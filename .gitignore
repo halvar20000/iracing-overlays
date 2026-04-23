@@ -1,0 +1,24 @@
+# iRacing credentials — NEVER commit
+iracing_auth.json
+
+# Cached track assets + session cookies from iRacing members-ng
+trackmaps/cache/
+trackmaps/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Local dev artifacts
+dashboard_log.txt
+*.log
+*.tmp
+apply_patch.py
+files.zip
+
+# Editor / OS cruft
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
