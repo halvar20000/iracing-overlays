@@ -52,6 +52,13 @@ so log output and status dots stay visually clear.
 ## Other conventions
 
 - Port numbers increment from 5000. Don't reuse.
+- **Shared poller base class:** `iracing_sdk_base.py` provides `SDKPoller`
+  (IRSDK connection, poll loop, Lock-protected `data` dict, graceful stop)
+  and `setup_utf8_stdout()`. 7 of the 8 non-dashboard overlays inherit
+  from `SDKPoller` and only implement `_read_snapshot()`. Exceptions:
+  `iracing_dashboard.py` keeps its hand-rolled poller (large, fragile,
+  never migrated); `flag_overlay.py` is a state machine with a different
+  public surface (`get_state()`, not `get()`) and doesn't fit cleanly.
 - All scripts use `pyirsdk` + `flask`. `iracing_dashboard.py` additionally
   uses `pywin32` for the "Go Live" keyboard-event feature.
   `iracing_livery.py` additionally uses `pillow` to convert the TGA paint

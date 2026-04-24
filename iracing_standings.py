@@ -20,24 +20,11 @@ Runs in parallel with the other iracing_*.py scripts. It connects to
 iRacing independently.
 """
 
-import sys
 import threading
-import time
 from flask import Flask, jsonify, render_template_string, send_file, abort
 
-# Windows cp1252 stdout + Unicode in prints = UnicodeEncodeError that can
-# kill the poller thread silently. Force UTF-8 like the other overlays do.
-for _stream in (sys.stdout, sys.stderr):
-    try:
-        _stream.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
-
-try:
-    import irsdk
-except ImportError:
-    print("ERROR: pyirsdk not installed. Run:  pip install pyirsdk flask")
-    raise SystemExit(1)
+from iracing_sdk_base import SDKPoller, setup_utf8_stdout
+setup_utf8_stdout()
 
 from car_brands import detect_brand, resolve_logo
 
@@ -113,15 +100,12 @@ def _weather(ir) -> dict:
 # -----------------------------------------------------------------------------
 # Standings poller
 # -----------------------------------------------------------------------------
-class StandingsPoller:
-    def __init__(self, poll_interval: float = 1.0):
-        self.ir = irsdk.IRSDK()
-        self.poll_interval = poll_interval
-        self.connected = False
-        self.data = {"connected": False}
-        self._lock = threading.Lock()
-        self._running = True
+class StandingsPoller(SDKPoller):
+    tag = "standings"
+    poll_interval = 1.0
 
+    def __init__(self):
+        super().__init__()
         # Per-car pit-stop tracking. iRacing doesn't expose "last pit lap"
         # or "pit-lane time" directly, so we derive them from
         # CarIdxOnPitRoad transitions. Dicts are keyed by CarIdx.
@@ -130,16 +114,6 @@ class StandingsPoller:
         self._pit_entry_t:   dict[int, float] = {}  # session time when entered
         self._last_pit_lap:  dict[int, int] = {}  # lap of most recent completed pit
         self._last_pit_time: dict[int, float] = {}  # seconds spent in pit lane on last stop
-
-    def _check_connection(self) -> bool:
-        if self.connected and not (self.ir.is_initialized and self.ir.is_connected):
-            self.ir.shutdown()
-            self.connected = False
-            print("[standings] Disconnected from iRacing")
-        elif not self.connected and self.ir.startup() and self.ir.is_initialized and self.ir.is_connected:
-            self.connected = True
-            print("[standings] Connected to iRacing")
-        return self.connected
 
     def _driver_map(self) -> dict:
         info = self.ir["DriverInfo"] or {}
@@ -537,30 +511,6 @@ class StandingsPoller:
             "standings":    rows,
         }
 
-    def run(self):
-        print("[standings] Poller started (waiting for iRacing...)")
-        while self._running:
-            try:
-                if self._check_connection():
-                    snap = self._read_snapshot()
-                    with self._lock:
-                        self.data = snap
-                else:
-                    with self._lock:
-                        self.data = {"connected": False}
-            except Exception as e:
-                with self._lock:
-                    self.data = {"connected": False, "error": str(e)}
-            time.sleep(self.poll_interval)
-
-    def get(self) -> dict:
-        with self._lock:
-            return dict(self.data)
-
-    def stop(self):
-        self._running = False
-        if self.connected:
-            self.ir.shutdown()
 
 
 # -----------------------------------------------------------------------------

@@ -29,11 +29,13 @@ stream mode (transparent background) for OBS browser sources.
 from __future__ import annotations
 import io
 import os
-import sys
 import threading
 import time
 from pathlib import Path
 from flask import Flask, jsonify, render_template_string, send_file, abort, Response
+
+from iracing_sdk_base import SDKPoller, setup_utf8_stdout
+setup_utf8_stdout()
 
 # `requests` is only needed to proxy Trading Paints previews. If it's not
 # installed the overlay still works — the car-render preference is just
@@ -46,23 +48,6 @@ except ImportError:
     _HAS_REQUESTS = False
     print("[livery] requests not installed — Trading Paints renders disabled. "
           "Run 'pip install requests' to enable.")
-
-# When the script is launched via launch_all.py the child process inherits the
-# Windows system codepage (often cp1252) for stdout. Any non-ASCII character in
-# a print() call then raises UnicodeEncodeError, which can kill the poller
-# thread silently if it happens inside an except block. Force UTF-8 so all our
-# diagnostic prints are safe regardless of the console's codepage.
-for _stream in (sys.stdout, sys.stderr):
-    try:
-        _stream.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
-
-try:
-    import irsdk
-except ImportError:
-    print("ERROR: pyirsdk not installed. Run:  pip install pyirsdk flask pillow")
-    raise SystemExit(1)
 
 try:
     from PIL import Image
@@ -177,14 +162,12 @@ def parse_design_str(design: str | None) -> dict:
 # ---------------------------------------------------------------------------
 # Poller
 # ---------------------------------------------------------------------------
-class LiveryPoller:
-    def __init__(self, poll_interval: float = POLL_INTERVAL):
-        self.ir = irsdk.IRSDK()
-        self.poll_interval = poll_interval
-        self.connected = False
-        self.data = {"connected": False}
-        self._lock = threading.Lock()
-        self._running = True
+class LiveryPoller(SDKPoller):
+    tag = "livery"
+    poll_interval = POLL_INTERVAL
+
+    def __init__(self):
+        super().__init__()
         # Diagnostics: remember the last (cam_idx, cust_id, path) we logged so
         # we only print when the on-camera driver changes.
         self._last_logged_key: tuple | None = None
@@ -407,14 +390,10 @@ class LiveryPoller:
                       f"self.connected={self.connected} data.connected={data_conn}")
             time.sleep(self.poll_interval)
 
-    def get(self) -> dict:
-        with self._lock:
-            return dict(self.data)
-
-    def stop(self):
-        self._running = False
-        if self.connected:
-            self.ir.shutdown()
+    # get() and stop() inherited from SDKPoller.
+    # _check_connection() and run() overridden above — they carry the heavy
+    # diagnostic instrumentation added during the TGA/render debugging
+    # saga. Don't strip without replacing the heartbeat + iteration tracking.
 
 
 # ---------------------------------------------------------------------------

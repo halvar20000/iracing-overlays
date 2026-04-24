@@ -23,47 +23,19 @@ Data source:
   order — so it's useful both during and after the race.
 """
 
-import sys
 import threading
-import time
 from flask import Flask, jsonify, render_template_string
 
-# Windows cp1252 stdout + Unicode in prints = UnicodeEncodeError that can
-# kill the poller thread silently. Force UTF-8 like the other overlays do.
-for _stream in (sys.stdout, sys.stderr):
-    try:
-        _stream.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
-
-try:
-    import irsdk
-except ImportError:
-    print("ERROR: pyirsdk not installed. Run:  pip install pyirsdk flask")
-    raise SystemExit(1)
+from iracing_sdk_base import SDKPoller, setup_utf8_stdout
+setup_utf8_stdout()
 
 
 # -----------------------------------------------------------------------------
 # Results poller
 # -----------------------------------------------------------------------------
-class ResultsPoller:
-    def __init__(self, poll_interval: float = 2.0):
-        self.ir = irsdk.IRSDK()
-        self.poll_interval = poll_interval
-        self.connected = False
-        self.data = {"connected": False}
-        self._lock = threading.Lock()
-        self._running = True
-
-    def _check_connection(self) -> bool:
-        if self.connected and not (self.ir.is_initialized and self.ir.is_connected):
-            self.ir.shutdown()
-            self.connected = False
-            print("[results] Disconnected from iRacing")
-        elif not self.connected and self.ir.startup() and self.ir.is_initialized and self.ir.is_connected:
-            self.connected = True
-            print("[results] Connected to iRacing")
-        return self.connected
+class ResultsPoller(SDKPoller):
+    tag = "results"
+    poll_interval = 2.0
 
     def _driver_map(self) -> dict:
         info = self.ir["DriverInfo"] or {}
@@ -204,30 +176,6 @@ class ResultsPoller:
             "results":      rows,
         }
 
-    def run(self):
-        print("[results] Poller started (waiting for iRacing...)")
-        while self._running:
-            try:
-                if self._check_connection():
-                    snap = self._read_snapshot()
-                    with self._lock:
-                        self.data = snap
-                else:
-                    with self._lock:
-                        self.data = {"connected": False}
-            except Exception as e:
-                with self._lock:
-                    self.data = {"connected": False, "error": str(e)}
-            time.sleep(self.poll_interval)
-
-    def get(self) -> dict:
-        with self._lock:
-            return dict(self.data)
-
-    def stop(self):
-        self._running = False
-        if self.connected:
-            self.ir.shutdown()
 
 
 # -----------------------------------------------------------------------------

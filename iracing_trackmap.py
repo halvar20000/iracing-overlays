@@ -28,25 +28,13 @@ Background on the data:
 from __future__ import annotations
 import json
 import math
-import sys
 import threading
 import time
 from pathlib import Path
 from flask import Flask, jsonify, render_template_string, Response, abort, request
 
-# Windows cp1252 stdout + Unicode in prints = UnicodeEncodeError that can
-# kill the poller thread silently. Force UTF-8 like the other overlays do.
-for _stream in (sys.stdout, sys.stderr):
-    try:
-        _stream.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
-
-try:
-    import irsdk
-except ImportError:
-    print("ERROR: pyirsdk not installed. Run:  pip install pyirsdk flask")
-    raise SystemExit(1)
+from iracing_sdk_base import SDKPoller, setup_utf8_stdout
+setup_utf8_stdout()
 
 
 # ---------------------------------------------------------------------------
@@ -205,14 +193,12 @@ def pct_to_xy(track: dict, pct: float) -> tuple[float, float] | None:
 # ---------------------------------------------------------------------------
 # Poller
 # ---------------------------------------------------------------------------
-class TrackmapPoller:
-    def __init__(self, poll_interval: float = POLL_INTERVAL):
-        self.ir = irsdk.IRSDK()
-        self.poll_interval = poll_interval
-        self.connected = False
-        self.data: dict = {"connected": False}
-        self._lock = threading.Lock()
-        self._running = True
+class TrackmapPoller(SDKPoller):
+    tag = "trackmap"
+    poll_interval = POLL_INTERVAL
+
+    def __init__(self):
+        super().__init__()
         # Session/track change detection — pyirsdk aggressively caches
         # WeekendInfo YAML and sometimes misses session transitions
         # (especially when switching between sessions within the same
@@ -243,17 +229,6 @@ class TrackmapPoller:
         self._last_session_uid = None
         self._last_track_id    = None
         self._last_track_file  = ""
-
-    def _check_connection(self) -> bool:
-        if self.connected and not (self.ir.is_initialized and self.ir.is_connected):
-            self.ir.shutdown()
-            self.connected = False
-            print("[trackmap] Disconnected from iRacing")
-        elif (not self.connected and self.ir.startup()
-              and self.ir.is_initialized and self.ir.is_connected):
-            self.connected = True
-            print("[trackmap] Connected to iRacing")
-        return self.connected
 
     def _read_snapshot(self) -> dict:
         ir = self.ir
@@ -345,31 +320,6 @@ class TrackmapPoller:
             "cars":           cars,
         }
 
-    def run(self):
-        print("[trackmap] Poller started (waiting for iRacing...)")
-        while self._running:
-            try:
-                if self._check_connection():
-                    snap = self._read_snapshot()
-                    with self._lock:
-                        self.data = snap
-                else:
-                    with self._lock:
-                        self.data = {"connected": False}
-            except Exception as e:
-                print(f"[trackmap] Poll error: {type(e).__name__}: {e!r}")
-                with self._lock:
-                    self.data = {"connected": False, "error": str(e)}
-            time.sleep(self.poll_interval)
-
-    def get(self) -> dict:
-        with self._lock:
-            return dict(self.data)
-
-    def stop(self):
-        self._running = False
-        if self.connected:
-            self.ir.shutdown()
 
 
 # ---------------------------------------------------------------------------
