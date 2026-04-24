@@ -12,10 +12,19 @@ v7 adds:
     replay playhead to the latest frame = live playback.
 """
 
+import sys
 import threading
 import time
 from collections import deque
 from flask import Flask, jsonify, render_template_string, request
+
+# Windows cp1252 stdout + Unicode in prints = UnicodeEncodeError that can
+# kill the poller thread silently. Force UTF-8 like the other overlays do.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 try:
     import irsdk

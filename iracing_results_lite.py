@@ -15,9 +15,18 @@ Runs in parallel with:
   - iracing_results.py     (port 5002)
 """
 
+import sys
 import threading
 import time
 from flask import Flask, jsonify, render_template_string
+
+# Windows cp1252 stdout + Unicode in prints = UnicodeEncodeError that can
+# kill the poller thread silently. Force UTF-8 like the other overlays do.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 try:
     import irsdk
@@ -56,6 +65,8 @@ class LiteResultsPoller:
             if cidx is None:
                 continue
             if d.get("CarIsPaceCar") == 1:
+                continue
+            if d.get("IsSpectator") == 1:
                 continue
             out[cidx] = {
                 "car_idx":    cidx,

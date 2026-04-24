@@ -1,0 +1,20 @@
+# iRacing Overlays — Python dependencies
+#
+# Install:
+#   pip install -r requirements.txt
+#
+# Notes:
+#   - pywin32 is only needed on Windows (iRacing's platform) and is auto-
+#     skipped elsewhere via the environment marker. It powers the "Go Live"
+#     keystroke feature and the HUD-hide reassert logic in the dashboard.
+#   - pillow is only used by iracing_livery.py for TGA→PNG conversion of
+#     the on-disk paint cache.
+#   - requests is only used by iracing_livery.py for Trading Paints
+#     previews (optional — the overlay still works without it, with the
+#     car-render feature disabled).
+
+flask>=3.0
+pyirsdk>=1.3
+pillow>=10.0
+requests>=2.31
+pywin32>=306; sys_platform == "win32"

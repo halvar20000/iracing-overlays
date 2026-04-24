@@ -1,6 +1,9 @@
 # iRacing Overlays — Project Notes for Claude
 
 Location: `/Users/thomasherbrig/Nextcloud/iRacing/python/files/`
+GitHub:   https://github.com/halvar20000/iracing-overlays (primary repo,
+          source of truth; local folder is where I edit, user pushes via
+          git from Terminal).
 
 ## Scripts
 
@@ -55,7 +58,15 @@ so log output and status dots stay visually clear.
   files from iRacing's paint cache to PNG on the fly.
   `iracing_trackmap.py` additionally uses `requests` to call the iRacing
   members-ng API; helper lives in `iracing_auth.py`.
-- Press `H` on dashboard/results/grid for stream mode (transparent BG).
+- Press `H` on dashboard/grid/results/results_lite/standings/livery/trackmap
+  for stream mode (toggles transparent BG for OBS Browser Sources).
+  `iracing_live_indicator.py` and `flag_overlay.py` are intentionally
+  always-transparent — they're pure overlay elements with no background
+  to toggle, so they don't ship a stream-mode key.
+- All overlays do a UTF-8 stdout reconfigure at import time to survive
+  Windows cp1252 code pages. Without it, a single non-ASCII character in
+  a print() call inside an except block can silently kill the poller
+  thread. This bit us hard once — don't remove.
 - Scripts are Windows-only in practice (iRacing runs on Windows), but the
   Python launcher is cross-platform.
 

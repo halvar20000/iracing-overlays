@@ -20,9 +20,18 @@ Runs in parallel with the other iracing_*.py scripts. It connects to
 iRacing independently.
 """
 
+import sys
 import threading
 import time
 from flask import Flask, jsonify, render_template_string, send_file, abort
+
+# Windows cp1252 stdout + Unicode in prints = UnicodeEncodeError that can
+# kill the poller thread silently. Force UTF-8 like the other overlays do.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 try:
     import irsdk

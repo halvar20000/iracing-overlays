@@ -314,6 +314,8 @@ class TrackmapPoller:
                 continue
             if d.get("CarIsPaceCar") == 1:
                 continue
+            if d.get("IsSpectator") == 1:
+                continue
             if idx >= len(lap_pct):
                 continue
             pct = float(lap_pct[idx] or 0.0)
