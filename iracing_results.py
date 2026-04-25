@@ -60,13 +60,38 @@ class ResultsPoller(SDKPoller):
         return out
 
     def _find_race_session(self, sessions: list) -> dict:
-        """Return the most recent race session (for heat-race weekends)."""
+        """Return the most recent race session (for heat-race weekends).
+
+        NOTE: may return an unstarted future race (e.g. Race 2 while we're
+        still in Warmup between Race 1 and Race 2). Use
+        _find_last_completed_race() when you need a race that actually has
+        results populated.
+        """
         race = None
         for s in sessions:
             stype = (s.get("SessionType") or "").lower()
             if "race" in stype:
                 race = s  # last wins
         return race
+
+    def _find_last_completed_race(self, sessions: list) -> dict | None:
+        """Return the most recent race that has ResultsPositions populated.
+
+        Walks sessions in reverse and returns the first race whose results
+        iRacing has actually filled in. This is the right choice whenever
+        we're NOT currently inside a race session and want to keep the
+        previous race's final standings on screen — the classic case being
+        a Race 1 → Warmup → Race 2 league format, where we want to keep
+        Race 1's classification visible during the warmup so the broadcast
+        can discuss it.
+        """
+        for s in reversed(sessions):
+            stype = (s.get("SessionType") or "").lower()
+            if "race" not in stype:
+                continue
+            if s.get("ResultsPositions"):
+                return s
+        return None
 
     def _session_is_finalized(self, session: dict) -> bool:
         """Check if iRacing has marked this session as ended."""
@@ -84,7 +109,6 @@ class ResultsPoller(SDKPoller):
         weekend = ir["WeekendInfo"] or {}
 
         drivers = self._driver_map()
-        race = self._find_race_session(sessions)
 
         rows = []
         source = None
@@ -96,13 +120,22 @@ class ResultsPoller(SDKPoller):
                 current_session = s
                 break
 
-        # Prefer the active session if it's a race; otherwise fall back to
-        # the latest race session found in the weekend.
+        # Session-selection rules:
+        # 1. If we're currently IN a race, show its live running order.
+        # 2. Otherwise (practice / qualifying / warmup / cooldown / any
+        #    non-race state), show the most recent race that has results
+        #    populated. This keeps the Race 1 classification visible on
+        #    screen during the warmup between Race 1 and Race 2 — the
+        #    original CAS Community Porsche Cup use case.
+        # The old fallback used _find_race_session() which returned the
+        # LAST race in the plan regardless of whether it had data; in a
+        # Race 1 → Warmup → Race 2 weekend that meant we blanked out
+        # during the warmup because Race 2 was empty.
         chosen = None
         if current_session and "race" in (current_session.get("SessionType") or "").lower():
             chosen = current_session
-        elif race:
-            chosen = race
+        else:
+            chosen = self._find_last_completed_race(sessions)
 
         if chosen and chosen.get("ResultsPositions"):
             results = chosen["ResultsPositions"]

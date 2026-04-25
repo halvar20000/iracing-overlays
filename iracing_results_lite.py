@@ -47,13 +47,23 @@ class LiteResultsPoller(SDKPoller):
             }
         return out
 
-    def _find_race_session(self, sessions: list) -> dict:
-        race = None
-        for s in sessions:
+    def _find_last_completed_race(self, sessions: list) -> dict | None:
+        """Most recent race session that has ResultsPositions populated.
+
+        Walks sessions in reverse. Used when we're not currently inside a
+        race session, so we can keep the previous race's classification
+        visible during warmup / cooldown between Race 1 and Race 2 in
+        league formats. The old logic returned the last race regardless
+        of whether it had data, which blanked the overlay during warmup
+        because Race 2 was empty.
+        """
+        for s in reversed(sessions):
             stype = (s.get("SessionType") or "").lower()
-            if "race" in stype:
-                race = s
-        return race
+            if "race" not in stype:
+                continue
+            if s.get("ResultsPositions"):
+                return s
+        return None
 
     def _read_snapshot(self) -> dict:
         ir = self.ir
@@ -62,7 +72,6 @@ class LiteResultsPoller(SDKPoller):
         weekend = ir["WeekendInfo"] or {}
 
         drivers = self._driver_map()
-        race = self._find_race_session(sessions)
 
         session_num = ir["SessionNum"]
         current_session = None
@@ -71,11 +80,14 @@ class LiteResultsPoller(SDKPoller):
                 current_session = s
                 break
 
+        # Prefer the active session if it's a race (live running order);
+        # otherwise show the most recent race that has results, so the
+        # Race 1 standings stay visible during the Warmup before Race 2.
         chosen = None
         if current_session and "race" in (current_session.get("SessionType") or "").lower():
             chosen = current_session
-        elif race:
-            chosen = race
+        else:
+            chosen = self._find_last_completed_race(sessions)
 
         rows = []
         official = False

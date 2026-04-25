@@ -211,6 +211,90 @@ endpoint). Every code path that calls `cam_switch_num` /
 `cam_set_state` calls `_reassert_ui_hide()`, which — if the flag is
 true — re-sends spacebar in a 0.25 s-delayed daemon thread.
 
+**April 24, 2026 (trackmap — Monza added from user-drawn GPX):**
+SIMRacingApps didn't have Monza in its track library, so `monza_full`
+was missing from `tracks/`. User drew the racing line in
+https://gpx.studio/ and exported GPX. Added `tracks/gpx_to_json.py`
+as a reusable converter (argparse: `python gpx_to_json.py <file.gpx>
+<iracing_track_name>`) and used it to produce `tracks/monza_full.json`
+(248 points, closed loop, center 45.62N 9.29E). `tracks/NOTICE.txt`
+updated with a "user-drawn tracks" section to make the provenance
+clear alongside the Apache-2.0 SRA-sourced files. Any future track
+iRacing runs that SRA doesn't have (Spa, Nürburgring, etc.) can be
+added with the same GPX → JSON workflow.
+
+**April 24, 2026 (dashboard — yellow-zone incident detection):**
+Added a fourth spec-mode incident detector in `_update_incidents`:
+when iRacing sets the LOCAL_YELLOW bit on a car's `CarIdxSessionFlags`
+(the per-car bitmask, not the session-wide one), we treat that as
+"iRacing detected an incident in this car's zone" and emit a
+`lost_control` incident. This is iRacing's own authoritative signal
+for "something happened" and catches the incidents our yaw / lap-
+regression / stopped-on-track thresholds let through (brief slides,
+light taps, quick recoveries). Two layers of dedup: (a) a global
+5-second cooldown so the multiple cars that receive the yellow bit
+simultaneously from one physical event only fire one emission, (b)
+the per-car `_incident_cooldown` inside `_emit_incident` which
+suppresses yellow-based emissions when a yaw/regression detector
+already caught the same event seconds earlier. An old "intentionally
+not emitted" comment was removed — it was about the session-wide
+`SessionFlags`, but the per-car `CarIdxSessionFlags` is genuinely
+per-event and actionable. Fixes the CAS Porsche Cup comparison with
+iOverlay, which was catching a few more incidents than the dashboard.
+
+**April 24, 2026 (flag overlay — session-change reset + hardened
+timed-race detection):** Two fixes in `flag_overlay.py`:
+
+1. The state machine (`state`, `_white_shown`, `_check_shown`,
+   `_lap_times`, etc.) was only reset on SDK disconnect — NOT on session
+   change. After qualifying's checkered fired, `state` stayed `"done"`
+   and every tick of the subsequent race(s) bailed out at
+   `if self.state == "done": return`. That's why yesterday's CAS stream
+   saw the flag in quali but never in the two races. Added
+   `_last_session_num` tracking + `_reset_session_state()` that fires
+   whenever `SessionNum` changes, clearing per-session state (lap
+   times, shown flags, etc.) while preserving connection state.
+
+2. Hardened the timed-race white-flag trigger from a single condition
+   (`time_rem < avg_lap AND crossed_sf`) to three alternatives, any of
+   which fires at the S/F crossing:
+     (a) same as before — time_rem < avg_lap and we have a good avg_lap.
+     (b) time_rem <= 0 — iRacing "+1 lap" rule says the first S/F
+         crossing after timer expiry starts the leader's final lap.
+         Fires even with no avg_lap estimate (short races, first-lap
+         leader, pit-stop-inflated avg_lap, …).
+     (c) SessionState >= 5 (Checkered / CoolDown).
+   The log line now prints which trigger fired so the next race we can
+   verify the path lived up to expectations.
+
+**April 24, 2026 (results / results_lite — persist last-race classification
+during warmup):** Added `_find_last_completed_race(sessions)` to both
+`iracing_results.py` and `iracing_results_lite.py`, and switched
+`_read_snapshot()` to use it as the fallback when the current session
+isn't a race. The old `_find_race_session()` returned the LAST race in
+the weekend plan regardless of whether it had any data; in a Race 1 →
+Warmup → Race 2 league format that meant the overlay blanked during
+the warmup (it tried to show Race 2, which was still empty). The new
+helper walks sessions in reverse and returns the most recent race
+whose `ResultsPositions` is populated — so Race 1's final
+classification stays visible all through the warmup for broadcast /
+debrief purposes. Fixes the CAS Community Porsche Cup complaint.
+
+**April 24, 2026 (standings — live position updates):** Replaced
+`CarIdxPosition`-based ordering in `_build_race_standings()` with
+live track-progress sorting (`CarIdxLap + CarIdxLapDistPct`).
+iRacing only updates `CarIdxPosition` at the start/finish line, so
+an overtake mid-lap used to take up to a full lap to appear in the
+standings. Now positions update the instant the pass happens — same
+technique broadcast tools like iOverlay / RaceControl use. Within
+each class we sort in-world cars first, then out-of-world (DNF /
+garage) below, both groups by descending progress. `CarIdxF2Time`
+still drives the interval column; it doesn't have the S/F-lag
+problem because it's a race-time measurement. The old raw iRacing
+position is still read and kept under `iracing_pos` on each row for
+diagnostics. Fixes the Porsche Cup broadcast complaint: positions
+were only updating at S/F crossings.
+
 **April 23, 2026 (standings — iOverlay-style pass + real gap + lap-
 down fix):** Multiple iterations on `iracing_standings.py`:
   • Tighter row rhythm (6 px vertical padding), amber accent on pit

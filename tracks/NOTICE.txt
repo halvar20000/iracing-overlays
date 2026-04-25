@@ -21,3 +21,13 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+---
+
+Some tracks in this folder were NOT sourced from SIMRacingApps — they were
+hand-drawn by the project maintainer in https://gpx.studio/ to fill gaps in
+the upstream SRA library. Those are converted with gpx_to_json.py in this
+same folder and released under the same licence as the rest of this repo.
+
+User-drawn tracks (as of April 2026):
+  - monza_full.json   (drawn April 24, 2026)

@@ -205,18 +205,26 @@ class StandingsPoller(SDKPoller):
 
     def _build_race_standings(self, drivers, ir) -> list:
         """
-        Live race running order. Prefers CarIdxPosition (iRacing-assigned
-        running order). Falls back to on-track running order derived from
-        lap count + lap distance percentage for situations where iRacing
-        hasn't assigned positions yet — notably:
-          - the formation / parade lap before the race officially starts
-          - some replay frames, where CarIdxPosition returns 0
+        Live race running order.
+
+        Position is derived from live track progress (CarIdxLap +
+        CarIdxLapDistPct), NOT from CarIdxPosition. iRacing only updates
+        CarIdxPosition at the start/finish line, which means an overtake
+        mid-lap doesn't show up in the standings until the leader next
+        crosses S/F — sometimes more than a full lap of lag. By sorting
+        on track progress instead, overtakes are reflected the instant
+        they happen. This is how iOverlay / RaceControl / other broadcast
+        tools derive their "live" position column.
 
         Interval column = GAP TO CAR AHEAD (in seconds, within the same
         class). Computed by taking the difference between consecutive
         drivers' CarIdxF2Time values after sort — CarIdxF2Time itself is
         "race time behind the class leader", NOT gap to the car in front.
-        Lapped cars show '+N LAP' instead.
+        CarIdxF2Time is a race-time measurement and does NOT have the
+        S/F update-lag problem, so it pairs cleanly with the live
+        track-progress sort.
+
+        Lapped cars show '+N LAP' instead of a seconds interval.
         """
         positions  = ir["CarIdxPosition"] or []
         f2times    = ir["CarIdxF2Time"] or []
@@ -229,8 +237,11 @@ class StandingsPoller(SDKPoller):
 
         rows = []
         for cidx, drv in drivers.items():
+            # iRacing's CarIdxPosition is read but NOT used for ordering.
+            # Kept for diagnostic purposes only — position is re-assigned
+            # below from live track progress.
             pos_raw = positions[cidx] if cidx < len(positions) else 0
-            pos = int(pos_raw) if pos_raw and pos_raw > 0 else 0
+            iracing_pos = int(pos_raw) if pos_raw and pos_raw > 0 else 0
 
             # CarIdxF2Time is the TOTAL race time behind the class leader
             # ("gap to leader"), not gap to the car ahead. We keep it as
@@ -247,7 +258,8 @@ class StandingsPoller(SDKPoller):
 
             row = {
                 **drv,
-                "position":      pos,  # 0 means unassigned; will be filled in below
+                "position":      0,      # assigned below from live track progress
+                "iracing_pos":   iracing_pos,  # raw CarIdxPosition, diagnostic only
                 "interval":      None,   # filled in after sort — see below
                 "_gap_to_leader": gap_to_leader,
                 "lap":           int(laps[cidx]) if cidx < len(laps) else 0,
@@ -263,19 +275,31 @@ class StandingsPoller(SDKPoller):
             }
             rows.append(row)
 
-        # If iRacing hasn't assigned any positions yet (formation lap, early
-        # replay frames, etc.) fall back to on-track running order computed
-        # from lap count + lap distance percentage within each class. A car
-        # on lap 3 at 50% is ahead of one on lap 3 at 20%, which is ahead of
-        # one on lap 2 at 90%.
-        if not any(r["position"] > 0 for r in rows):
-            by_class: dict = {}
-            for r in rows:
-                by_class.setdefault(r.get("class_id", 0), []).append(r)
-            for cid, grp in by_class.items():
-                grp.sort(key=lambda r: (r["lap"], r["lap_pct"]), reverse=True)
-                for i, r in enumerate(grp, start=1):
-                    r["position"] = i
+        # ------------------------------------------------------------------
+        # Live running order via track progress.
+        #
+        # iRacing only updates CarIdxPosition at the start/finish line, so
+        # an overtake mid-lap doesn't show up in CarIdxPosition until the
+        # leader next crosses S/F — sometimes a full lap of lag. Sort by
+        # live track progress (CarIdxLap + CarIdxLapDistPct) instead, so
+        # overtakes show up instantly.
+        #
+        # Within each class we sort in-world cars first, then out-of-world
+        # cars (DNF / disconnected / retired to garage) at the bottom,
+        # both groups by descending progress.
+        # ------------------------------------------------------------------
+        by_class: dict = {}
+        for r in rows:
+            by_class.setdefault(r.get("class_id", 0), []).append(r)
+        for cid, grp in by_class.items():
+            grp.sort(
+                key=lambda r: (
+                    0 if r.get("in_world") else 1,      # in-world first
+                    -(float(r["lap"]) + float(r["lap_pct"])),  # progress desc
+                ),
+            )
+            for i, r in enumerate(grp, start=1):
+                r["position"] = i
 
         # Sort by (class_id, in_world, position) so rows in the same class
         # sit together for class-separator rendering, and any driver who has
@@ -541,16 +565,28 @@ STANDINGS_HTML = """
 <title>iRacing Live Standings</title>
 <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    /* Transparent by default — this overlay is designed to be loaded as
+       an OBS Browser Source which composites it over iRacing video.
+       OBS's Chromium needs both html AND body explicitly transparent. */
+    html, body { background-color: rgba(0,0,0,0); }
     body {
         font-family: 'Segoe UI', system-ui, sans-serif;
-        background: #0a0a0f;
         color: #e8e8ea;
         min-height: 100vh;
-        padding: 20px;
+        padding: 12px;
         transition: background 0.2s;
     }
-    body.stream-mode { background: transparent; padding: 12px; }
-    body.stream-mode .panel { background: rgba(20,20,28,0.88); }
+    /* Debug background — toggle on with H when previewing in a
+       browser tab, so the overlay isn't composited over a white page. */
+    body.debug-mode { background: #0a0a0f; padding: 20px; }
+
+    /* Default panel translucency: 0.65 alpha = 65% opaque
+       (35% see-through). Lets iRacing video show through behind the
+       standings while text stays readable. */
+    .panel { background: rgba(20,20,28,0.65); }
+    /* In debug-mode, panels go fully solid so the layout is easy to
+       inspect against a dark page background. */
+    body.debug-mode .panel { background: #14141c; }
 
     .stream-toggle {
         position: fixed; top: 10px; right: 10px; z-index: 1000;
@@ -558,13 +594,18 @@ STANDINGS_HTML = """
         border: 1px solid #333; color: #bbb;
         padding: 5px 10px; font-size: 11px; border-radius: 4px;
         cursor: pointer; font-family: inherit;
+        /* Hidden by default — only shows when the overlay is being
+           previewed in a browser (debug-mode). OBS users never see it. */
+        display: none;
     }
-    body.stream-mode .stream-toggle { display: none; }
+    body.debug-mode .stream-toggle { display: block; }
 
     .wrap { max-width: 1120px; margin: 0 auto; }
 
     .panel {
-        background: #14141c;
+        /* Background colour set above (translucent default + opaque
+           debug-mode override) — don't repeat it here or it overrides
+           the debug variant. */
         border: 1px solid #26262f;
         border-radius: 8px;
         overflow: hidden;
@@ -806,14 +847,14 @@ STANDINGS_HTML = """
 </head>
 <body>
 
-<button class="stream-toggle" onclick="toggleStreamMode()">Stream mode (H)</button>
+<button class="stream-toggle" onclick="toggleStreamMode()">Debug background (H)</button>
 
 <div class="wrap" id="root">
     <div class="panel waiting"><h2>WAITING FOR IRACING…</h2><div>Load into a session to see live standings.</div></div>
 </div>
 
 <script>
-function toggleStreamMode() { document.body.classList.toggle('stream-mode'); }
+function toggleStreamMode() { document.body.classList.toggle('debug-mode'); }
 document.addEventListener('keydown', e => {
     if (e.key === 'h' || e.key === 'H') toggleStreamMode();
 });

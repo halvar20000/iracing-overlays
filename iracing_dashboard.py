@@ -123,6 +123,16 @@ class TelemetryPoller:
         self.focus_leader = False
         self._last_leader_car_idx: int | None = None
 
+        # Camera disconnect watchdog. Tracks when the currently followed
+        # car went out-of-world (CarIdxTrackSurface == -1) — typically a
+        # network disconnect or a tow-to-garage. After a short grace
+        # window we proactively switch to another driver so iRacing's
+        # scenic camera doesn't kick in (which the user finds annoying
+        # because the scene is then unrelated to the race).
+        self._cam_lost_since: float | None = None
+        self._cam_lost_grace_seconds = 3.0   # how long to wait before switching
+        self._last_cam_recover_at = 0.0      # debounce repeat switches
+
         # Focus-on-crashes: auto-switch camera to a car that just crashed or
         # spun. When a crash is picked up, stick with it for a hold window
         # before allowing the next switch — prevents rapid flipping during
@@ -168,6 +178,13 @@ class TelemetryPoller:
         self._finished = set()             # car_idxs considered finished
         self._incidents = deque(maxlen=40)
         self._incident_cooldown = {}     # (car_idx, type) -> last session_time emitted
+        # Global cooldown for yellow-zone emissions. When iRacing raises a
+        # local yellow, multiple cars in the zone get the flag bit set
+        # simultaneously — we only want ONE incident per actual event, so
+        # this gate lets the first car emit and suppresses the rest for a
+        # short window. Per-car _incident_cooldown still dedupes against
+        # yaw/regression-based emissions for the same car.
+        self._last_yellow_emit_t = -1e9  # session_time of last yellow-based emit
 
         # Auto-replay on incidents (opt-in via dashboard toggle)
         self.auto_replay = False
@@ -215,6 +232,9 @@ class TelemetryPoller:
         self._finished.clear()
         self._incidents.clear()
         self._incident_cooldown.clear()
+        self._last_yellow_emit_t = -1e9
+        self._cam_lost_since = None
+        self._last_cam_recover_at = 0.0
 
     def _load_sector_boundaries(self):
         info = self.ir["SplitTimeInfo"]
@@ -828,9 +848,45 @@ class TelemetryPoller:
                             f"crashed (stopped {stop_duration:.0f}s then vanished)",
                         )
 
-            # Yellow-flag "incident" intentionally not emitted — it's a
-            # session-wide flag, not a per-driver actionable event. The
-            # live-indicator overlay already conveys yellow-flag state.
+            # --- iRacing local-yellow zone (spec-mode supplementary) -------
+            # CarIdxSessionFlags exposes a per-car bitmask. iRacing sets
+            # the LOCAL_YELLOW / yellow-waving bits on cars that are in
+            # the zone of an incident — that IS iRacing's own "an incident
+            # just happened here" signal. Useful because CarIdxYawRate and
+            # CurDriverIncidentCount don't work in spectator mode, so
+            # smaller incidents (a light tap, a brief slide that doesn't
+            # cross our yaw or lap-regress thresholds) can slip through
+            # the other detectors.
+            #
+            # Two layers of deduplication:
+            #   (1) Global 5-second cooldown. One physical incident
+            #       usually raises the yellow bit on several cars
+            #       simultaneously — the zone is broad. Without this,
+            #       we'd fire N incidents for the one event.
+            #   (2) Per-car _incident_cooldown inside _emit_incident. If
+            #       the yaw or regression detector already fired for this
+            #       car in the last 15 s, the yellow-based emission is
+            #       suppressed there.
+            if idx < len(flags_arr):
+                raw_flags = int(flags_arr[idx] or 0)
+                cur_yellow_bits = raw_flags & YELLOW_MASK
+                cur_yellow = cur_yellow_bits != 0
+                prev_yellow = self._prev_yellow.get(idx, False)
+                self._prev_yellow[idx] = cur_yellow
+                if (cur_yellow
+                        and not prev_yellow
+                        and surf == SURFACE_ON_TRACK
+                        and not is_pit
+                        and t_now - self._last_yellow_emit_t > 5.0):
+                    self._last_yellow_emit_t = t_now
+                    pct_str = (f"{cur_pct:.3f}"
+                               if cur_pct is not None else "?")
+                    print(f"[yellow-zone] idx={idx} bits=0x{cur_yellow_bits:x} "
+                          f"at pct {pct_str}")
+                    self._emit_incident(
+                        idx, "lost_control", t_now,
+                        f"local yellow raised (flags=0x{cur_yellow_bits:x})",
+                    )
 
     # --- driver list --------------------------------------------------------
     def _build_driver_list(self) -> list:
@@ -973,6 +1029,128 @@ class TelemetryPoller:
         except Exception as e:
             print(f"[focus-leader] switch failed: {e}")
 
+    # --- camera disconnect watchdog ----------------------------------------
+    def _maybe_recover_lost_cam_target(self, drivers: list, current_cam_idx):
+        """If the camera target has been out-of-world for more than the
+        grace window (default 3 s), proactively switch to a sensible
+        fallback. This prevents iRacing from falling back to the scenic
+        camera when a driver disconnects / disappears, which is jarring
+        on a broadcast.
+
+        Fallback priority:
+          1. Current overall leader (P1) if in-world and not in pit
+          2. Any in-world non-pit driver near the lost driver's position
+          3. Any in-world driver at all
+        """
+        t_now = time.time()
+
+        # Don't fight a recent manual click or a focus-crash hold window.
+        if t_now < self._manual_override_until:
+            self._cam_lost_since = None
+            return
+        if t_now < self._focus_crash_until:
+            return
+
+        # If focus_leader or auto_follow is active they'll re-pick on
+        # their own; don't fight them either.
+        if self.focus_leader or self.auto_follow:
+            self._cam_lost_since = None
+            return
+
+        if current_cam_idx is None:
+            self._cam_lost_since = None
+            return
+
+        surfaces = self.ir["CarIdxTrackSurface"] or []
+        in_world = (current_cam_idx < len(surfaces)
+                    and int(surfaces[current_cam_idx]) != SURFACE_NOT_IN_WORLD)
+
+        if in_world:
+            if self._cam_lost_since is not None:
+                lost_for = t_now - self._cam_lost_since
+                print(f"[cam-watchdog] target idx={current_cam_idx} back "
+                      f"in world after {lost_for:.1f}s")
+            self._cam_lost_since = None
+            return
+
+        # Out of world. Start the timer if not already running.
+        if self._cam_lost_since is None:
+            self._cam_lost_since = t_now
+            return
+
+        elapsed = t_now - self._cam_lost_since
+        if elapsed < self._cam_lost_grace_seconds:
+            return
+
+        # Debounce: don't keep firing every tick — once we've switched,
+        # wait at least 8 s before another watchdog switch (the new
+        # target is presumably a real driver, but in degenerate cases
+        # they could also be DC'd within seconds).
+        if t_now - self._last_cam_recover_at < 8.0:
+            return
+
+        # Pick a fallback.
+        fallback = self._pick_cam_fallback(drivers, current_cam_idx)
+        if fallback is None:
+            return
+
+        try:
+            self.ir.cam_switch_num(
+                str(fallback["car_number"]),
+                self._current_cam_group,
+                0,
+            )
+            self._reassert_ui_hide()
+            self._last_cam_recover_at = t_now
+            self._cam_lost_since = None
+            print(f"[cam-watchdog] target idx={current_cam_idx} "
+                  f"out-of-world for {elapsed:.1f}s -> switched to "
+                  f"#{fallback['car_number']} {fallback['name']}")
+        except Exception as e:
+            print(f"[cam-watchdog] switch failed: {e}")
+
+    def _pick_cam_fallback(self, drivers: list, lost_cam_idx):
+        """Pick a sensible camera target after the current one disappears."""
+        surfaces = self.ir["CarIdxTrackSurface"] or []
+
+        def is_eligible(d):
+            idx = d.get("car_idx")
+            if idx is None:
+                return False
+            if idx >= len(surfaces):
+                return False
+            if int(surfaces[idx]) == SURFACE_NOT_IN_WORLD:
+                return False
+            if d.get("on_pit_road"):
+                return False
+            return True
+
+        # 1. Overall P1
+        for d in drivers:
+            if d.get("position") == 1 and is_eligible(d):
+                return d
+
+        # 2. Position-nearest driver to the one we lost.
+        lost_pos = None
+        for d in drivers:
+            if d.get("car_idx") == lost_cam_idx:
+                lost_pos = d.get("position")
+                break
+        if lost_pos:
+            candidates = sorted(
+                (d for d in drivers if is_eligible(d)),
+                key=lambda d: abs((d.get("position") or 99) - lost_pos),
+            )
+            if candidates:
+                return candidates[0]
+
+        # 3. Anyone at all
+        for d in drivers:
+            if is_eligible(d):
+                return d
+
+        return None
+
     # --- race progress ------------------------------------------------------
     def _race_progress(self) -> dict:
         """
@@ -1088,6 +1266,7 @@ class TelemetryPoller:
         driver_list = self._build_driver_list()
         self._maybe_auto_switch(driver_list, cam_car_idx)
         self._maybe_focus_leader(driver_list, cam_car_idx)
+        self._maybe_recover_lost_cam_target(driver_list, cam_car_idx)
 
         snap = {
             "connected": True,
