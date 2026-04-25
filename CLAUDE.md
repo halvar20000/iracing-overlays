@@ -212,6 +212,21 @@ endpoint). Every code path that calls `cam_switch_num` /
 `cam_set_state` calls `_reassert_ui_hide()`, which — if the flag is
 true — re-sends spacebar in a 0.25 s-delayed daemon thread.
 
+**April 25, 2026 (race logger UI expanded → live race monitor):**
+The Flask page on port 5009 was a minimal status display. Rewrote it
+into a full live race monitor: top bar with track / session /
+elapsed / weather / track temp; counts row (on track / in pits / out /
+laps logged / incidents logged); two-pane main area with the live
+drivers table on the left (position, #, driver, last lap, best lap,
+gap to leader, incidents count, pit/DNF flags) and the event timeline
+on the right (recent lap completions and incidents, newest first);
+past-logs section at the bottom with download links. The drivers
+table is always live (works during practice/quali too); the timeline
+only populates while logging a race. Same script, same port — just
+a much more useful page. New `_build_drivers_state()` helper reads
+all the per-car telemetry; `_recent_events` deque(maxlen=80) on the
+poller buffers lap+incident events for the timeline.
+
 **April 24, 2026 (race logger added):** New standalone overlay
 `iracing_race_logger.py` (port 5009) that writes a JSONL log per race
 session into `logs/<timestamp>_<track>_race.jsonl`. Inherits from
