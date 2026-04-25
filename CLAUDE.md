@@ -212,6 +212,27 @@ endpoint). Every code path that calls `cam_switch_num` /
 `cam_set_state` calls `_reassert_ui_hide()`, which — if the flag is
 true — re-sends spacebar in a 0.25 s-delayed daemon thread.
 
+**April 25, 2026 (race logger — car/class, tire temps, overtake counts):**
+Extended the logger payload and the live monitor with three new fields:
+(a) **car / car_class** — already in the session_start drivers list,
+now also stamped on every lap event AND surfaced as a sub-line under
+each driver's name in the live table (with the class slug colored
+blue for multi-class disambiguation). (b) **tire surface
+temperatures** — read via `LFtempL/M/R`, etc. iRacing only broadcasts
+these for the LOCAL player's car (no per-car array exists), so they
+get stamped on lap events only when the lap belongs to the local
+player. The live monitor also shows a "Your car" panel with all four
+corners color-coded (cool/ok/hot thresholds tuned for slick GT3
+tires); the panel auto-hides for pure-spectator users where no tire
+data is broadcast. (c) **overtakes / overtaken** — derived from
+CarIdxPosition deltas tick-over-tick. New `_update_overtake_counters`
+runs every poll, increments per-car counts whenever a position
+changes (also captures indirect movement, matching iRacing's own
+"positions gained / lost" definition). Counts are stamped on each
+lap event AND shown live in a `+/−` column on the drivers table
+(green up arrow / red down arrow / muted zero). Race-scoped: cleared
+on each new race via `_open_log`.
+
 **April 25, 2026 (race logger UI expanded → live race monitor):**
 The Flask page on port 5009 was a minimal status display. Rewrote it
 into a full live race monitor: top bar with track / session /

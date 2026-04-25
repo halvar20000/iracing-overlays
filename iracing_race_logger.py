@@ -103,6 +103,16 @@ class RaceLogger(SDKPoller):
         # active. Bounded so it can never grow unbounded over a long race.
         self._recent_events: deque[dict] = deque(maxlen=80)
 
+        # Overtake bookkeeping (race-scoped; reset each new race).
+        # iRacing's CarIdxPosition only updates at S/F crossings, so a
+        # delta vs. last-seen value tells us when a driver gained or
+        # lost positions. Indirect movements (leader retires, everyone
+        # behind moves up by 1) are counted too — that's iRacing's own
+        # "positions gained / lost" definition.
+        self._prev_position_seen: dict[int, int] = {}   # car_idx -> CarIdxPosition
+        self._overtakes_made:     dict[int, int] = {}   # car_idx -> positions gained
+        self._overtakes_against:  dict[int, int] = {}   # car_idx -> positions lost
+
         # Background thread for /incidents polling so we don't block
         # the main poll loop on HTTP timeouts.
         self._seen_incidents: set[tuple] = set()
@@ -130,6 +140,9 @@ class RaceLogger(SDKPoller):
         self._seen_incidents.clear()
         self._last_lap_seen.clear()
         self._recent_events.clear()
+        self._prev_position_seen.clear()
+        self._overtakes_made.clear()
+        self._overtakes_against.clear()
 
         print(f"[logger] Opened {path.name}  ({session_meta.get('track')} "
               f"— {session_meta.get('session_type')})")
@@ -185,6 +198,8 @@ class RaceLogger(SDKPoller):
                 "car_number": d.get("CarNumber", "") or "",
                 "name":       d.get("UserName", "") or "",
                 "car":        d.get("CarScreenNameShort") or d.get("CarScreenName", "") or "",
+                "car_class":  d.get("CarClassShortName") or "",
+                "car_path":   d.get("CarPath", "") or "",
                 "team":       d.get("TeamName", "") or "",
                 "irating":    int(d.get("IRating") or 0),
                 "license":    d.get("LicString", "") or "",
@@ -230,6 +245,71 @@ class RaceLogger(SDKPoller):
         }
         return (uid, sess_num), sess_type, meta
 
+    # ----- overtake tracking ---------------------------------------------
+    def _update_overtake_counters(self) -> None:
+        """Compare each driver's current CarIdxPosition with the last one
+        we saw. Position decreased → positions gained (overtake credit).
+        Position increased → positions lost (overtaken).
+
+        Note: counts indirect movement too (someone ahead retires →
+        everyone behind picks up a position). That's how iRacing's own
+        scoring defines "positions gained" — we match it.
+        """
+        if self._log_fp is None:
+            return
+        positions = self.ir["CarIdxPosition"] or []
+        for d in self._log_session_meta.get("drivers", []):
+            idx = d["car_idx"]
+            if idx >= len(positions):
+                continue
+            cur = int(positions[idx]) if positions[idx] else 0
+            if cur <= 0:
+                continue
+            prev = self._prev_position_seen.get(idx)
+            self._prev_position_seen[idx] = cur
+            if prev is None or prev <= 0:
+                continue
+            if cur < prev:
+                self._overtakes_made[idx] = (
+                    self._overtakes_made.get(idx, 0) + (prev - cur)
+                )
+            elif cur > prev:
+                self._overtakes_against[idx] = (
+                    self._overtakes_against.get(idx, 0) + (cur - prev)
+                )
+
+    # ----- tire temperature reader (LOCAL PLAYER ONLY) -------------------
+    def _read_tire_temps(self) -> dict | None:
+        """Return tire surface temperatures for the local player's car,
+        or None if not available. iRacing only broadcasts these for the
+        local player — there's no per-car array we can use.
+
+        Each tire returns three values: inner / middle / outer surface
+        temperature in °C. Matches what the iRacing F-keys black box
+        shows.
+        """
+        ir = self.ir
+        info = ir["DriverInfo"] or {}
+        local_idx = info.get("DriverCarIdx")
+        if local_idx is None:
+            return None
+
+        def _tri(prefix):
+            l = ir[prefix + "L"]
+            m = ir[prefix + "M"]
+            r = ir[prefix + "R"]
+            if l is None or m is None or r is None:
+                return None
+            return [round(float(l), 1), round(float(m), 1), round(float(r), 1)]
+
+        lf = _tri("LFtemp")
+        rf = _tri("RFtemp")
+        lr = _tri("LRtemp")
+        rr = _tri("RRtemp")
+        if not (lf or rf or lr or rr):
+            return None
+        return {"local_car_idx": int(local_idx), "lf": lf, "rf": rf, "lr": lr, "rr": rr}
+
     # ----- lap-completion detection --------------------------------------
     def _maybe_emit_laps(self) -> None:
         if self._log_fp is None:
@@ -259,12 +339,15 @@ class RaceLogger(SDKPoller):
             if cur_lap > prev:
                 # Crossed S/F. The lap they just completed is `prev`.
                 lt = last_lap_t[idx] if idx < len(last_lap_t) else 0.0
-                self._emit({
+
+                event = {
                     "type":        "lap",
                     "t_session":   round(float(t_session), 2),
                     "car_idx":     idx,
                     "car_number":  d["car_number"],
                     "driver":      d["name"],
+                    "car":         d.get("car", ""),
+                    "car_class":   d.get("car_class", ""),
                     "lap":         int(prev),  # lap just completed
                     "lap_time":    float(lt) if lt and lt > 0 else None,
                     "best_lap":    float(best_lap[idx]) if (idx < len(best_lap) and best_lap[idx] and best_lap[idx] > 0) else None,
@@ -272,7 +355,23 @@ class RaceLogger(SDKPoller):
                     "class_pos":   int(cls_pos[idx]) if idx < len(cls_pos) else 0,
                     "gap_to_leader": float(f2_arr[idx]) if (idx < len(f2_arr) and f2_arr[idx] and f2_arr[idx] > 0) else None,
                     "on_pit":      bool(on_pit[idx]) if idx < len(on_pit) else False,
-                })
+                    # Cumulative-to-this-point overtake counters. Useful
+                    # for plotting "positions gained over time" charts.
+                    "overtakes":   self._overtakes_made.get(idx, 0),
+                    "overtaken":   self._overtakes_against.get(idx, 0),
+                }
+
+                # Tire temps — only present when this driver IS the local
+                # player. iRacing doesn't broadcast tire temps for
+                # non-player cars.
+                tire = self._read_tire_temps()
+                if tire and tire.get("local_car_idx") == idx:
+                    event["tire_temps"] = {
+                        "lf": tire["lf"], "rf": tire["rf"],
+                        "lr": tire["lr"], "rr": tire["rr"],
+                    }
+
+                self._emit(event)
                 self._laps_logged += 1
 
     # ----- final classification at checkered -----------------------------
@@ -367,6 +466,7 @@ class RaceLogger(SDKPoller):
                 "name":        d.get("UserName", "") or "",
                 "team":        d.get("TeamName", "") or "",
                 "car":         d.get("CarScreenNameShort") or d.get("CarScreenName", "") or "",
+                "car_class":   d.get("CarClassShortName") or "",
                 "position":    pos,
                 "class_pos":   int(cls_pos[idx]) if idx < len(cls_pos) and cls_pos[idx] else 0,
                 "lap":         int(lap_arr[idx]) if idx < len(lap_arr) and lap_arr[idx] else 0,
@@ -376,6 +476,8 @@ class RaceLogger(SDKPoller):
                 "on_pit":      bool(on_pit[idx]) if idx < len(on_pit) else False,
                 "in_world":    in_world,
                 "incidents":   self._driver_incident_count.get(car_num, 0),
+                "overtakes":   self._overtakes_made.get(idx, 0),
+                "overtaken":   self._overtakes_against.get(idx, 0),
             })
         # Sort: in-world cars first, then by position (unassigned cars at the bottom)
         out.sort(key=lambda r: (
@@ -466,7 +568,10 @@ class RaceLogger(SDKPoller):
             self._open_log(meta)
             self._log_session_key = session_key
 
-        # Active race tick
+        # Active race tick — order matters: update overtake counters
+        # BEFORE emitting laps so the lap event captures the latest
+        # cumulative positions-gained / -lost values.
+        self._update_overtake_counters()
         self._maybe_emit_laps()
         self._maybe_emit_final()
         return self._status_snapshot(session_key, session_type, meta)
@@ -501,6 +606,9 @@ class RaceLogger(SDKPoller):
             "skies":        ir["Skies"],
         }
 
+        # Tire temps for the local player (None if spectating).
+        tire_temps = self._read_tire_temps()
+
         return {
             "connected":         True,
             "logging":           self._log_fp is not None,
@@ -523,6 +631,7 @@ class RaceLogger(SDKPoller):
             "remaining":         remaining,
             "laps_remaining":    int(lap_total) if (lap_total is not None and 0 <= lap_total < 99999) else None,
             "weather":           weather,
+            "tire_temps":        tire_temps,
             "counts": {
                 "on_track": on_track,
                 "in_pits":  in_pits,
@@ -728,7 +837,7 @@ STATUS_HTML = """
   }
   .drv-row {
     display: grid;
-    grid-template-columns: 42px 50px 1fr 80px 80px 70px 60px;
+    grid-template-columns: 42px 50px 1fr 75px 75px 65px 60px 50px;
     align-items: center;
     padding: 7px 14px;
     border-bottom: 1px solid #1d1d27;
@@ -761,13 +870,28 @@ STATUS_HTML = """
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     padding-right: 10px;
   }
-  .drv-name .team {
+  .drv-name .sub {
+    display: block;
     font-size: 10px; color: #7a7a90; font-weight: 500;
-    margin-left: 6px;
+    margin-top: 1px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .drv-name .sub .class {
+    color: #61b4ff; font-weight: 700;
+    margin-right: 4px;
   }
   .drv-time { text-align: right; color: #c8c8d8; }
   .drv-best { text-align: right; color: #ffd166; font-weight: 600; }
   .drv-gap  { text-align: right; color: #c8c8d8; font-weight: 600; }
+  /* Overtakes / overtaken cell — green up arrow + red down arrow */
+  .drv-ot {
+    text-align: right; font-size: 11px; font-weight: 700;
+    padding-right: 4px;
+    font-variant-numeric: tabular-nums;
+  }
+  .drv-ot .up   { color: #4ade80; }
+  .drv-ot .down { color: #ff8888; margin-left: 6px; }
+  .drv-ot .zero { color: #3a3a4a; }
   .drv-inc {
     text-align: right; padding-right: 4px;
   }
@@ -778,6 +902,54 @@ STATUS_HTML = """
     display: inline-block;
   }
   .drv-inc .num.zero { background: transparent; color: #4a4a5a; }
+
+  /* === Tire temps panel (local player only) === */
+  .tires {
+    display: none; /* shown by JS when data available */
+    background: #14141c;
+    border: 1px solid #26262f;
+    border-radius: 8px;
+    padding: 10px 14px;
+  }
+  .tires.visible { display: block; }
+  .tires .head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 8px;
+  }
+  .tires .head h3 {
+    font-size: 11px; color: #9a9aad; text-transform: uppercase;
+    letter-spacing: 1.5px; font-weight: 800;
+  }
+  .tires .head .note {
+    font-size: 10px; color: #7a7a90;
+  }
+  .tires .grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+  }
+  .tire-corner {
+    display: flex; flex-direction: column; gap: 2px;
+    background: #1b1b26;
+    border: 1px solid #26262f;
+    border-radius: 6px;
+    padding: 6px 10px;
+  }
+  .tire-corner .lbl {
+    font-size: 10px; color: #7a7a90; font-weight: 700;
+    letter-spacing: 1px;
+  }
+  .tire-corner .vals {
+    display: flex; gap: 10px;
+    font-size: 14px; font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  .tire-corner .vals span {
+    flex: 1; text-align: center;
+  }
+  /* Tire temp color coding: cool (blue) / warm (green) / hot (red).
+     Sim-racing-friendly thresholds for slick tires (~80–105°C optimal). */
+  .t-cool { color: #61b4ff; }
+  .t-ok   { color: #4ade80; }
+  .t-hot  { color: #ff8888; }
   .pit-flag {
     display: inline-block; margin-left: 6px;
     background: #3a1a1a; color: #ff8888;
@@ -882,6 +1054,32 @@ STATUS_HTML = """
     <div class="item"><span class="num" id="cnt-inc">0</span><span class="sub">Incidents logged</span></div>
   </div>
 
+  <!-- TIRE TEMPS (only visible when local player data is available) -->
+  <div class="tires" id="tires">
+    <div class="head">
+      <h3>Your car — tire temperatures</h3>
+      <span class="note">surface temps — inner / middle / outer (°C)</span>
+    </div>
+    <div class="grid">
+      <div class="tire-corner">
+        <span class="lbl">FRONT LEFT</span>
+        <div class="vals" id="t-lf"><span>—</span><span>—</span><span>—</span></div>
+      </div>
+      <div class="tire-corner">
+        <span class="lbl">FRONT RIGHT</span>
+        <div class="vals" id="t-rf"><span>—</span><span>—</span><span>—</span></div>
+      </div>
+      <div class="tire-corner">
+        <span class="lbl">REAR LEFT</span>
+        <div class="vals" id="t-lr"><span>—</span><span>—</span><span>—</span></div>
+      </div>
+      <div class="tire-corner">
+        <span class="lbl">REAR RIGHT</span>
+        <div class="vals" id="t-rr"><span>—</span><span>—</span><span>—</span></div>
+      </div>
+    </div>
+  </div>
+
   <!-- MAIN: drivers + timeline -->
   <div class="main">
 
@@ -894,10 +1092,11 @@ STATUS_HTML = """
         <div class="drv-row head">
           <div>POS</div>
           <div>#</div>
-          <div>DRIVER</div>
+          <div>DRIVER · CAR</div>
           <div style="text-align:right;">LAST LAP</div>
           <div style="text-align:right;">BEST</div>
           <div style="text-align:right;">GAP</div>
+          <div style="text-align:right;" title="Positions gained / lost (+/−)">+/−</div>
           <div style="text-align:right;">INC</div>
         </div>
         <div id="drv-rows"><div class="empty">Waiting for iRacing…</div></div>
@@ -966,6 +1165,23 @@ function shortTime(iso) {
   // 2026-04-26T19:30:15 -> 19:30:15
   return iso.split('T').pop().slice(0, 8);
 }
+
+// Tire surface temperature → color class. Tuned for slick race tires:
+// optimal window roughly 80–105°C for GT3-class compounds; below = cold,
+// above = overheating. Adjust if your league runs different rubber.
+function tireClass(temp) {
+  if (temp == null) return '';
+  if (temp < 70)  return 't-cool';
+  if (temp > 105) return 't-hot';
+  return 't-ok';
+}
+function renderTireCorner(id, vals) {
+  const el = document.getElementById(id);
+  if (!el || !vals) return;
+  el.innerHTML = vals.map(v =>
+    `<span class="${tireClass(v)}">${v == null ? '—' : v.toFixed(1)}°</span>`
+  ).join('');
+}
 const TRACK_WETNESS = {
   1: ['Dry',                'dry'],
   2: ['Mostly dry',         'dry'],
@@ -1029,6 +1245,19 @@ function render(d) {
   document.getElementById('cnt-laps').textContent = d.laps_logged ?? 0;
   document.getElementById('cnt-inc').textContent  = d.incidents_logged ?? 0;
 
+  // Tire temps — only visible when iRacing broadcasts them (= local
+  // player is in-car). Pure spectators see no panel at all.
+  const tirePanel = document.getElementById('tires');
+  if (d.tire_temps && d.tire_temps.lf) {
+    tirePanel.classList.add('visible');
+    renderTireCorner('t-lf', d.tire_temps.lf);
+    renderTireCorner('t-rf', d.tire_temps.rf);
+    renderTireCorner('t-lr', d.tire_temps.lr);
+    renderTireCorner('t-rr', d.tire_temps.rr);
+  } else {
+    tirePanel.classList.remove('visible');
+  }
+
   // Drivers table
   const rowsEl = document.getElementById('drv-rows');
   const drivers = d.drivers || [];
@@ -1044,16 +1273,33 @@ function render(d) {
       const incCls = r.incidents > 0 ? '' : 'zero';
       const pitFlag = r.on_pit ? '<span class="pit-flag">PIT</span>' : '';
       const outFlag = !r.in_world ? '<span class="out-flag">DNF/garage</span>' : '';
-      const team = r.team && r.team !== r.name
-        ? `<span class="team">${esc(r.team)}</span>` : '';
+
+      // Driver sub-line — class (when present, multi-class only) + car +
+      // team. Keeps the table compact while exposing the new fields.
+      const subParts = [];
+      if (r.car_class) subParts.push(`<span class="class">${esc(r.car_class)}</span>`);
+      if (r.car) subParts.push(esc(r.car));
+      if (r.team && r.team !== r.name) subParts.push(esc(r.team));
+      const subLine = subParts.length
+        ? `<span class="sub">${subParts.join(' · ')}</span>` : '';
+
+      // Overtakes / overtaken — green up + red down. Render zeros muted
+      // so the cell stays visually quiet for the field that hasn't moved.
+      const ot = r.overtakes || 0;
+      const ag = r.overtaken || 0;
+      const otCell =
+        `<span class="${ot > 0 ? 'up' : 'zero'}">+${ot}</span>` +
+        `<span class="${ag > 0 ? 'down' : 'zero'}">−${ag}</span>`;
+
       html += `
         <div class="drv-row ${rowCls}">
           <div class="drv-pos ${posCls}">${r.position || '—'}</div>
           <div><span class="drv-num">#${esc(r.car_number || '—')}</span></div>
-          <div class="drv-name">${esc(r.name || 'Unknown')}${pitFlag}${outFlag}${team}</div>
+          <div class="drv-name">${esc(r.name || 'Unknown')}${pitFlag}${outFlag}${subLine}</div>
           <div class="drv-time">${fmtLap(r.last_lap)}</div>
           <div class="drv-best">${fmtLap(r.best_lap)}</div>
           <div class="drv-gap">${fmtGap(r.gap_to_leader)}</div>
+          <div class="drv-ot">${otCell}</div>
           <div class="drv-inc"><span class="num ${incCls}">${r.incidents}</span></div>
         </div>`;
     }
