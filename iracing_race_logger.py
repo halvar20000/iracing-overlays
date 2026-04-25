@@ -113,6 +113,13 @@ class RaceLogger(SDKPoller):
         self._overtakes_made:     dict[int, int] = {}   # car_idx -> positions gained
         self._overtakes_against:  dict[int, int] = {}   # car_idx -> positions lost
 
+        # Position-tick emission. Once per second we write a "pos" event
+        # capturing every car's CarIdxLapDistPct. This is the granular
+        # data render_race.py needs to animate the race afterwards —
+        # without it, the lap-completion events alone are far too sparse
+        # for a smooth replay. ~360 KB per 30-min race; trivial.
+        self._last_pos_emit_t: float = -1e9   # session_time of last emit
+
         # Background thread for /incidents polling so we don't block
         # the main poll loop on HTTP timeouts.
         self._seen_incidents: set[tuple] = set()
@@ -143,6 +150,7 @@ class RaceLogger(SDKPoller):
         self._prev_position_seen.clear()
         self._overtakes_made.clear()
         self._overtakes_against.clear()
+        self._last_pos_emit_t = -1e9
 
         print(f"[logger] Opened {path.name}  ({session_meta.get('track')} "
               f"— {session_meta.get('session_type')})")
@@ -229,6 +237,9 @@ class RaceLogger(SDKPoller):
             "track":            weekend.get("TrackDisplayName", "") or "",
             "track_config":     weekend.get("TrackConfigName", "") or "",
             "track_id":         weekend.get("TrackID"),
+            # Internal iRacing track name (e.g. "monza_full") — what
+            # render_race.py uses to find the matching tracks/<name>.json.
+            "track_name":       (weekend.get("TrackName") or "").strip().lower(),
             "session_type":     cur_session.get("SessionType", "") or "",
             "session_name":     cur_session.get("SessionName", "") or "",
             "session_num":      sess_num,
@@ -309,6 +320,60 @@ class RaceLogger(SDKPoller):
         if not (lf or rf or lr or rr):
             return None
         return {"local_car_idx": int(local_idx), "lf": lf, "rf": rf, "lr": lr, "rr": rr}
+
+    # ----- per-second position tick (for post-race replay rendering) -----
+    def _maybe_emit_position(self) -> None:
+        """Once per second, write a `pos` event capturing every car's
+        CarIdxLapDistPct. This is the dense positional data
+        render_race.py needs to animate the race afterwards; lap events
+        alone are far too sparse for smooth animation.
+
+        Format (compact on purpose — this is the largest event type):
+          {"type":"pos","t":123.45,"p":{"3":0.234,"7":0.891,...}}
+
+        Only cars currently in the world are written. Pit-road status
+        and lap counts come from the lap events; the renderer can
+        derive both at any point in time.
+        """
+        if self._log_fp is None:
+            return
+        ir = self.ir
+        t_session = float(ir["SessionTime"] or 0.0)
+        if t_session - self._last_pos_emit_t < 1.0:
+            return  # less than a second since last emit
+        self._last_pos_emit_t = t_session
+
+        pct_arr = ir["CarIdxLapDistPct"] or []
+        surface = ir["CarIdxTrackSurface"] or []
+        pos_map: dict[str, float] = {}
+        for d in self._log_session_meta.get("drivers", []):
+            idx = d["car_idx"]
+            if idx >= len(pct_arr):
+                continue
+            pct = pct_arr[idx]
+            if pct is None or pct < 0 or pct > 1.0:
+                continue
+            # Skip cars not in the world (DNF / garage / disconnected).
+            # Their last known position will linger in the renderer from
+            # earlier ticks — which is correct: it's where they parked.
+            in_world = idx < len(surface) and surface[idx] is not None and int(surface[idx]) != -1
+            if not in_world:
+                continue
+            pos_map[str(idx)] = round(float(pct), 4)
+
+        if not pos_map:
+            return
+        # Don't go through _emit() — we want this event NOT in the
+        # in-memory _recent_events deque (it's noise for the timeline)
+        # and we want to keep the JSON as compact as possible.
+        try:
+            self._log_fp.write(json.dumps({
+                "type": "pos",
+                "t":    round(t_session, 2),
+                "p":    pos_map,
+            }, separators=(",", ":")) + "\n")
+        except Exception as e:
+            print(f"[logger] pos write error: {e!r}")
 
     # ----- lap-completion detection --------------------------------------
     def _maybe_emit_laps(self) -> None:
@@ -572,6 +637,7 @@ class RaceLogger(SDKPoller):
         # BEFORE emitting laps so the lap event captures the latest
         # cumulative positions-gained / -lost values.
         self._update_overtake_counters()
+        self._maybe_emit_position()
         self._maybe_emit_laps()
         self._maybe_emit_final()
         return self._status_snapshot(session_key, session_type, meta)

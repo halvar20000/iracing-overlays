@@ -212,6 +212,28 @@ endpoint). Every code path that calls `cam_switch_num` /
 `cam_set_state` calls `_reassert_ui_hide()`, which — if the flag is
 true — re-sends spacebar in a 0.25 s-delayed daemon thread.
 
+**April 25, 2026 (race logger — position ticks + render_race.py):**
+Added two pieces that together produce a 2D animated MP4 replay of any
+logged race:
+1. `iracing_race_logger.py` now emits a `pos` event once per second
+   during a race, capturing every car's `CarIdxLapDistPct`
+   ({"type":"pos","t":...,"p":{"3":0.234,...}}). Compact format —
+   adds ~360 KB per 30-min race. Also stamps `WeekendInfo.TrackName`
+   into the session_start meta so the renderer can find the matching
+   track JSON.
+2. `render_race.py` — standalone CLI that reads any race JSONL,
+   loads the matching `tracks/<TrackName>.json`, and renders the
+   entire race as an MP4. Pillow for frame drawing, ffmpeg for video
+   assembly (uses `imageio-ffmpeg`-bundled binary when available so
+   Windows users don't have to install ffmpeg manually). Top-down
+   view with the track outline, numbered car dots, leaderboard panel
+   on the right, lap counter, and incident flashes when an incident
+   fires. Linear interpolation between position ticks → smooth 30 fps.
+   Self-contained — copies the projection math from
+   `iracing_trackmap.py` rather than importing the Flask overlay.
+   Limitations: only works on logs recorded after the position-tick
+   feature was added; track outline must exist in `tracks/`.
+
 **April 25, 2026 (race logger — car/class, tire temps, overtake counts):**
 Extended the logger payload and the live monitor with three new fields:
 (a) **car / car_class** — already in the session_start drivers list,

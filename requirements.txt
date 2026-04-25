@@ -18,3 +18,8 @@ pyirsdk>=1.3
 pillow>=10.0
 requests>=2.31
 pywin32>=306; sys_platform == "win32"
+
+# Optional — only needed for render_race.py if ffmpeg isn't already
+# installed system-wide. Bundles a self-contained ffmpeg binary as a
+# Python wheel so Windows users don't have to install ffmpeg manually.
+imageio-ffmpeg>=0.4.9
