@@ -17,6 +17,9 @@ dashboard_log.txt
 apply_patch.py
 files.zip
 
+# Race logger output (one .jsonl per race; can grow over time)
+logs/
+
 # Editor / OS cruft
 .vscode/
 .idea/

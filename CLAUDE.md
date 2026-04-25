@@ -18,6 +18,7 @@ GitHub:   https://github.com/halvar20000/iracing-overlays (primary repo,
 | livery      | `iracing_livery.py`           | 5006 | Car livery of the driver on camera         |
 | trackmap    | `iracing_trackmap.py`         | 5007 | SVG track map + live car dots              |
 | flag        | `flag_overlay.py`             | 5008 | Flag status overlay (session flags)        |
+| logger      | `iracing_race_logger.py`      | 5009 | Race logger — JSONL log per race           |
 
 All overlays are Flask apps that read iRacing telemetry via `pyirsdk`,
 designed to be added as browser sources in OBS. They run in parallel on
@@ -210,6 +211,19 @@ tracks `poller.iracing_ui_hidden` (toggled by `/hide_iracing_ui`
 endpoint). Every code path that calls `cam_switch_num` /
 `cam_set_state` calls `_reassert_ui_hide()`, which — if the flag is
 true — re-sends spacebar in a 0.25 s-delayed daemon thread.
+
+**April 24, 2026 (race logger added):** New standalone overlay
+`iracing_race_logger.py` (port 5009) that writes a JSONL log per race
+session into `logs/<timestamp>_<track>_race.jsonl`. Inherits from
+`SDKPoller` (Batch 2 base class). Captures: session_start (track,
+session type, drivers list, weather), one event per lap completed by
+each driver (lap time, position, gap, on-pit), incidents fetched from
+the dashboard's `/incidents` feed (deduped by `(t_session, car_idx,
+type)`), and a final classification when iRacing flips to checkered
+(positions, laps, best lap, incident counts, status). Skips practice
+and qualifying sessions. Tiny Flask UI on port 5009 lets the user
+download the current log and browse past logs. `logs/` is gitignored
+so per-race files don't pollute the repo.
 
 **April 24, 2026 (trackmap — Monza added from user-drawn GPX):**
 SIMRacingApps didn't have Monza in its track library, so `monza_full`
