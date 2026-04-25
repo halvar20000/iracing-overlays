@@ -2655,6 +2655,16 @@ def telemetry():
     return jsonify(poller.get())
 
 
+@app.route("/incidents")
+def incidents_feed():
+    """Focused incident feed used by iracing_race_logger.py to log
+    incidents into the per-race JSONL alongside lap completions.
+    Same data that's embedded inside /telemetry under the 'incidents'
+    key, just smaller payload for tools that only need this slice.
+    """
+    return jsonify({"incidents": list(poller._incidents)})
+
+
 @app.route("/switch_car", methods=["POST"])
 def switch_car():
     payload = request.get_json(silent=True) or {}

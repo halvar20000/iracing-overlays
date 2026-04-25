@@ -212,6 +212,25 @@ endpoint). Every code path that calls `cam_switch_num` /
 `cam_set_state` calls `_reassert_ui_hide()`, which — if the flag is
 true — re-sends spacebar in a 0.25 s-delayed daemon thread.
 
+**April 26, 2026 (race logger — incident count fix):** Two-part bug
+fix for the live monitor's "INC" column staying at 0 for everyone:
+
+1. **Logger was fetching the wrong URL.** It hit
+   `http://localhost:5000/incidents` but the dashboard didn't have a
+   plain `/incidents` route — incidents were only embedded inside
+   `/telemetry` under the `incidents` key, so the logger silently 404'd
+   on every poll (the try/except swallowed it). Added a focused
+   `/incidents` endpoint to `iracing_dashboard.py` that returns
+   `{"incidents": [...]}` — same data, smaller payload, matches the
+   logger's expectation. The original `/telemetry` route still embeds
+   incidents too, so nothing is broken.
+2. **Incident count was keyed by `car_number` (string).** Re-keyed by
+   `car_idx` (numeric) — always present in the dashboard's payload,
+   never empty. Both the count update in `_incident_loop` and the
+   lookup in `_build_drivers_state` now use the numeric key.
+   Defensive against future edge cases where `car_number` could be
+   missing in spectator scenarios.
+
 **April 25, 2026 (race logger — position ticks + render_race.py):**
 Added two pieces that together produce a 2D animated MP4 replay of any
 logged race:

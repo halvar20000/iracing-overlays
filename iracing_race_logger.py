@@ -96,7 +96,13 @@ class RaceLogger(SDKPoller):
         self._laps_logged = 0
         self._incidents_logged = 0
         self._final_written = False
-        self._driver_incident_count: dict[str, int] = {}   # car_number -> count
+        # Per-driver running incident count. Keyed by car_idx (numeric,
+        # always present in the dashboard's /incidents payload). Used to
+        # be keyed by car_number, but car_number can be empty in some
+        # spectator scenarios — the live monitor's "INC" column then
+        # quietly stays at 0 for everyone, which is the bug we're
+        # fixing here.
+        self._driver_incident_count: dict[int, int] = {}   # car_idx -> count
 
         # Recent events for the live monitor timeline (newest first).
         # Captures lap-completion + incident events while the logger is
@@ -540,7 +546,7 @@ class RaceLogger(SDKPoller):
                 "gap_to_leader": float(f2_arr[idx]) if idx < len(f2_arr) and f2_arr[idx] and f2_arr[idx] > 0 else None,
                 "on_pit":      bool(on_pit[idx]) if idx < len(on_pit) else False,
                 "in_world":    in_world,
-                "incidents":   self._driver_incident_count.get(car_num, 0),
+                "incidents":   self._driver_incident_count.get(idx, 0),
                 "overtakes":   self._overtakes_made.get(idx, 0),
                 "overtaken":   self._overtakes_against.get(idx, 0),
             })
@@ -597,11 +603,15 @@ class RaceLogger(SDKPoller):
                 }
                 self._emit(event)
                 self._incidents_logged += 1
-                cn = event["car_number"]
-                if cn:
-                    self._driver_incident_count[cn] = (
-                        self._driver_incident_count.get(cn, 0) + 1
-                    )
+                cidx = inc.get("car_idx")
+                if cidx is not None:
+                    try:
+                        cidx_i = int(cidx)
+                        self._driver_incident_count[cidx_i] = (
+                            self._driver_incident_count.get(cidx_i, 0) + 1
+                        )
+                    except (TypeError, ValueError):
+                        pass
 
     # ----- main snapshot --------------------------------------------------
     def _read_snapshot(self) -> dict:
