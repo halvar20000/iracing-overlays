@@ -236,6 +236,13 @@ class RaceLogger(SDKPoller):
 
     def _close_log(self) -> None:
         if self._log_fp:
+            # If we never managed to write the official session_end (e.g.
+            # the user shut us down before iRacing locked the result, or
+            # the session transitioned to Warmup early), drop in a
+            # provisional final based on whatever ResultsPositions
+            # iRacing has right now. Better than a log with no terminator.
+            if not self._final_written:
+                self._write_final_provisional()
             try:
                 self._log_fp.flush()
                 self._log_fp.close()
@@ -244,6 +251,16 @@ class RaceLogger(SDKPoller):
         self._log_fp = None
         self._log_path = None
         self._log_session_key = None
+
+    def stop(self) -> None:
+        """Override SDKPoller.stop() so we get a chance to write the
+        final classification before the base class shuts the SDK down.
+        Once self.ir.shutdown() runs, ir["SessionInfo"] returns None and
+        we can no longer read ResultsPositions.
+        """
+        if self._log_fp is not None and not self._final_written:
+            self._write_final_provisional()
+        super().stop()
 
     def _emit(self, event: dict) -> None:
         """Write one JSON line to the active log AND remember it for the
@@ -646,6 +663,20 @@ class RaceLogger(SDKPoller):
 
     # ----- final classification at checkered -----------------------------
     def _maybe_emit_final(self) -> None:
+        """Write the session_end event ONLY when iRacing has officially
+        closed the session (ResultsOfficial == 1).
+
+        That flag flips after the slowest finisher crosses the line and
+        iRacing has locked the classification — typically 30-60 seconds
+        after the leader's checkered. By waiting for it, session_end is
+        guaranteed to be the truly final result, with no straggler-lap
+        events sneaking in afterwards.
+
+        If the user shuts the logger down (Ctrl+C) or the session
+        transitions to Warmup before that flag flips, _close_log writes
+        a provisional final as a fallback so we never end up with a log
+        that has no session_end event at all.
+        """
         if self._log_fp is None or self._final_written:
             return
         ir = self.ir
@@ -658,9 +689,19 @@ class RaceLogger(SDKPoller):
         cur = next((s for s in sessions if s.get("SessionNum") == sess_num), None)
         if cur is None:
             return
-        results = cur.get("ResultsPositions") or []
+        if not cur.get("ResultsOfficial"):
+            return  # wait for iRacing to lock the result
+        self._write_final(cur, official=True)
+
+    def _write_final(self, session: dict, official: bool) -> None:
+        """Build and emit the session_end event from an iRacing session
+        dict. Idempotent — does nothing if we've already written one.
+        """
+        if self._log_fp is None or self._final_written:
+            return
+        results = session.get("ResultsPositions") or []
         if not results:
-            return  # iRacing hasn't finalized yet — wait for next tick
+            return  # nothing to write
 
         # Map driver info by car_idx for name/number lookup
         d_by_idx = {d["car_idx"]: d for d in self._log_session_meta.get("drivers", [])}
@@ -691,12 +732,39 @@ class RaceLogger(SDKPoller):
 
         self._emit({
             "type":     "session_end",
-            "official": bool(cur.get("ResultsOfficial", 0)),
+            "official": official,
             "final":    final,
         })
         self._final_written = True
-        print(f"[logger] Wrote final classification for "
+        kind = "FINAL" if official else "PROVISIONAL final"
+        print(f"[logger] Wrote {kind} classification for "
               f"{self._log_session_meta.get('track')} ({len(final)} cars)")
+
+    def _write_final_provisional(self) -> None:
+        """Best-effort attempt to write session_end when we're about to
+        close the log without having seen ResultsOfficial flip. Reads
+        whatever ResultsPositions iRacing has at this moment. Marked
+        official=False so post-race tools can tell.
+
+        Safely handles the case where the SDK is no longer connected
+        (returns None for everything) — we just skip in that case.
+        """
+        try:
+            info = self.ir["SessionInfo"]
+            if not info:
+                return
+            sess_num = self.ir["SessionNum"]
+            sessions = info.get("Sessions", []) or []
+            cur = next((s for s in sessions
+                        if s.get("SessionNum") == sess_num), None)
+            if cur is None:
+                return
+            if not (cur.get("ResultsPositions") or []):
+                return  # genuinely nothing to write
+            official = bool(cur.get("ResultsOfficial", 0))
+            self._write_final(cur, official=official)
+        except Exception as e:
+            print(f"[logger] could not write provisional final: {e}")
 
     # ----- live driver state for the monitor UI --------------------------
     def _build_drivers_state(self) -> list[dict]:
@@ -1721,6 +1789,13 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        # Shutdown order matters:
+        #   1. poller.stop() — our RaceLogger.stop() override writes a
+        #      provisional session_end (if not already written) BEFORE
+        #      the base class shuts down the SDK. After ir.shutdown()
+        #      we can't read ResultsPositions anymore.
+        #   2. _close_log() — flushes + closes the file. session_end
+        #      has already been written so it just does the file ops.
         poller.stop()
         if poller._log_fp:
             poller._close_log()

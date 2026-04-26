@@ -212,6 +212,29 @@ endpoint). Every code path that calls `cam_switch_num` /
 `cam_set_state` calls `_reassert_ui_hide()`, which — if the flag is
 true — re-sends spacebar in a 0.25 s-delayed daemon thread.
 
+**April 26, 2026 (race logger — defer session_end until ResultsOfficial):**
+The session_end event used to fire as soon as `SessionState >= 5` (the
+leader's checkered crossing), but `ResultsPositions` at that moment
+still showed trailing drivers as "in progress". Trailing-driver lap
+events would then continue to be appended to the log AFTER session_end,
+making the file confusing to parse.
+
+Fix: `_maybe_emit_final()` now waits for `ResultsOfficial == 1`,
+which iRacing flips ~30-60s after the slowest car finishes. By then
+the classification is locked. Refactored the final-writing logic
+into `_write_final(session, official)` so it can be reused.
+
+Fallback for graceful shutdown: new `_write_final_provisional()`
+attempts to write session_end if we're closing the log without ever
+having seen ResultsOfficial flip (race abandoned, user Ctrl+C'd, or
+session transitioned early). Marked `official=False` so post-race
+tools can tell. Also added `RaceLogger.stop()` that overrides
+`SDKPoller.stop()` to call the provisional writer BEFORE the base
+class shuts down the SDK (after `ir.shutdown()` we can't read
+ResultsPositions anymore). Net result: every race log now ends with
+a session_end event, and that event is the truly final one whenever
+possible.
+
 **April 26, 2026 (race logger — pit / flag / penalty / slow-lap events):**
 Lifted four ideas from a mobile-Claude rewrite the user shared and
 integrated them properly into the existing logger:
