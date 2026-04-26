@@ -212,6 +212,40 @@ endpoint). Every code path that calls `cam_switch_num` /
 `cam_set_state` calls `_reassert_ui_hide()`, which — if the flag is
 true — re-sends spacebar in a 0.25 s-delayed daemon thread.
 
+**April 26, 2026 (race logger — pit / flag / penalty / slow-lap events):**
+Lifted four ideas from a mobile-Claude rewrite the user shared and
+integrated them properly into the existing logger:
+
+1. **`pit` events** — watches `CarIdxOnPitRoad` transitions per car.
+   Records entry time + lap, computes duration on exit, increments a
+   per-car stop count, and emits a `pit` event. Drive-throughs <2s
+   are filtered as edge-of-pit-lane noise. Pit count is also exposed
+   as a `pit_stops` field on the live drivers table (rendered as
+   `🔧×N` in the driver name sub-line).
+
+2. **`flag` events** — watches session-wide `SessionFlags` for newly-
+   set bits matching a curated whitelist (Green / Yellow / Red /
+   White / Checkered / YellowWaving / OneToGreen / Caution). Skips
+   internal start-state bits and the `RandomWaving` test signal.
+   The mobile version's "every flag bit" approach would have spammed
+   the log.
+
+3. **`penalty` events** — watches per-car `CarIdxSessionFlags` for
+   newly-set BLACK / DISQUALIFY / BLUE / REPAIR bits. The mobile
+   version's `CarIdxF2Time != 0` approach was wrong (F2Time is just
+   the gap to the car ahead, which changes constantly). The per-car
+   flag bitmask is iRacing's actual penalty signal.
+
+4. **`slow_lap` events** — keeps a per-driver rolling 5-lap window;
+   when a new lap is more than 10% slower than the average, emits a
+   `slow_lap` event with the delta. Pit laps are skipped (they're
+   naturally slower). Useful as a broadcast camera hint.
+
+All four show up in both the JSONL file and the live monitor
+timeline (with their own colors and icons). Constants for the
+thresholds and bit-name maps are at module top so they're easy to
+adjust later.
+
 **April 26, 2026 (race logger — incident count fix):** Two-part bug
 fix for the live monitor's "INC" column staying at 0 for everyone:
 

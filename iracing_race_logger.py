@@ -64,6 +64,41 @@ LOGS_DIR.mkdir(parents=True, exist_ok=True)
 DASHBOARD_INCIDENTS_URL = "http://127.0.0.1:5000/incidents"
 INCIDENT_POLL_INTERVAL  = 5.0   # seconds between fetches (laps poll faster)
 
+# --- Pit detection ---
+# Below this duration in seconds we treat the pit-road event as edge-of-
+# pit-lane noise rather than a real stop or drive-through.
+PIT_MIN_DURATION = 2.0
+
+# --- Flag tracking (session-wide SessionFlags bitmask) ---
+# Whitelisted flag bits we care about for the race log. Skips internal
+# start-state bits (StartHidden/Ready/Set/Go), test signals (Random),
+# and per-car bits handled separately (Furled/Repair/Black/DQ).
+SESSION_FLAG_BITS = {
+    0x0001: "checkered",
+    0x0002: "white",
+    0x0004: "green",
+    0x0008: "yellow",
+    0x0010: "red",
+    0x0100: "yellow_waving",
+    0x0200: "one_to_green",
+    0x4000: "caution",
+}
+
+# --- Penalty detection (per-car CarIdxSessionFlags bitmask) ---
+# These are iRacing's authoritative signals that a penalty has been
+# assessed on a specific driver. Newly-set bits emit a penalty event.
+CAR_PENALTY_BITS = {
+    0x0020:    "blue_flag",        # let faster car by
+    0x10000:   "black_flag",       # drive-through / stop-go
+    0x20000:   "disqualify",       # DQ
+    0x100000:  "repair",           # mandatory repair (meatball)
+}
+
+# --- Slow-lap detection ---
+# A lap > average × this is flagged as anomalous (rolling 5-lap window).
+SLOW_LAP_THRESHOLD = 1.10
+SLOW_LAP_HISTORY   = 5
+
 
 def _safe_filename(s: str) -> str:
     """Trim a string into something sensible for a filename."""
@@ -126,6 +161,31 @@ class RaceLogger(SDKPoller):
         # for a smooth replay. ~360 KB per 30-min race; trivial.
         self._last_pos_emit_t: float = -1e9   # session_time of last emit
 
+        # Pit-stop tracking — entry/exit, duration, running count per car.
+        # Detected via CarIdxOnPitRoad transitions (broader than the
+        # InPitStall-only signal, so drive-throughs are caught too).
+        self._pit_in_pit:    dict[int, bool]  = {}    # car_idx -> currently on pit road
+        self._pit_entry_t:   dict[int, float] = {}    # car_idx -> session_time entered
+        self._pit_entry_lap: dict[int, int]   = {}    # car_idx -> lap when entered
+        self._pit_count:     dict[int, int]   = {}    # car_idx -> total stops completed
+
+        # Flag (session-wide) tracking. Watch SessionFlags for newly-set
+        # bits we care about; emit a flag event on each transition.
+        # Curated whitelist below filters out the spammy / internal bits
+        # mobile-Claude was emitting.
+        self._prev_session_flags: int = 0
+
+        # Per-car flag tracking (penalty detection). BLACK / DQ / BLUE
+        # bits in CarIdxSessionFlags are iRacing's authoritative signal
+        # that a penalty has been assessed against a specific car.
+        self._prev_car_session_flags: dict[int, int] = {}
+
+        # Slow-lap detection — rolling history of recent lap times per
+        # driver. When a new lap is more than SLOW_LAP_THRESHOLD slower
+        # than the rolling average, emit a slow_lap event. Useful as a
+        # broadcast-camera hint ("driver just did something weird").
+        self._lap_history: dict[int, deque[float]] = {}
+
         # Background thread for /incidents polling so we don't block
         # the main poll loop on HTTP timeouts.
         self._seen_incidents: set[tuple] = set()
@@ -157,6 +217,13 @@ class RaceLogger(SDKPoller):
         self._overtakes_made.clear()
         self._overtakes_against.clear()
         self._last_pos_emit_t = -1e9
+        self._pit_in_pit.clear()
+        self._pit_entry_t.clear()
+        self._pit_entry_lap.clear()
+        self._pit_count.clear()
+        self._prev_session_flags = 0
+        self._prev_car_session_flags.clear()
+        self._lap_history.clear()
 
         print(f"[logger] Opened {path.name}  ({session_meta.get('track')} "
               f"— {session_meta.get('session_type')})")
@@ -194,7 +261,8 @@ class RaceLogger(SDKPoller):
         # Keep an in-memory copy for the live race monitor (newest first).
         # Skip the verbose session_start/end blocks — those are big and
         # the monitor renders them from a different code path.
-        if event.get("type") in ("lap", "incident"):
+        if event.get("type") in ("lap", "incident", "pit", "flag",
+                                 "penalty", "slow_lap"):
             self._recent_events.appendleft(event)
 
     # ----- iRacing read helpers ------------------------------------------
@@ -294,6 +362,115 @@ class RaceLogger(SDKPoller):
                 self._overtakes_against[idx] = (
                     self._overtakes_against.get(idx, 0) + (cur - prev)
                 )
+
+    # ----- pit-stop detection --------------------------------------------
+    def _maybe_emit_pit_events(self) -> None:
+        """Watch CarIdxOnPitRoad transitions per driver.
+
+        Entry (False -> True): record the time and lap.
+        Exit  (True  -> False): emit a pit event with the duration and
+        the running stop count for that driver. Stops shorter than
+        PIT_MIN_DURATION are treated as edge-of-pit-lane noise and
+        discarded (no event, no count increment).
+        """
+        if self._log_fp is None:
+            return
+        ir = self.ir
+        on_pit_arr = ir["CarIdxOnPitRoad"] or []
+        lap_arr    = ir["CarIdxLap"] or []
+        t_session  = float(ir["SessionTime"] or 0.0)
+
+        for d in self._log_session_meta.get("drivers", []):
+            idx = d["car_idx"]
+            if idx >= len(on_pit_arr):
+                continue
+            cur = bool(on_pit_arr[idx])
+            prev = self._pit_in_pit.get(idx, False)
+            self._pit_in_pit[idx] = cur
+
+            if cur and not prev:
+                # Just entered pit road
+                self._pit_entry_t[idx] = t_session
+                self._pit_entry_lap[idx] = (
+                    int(lap_arr[idx]) if idx < len(lap_arr) and lap_arr[idx] else 0
+                )
+            elif prev and not cur:
+                # Just exited pit road
+                entry_t = self._pit_entry_t.pop(idx, None)
+                entry_lap = self._pit_entry_lap.pop(idx, 0)
+                if entry_t is None:
+                    continue  # we missed the entry; skip
+                duration = t_session - entry_t
+                if duration < PIT_MIN_DURATION:
+                    continue  # noise — car barely brushed pit lane
+                self._pit_count[idx] = self._pit_count.get(idx, 0) + 1
+                self._emit({
+                    "type":        "pit",
+                    "t_session":   round(t_session, 2),
+                    "car_idx":     idx,
+                    "car_number":  d["car_number"],
+                    "driver":      d["name"],
+                    "entry_lap":   entry_lap,
+                    "duration":    round(duration, 2),
+                    "stop_count":  self._pit_count[idx],
+                })
+
+    # ----- session flag transitions --------------------------------------
+    def _maybe_emit_flag_events(self) -> None:
+        """Watch SessionFlags (session-wide) for newly-set bits we
+        care about. Each transition fires one flag event.
+
+        Whitelisted bits only — see SESSION_FLAG_BITS. The full bitmask
+        contains a lot of internal start-state bits that would otherwise
+        spam the log.
+        """
+        if self._log_fp is None:
+            return
+        cur_flags = int(self.ir["SessionFlags"] or 0)
+        new_bits = cur_flags & ~self._prev_session_flags
+        self._prev_session_flags = cur_flags
+        if not new_bits:
+            return
+        t_session = float(self.ir["SessionTime"] or 0.0)
+        for bit, name in SESSION_FLAG_BITS.items():
+            if new_bits & bit:
+                self._emit({
+                    "type":      "flag",
+                    "t_session": round(t_session, 2),
+                    "flag":      name,
+                    "raw_bit":   bit,
+                })
+
+    # ----- per-car penalty detection -------------------------------------
+    def _maybe_emit_penalty_events(self) -> None:
+        """Watch each car's CarIdxSessionFlags for newly-set penalty
+        bits (BLACK / DQ / BLUE / REPAIR). One event per transition.
+        """
+        if self._log_fp is None:
+            return
+        flags_arr = self.ir["CarIdxSessionFlags"] or []
+        t_session = float(self.ir["SessionTime"] or 0.0)
+        for d in self._log_session_meta.get("drivers", []):
+            idx = d["car_idx"]
+            if idx >= len(flags_arr):
+                continue
+            cur = int(flags_arr[idx] or 0)
+            prev = self._prev_car_session_flags.get(idx, 0)
+            self._prev_car_session_flags[idx] = cur
+            new_bits = cur & ~prev
+            if not new_bits:
+                continue
+            for bit, name in CAR_PENALTY_BITS.items():
+                if new_bits & bit:
+                    self._emit({
+                        "type":         "penalty",
+                        "t_session":    round(t_session, 2),
+                        "car_idx":      idx,
+                        "car_number":   d["car_number"],
+                        "driver":       d["name"],
+                        "penalty_type": name,
+                        "raw_bit":      bit,
+                    })
 
     # ----- tire temperature reader (LOCAL PLAYER ONLY) -------------------
     def _read_tire_temps(self) -> dict | None:
@@ -445,6 +622,28 @@ class RaceLogger(SDKPoller):
                 self._emit(event)
                 self._laps_logged += 1
 
+                # Slow-lap detection. Skip pit laps (they're naturally
+                # slow because of pit-lane time) and the first couple
+                # of laps before the rolling average is meaningful.
+                if event["lap_time"] is not None and not event["on_pit"]:
+                    history = self._lap_history.setdefault(idx, deque(maxlen=SLOW_LAP_HISTORY))
+                    if len(history) >= 3:
+                        avg = sum(history) / len(history)
+                        if avg > 0 and event["lap_time"] > avg * SLOW_LAP_THRESHOLD:
+                            delta = event["lap_time"] - avg
+                            self._emit({
+                                "type":       "slow_lap",
+                                "t_session":  round(float(t_session), 2),
+                                "car_idx":    idx,
+                                "car_number": d["car_number"],
+                                "driver":     d["name"],
+                                "lap":        int(prev),
+                                "lap_time":   event["lap_time"],
+                                "avg":        round(avg, 3),
+                                "delta":      round(delta, 3),
+                            })
+                    history.append(event["lap_time"])
+
     # ----- final classification at checkered -----------------------------
     def _maybe_emit_final(self) -> None:
         if self._log_fp is None or self._final_written:
@@ -549,6 +748,7 @@ class RaceLogger(SDKPoller):
                 "incidents":   self._driver_incident_count.get(idx, 0),
                 "overtakes":   self._overtakes_made.get(idx, 0),
                 "overtaken":   self._overtakes_against.get(idx, 0),
+                "pit_stops":   self._pit_count.get(idx, 0),
             })
         # Sort: in-world cars first, then by position (unassigned cars at the bottom)
         out.sort(key=lambda r: (
@@ -648,6 +848,9 @@ class RaceLogger(SDKPoller):
         # cumulative positions-gained / -lost values.
         self._update_overtake_counters()
         self._maybe_emit_position()
+        self._maybe_emit_pit_events()
+        self._maybe_emit_flag_events()
+        self._maybe_emit_penalty_events()
         self._maybe_emit_laps()
         self._maybe_emit_final()
         return self._status_snapshot(session_key, session_type, meta)
@@ -1059,6 +1262,18 @@ STATUS_HTML = """
   .ev.ev-incident .icon { color: #ff8888; font-weight: 800; margin-right: 4px; }
   .ev.ev-incident .who { color: #ff8888; font-weight: 700; }
   .ev.ev-incident .desc { color: #c8c8d8; font-size: 11px; margin-top: 2px; }
+  .ev.ev-pit { background: rgba(255, 195, 0, 0.05); }
+  .ev.ev-pit .icon { color: #ffd166; margin-right: 4px; }
+  .ev.ev-pit .who  { color: #ffd166; font-weight: 700; }
+  .ev.ev-flag { background: rgba(34, 201, 224, 0.05); }
+  .ev.ev-flag .icon { color: #22c9e0; margin-right: 4px; }
+  .ev.ev-flag .what { color: #22c9e0; font-weight: 800; text-transform: uppercase; }
+  .ev.ev-penalty { background: rgba(255, 60, 60, 0.08); }
+  .ev.ev-penalty .icon { color: #ff6b6b; margin-right: 4px; font-weight: 800; }
+  .ev.ev-penalty .who  { color: #ff6b6b; font-weight: 700; }
+  .ev.ev-penalty .what { color: #ff6b6b; font-weight: 800; text-transform: uppercase; }
+  .ev.ev-slow_lap .icon { color: #ff9800; margin-right: 4px; }
+  .ev.ev-slow_lap .who  { color: #ff9800; font-weight: 700; }
   .ev .pos {
     display: inline-block;
     background: #1f1f2b;
@@ -1350,12 +1565,13 @@ function render(d) {
       const pitFlag = r.on_pit ? '<span class="pit-flag">PIT</span>' : '';
       const outFlag = !r.in_world ? '<span class="out-flag">DNF/garage</span>' : '';
 
-      // Driver sub-line — class (when present, multi-class only) + car +
-      // team. Keeps the table compact while exposing the new fields.
+      // Driver sub-line — class (multi-class only) + car + team + pit
+      // stop count. Keeps the table compact while exposing the new fields.
       const subParts = [];
       if (r.car_class) subParts.push(`<span class="class">${esc(r.car_class)}</span>`);
       if (r.car) subParts.push(esc(r.car));
       if (r.team && r.team !== r.name) subParts.push(esc(r.team));
+      if (r.pit_stops > 0) subParts.push(`🔧×${r.pit_stops}`);
       const subLine = subParts.length
         ? `<span class="sub">${subParts.join(' · ')}</span>` : '';
 
@@ -1415,6 +1631,37 @@ function render(d) {
             <span class="icon">⚠</span>
             <span class="who">#${esc(num)} ${esc(name)}</span>
             <div class="desc">${esc(ev.incident_type || '')}${desc ? ' — ' + esc(desc) : ''}</div>
+          </div>`;
+      } else if (ev.type === 'pit') {
+        html += `
+          <div class="ev ev-pit">
+            <span class="when">${t}</span>
+            <span class="icon">🔧</span>
+            <span class="who">#${esc(ev.car_number || '?')} ${esc(ev.driver || '')}</span>
+            — pit stop #${ev.stop_count || '?'} (lap ${ev.entry_lap || '?'}, ${ev.duration ? ev.duration.toFixed(1) : '?'}s)
+          </div>`;
+      } else if (ev.type === 'flag') {
+        html += `
+          <div class="ev ev-flag">
+            <span class="when">${t}</span>
+            <span class="icon">🚩</span>
+            <span class="what">${esc(ev.flag || '?')}</span>
+          </div>`;
+      } else if (ev.type === 'penalty') {
+        html += `
+          <div class="ev ev-penalty">
+            <span class="when">${t}</span>
+            <span class="icon">⚑</span>
+            <span class="who">#${esc(ev.car_number || '?')} ${esc(ev.driver || '')}</span>
+            <span class="what" style="margin-left:6px;">${esc(ev.penalty_type || '?')}</span>
+          </div>`;
+      } else if (ev.type === 'slow_lap') {
+        html += `
+          <div class="ev ev-slow_lap">
+            <span class="when">${t}</span>
+            <span class="icon">🐢</span>
+            <span class="who">#${esc(ev.car_number || '?')} ${esc(ev.driver || '')}</span>
+            — lap ${ev.lap || '?'} ${fmtLap(ev.lap_time)} (+${ev.delta ? ev.delta.toFixed(2) : '?'}s vs avg)
           </div>`;
       }
     }
