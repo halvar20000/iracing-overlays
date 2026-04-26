@@ -1103,6 +1103,21 @@ app = Flask(__name__)
 poller = RaceLogger()
 
 
+@app.before_request
+def _gate_remote_to_share():
+    """Defense in depth: when a request arrives via Cloudflare (Cf-Ray
+    header present), restrict access to /share/* paths only. Even if
+    cloudflared is misconfigured to forward everything, the local server
+    itself refuses to serve admin endpoints (operator panel, log
+    downloads, /chart/select, etc.) to remote viewers.
+
+    Local LAN viewers don't carry that header and access everything as
+    before.
+    """
+    if request.headers.get("Cf-Ray") and not request.path.startswith("/share/"):
+        abort(404)
+
+
 @app.route("/")
 def index():
     return render_template_string(STATUS_HTML)
@@ -1186,6 +1201,139 @@ def chart_render():
     """The OBS browser-source page. Pure SVG chart, polls /chart/state
     every second. Add this URL as a Browser Source in OBS at 600×360."""
     return render_template_string(CHART_HTML)
+
+
+# ----- Public share endpoints ----------------------------------------------
+# Stateless. Driver selection lives entirely in URL parameters, so an
+# arbitrary number of remote viewers can each have their own view at
+# the same time without affecting the operator's selection or each
+# other. Designed to be safe to expose via Cloudflare Tunnel.
+#
+# Driver identifiers in URL params are CAR NUMBERS (the visible "#11"
+# strings) rather than internal car_idx values — they're stable across
+# sessions and shareable in URLs ("?drivers=11,23").
+
+def _car_numbers_to_idxs(car_numbers: list[str]) -> list[int]:
+    """Resolve car-number strings to internal car_idx values for the
+    current session. Returns idxs in the order the numbers were given;
+    silently drops unknown numbers."""
+    by_number = {
+        str(d.get("car_number", "")): d["car_idx"]
+        for d in poller._log_session_meta.get("drivers", [])
+    }
+    out = []
+    for n in car_numbers:
+        idx = by_number.get(str(n).strip())
+        if idx is not None and idx not in out:
+            out.append(idx)
+    return out
+
+
+def _parse_share_params() -> tuple[list[str], str]:
+    """Parse drivers + type from the URL. Returns (car_numbers, type)."""
+    raw = request.args.get("drivers", "") or ""
+    car_numbers = [s for s in raw.split(",") if s.strip()]
+    chart_type = (request.args.get("type") or "laptime").lower()
+    if chart_type not in ("laptime", "position", "gap"):
+        chart_type = "laptime"
+    return car_numbers, chart_type
+
+
+@app.route("/share/data")
+def share_data():
+    """Stateless JSON for the public share page. Returns the full
+    driver list (so the picker can populate) AND the chart data for
+    the selected drivers (so the chart can draw without a second
+    fetch).
+
+    URL params:
+      drivers  comma-separated car NUMBERS, e.g. "11,23,45"
+      type     "laptime" | "position" | "gap"
+    """
+    car_numbers, chart_type = _parse_share_params()
+    selected_idxs = _car_numbers_to_idxs(car_numbers)
+
+    # Build the public-safe driver list (no admin info, no irating, no
+    # license, no team data — keep it minimal for public consumption).
+    drivers_safe = []
+    drivers_meta = poller._log_session_meta.get("drivers", []) or []
+    for d in drivers_meta:
+        cidx = d["car_idx"]
+        drivers_safe.append({
+            "car_number": d.get("car_number", ""),
+            "name":       d.get("name", "Unknown"),
+            "car":        d.get("car", ""),
+            "car_class":  d.get("car_class", ""),
+            "color":      poller._chart_colors.get(cidx, "#ff6b35"),
+        })
+
+    # Chart data per selected driver
+    selected = []
+    for cidx in selected_idxs:
+        meta = next((d for d in drivers_meta if d["car_idx"] == cidx), {})
+        selected.append({
+            "car_number": meta.get("car_number", "?"),
+            "name":       meta.get("name", "Unknown"),
+            "color":      poller._chart_colors.get(cidx, "#ff6b35"),
+            "laps":       list(poller._chart_lap_data.get(cidx, [])),
+        })
+
+    return jsonify({
+        "chart_type":   chart_type,
+        "track":        poller._log_session_meta.get("track", ""),
+        "track_config": poller._log_session_meta.get("track_config", ""),
+        "session_name": poller._log_session_meta.get("session_name", ""),
+        "session_type": poller._log_session_meta.get("session_type", ""),
+        "logging":      poller._log_fp is not None,
+        "all_drivers":  drivers_safe,
+        "selected":     selected,
+    })
+
+
+@app.route("/share/standings/data")
+def share_standings_data():
+    """Stateless live-standings JSON for the public standings page.
+    Same shape as the live monitor's drivers table but with admin /
+    diagnostic fields stripped."""
+    state = poller._build_drivers_state()
+    safe = []
+    for r in state:
+        safe.append({
+            "position":     r["position"],
+            "car_number":   r["car_number"],
+            "name":         r["name"],
+            "car":          r["car"],
+            "car_class":    r["car_class"],
+            "lap":          r["lap"],
+            "last_lap":     r["last_lap"],
+            "best_lap":     r["best_lap"],
+            "gap_to_leader": r["gap_to_leader"],
+            "on_pit":       r["on_pit"],
+            "in_world":     r["in_world"],
+            "incidents":    r["incidents"],
+            "pit_stops":    r["pit_stops"],
+        })
+    return jsonify({
+        "track":        poller._log_session_meta.get("track", ""),
+        "track_config": poller._log_session_meta.get("track_config", ""),
+        "session_name": poller._log_session_meta.get("session_name", ""),
+        "session_type": poller._log_session_meta.get("session_type", ""),
+        "drivers":      safe,
+    })
+
+
+@app.route("/share/chart")
+def share_chart():
+    """Public-safe chart page with a built-in driver picker. State
+    lives in URL params, so each viewer's selection is independent
+    and shareable."""
+    return render_template_string(SHARE_CHART_HTML)
+
+
+@app.route("/share/standings")
+def share_standings():
+    """Public-safe live standings table. Mobile-friendly."""
+    return render_template_string(SHARE_STANDINGS_HTML)
 
 
 # ---------------------------------------------------------------------------
@@ -1639,6 +1787,7 @@ STATUS_HTML = """
       <div class="seg" id="chart-type-seg">
         <button data-type="laptime" class="active">Lap times</button>
         <button data-type="position">Position</button>
+        <button data-type="gap">Gap to leader</button>
       </div>
       <button class="act" onclick="chartTop3()">Top 3</button>
       <button class="act" onclick="chartClear()">Clear</button>
@@ -2228,12 +2377,22 @@ function drawChart(state) {
   let lapMin = Infinity, lapMax = -Infinity;
   let valMin = Infinity, valMax = -Infinity;
   const isPos = state.chart_type === 'position';
+  const isGap = state.chart_type === 'gap';
+  // For both position and gap, higher value = lower on chart (P1 / 0s
+  // gap at the top, trailing positions / bigger gaps below).
+  const inverted = isPos || isGap;
+  function valueOf(l) {
+    if (isPos) return l.position;
+    if (isGap) return (l.gap_to_leader == null ? 0 : l.gap_to_leader);
+    return l.lap_time;
+  }
   for (const d of hasLaps) {
     for (const l of d.laps) {
       if (l.lap < lapMin) lapMin = l.lap;
       if (l.lap > lapMax) lapMax = l.lap;
-      const v = isPos ? l.position : l.lap_time;
-      if (v == null || v <= 0) continue;
+      const v = valueOf(l);
+      if (v == null) continue;
+      if (!isGap && v <= 0) continue;   // 0 is valid for gap (= leader)
       if (v < valMin) valMin = v;
       if (v > valMax) valMax = v;
     }
@@ -2249,6 +2408,11 @@ function drawChart(state) {
     valMin = Math.max(1, Math.floor(valMin));
     valMax = Math.ceil(valMax);
     padTop = padBot = 0.5;
+  } else if (isGap) {
+    valMin = 0;                          // anchor at the leader (0s)
+    const range = valMax || 1;
+    padTop = range * 0.08;
+    padBot = 0;                          // no padding below 0
   } else {
     const range = valMax - valMin || 1;
     padTop = padBot = range * 0.08;
@@ -2268,8 +2432,8 @@ function drawChart(state) {
     const v0 = valMin - padBot;
     const v1 = valMax + padTop;
     const t = (val - v0) / (v1 - v0);
-    if (isPos) {
-      return M.t + t * innerH;          // higher number = lower on chart
+    if (inverted) {
+      return M.t + t * innerH;          // higher value = lower on chart
     }
     return M.t + (1 - t) * innerH;      // higher value = higher on chart
   }
@@ -2301,7 +2465,10 @@ function drawChart(state) {
     label.setAttribute("fill", "#7a7a90");
     label.setAttribute("font-size", "9");
     label.setAttribute("text-anchor", "end");
-    label.textContent = isPos ? `P${tickVal}` : fmtLap(tickVal);
+    label.textContent =
+      isPos ? `P${tickVal}` :
+      isGap ? (tickVal === 0 ? 'LEAD' : `+${tickVal.toFixed(1)}s`) :
+      fmtLap(tickVal);
     svg.appendChild(label);
   }
 
@@ -2333,10 +2500,11 @@ function drawChart(state) {
     const pts = [];
     let bestT = Infinity, bestLap = -1;
     for (const l of d.laps) {
-      const v = isPos ? l.position : l.lap_time;
-      if (v == null || v <= 0) continue;
+      const v = valueOf(l);
+      if (v == null) continue;
+      if (!isGap && v <= 0) continue;
       pts.push([l.lap, v, l]);
-      if (!isPos && l.lap_time && l.lap_time < bestT) {
+      if (!isPos && !isGap && l.lap_time && l.lap_time < bestT) {
         bestT = l.lap_time; bestLap = l.lap;
       }
     }
@@ -2446,12 +2614,704 @@ async function refresh() {
     const r = await fetch('/chart/state');
     const s = await r.json();
     document.getElementById('chart-title').textContent =
-      s.chart_type === 'position' ? 'POSITION' : 'LAP TIMES';
+      s.chart_type === 'position' ? 'POSITION' :
+      s.chart_type === 'gap'      ? 'GAP TO LEADER' :
+                                     'LAP TIMES';
     document.getElementById('chart-meta').textContent =
       [s.track, s.session_name].filter(x => x).join(' · ');
     drawChart(s);
   } catch (e) { /* keep last view */ }
   setTimeout(refresh, 1000);
+}
+refresh();
+</script>
+</body>
+</html>
+"""
+
+
+# ---------------------------------------------------------------------------
+# HTML — public share: chart with built-in driver picker
+# ---------------------------------------------------------------------------
+# Stateless. Driver selection lives in URL params (?drivers=11,23&type=gap).
+# Each remote viewer's selection is independent — no server-side state for
+# remote viewers. Mobile-friendly responsive layout.
+SHARE_CHART_HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Race Chart</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #0a0a0f; color: #e8e8ea;
+    padding: 14px;
+    font-variant-numeric: tabular-nums;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; display: grid; gap: 12px; }
+  .card {
+    background: #14141c; border: 1px solid #26262f;
+    border-radius: 10px; padding: 12px 14px;
+  }
+  h1 {
+    font-size: 16px; color: #ff6b35; letter-spacing: 1px;
+    font-weight: 800;
+  }
+  .meta {
+    font-size: 11px; color: #7a7a90; margin-top: 4px;
+  }
+
+  .controls {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    margin-top: 10px;
+  }
+  .seg {
+    display: inline-flex; background: #1b1b26;
+    border: 1px solid #2e2e3d; border-radius: 6px; overflow: hidden;
+  }
+  .seg button {
+    background: transparent; border: none;
+    color: #c8c8d8; font-size: 11px; font-weight: 700;
+    padding: 6px 12px; cursor: pointer; letter-spacing: 0.5px;
+  }
+  .seg button.active { background: #ff6b35; color: #0a0a0f; }
+  button.act {
+    background: #2a2a38; border: 1px solid #3a3a4a;
+    color: #c8c8d8; font-size: 11px; font-weight: 700;
+    padding: 6px 12px; border-radius: 6px; cursor: pointer;
+  }
+  button.act:hover { background: #3a3a4a; color: #fff; }
+
+  /* Driver picker */
+  .pick-head {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px;
+    color: #7a7a90; font-weight: 800; margin-bottom: 8px;
+  }
+  .pick {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 6px;
+    max-height: 200px; overflow-y: auto;
+    padding-right: 4px;
+  }
+  .pick label {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px; border-radius: 4px;
+    background: #1b1b26; cursor: pointer;
+    font-size: 12px;
+  }
+  .pick label:hover { background: #232331; }
+  .pick label.checked {
+    background: rgba(255, 107, 53, 0.10);
+    box-shadow: inset 4px 0 0 var(--c, #ff6b35);
+  }
+  .pick input { accent-color: #ff6b35; }
+  .pick .num {
+    background: #fff; color: #0a0a0f;
+    padding: 1px 5px; border-radius: 3px;
+    font-size: 10px; font-weight: 800;
+    min-width: 30px; text-align: center;
+  }
+  .pick .name {
+    flex: 1; color: #fff; font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .pick .swatch {
+    width: 8px; height: 8px; border-radius: 50%;
+  }
+
+  /* Chart card */
+  .chart-card {
+    background: #14141c; border: 1px solid #26262f;
+    border-radius: 10px; padding: 12px 14px;
+  }
+  .chart-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 6px;
+  }
+  .chart-title {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px;
+    font-weight: 800; color: #ff6b35;
+  }
+  .live-pill {
+    background: #16341f; color: #4ade80;
+    border: 1px solid #1d5c30;
+    padding: 2px 8px; border-radius: 10px;
+    font-size: 10px; font-weight: 800; letter-spacing: 1px;
+  }
+  .live-pill.idle { background: #1f1f2b; color: #7a7a90; border-color: #2e2e3d; }
+
+  svg.chart {
+    width: 100%; height: 360px;
+  }
+  .legend {
+    display: flex; gap: 12px; flex-wrap: wrap;
+    margin-top: 6px;
+    font-size: 11px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 4px; }
+  .legend-swatch { width: 14px; height: 3px; border-radius: 2px; }
+  .legend-name { color: #c8c8d8; font-weight: 600; }
+  .legend-num  { color: #7a7a90; font-weight: 500; margin-left: 2px; }
+  .empty {
+    text-align: center; padding: 60px 20px; color: #7a7a90;
+    font-size: 12px;
+  }
+
+  .footer {
+    text-align: center; font-size: 10px; color: #4a4a5a;
+    margin-top: 4px;
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <!-- Header -->
+  <div class="card">
+    <h1 id="header-title">Live Race Chart</h1>
+    <div class="meta" id="header-meta">connecting…</div>
+    <div class="controls">
+      <div class="seg" id="type-seg">
+        <button data-type="laptime" class="active">Lap times</button>
+        <button data-type="position">Position</button>
+        <button data-type="gap">Gap to leader</button>
+      </div>
+      <button class="act" onclick="clearAll()">Clear</button>
+    </div>
+  </div>
+
+  <!-- Driver picker -->
+  <div class="card">
+    <div class="pick-head" id="pick-head">Pick drivers (up to 5)</div>
+    <div class="pick" id="picker">loading drivers…</div>
+  </div>
+
+  <!-- Chart -->
+  <div class="chart-card">
+    <div class="chart-head">
+      <span class="chart-title" id="chart-title">LAP TIMES</span>
+      <span class="live-pill idle" id="live-pill">idle</span>
+    </div>
+    <div id="chart-area">
+      <div class="empty">Select one or more drivers above to populate the chart.</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    Live data via iRacing Race Logger · selection saved in URL — share this page to share your view.
+  </div>
+</div>
+
+<script>
+const SVG_NS = "http://www.w3.org/2000/svg";
+const MAX_PICKED = 5;
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+function fmtLap(t) {
+  if (!t || t <= 0) return '—';
+  const m = Math.floor(t/60);
+  const s = t - m*60;
+  return m ? `${m}:${s.toFixed(2).padStart(5,'0')}` : s.toFixed(2);
+}
+
+// --- URL state management -------------------------------------------------
+function readState() {
+  const url = new URL(location.href);
+  const drivers = (url.searchParams.get('drivers') || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+  const type = (url.searchParams.get('type') || 'laptime').toLowerCase();
+  const validType = ['laptime','position','gap'].includes(type) ? type : 'laptime';
+  return { drivers, type: validType };
+}
+function writeState(drivers, type) {
+  const url = new URL(location.href);
+  if (drivers.length) url.searchParams.set('drivers', drivers.join(','));
+  else url.searchParams.delete('drivers');
+  url.searchParams.set('type', type);
+  history.replaceState(null, '', url.toString());
+}
+
+// --- Picker rendering -----------------------------------------------------
+function renderPicker(allDrivers, picked) {
+  const el = document.getElementById('picker');
+  if (!allDrivers.length) {
+    el.innerHTML = '<div style="grid-column:1/-1;color:#7a7a90;text-align:center;">' +
+      'No drivers in session. Wait for the race to load.</div>';
+    return;
+  }
+  // Sort by car number
+  const sorted = [...allDrivers].sort((a, b) => {
+    const an = String(a.car_number);
+    const bn = String(b.car_number);
+    const ai = parseInt(an, 10);
+    const bi = parseInt(bn, 10);
+    if (!isNaN(ai) && !isNaN(bi)) return ai - bi;
+    return an.localeCompare(bn);
+  });
+  let html = '';
+  for (const d of sorted) {
+    const checked = picked.has(String(d.car_number));
+    html += `
+      <label class="${checked ? 'checked' : ''}" style="--c:${d.color};">
+        <input type="checkbox" data-num="${esc(d.car_number)}" ${checked ? 'checked' : ''}>
+        <span class="swatch" style="background:${d.color}"></span>
+        <span class="num">#${esc(d.car_number)}</span>
+        <span class="name">${esc(d.name)}</span>
+      </label>`;
+  }
+  el.innerHTML = html;
+  el.querySelectorAll('input').forEach(inp => {
+    inp.addEventListener('change', e => {
+      const num = inp.dataset.num;
+      const state = readState();
+      const set = new Set(state.drivers);
+      if (inp.checked) {
+        set.add(num);
+        if (set.size > MAX_PICKED) {
+          // Drop the oldest selection (first in URL order)
+          const arr = state.drivers.filter(x => x !== num);
+          arr.push(num);
+          while (arr.length > MAX_PICKED) arr.shift();
+          writeState(arr, state.type);
+        } else {
+          state.drivers.push(num);
+          writeState(state.drivers, state.type);
+        }
+      } else {
+        const arr = state.drivers.filter(x => x !== num);
+        writeState(arr, state.type);
+      }
+      refresh();
+    });
+  });
+}
+
+// --- Type segmented control -----------------------------------------------
+document.querySelectorAll('#type-seg button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const state = readState();
+    writeState(state.drivers, btn.dataset.type);
+    refresh();
+  });
+});
+function syncTypeButtons(type) {
+  document.querySelectorAll('#type-seg button').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.type === type);
+  });
+}
+function clearAll() {
+  const state = readState();
+  writeState([], state.type);
+  refresh();
+}
+
+// --- Chart drawing (same approach as /chart/render) -----------------------
+function drawChart(state) {
+  const area = document.getElementById('chart-area');
+  area.innerHTML = '';
+
+  const sel = state.selected || [];
+  if (!sel.length) {
+    area.innerHTML = '<div class="empty">Select one or more drivers above to populate the chart.</div>';
+    return;
+  }
+  const hasLaps = sel.filter(d => (d.laps || []).length > 0);
+  if (!hasLaps.length) {
+    area.innerHTML = '<div class="empty">Selected drivers haven\\'t completed any laps yet.</div>';
+    return;
+  }
+
+  const isPos = state.chart_type === 'position';
+  const isGap = state.chart_type === 'gap';
+  const inverted = isPos || isGap;
+  function valueOf(l) {
+    if (isPos) return l.position;
+    if (isGap) return (l.gap_to_leader == null ? 0 : l.gap_to_leader);
+    return l.lap_time;
+  }
+
+  let lapMin = Infinity, lapMax = -Infinity;
+  let valMin = Infinity, valMax = -Infinity;
+  for (const d of hasLaps) {
+    for (const l of d.laps) {
+      if (l.lap < lapMin) lapMin = l.lap;
+      if (l.lap > lapMax) lapMax = l.lap;
+      const v = valueOf(l);
+      if (v == null) continue;
+      if (!isGap && v <= 0) continue;
+      if (v < valMin) valMin = v;
+      if (v > valMax) valMax = v;
+    }
+  }
+  if (!isFinite(lapMin) || !isFinite(valMin)) {
+    area.innerHTML = '<div class="empty">No usable data points yet.</div>';
+    return;
+  }
+  if (lapMax === lapMin) lapMax = lapMin + 1;
+  let padTop, padBot;
+  if (isPos) {
+    valMin = Math.max(1, Math.floor(valMin));
+    valMax = Math.ceil(valMax);
+    padTop = padBot = 0.5;
+  } else if (isGap) {
+    valMin = 0;
+    const range = valMax || 1;
+    padTop = range * 0.08;
+    padBot = 0;
+  } else {
+    const range = valMax - valMin || 1;
+    padTop = padBot = range * 0.08;
+  }
+
+  const W = 880, H = 360;
+  const M = { l: 56, r: 16, t: 10, b: 32 };
+  const innerW = W - M.l - M.r;
+  const innerH = H - M.t - M.b;
+  function xPx(lap) { return M.l + ((lap - lapMin) / (lapMax - lapMin)) * innerW; }
+  function yPx(val) {
+    const v0 = valMin - padBot, v1 = valMax + padTop;
+    const t = (val - v0) / (v1 - v0);
+    if (inverted) return M.t + t * innerH;
+    return M.t + (1 - t) * innerH;
+  }
+
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("class", "chart");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+
+  // Y-axis
+  const yTicks = isPos
+    ? makeIntegerTicks(valMin, valMax, 6)
+    : makeNiceTicks(valMin - padBot, valMax + padTop, 5);
+  for (const t of yTicks) {
+    const y = yPx(t);
+    const line = document.createElementNS(SVG_NS, "line");
+    line.setAttribute("x1", M.l); line.setAttribute("x2", W - M.r);
+    line.setAttribute("y1", y); line.setAttribute("y2", y);
+    line.setAttribute("stroke", "#26262f"); line.setAttribute("stroke-dasharray", "2 3");
+    svg.appendChild(line);
+    const lbl = document.createElementNS(SVG_NS, "text");
+    lbl.setAttribute("x", M.l - 8); lbl.setAttribute("y", y + 4);
+    lbl.setAttribute("fill", "#7a7a90"); lbl.setAttribute("font-size", "10");
+    lbl.setAttribute("text-anchor", "end");
+    lbl.textContent =
+      isPos ? `P${t}` :
+      isGap ? (t === 0 ? 'LEAD' : `+${t.toFixed(1)}s`) :
+      fmtLap(t);
+    svg.appendChild(lbl);
+  }
+
+  // X-axis
+  const xTicks = makeIntegerTicks(lapMin, lapMax, 8);
+  for (const t of xTicks) {
+    const x = xPx(t);
+    const lbl = document.createElementNS(SVG_NS, "text");
+    lbl.setAttribute("x", x); lbl.setAttribute("y", H - 14);
+    lbl.setAttribute("fill", "#7a7a90"); lbl.setAttribute("font-size", "10");
+    lbl.setAttribute("text-anchor", "middle");
+    lbl.textContent = `L${t}`;
+    svg.appendChild(lbl);
+  }
+  const xL = document.createElementNS(SVG_NS, "text");
+  xL.setAttribute("x", M.l + innerW/2); xL.setAttribute("y", H - 2);
+  xL.setAttribute("fill", "#5a5a6a"); xL.setAttribute("font-size", "10");
+  xL.setAttribute("text-anchor", "middle"); xL.textContent = "LAP";
+  svg.appendChild(xL);
+
+  // Lines per driver
+  for (const d of hasLaps) {
+    const pts = [];
+    let bestT = Infinity, bestLap = -1;
+    for (const l of d.laps) {
+      const v = valueOf(l);
+      if (v == null) continue;
+      if (!isGap && v <= 0) continue;
+      pts.push([l.lap, v, l]);
+      if (!isPos && !isGap && l.lap_time && l.lap_time < bestT) {
+        bestT = l.lap_time; bestLap = l.lap;
+      }
+    }
+    if (!pts.length) continue;
+    let pathD = '';
+    if (isPos) {
+      for (let i = 0; i < pts.length; i++) {
+        const [lp, vl] = pts[i];
+        const x = xPx(lp), y = yPx(vl);
+        if (i === 0) pathD += `M ${x} ${y}`;
+        else pathD += ` H ${x} V ${y}`;
+      }
+    } else {
+      for (let i = 0; i < pts.length; i++) {
+        const [lp, vl] = pts[i];
+        const x = xPx(lp), y = yPx(vl);
+        pathD += (i === 0 ? `M ${x} ${y}` : ` L ${x} ${y}`);
+      }
+    }
+    const line = document.createElementNS(SVG_NS, "path");
+    line.setAttribute("d", pathD); line.setAttribute("fill", "none");
+    line.setAttribute("stroke", d.color); line.setAttribute("stroke-width", "2.4");
+    line.setAttribute("stroke-linejoin", "round"); line.setAttribute("stroke-linecap", "round");
+    svg.appendChild(line);
+    for (const [lp, vl, lapEv] of pts) {
+      const x = xPx(lp), y = yPx(vl);
+      const isPit = !!lapEv.on_pit;
+      const isBest = !isPos && !isGap && lp === bestLap;
+      const r = isBest ? 4.5 : 3.5;
+      const dot = document.createElementNS(SVG_NS, "circle");
+      dot.setAttribute("cx", x); dot.setAttribute("cy", y); dot.setAttribute("r", r);
+      dot.setAttribute("fill", isBest ? "#ffd166" : d.color);
+      dot.setAttribute("stroke", "#0a0a0f"); dot.setAttribute("stroke-width", "1");
+      svg.appendChild(dot);
+      if (isPit) {
+        const pd = document.createElementNS(SVG_NS, "circle");
+        pd.setAttribute("cx", x); pd.setAttribute("cy", y - 9);
+        pd.setAttribute("r", 2.2); pd.setAttribute("fill", "#ffd166");
+        svg.appendChild(pd);
+      }
+    }
+  }
+  area.appendChild(svg);
+
+  const legend = document.createElement('div');
+  legend.className = 'legend';
+  for (const d of hasLaps) {
+    const item = document.createElement('span');
+    item.className = 'legend-item';
+    item.innerHTML =
+      `<span class="legend-swatch" style="background:${d.color}"></span>` +
+      `<span class="legend-name">${esc(d.name)}</span>` +
+      `<span class="legend-num">#${esc(d.car_number)}</span>`;
+    legend.appendChild(item);
+  }
+  area.appendChild(legend);
+}
+
+function makeNiceTicks(lo, hi, n) {
+  const range = hi - lo;
+  if (range <= 0) return [lo];
+  const rough = range / (n - 1);
+  const mag = Math.pow(10, Math.floor(Math.log10(rough)));
+  const norm = rough / mag;
+  let step;
+  if (norm < 1.5) step = mag;
+  else if (norm < 3) step = 2 * mag;
+  else if (norm < 7) step = 5 * mag;
+  else step = 10 * mag;
+  const start = Math.ceil(lo / step) * step;
+  const out = [];
+  for (let v = start; v <= hi + step * 0.001; v += step) out.push(v);
+  return out;
+}
+function makeIntegerTicks(lo, hi, n) {
+  const range = Math.max(1, Math.ceil(hi) - Math.floor(lo));
+  const step = Math.max(1, Math.ceil(range / (n - 1)));
+  const out = [];
+  for (let v = Math.floor(lo); v <= Math.ceil(hi); v += step) out.push(v);
+  if (out[out.length - 1] !== Math.ceil(hi)) out.push(Math.ceil(hi));
+  return out;
+}
+
+// --- Refresh loop ---------------------------------------------------------
+async function refresh() {
+  const state = readState();
+  const params = new URLSearchParams();
+  if (state.drivers.length) params.set('drivers', state.drivers.join(','));
+  params.set('type', state.type);
+  try {
+    const r = await fetch('/share/data?' + params.toString());
+    const d = await r.json();
+    document.getElementById('header-title').textContent =
+      [d.track, d.track_config].filter(x => x).join(' — ') || 'Live Race Chart';
+    document.getElementById('header-meta').textContent =
+      d.session_name ? d.session_name : (d.session_type || 'Waiting…');
+    syncTypeButtons(d.chart_type);
+    document.getElementById('chart-title').textContent =
+      d.chart_type === 'position' ? 'POSITION' :
+      d.chart_type === 'gap'      ? 'GAP TO LEADER' :
+                                     'LAP TIMES';
+    const pill = document.getElementById('live-pill');
+    pill.textContent = d.logging ? 'LIVE' : 'idle';
+    pill.classList.toggle('idle', !d.logging);
+    renderPicker(d.all_drivers || [], new Set(state.drivers));
+    drawChart(d);
+  } catch (e) { /* keep last view */ }
+  setTimeout(refresh, 2000);
+}
+refresh();
+</script>
+</body>
+</html>
+"""
+
+
+# ---------------------------------------------------------------------------
+# HTML — public share: live standings table
+# ---------------------------------------------------------------------------
+SHARE_STANDINGS_HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Standings</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #0a0a0f; color: #e8e8ea;
+    padding: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; display: grid; gap: 10px; }
+  .card {
+    background: #14141c; border: 1px solid #26262f; border-radius: 10px;
+    padding: 12px 14px;
+  }
+  h1 { font-size: 16px; color: #ff6b35; letter-spacing: 1px; font-weight: 800; }
+  .meta { font-size: 11px; color: #7a7a90; margin-top: 4px; }
+
+  .row {
+    display: grid;
+    grid-template-columns: 38px 50px 1fr 84px 84px 70px 36px;
+    align-items: center;
+    padding: 7px 12px;
+    border-bottom: 1px solid #1d1d27;
+    font-size: 13px;
+  }
+  .row.head {
+    background: #1b1b26;
+    font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+    color: #7a7a90; font-weight: 800;
+    padding: 8px 12px;
+  }
+  .pos { font-weight: 800; font-size: 15px; color: #fff; text-align: center; }
+  .pos.p1 { color: #ffd166; }
+  .pos.p2 { color: #c0c0d0; }
+  .pos.p3 { color: #cd7f32; }
+  .num {
+    background: #fff; color: #0a0a0f; padding: 1px 6px;
+    border-radius: 3px; font-size: 11px; font-weight: 800;
+    min-width: 36px; text-align: center;
+  }
+  .name {
+    font-weight: 600; color: #fff;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    padding-right: 8px;
+  }
+  .name .sub {
+    display: block; font-size: 10px; color: #7a7a90; font-weight: 500;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .time { text-align: right; color: #c8c8d8; }
+  .best { text-align: right; color: #ffd166; font-weight: 600; }
+  .gap  { text-align: right; color: #c8c8d8; font-weight: 600; }
+  .pit-flag {
+    background: #3a1a1a; color: #ff8888; border: 1px solid #5c2a2a;
+    padding: 1px 5px; border-radius: 3px;
+    font-size: 9px; font-weight: 800;
+    text-align: center;
+  }
+  .row.out { opacity: 0.4; }
+  .empty { padding: 60px 20px; text-align: center; color: #7a7a90; font-size: 12px; }
+
+  /* Mobile tightening */
+  @media (max-width: 540px) {
+    .row {
+      grid-template-columns: 32px 44px 1fr 70px 70px 60px;
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+    .row > .pit-col { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="card">
+    <h1 id="title">Live Standings</h1>
+    <div class="meta" id="meta">connecting…</div>
+  </div>
+  <div class="card" style="padding: 0;">
+    <div class="row head">
+      <div>POS</div>
+      <div>#</div>
+      <div>DRIVER</div>
+      <div style="text-align:right;">LAST LAP</div>
+      <div style="text-align:right;">BEST</div>
+      <div style="text-align:right;">GAP</div>
+      <div class="pit-col" style="text-align:center;">PIT</div>
+    </div>
+    <div id="rows"><div class="empty">Waiting for race data…</div></div>
+  </div>
+  <div style="text-align:center;font-size:10px;color:#4a4a5a;">
+    Live data via iRacing Race Logger
+  </div>
+</div>
+
+<script>
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+function fmtLap(t) {
+  if (!t || t <= 0) return '—';
+  const m = Math.floor(t/60); const s = t - m*60;
+  return m ? `${m}:${s.toFixed(2).padStart(5,'0')}` : s.toFixed(2);
+}
+function fmtGap(g) {
+  if (g == null || g <= 0) return '—';
+  if (g < 60) return '+' + g.toFixed(g < 10 ? 3 : 2);
+  const m = Math.floor(g/60); const s = g - m*60;
+  return `+${m}:${s.toFixed(2).padStart(5,'0')}`;
+}
+
+async function refresh() {
+  try {
+    const r = await fetch('/share/standings/data');
+    const d = await r.json();
+    document.getElementById('title').textContent =
+      [d.track, d.track_config].filter(x => x).join(' — ') || 'Live Standings';
+    document.getElementById('meta').textContent =
+      d.session_name || d.session_type || 'Waiting…';
+    const rowsEl = document.getElementById('rows');
+    const drivers = d.drivers || [];
+    if (!drivers.length) {
+      rowsEl.innerHTML = '<div class="empty">No drivers in session.</div>';
+    } else {
+      let html = '';
+      for (const r of drivers) {
+        const posCls = r.position === 1 ? 'p1' :
+                       r.position === 2 ? 'p2' :
+                       r.position === 3 ? 'p3' : '';
+        const rowCls = !r.in_world ? 'out' : '';
+        const sub = [r.car_class, r.car].filter(x => x).join(' · ');
+        html += `
+          <div class="row ${rowCls}">
+            <div class="pos ${posCls}">${r.position || '—'}</div>
+            <div><span class="num">#${esc(r.car_number || '—')}</span></div>
+            <div class="name">${esc(r.name || '—')}${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</div>
+            <div class="time">${fmtLap(r.last_lap)}</div>
+            <div class="best">${fmtLap(r.best_lap)}</div>
+            <div class="gap">${fmtGap(r.gap_to_leader)}</div>
+            <div class="pit-col" style="text-align:center;">${r.on_pit ? '<span class="pit-flag">PIT</span>' : ''}</div>
+          </div>`;
+      }
+      rowsEl.innerHTML = html;
+    }
+  } catch (e) {}
+  setTimeout(refresh, 2000);
 }
 refresh();
 </script>

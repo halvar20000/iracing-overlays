@@ -212,6 +212,38 @@ endpoint). Every code path that calls `cam_switch_num` /
 `cam_set_state` calls `_reassert_ui_hide()`, which — if the flag is
 true — re-sends spacebar in a 0.25 s-delayed daemon thread.
 
+**April 26, 2026 (race logger — public share endpoints + Cloudflare):**
+Built the public-share path so remote viewers (Twitch chat / Discord)
+can open a self-service chart and pick their own drivers without
+affecting the operator's OBS source.
+
+- New `/share/data` (stateless JSON), `/share/chart` (picker + chart
+  HTML), `/share/standings` (mobile-friendly table), and
+  `/share/standings/data` (JSON for the table). All accept driver
+  selection via URL params using **car_number** (the user-visible
+  "#11" string), not internal car_idx — so URLs are stable across
+  sessions and shareable.
+- Driver selection lives entirely in URL params on the share page,
+  with `history.replaceState` keeping the URL in sync. Each remote
+  viewer's selection is independent — no server-side state per
+  remote viewer. Operator's chart selection is unaffected.
+- New "gap to leader" chart type added to BOTH the operator's
+  /chart/render and the share page, alongside the existing lap-time
+  and position views. Y-axis inverted (leader at top, gaps falling
+  below) — F1-broadcast convention.
+- Defense-in-depth gate: a Flask `before_request` middleware detects
+  the `Cf-Ray` header (only Cloudflare adds it) and returns 404 for
+  any path that isn't `/share/*`. So even if cloudflared is
+  misconfigured to forward everything, the local server itself
+  refuses to serve admin endpoints (operator panel, log downloads,
+  /chart/select, /status, etc.) to remote viewers. Local LAN access
+  unchanged.
+- New file `CLOUDFLARE_TUNNEL_DE.md` — German setup guide covering
+  cloudflared install, quick tunnel command, optional named-tunnel
+  config with own domain, and security model.
+- Public payloads are filtered: no log paths, no irating, no team
+  names — minimum data needed for the chart and standings to render.
+
 **April 26, 2026 (race logger — live charts for OBS):**
 Added a broadcast-friendly chart pipeline to the logger:
 
