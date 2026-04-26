@@ -212,6 +212,32 @@ endpoint). Every code path that calls `cam_switch_num` /
 `cam_set_state` calls `_reassert_ui_hide()`, which — if the flag is
 true — re-sends spacebar in a 0.25 s-delayed daemon thread.
 
+**April 26, 2026 (race logger — live charts for OBS):**
+Added a broadcast-friendly chart pipeline to the logger:
+
+- New endpoints `/chart/state`, `/chart/select`, `/chart/top3`,
+  `/chart/render`. `/chart/render` is the page added as an OBS
+  browser source (600×360, transparent BG); the others are the
+  operator API.
+- Operator UX in the existing live monitor (port 5009 root): every
+  driver row is now clickable to pin/unpin from the chart. Pinned
+  rows get a colored left border in the row's chart color. A new
+  "Live chart" panel above the tire panel shows pinned drivers as
+  removable chips, a chart-type segmented control (Lap times /
+  Position), Top 3 / Clear buttons, and a link to the OBS source URL.
+- Two chart types in v1: **lap times** (line, lower=faster) and
+  **position** (step-after line, P1 at top — chart is inverted on
+  Y axis). One line per pinned driver, stable color per driver from
+  CHART_PALETTE indexed by sorted car number, dot per lap, gold
+  outline on the best lap, small wrench dot on pit laps.
+- All chart drawing is pure SVG generated client-side — no Chart.js
+  / D3 / external libs. Keeps the project's "no CDN dependencies"
+  invariant.
+- State (selected drivers + chart type) lives in the poller, so all
+  browser windows share the same view. Chart_lap_data is a separate
+  per-driver lap-history dict (full race kept) distinct from the
+  bounded slow-lap detector window. Capped at 5 pinned drivers.
+
 **April 26, 2026 (race logger — defer session_end until ResultsOfficial):**
 The session_end event used to fire as soon as `SessionState >= 5` (the
 leader's checkered crossing), but `ResultsPositions` at that moment

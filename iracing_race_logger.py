@@ -38,7 +38,7 @@ import time
 from collections import deque
 from datetime import datetime
 from pathlib import Path
-from flask import Flask, jsonify, render_template_string, send_file, abort
+from flask import Flask, jsonify, render_template_string, send_file, abort, request
 
 try:
     import requests  # for /incidents fetch from the dashboard
@@ -98,6 +98,21 @@ CAR_PENALTY_BITS = {
 # A lap > average × this is flagged as anomalous (rolling 5-lap window).
 SLOW_LAP_THRESHOLD = 1.10
 SLOW_LAP_HISTORY   = 5
+
+# --- Live charts ---
+# Stable per-driver palette used by the chart-render endpoint. Indexed
+# by the driver's position in the field when sorted by car_number, so a
+# given driver gets the same color all race long. Distinct, vivid hues
+# that read well on the dark theme.
+CHART_PALETTE = [
+    "#ff6b35", "#61b4ff", "#ffd166", "#4ade80", "#a371f7",
+    "#22c9e0", "#ff8888", "#84cc16", "#f97316", "#9333ea",
+    "#fb923c", "#34d399", "#fbbf24", "#f472b6", "#60a5fa",
+    "#fcd34d", "#a78bfa", "#f87171", "#22d3ee", "#fde047",
+]
+# Cap how many drivers the operator can pin to the chart at once.
+# More than this gets visually crowded and the legend overflows.
+CHART_MAX_SELECTED = 5
 
 
 def _safe_filename(s: str) -> str:
@@ -186,6 +201,18 @@ class RaceLogger(SDKPoller):
         # broadcast-camera hint ("driver just did something weird").
         self._lap_history: dict[int, deque[float]] = {}
 
+        # Live broadcast charts — operator picks drivers in the live
+        # monitor; the OBS-source chart endpoint shows whatever's
+        # currently selected. State is shared across all browsers.
+        self._chart_selected: list[int] = []        # car_idx in selection order
+        self._chart_type: str = "laptime"           # "laptime" | "position"
+        # Full per-driver lap history kept for the duration of the race.
+        # Distinct from _lap_history (the bounded slow-lap detector
+        # window) because charts want every lap.
+        self._chart_lap_data: dict[int, list[dict]] = {}
+        # Pre-computed stable color per driver (set in _open_log).
+        self._chart_colors: dict[int, str] = {}
+
         # Background thread for /incidents polling so we don't block
         # the main poll loop on HTTP timeouts.
         self._seen_incidents: set[tuple] = set()
@@ -224,6 +251,16 @@ class RaceLogger(SDKPoller):
         self._prev_session_flags = 0
         self._prev_car_session_flags.clear()
         self._lap_history.clear()
+        self._chart_selected.clear()
+        self._chart_type = "laptime"
+        self._chart_lap_data.clear()
+        # Stable per-driver colors for the chart, indexed by sort-order
+        # of car_number so the colors are deterministic.
+        self._chart_colors = {}
+        sorted_drv = sorted(session_meta.get("drivers", []),
+                            key=lambda d: d.get("car_number", "ZZZ"))
+        for i, d in enumerate(sorted_drv):
+            self._chart_colors[d["car_idx"]] = CHART_PALETTE[i % len(CHART_PALETTE)]
 
         print(f"[logger] Opened {path.name}  ({session_meta.get('track')} "
               f"— {session_meta.get('session_type')})")
@@ -639,6 +676,17 @@ class RaceLogger(SDKPoller):
                 self._emit(event)
                 self._laps_logged += 1
 
+                # Append to the chart's per-driver history. Kept for the
+                # full race (not bounded), so charts can plot the entire
+                # lap-time progression.
+                self._chart_lap_data.setdefault(idx, []).append({
+                    "lap":       int(prev),
+                    "lap_time":  event["lap_time"],
+                    "position":  event["position"],
+                    "class_pos": event["class_pos"],
+                    "on_pit":    event["on_pit"],
+                })
+
                 # Slow-lap detection. Skip pit laps (they're naturally
                 # slow because of pit-lane time) and the first couple
                 # of laps before the rolling average is meaningful.
@@ -984,7 +1032,68 @@ class RaceLogger(SDKPoller):
                 "in_pits":  in_pits,
                 "out":      out,
             },
+            # Surface chart selection in /status so the operator panel
+            # can show which drivers are pinned without a separate fetch.
+            "chart_selected": list(self._chart_selected),
+            "chart_type":     self._chart_type,
+            "chart_colors":   {str(k): v for k, v in self._chart_colors.items()},
         }
+
+    # ----- chart endpoints support ---------------------------------------
+    def get_chart_state(self) -> dict:
+        """Build the JSON payload the chart-render page polls.
+        Includes the operator's selection plus the full lap history per
+        selected driver so the chart can render without further fetches.
+        """
+        drivers_meta = {
+            d["car_idx"]: d
+            for d in self._log_session_meta.get("drivers", [])
+        }
+        selected = []
+        for cidx in self._chart_selected:
+            meta = drivers_meta.get(cidx, {})
+            selected.append({
+                "car_idx":    cidx,
+                "car_number": meta.get("car_number", "?"),
+                "name":       meta.get("name", "Unknown"),
+                "color":      self._chart_colors.get(cidx, "#ff6b35"),
+                "laps":       list(self._chart_lap_data.get(cidx, [])),
+            })
+        return {
+            "chart_type":   self._chart_type,
+            "track":        self._log_session_meta.get("track", ""),
+            "session_name": self._log_session_meta.get("session_name", ""),
+            "logging":      self._log_fp is not None,
+            "selected":     selected,
+        }
+
+    def set_chart_selection(self, drivers, chart_type=None) -> None:
+        """Operator updates: replace the selection list and/or chart
+        type. Drivers list is sanitized — keeps unique valid car_idx
+        ints, capped at CHART_MAX_SELECTED to avoid clutter.
+        """
+        if chart_type in ("laptime", "position"):
+            self._chart_type = chart_type
+        if isinstance(drivers, list):
+            clean: list[int] = []
+            for raw in drivers:
+                try:
+                    cidx = int(raw)
+                except (TypeError, ValueError):
+                    continue
+                if cidx in clean:
+                    continue
+                clean.append(cidx)
+                if len(clean) >= CHART_MAX_SELECTED:
+                    break
+            self._chart_selected = clean
+
+    def set_chart_top3(self) -> None:
+        """Convenience: pin the current overall top 3 to the chart."""
+        state = self._build_drivers_state()
+        in_world_top = [r for r in state if r["in_world"] and r["position"] > 0]
+        in_world_top.sort(key=lambda r: r["position"])
+        self._chart_selected = [r["car_idx"] for r in in_world_top[:3]]
 
 
 # ---------------------------------------------------------------------------
@@ -1040,6 +1149,43 @@ def download_specific(name: str):
         abort(404)
     return send_file(str(p), as_attachment=True, download_name=p.name,
                      mimetype="application/x-ndjson")
+
+
+# ----- Live chart endpoints ------------------------------------------------
+# Pattern: operator picks drivers + chart type in the live monitor (which
+# POSTs to /chart/select); the OBS browser source loads /chart/render and
+# polls /chart/state every second. State is shared across all viewers so
+# the operator's selection instantly updates whatever's on screen in OBS.
+
+@app.route("/chart/state")
+def chart_state():
+    return jsonify(poller.get_chart_state())
+
+
+@app.route("/chart/select", methods=["POST"])
+def chart_select():
+    payload = request.get_json(silent=True) or {}
+    poller.set_chart_selection(
+        payload.get("drivers", []),
+        chart_type=payload.get("type"),
+    )
+    return jsonify({"ok": True,
+                    "selected": list(poller._chart_selected),
+                    "type":     poller._chart_type})
+
+
+@app.route("/chart/top3", methods=["POST"])
+def chart_top3():
+    poller.set_chart_top3()
+    return jsonify({"ok": True,
+                    "selected": list(poller._chart_selected)})
+
+
+@app.route("/chart/render")
+def chart_render():
+    """The OBS browser-source page. Pure SVG chart, polls /chart/state
+    every second. Add this URL as a Browser Source in OBS at 600×360."""
+    return render_template_string(CHART_HTML)
 
 
 # ---------------------------------------------------------------------------
@@ -1199,6 +1345,12 @@ STATUS_HTML = """
   }
   .drv-row.out      { opacity: 0.45; }
   .drv-row.pit-row  { background: rgba(255, 195, 0, 0.04); }
+  .drv-row.clickable { cursor: pointer; transition: background .12s; }
+  .drv-row.clickable:hover { background: rgba(255,255,255,0.04); }
+  .drv-row.charted {
+    background: rgba(255,107,53,0.08);
+    box-shadow: inset 4px 0 0 var(--chart-color, #ff6b35);
+  }
 
   .drv-pos {
     font-size: 17px; font-weight: 800; color: #fff; text-align: center;
@@ -1249,6 +1401,72 @@ STATUS_HTML = """
     display: inline-block;
   }
   .drv-inc .num.zero { background: transparent; color: #4a4a5a; }
+
+  /* === Chart control panel === */
+  .chart-bar {
+    background: #14141c;
+    border: 1px solid #26262f;
+    border-radius: 8px;
+    padding: 10px 14px;
+  }
+  .chart-bar .head {
+    display: flex; align-items: center; gap: 14px;
+    margin-bottom: 8px; flex-wrap: wrap;
+  }
+  .chart-bar h3 {
+    font-size: 11px; color: #9a9aad; text-transform: uppercase;
+    letter-spacing: 1.5px; font-weight: 800;
+  }
+  .chart-bar .seg {
+    display: inline-flex; background: #1b1b26;
+    border: 1px solid #2e2e3d; border-radius: 6px; overflow: hidden;
+  }
+  .chart-bar .seg button {
+    background: transparent; border: none;
+    color: #c8c8d8; font-size: 11px; font-weight: 700;
+    padding: 4px 10px; cursor: pointer; letter-spacing: 0.5px;
+  }
+  .chart-bar .seg button.active {
+    background: #ff6b35; color: #0a0a0f;
+  }
+  .chart-bar button.act {
+    background: #2a2a38; border: 1px solid #3a3a4a;
+    color: #c8c8d8; font-size: 11px; font-weight: 700;
+    padding: 4px 12px; border-radius: 6px; cursor: pointer;
+  }
+  .chart-bar button.act:hover { background: #3a3a4a; color: #fff; }
+  .chart-bar a.dl-url {
+    color: #ff6b35; text-decoration: none;
+    font-size: 10px; font-family: monospace;
+    margin-left: auto;
+    padding: 4px 8px;
+    border: 1px dashed #3a3a4a; border-radius: 4px;
+  }
+  .chart-bar a.dl-url:hover { border-style: solid; }
+  .chart-bar .chips {
+    display: flex; gap: 6px; flex-wrap: wrap;
+    min-height: 22px;
+  }
+  .chart-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 4px 3px 8px; border-radius: 12px;
+    background: #1b1b26; border: 1px solid #2e2e3d;
+    font-size: 11px; font-weight: 700;
+  }
+  .chart-chip .swatch {
+    width: 8px; height: 8px; border-radius: 50%;
+  }
+  .chart-chip .num { color: #c8c8d8; }
+  .chart-chip .name { color: #fff; }
+  .chart-chip .x {
+    background: transparent; border: none; color: #7a7a90;
+    font-size: 14px; line-height: 1; cursor: pointer;
+    padding: 0 4px; margin-left: 2px;
+  }
+  .chart-chip .x:hover { color: #ff8888; }
+  .chart-empty {
+    color: #6a6a7a; font-size: 11px; font-style: italic;
+  }
 
   /* === Tire temps panel (local player only) === */
   .tires {
@@ -1413,6 +1631,26 @@ STATUS_HTML = """
     <div class="item"><span class="num" id="cnt-inc">0</span><span class="sub">Incidents logged</span></div>
   </div>
 
+  <!-- CHART CONTROL PANEL — operator picks drivers + chart type for the
+       OBS-source chart at /chart/render -->
+  <div class="chart-bar">
+    <div class="head">
+      <h3>Live chart</h3>
+      <div class="seg" id="chart-type-seg">
+        <button data-type="laptime" class="active">Lap times</button>
+        <button data-type="position">Position</button>
+      </div>
+      <button class="act" onclick="chartTop3()">Top 3</button>
+      <button class="act" onclick="chartClear()">Clear</button>
+      <a class="dl-url" id="chart-url" href="/chart/render" target="_blank">
+        OBS source: /chart/render
+      </a>
+    </div>
+    <div class="chips" id="chart-chips">
+      <span class="chart-empty">Click drivers in the table to pin them. Up to 5.</span>
+    </div>
+  </div>
+
   <!-- TIRE TEMPS (only visible when local player data is available) -->
   <div class="tires" id="tires">
     <div class="head">
@@ -1541,6 +1779,83 @@ function renderTireCorner(id, vals) {
     `<span class="${tireClass(v)}">${v == null ? '—' : v.toFixed(1)}°</span>`
   ).join('');
 }
+
+// --- Chart control: pin/unpin drivers, switch chart type ---
+// Cache the most recent /status payload so we can map car_idx -> name
+// without doing a separate driver lookup when rendering chips.
+let _lastDrivers = [];
+function renderChartChips(d, selected, colors) {
+  _lastDrivers = d.drivers || [];
+  const el = document.getElementById('chart-chips');
+  if (!selected.size) {
+    el.innerHTML = '<span class="chart-empty">' +
+      'Click drivers in the table to pin them to the chart. Up to 5.' +
+      '</span>';
+    return;
+  }
+  // Preserve the operator's selection ORDER (taken from chart_selected,
+  // not the table sort) so the chips line up consistently.
+  const order = (d.chart_selected || []).map(Number);
+  const byIdx = new Map(_lastDrivers.map(r => [r.car_idx, r]));
+  let html = '';
+  for (const idx of order) {
+    const r = byIdx.get(idx);
+    if (!r) continue;
+    const c = colors[String(idx)] || '#ff6b35';
+    html += `
+      <span class="chart-chip">
+        <span class="swatch" style="background:${c}"></span>
+        <span class="num">#${esc(r.car_number || '?')}</span>
+        <span class="name">${esc(r.name || 'Unknown')}</span>
+        <button class="x" title="remove from chart"
+                onclick="event.stopPropagation();toggleChartDriver(${idx})">×</button>
+      </span>`;
+  }
+  el.innerHTML = html;
+}
+
+function syncChartTypeButtons(type) {
+  document.querySelectorAll('#chart-type-seg button').forEach(btn => {
+    if (btn.dataset.type === type) btn.classList.add('active');
+    else btn.classList.remove('active');
+  });
+}
+
+// Wire the chart-type segmented control once at startup.
+document.querySelectorAll('#chart-type-seg button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    setChartSelection(null, btn.dataset.type);
+  });
+});
+
+async function toggleChartDriver(carIdx) {
+  // Pull current selection from the cached status, toggle, push back.
+  const r = await fetch('/status');
+  const s = await r.json();
+  const sel = (s.chart_selected || []).map(Number);
+  const i = sel.indexOf(Number(carIdx));
+  if (i >= 0) sel.splice(i, 1);
+  else        sel.push(Number(carIdx));
+  setChartSelection(sel, null);
+}
+async function setChartSelection(drivers, chartType) {
+  const body = {};
+  if (drivers !== null) body.drivers = drivers;
+  if (chartType !== null) body.type = chartType;
+  await fetch('/chart/select', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  });
+  refresh();   // pull new state straight away
+}
+async function chartTop3() {
+  await fetch('/chart/top3', {method: 'POST'});
+  refresh();
+}
+async function chartClear() {
+  await setChartSelection([], null);
+}
 const TRACK_WETNESS = {
   1: ['Dry',                'dry'],
   2: ['Mostly dry',         'dry'],
@@ -1623,12 +1938,23 @@ function render(d) {
   if (!drivers.length) {
     rowsEl.innerHTML = '<div class="empty">No drivers in session.</div>';
   } else {
+    const chartSelected = new Set((d.chart_selected || []).map(Number));
+    const chartColors = d.chart_colors || {};
+
     let html = '';
     for (const r of drivers) {
       const posCls = r.position === 1 ? 'p1' :
                      r.position === 2 ? 'p2' :
                      r.position === 3 ? 'p3' : '';
-      const rowCls = !r.in_world ? 'out' : (r.on_pit ? 'pit-row' : '');
+      let rowCls = !r.in_world ? 'out' : (r.on_pit ? 'pit-row' : '');
+      rowCls += ' clickable';
+      const isCharted = chartSelected.has(r.car_idx);
+      let chartedStyle = '';
+      if (isCharted) {
+        rowCls += ' charted';
+        const c = chartColors[String(r.car_idx)] || '#ff6b35';
+        chartedStyle = `style="--chart-color:${c};"`;
+      }
       const incCls = r.incidents > 0 ? '' : 'zero';
       const pitFlag = r.on_pit ? '<span class="pit-flag">PIT</span>' : '';
       const outFlag = !r.in_world ? '<span class="out-flag">DNF/garage</span>' : '';
@@ -1652,7 +1978,9 @@ function render(d) {
         `<span class="${ag > 0 ? 'down' : 'zero'}">−${ag}</span>`;
 
       html += `
-        <div class="drv-row ${rowCls}">
+        <div class="drv-row ${rowCls}" ${chartedStyle}
+             data-car-idx="${r.car_idx}"
+             onclick="toggleChartDriver(${r.car_idx})">
           <div class="drv-pos ${posCls}">${r.position || '—'}</div>
           <div><span class="drv-num">#${esc(r.car_number || '—')}</span></div>
           <div class="drv-name">${esc(r.name || 'Unknown')}${pitFlag}${outFlag}${subLine}</div>
@@ -1664,6 +1992,10 @@ function render(d) {
         </div>`;
     }
     rowsEl.innerHTML = html;
+
+    // Render the chart-control panel chips and reflect the current chart type
+    renderChartChips(d, chartSelected, chartColors);
+    syncChartTypeButtons(d.chart_type);
   }
 
   // Timeline (recent_events come newest-first from the server)
@@ -1765,6 +2097,363 @@ async function refreshLogs() {
 
 refresh();
 refreshLogs();
+</script>
+</body>
+</html>
+"""
+
+
+# ---------------------------------------------------------------------------
+# HTML — chart browser source (for OBS)
+# ---------------------------------------------------------------------------
+# Designed for a 600×360 browser source. Transparent background by
+# default so it composites over the stream layout. Polls /chart/state
+# every second and re-renders the SVG line chart from scratch each tick.
+CHART_HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>iRacing Live Chart</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 600px; height: 360px; overflow: hidden;
+                background: transparent; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    color: #e8e8ea;
+  }
+  .chart-card {
+    width: 600px; height: 360px;
+    background: rgba(20, 20, 28, 0.92);
+    border: 1px solid #26262f;
+    border-radius: 10px;
+    padding: 10px 14px;
+    display: flex; flex-direction: column;
+  }
+  .chart-head {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: 4px;
+  }
+  .chart-title {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px;
+    font-weight: 800; color: #ff6b35;
+  }
+  .chart-meta {
+    font-size: 10px; color: #7a7a90;
+  }
+  .legend {
+    display: flex; gap: 12px; flex-wrap: wrap;
+    margin-top: 6px;
+    font-size: 11px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 4px; }
+  .legend-swatch {
+    width: 14px; height: 3px; border-radius: 2px;
+  }
+  .legend-name { color: #c8c8d8; font-weight: 600; }
+  .legend-num  { color: #7a7a90; font-weight: 500; margin-left: 2px; }
+  svg.chart {
+    flex: 1;
+    width: 100%; min-height: 0;
+  }
+  .empty {
+    flex: 1;
+    display: flex; align-items: center; justify-content: center;
+    color: #7a7a90;
+    font-size: 12px;
+    text-align: center; padding: 20px;
+  }
+
+  /* Stream-mode toggle button (debug-only, hidden in OBS) */
+  .stream-toggle {
+    position: fixed; top: 4px; right: 4px;
+    background: rgba(20, 20, 28, 0.9);
+    border: 1px solid #333; color: #999;
+    padding: 3px 8px; font-size: 10px; border-radius: 3px;
+    cursor: pointer; opacity: 0.5;
+  }
+  .stream-toggle:hover { opacity: 1; }
+  body.solid-bg { background: #0a0a0f; }
+  body.solid-bg .chart-card { background: #14141c; }
+</style>
+</head>
+<body>
+
+<button class="stream-toggle" onclick="document.body.classList.toggle('solid-bg')">BG</button>
+
+<div class="chart-card" id="card">
+  <div class="chart-head">
+    <span class="chart-title" id="chart-title">—</span>
+    <span class="chart-meta"  id="chart-meta">—</span>
+  </div>
+  <div id="chart-area" style="flex:1; display:flex; flex-direction:column; min-height:0;">
+    <div class="empty" id="empty-msg">Waiting for selection…</div>
+  </div>
+</div>
+
+<script>
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+function fmtLap(t) {
+  if (!t || t <= 0) return '—';
+  const m = Math.floor(t/60);
+  const s = t - m*60;
+  return m ? `${m}:${s.toFixed(2).padStart(5,'0')}` : s.toFixed(2);
+}
+
+function drawChart(state) {
+  const area = document.getElementById('chart-area');
+  area.innerHTML = '';
+
+  const sel = state.selected || [];
+  if (!sel.length) {
+    area.innerHTML = '<div class="empty">No drivers selected. Pin some in the operator panel at /</div>';
+    return;
+  }
+
+  // Filter to selections that have at least one lap recorded.
+  const hasLaps = sel.filter(d => (d.laps || []).length > 0);
+  if (!hasLaps.length) {
+    area.innerHTML = '<div class="empty">Selected drivers haven\\'t completed any laps yet.</div>';
+    return;
+  }
+
+  // Compute axis ranges
+  let lapMin = Infinity, lapMax = -Infinity;
+  let valMin = Infinity, valMax = -Infinity;
+  const isPos = state.chart_type === 'position';
+  for (const d of hasLaps) {
+    for (const l of d.laps) {
+      if (l.lap < lapMin) lapMin = l.lap;
+      if (l.lap > lapMax) lapMax = l.lap;
+      const v = isPos ? l.position : l.lap_time;
+      if (v == null || v <= 0) continue;
+      if (v < valMin) valMin = v;
+      if (v > valMax) valMax = v;
+    }
+  }
+  if (!isFinite(lapMin) || !isFinite(valMin)) {
+    area.innerHTML = '<div class="empty">No usable data points yet.</div>';
+    return;
+  }
+  // Pad ranges a touch so points don't sit on the axis lines
+  if (lapMax === lapMin) lapMax = lapMin + 1;
+  let padTop, padBot;
+  if (isPos) {
+    valMin = Math.max(1, Math.floor(valMin));
+    valMax = Math.ceil(valMax);
+    padTop = padBot = 0.5;
+  } else {
+    const range = valMax - valMin || 1;
+    padTop = padBot = range * 0.08;
+  }
+
+  // SVG layout
+  const W = 572, H = 250;
+  const M = { l: 50, r: 12, t: 8, b: 28 };
+  const innerW = W - M.l - M.r;
+  const innerH = H - M.t - M.b;
+
+  // Y scale: position is INVERTED (P1 at top)
+  function xPx(lap) {
+    return M.l + ((lap - lapMin) / (lapMax - lapMin)) * innerW;
+  }
+  function yPx(val) {
+    const v0 = valMin - padBot;
+    const v1 = valMax + padTop;
+    const t = (val - v0) / (v1 - v0);
+    if (isPos) {
+      return M.t + t * innerH;          // higher number = lower on chart
+    }
+    return M.t + (1 - t) * innerH;      // higher value = higher on chart
+  }
+
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("class", "chart");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("preserveAspectRatio", "none");
+
+  // --- Y axis grid + labels ---
+  const yTicks = isPos
+    ? makeIntegerTicks(valMin, valMax, 6)
+    : makeNiceTicks(valMin - padBot, valMax + padTop, 5);
+  for (const tickVal of yTicks) {
+    const y = yPx(tickVal);
+    const line = document.createElementNS(SVG_NS, "line");
+    line.setAttribute("x1", M.l);
+    line.setAttribute("x2", W - M.r);
+    line.setAttribute("y1", y);
+    line.setAttribute("y2", y);
+    line.setAttribute("stroke", "#26262f");
+    line.setAttribute("stroke-width", "1");
+    line.setAttribute("stroke-dasharray", "2 3");
+    svg.appendChild(line);
+
+    const label = document.createElementNS(SVG_NS, "text");
+    label.setAttribute("x", M.l - 6);
+    label.setAttribute("y", y + 3);
+    label.setAttribute("fill", "#7a7a90");
+    label.setAttribute("font-size", "9");
+    label.setAttribute("text-anchor", "end");
+    label.textContent = isPos ? `P${tickVal}` : fmtLap(tickVal);
+    svg.appendChild(label);
+  }
+
+  // --- X axis labels ---
+  const xTicks = makeIntegerTicks(lapMin, lapMax, 6);
+  for (const tick of xTicks) {
+    const x = xPx(tick);
+    const label = document.createElementNS(SVG_NS, "text");
+    label.setAttribute("x", x);
+    label.setAttribute("y", H - 10);
+    label.setAttribute("fill", "#7a7a90");
+    label.setAttribute("font-size", "9");
+    label.setAttribute("text-anchor", "middle");
+    label.textContent = `L${tick}`;
+    svg.appendChild(label);
+  }
+  // Axis labels
+  const xAxisLbl = document.createElementNS(SVG_NS, "text");
+  xAxisLbl.setAttribute("x", M.l + innerW/2);
+  xAxisLbl.setAttribute("y", H - 1);
+  xAxisLbl.setAttribute("fill", "#5a5a6a");
+  xAxisLbl.setAttribute("font-size", "9");
+  xAxisLbl.setAttribute("text-anchor", "middle");
+  xAxisLbl.textContent = "LAP";
+  svg.appendChild(xAxisLbl);
+
+  // --- Lines per driver ---
+  for (const d of hasLaps) {
+    const pts = [];
+    let bestT = Infinity, bestLap = -1;
+    for (const l of d.laps) {
+      const v = isPos ? l.position : l.lap_time;
+      if (v == null || v <= 0) continue;
+      pts.push([l.lap, v, l]);
+      if (!isPos && l.lap_time && l.lap_time < bestT) {
+        bestT = l.lap_time; bestLap = l.lap;
+      }
+    }
+    if (!pts.length) continue;
+
+    // Path
+    let pathD = '';
+    if (isPos) {
+      // Step-after for position so the chart looks like a staircase
+      // (positions change at the moment the driver crosses S/F).
+      for (let i = 0; i < pts.length; i++) {
+        const [lp, vl] = pts[i];
+        const x = xPx(lp), y = yPx(vl);
+        if (i === 0) pathD += `M ${x} ${y}`;
+        else {
+          const [, vlPrev] = pts[i-1];
+          pathD += ` H ${x} V ${yPx(vl)}`;
+        }
+      }
+    } else {
+      for (let i = 0; i < pts.length; i++) {
+        const [lp, vl] = pts[i];
+        const x = xPx(lp), y = yPx(vl);
+        pathD += (i === 0 ? `M ${x} ${y}` : ` L ${x} ${y}`);
+      }
+    }
+    const line = document.createElementNS(SVG_NS, "path");
+    line.setAttribute("d", pathD);
+    line.setAttribute("fill", "none");
+    line.setAttribute("stroke", d.color);
+    line.setAttribute("stroke-width", "2");
+    line.setAttribute("stroke-linejoin", "round");
+    line.setAttribute("stroke-linecap", "round");
+    svg.appendChild(line);
+
+    // Points
+    for (const [lp, vl, lapEv] of pts) {
+      const x = xPx(lp), y = yPx(vl);
+      const isPit = !!lapEv.on_pit;
+      const isBest = !isPos && lp === bestLap;
+      const r = isBest ? 4 : 3;
+      const dot = document.createElementNS(SVG_NS, "circle");
+      dot.setAttribute("cx", x);
+      dot.setAttribute("cy", y);
+      dot.setAttribute("r", r);
+      dot.setAttribute("fill", isBest ? "#ffd166" : d.color);
+      dot.setAttribute("stroke", "#0a0a0f");
+      dot.setAttribute("stroke-width", "1");
+      svg.appendChild(dot);
+      if (isPit) {
+        // Small wrench-ish dot on top to mark a pit lap
+        const pitDot = document.createElementNS(SVG_NS, "circle");
+        pitDot.setAttribute("cx", x);
+        pitDot.setAttribute("cy", y - 8);
+        pitDot.setAttribute("r", 2);
+        pitDot.setAttribute("fill", "#ffd166");
+        svg.appendChild(pitDot);
+      }
+    }
+  }
+
+  area.appendChild(svg);
+
+  // Legend
+  const legend = document.createElement('div');
+  legend.className = 'legend';
+  for (const d of hasLaps) {
+    const item = document.createElement('span');
+    item.className = 'legend-item';
+    item.innerHTML =
+      `<span class="legend-swatch" style="background:${d.color}"></span>` +
+      `<span class="legend-name">${esc(d.name)}</span>` +
+      `<span class="legend-num">#${esc(d.car_number)}</span>`;
+    legend.appendChild(item);
+  }
+  area.appendChild(legend);
+}
+
+// "Nice" axis ticks for floating-point values (lap times).
+function makeNiceTicks(lo, hi, n) {
+  const range = hi - lo;
+  if (range <= 0) return [lo];
+  const rough = range / (n - 1);
+  const mag = Math.pow(10, Math.floor(Math.log10(rough)));
+  const norm = rough / mag;
+  let step;
+  if (norm < 1.5) step = mag;
+  else if (norm < 3) step = 2 * mag;
+  else if (norm < 7) step = 5 * mag;
+  else step = 10 * mag;
+  const start = Math.ceil(lo / step) * step;
+  const out = [];
+  for (let v = start; v <= hi + step * 0.001; v += step) out.push(v);
+  return out;
+}
+function makeIntegerTicks(lo, hi, n) {
+  const range = Math.max(1, Math.ceil(hi) - Math.floor(lo));
+  const step = Math.max(1, Math.ceil(range / (n - 1)));
+  const out = [];
+  for (let v = Math.floor(lo); v <= Math.ceil(hi); v += step) out.push(v);
+  if (out[out.length - 1] !== Math.ceil(hi)) out.push(Math.ceil(hi));
+  return out;
+}
+
+async function refresh() {
+  try {
+    const r = await fetch('/chart/state');
+    const s = await r.json();
+    document.getElementById('chart-title').textContent =
+      s.chart_type === 'position' ? 'POSITION' : 'LAP TIMES';
+    document.getElementById('chart-meta').textContent =
+      [s.track, s.session_name].filter(x => x).join(' · ');
+    drawChart(s);
+  } catch (e) { /* keep last view */ }
+  setTimeout(refresh, 1000);
+}
+refresh();
 </script>
 </body>
 </html>
