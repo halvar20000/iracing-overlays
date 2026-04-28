@@ -183,6 +183,10 @@ class RaceLogger(SDKPoller):
         self._pit_entry_t:   dict[int, float] = {}    # car_idx -> session_time entered
         self._pit_entry_lap: dict[int, int]   = {}    # car_idx -> lap when entered
         self._pit_count:     dict[int, int]   = {}    # car_idx -> total stops completed
+        # Duration of the most recent completed pit stop per car (seconds).
+        # Used by the live drivers table and the public /share/standings
+        # page to show "last pit time" without parsing the JSONL log.
+        self._last_pit_duration: dict[int, float] = {}
 
         # Flag (session-wide) tracking. Watch SessionFlags for newly-set
         # bits we care about; emit a flag event on each transition.
@@ -248,6 +252,7 @@ class RaceLogger(SDKPoller):
         self._pit_entry_t.clear()
         self._pit_entry_lap.clear()
         self._pit_count.clear()
+        self._last_pit_duration.clear()
         self._prev_session_flags = 0
         self._prev_car_session_flags.clear()
         self._lap_history.clear()
@@ -458,6 +463,7 @@ class RaceLogger(SDKPoller):
                 if duration < PIT_MIN_DURATION:
                     continue  # noise — car barely brushed pit lane
                 self._pit_count[idx] = self._pit_count.get(idx, 0) + 1
+                self._last_pit_duration[idx] = duration
                 self._emit({
                     "type":        "pit",
                     "t_session":   round(t_session, 2),
@@ -865,6 +871,7 @@ class RaceLogger(SDKPoller):
                 "overtakes":   self._overtakes_made.get(idx, 0),
                 "overtaken":   self._overtakes_against.get(idx, 0),
                 "pit_stops":   self._pit_count.get(idx, 0),
+                "last_pit_duration": self._last_pit_duration.get(idx),
             })
         # Sort: in-world cars first, then by position (unassigned cars at the bottom)
         out.sort(key=lambda r: (
@@ -1072,7 +1079,13 @@ class RaceLogger(SDKPoller):
         type. Drivers list is sanitized — keeps unique valid car_idx
         ints, capped at CHART_MAX_SELECTED to avoid clutter.
         """
-        if chart_type in ("laptime", "position"):
+        # Allowed chart types must match what the renderer can draw —
+        # see /chart/render and the share-side _parse_share_params(),
+        # both of which already accept "gap" (gap-to-leader). The
+        # operator's local picker had a stale allowlist that silently
+        # dropped "gap" requests, so the button on the live monitor
+        # appeared inert. Keep this list in sync with the renderer.
+        if chart_type in ("laptime", "position", "gap"):
             self._chart_type = chart_type
         if isinstance(drivers, list):
             clean: list[int] = []
@@ -1312,6 +1325,9 @@ def share_standings_data():
             "in_world":     r["in_world"],
             "incidents":    r["incidents"],
             "pit_stops":    r["pit_stops"],
+            "overtakes":    r.get("overtakes", 0),
+            "overtaken":    r.get("overtaken", 0),
+            "last_pit_duration": r.get("last_pit_duration"),
         })
     return jsonify({
         "track":        poller._log_session_meta.get("track", ""),
@@ -3180,11 +3196,13 @@ SHARE_STANDINGS_HTML = """
   h1 { font-size: 16px; color: #ff6b35; letter-spacing: 1px; font-weight: 800; }
   .meta { font-size: 11px; color: #7a7a90; margin-top: 4px; }
 
+  .wrap { max-width: 920px; }
   .row {
+    /* POS | # | DRIVER | LAST | BEST | GAP | INC | +/- | PIT TIME */
     display: grid;
-    grid-template-columns: 38px 50px 1fr 84px 84px 70px 36px;
+    grid-template-columns: 36px 46px 1fr 78px 78px 64px 38px 44px 64px;
     align-items: center;
-    padding: 7px 12px;
+    padding: 7px 10px;
     border-bottom: 1px solid #1d1d27;
     font-size: 13px;
   }
@@ -3192,7 +3210,7 @@ SHARE_STANDINGS_HTML = """
     background: #1b1b26;
     font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
     color: #7a7a90; font-weight: 800;
-    padding: 8px 12px;
+    padding: 8px 10px;
   }
   .pos { font-weight: 800; font-size: 15px; color: #fff; text-align: center; }
   .pos.p1 { color: #ffd166; }
@@ -3212,26 +3230,43 @@ SHARE_STANDINGS_HTML = """
     display: block; font-size: 10px; color: #7a7a90; font-weight: 500;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
+  .name .pit-flag {
+    display: inline-block;
+    background: #3a1a1a; color: #ff8888; border: 1px solid #5c2a2a;
+    padding: 0 5px; border-radius: 3px;
+    font-size: 9px; font-weight: 800;
+    margin-left: 6px; vertical-align: middle;
+  }
   .time { text-align: right; color: #c8c8d8; }
   .best { text-align: right; color: #ffd166; font-weight: 600; }
   .gap  { text-align: right; color: #c8c8d8; font-weight: 600; }
-  .pit-flag {
-    background: #3a1a1a; color: #ff8888; border: 1px solid #5c2a2a;
-    padding: 1px 5px; border-radius: 3px;
-    font-size: 9px; font-weight: 800;
-    text-align: center;
-  }
+  .inc  { text-align: right; color: #ff9f5a; font-weight: 600; }
+  .ot   { text-align: right; font-weight: 700; font-size: 12px; }
+  .ot.up   { color: #4ade80; }
+  .ot.down { color: #f87171; }
+  .ot.flat { color: #6a6a78; }
+  .pit-time { text-align: right; color: #c8a8ff; font-weight: 600; font-size: 12px; }
+
   .row.out { opacity: 0.4; }
   .empty { padding: 60px 20px; text-align: center; color: #7a7a90; font-size: 12px; }
 
-  /* Mobile tightening */
-  @media (max-width: 540px) {
+  /* Mid-size: drop pit-time column */
+  @media (max-width: 760px) {
     .row {
-      grid-template-columns: 32px 44px 1fr 70px 70px 60px;
+      grid-template-columns: 34px 42px 1fr 70px 70px 60px 36px 40px;
       padding: 6px 10px;
       font-size: 12px;
     }
-    .row > .pit-col { display: none; }
+    .col-pit-time { display: none; }
+  }
+  /* Mobile: also drop +/- and INC */
+  @media (max-width: 540px) {
+    .row {
+      grid-template-columns: 30px 40px 1fr 64px 64px 56px;
+      padding: 6px 8px;
+      font-size: 12px;
+    }
+    .col-inc, .col-ot, .col-pit-time { display: none; }
   }
 </style>
 </head>
@@ -3250,7 +3285,9 @@ SHARE_STANDINGS_HTML = """
       <div style="text-align:right;">LAST LAP</div>
       <div style="text-align:right;">BEST</div>
       <div style="text-align:right;">GAP</div>
-      <div class="pit-col" style="text-align:center;">PIT</div>
+      <div class="col-inc" style="text-align:right;" title="Incidents">INC</div>
+      <div class="col-ot" style="text-align:right;" title="Positions gained / lost">+/&minus;</div>
+      <div class="col-pit-time" style="text-align:right;" title="Last pit-stop duration">PIT TIME</div>
     </div>
     <div id="rows"><div class="empty">Waiting for race data…</div></div>
   </div>
@@ -3276,6 +3313,21 @@ function fmtGap(g) {
   const m = Math.floor(g/60); const s = g - m*60;
   return `+${m}:${s.toFixed(2).padStart(5,'0')}`;
 }
+function fmtPitDur(t) {
+  if (t == null || t <= 0) return '—';
+  // Pit stops are typically 20-90 seconds. Show with one decimal.
+  if (t < 60) return t.toFixed(1) + 's';
+  const m = Math.floor(t/60); const s = t - m*60;
+  return `${m}:${s.toFixed(1).padStart(4,'0')}`;
+}
+function fmtOvertakes(up, down) {
+  // Net positions gained/lost — green up arrow, red down arrow,
+  // grey dash if neither.
+  const net = (up || 0) - (down || 0);
+  if (net > 0) return `<span class="ot up">▲${net}</span>`;
+  if (net < 0) return `<span class="ot down">▼${-net}</span>`;
+  return `<span class="ot flat">—</span>`;
+}
 
 async function refresh() {
   try {
@@ -3297,15 +3349,20 @@ async function refresh() {
                        r.position === 3 ? 'p3' : '';
         const rowCls = !r.in_world ? 'out' : '';
         const sub = [r.car_class, r.car].filter(x => x).join(' · ');
+        const pitFlag = r.on_pit ? '<span class="pit-flag">PIT</span>' : '';
+        const inc = (r.incidents != null && r.incidents > 0)
+          ? `${r.incidents}x` : '0x';
         html += `
           <div class="row ${rowCls}">
             <div class="pos ${posCls}">${r.position || '—'}</div>
             <div><span class="num">#${esc(r.car_number || '—')}</span></div>
-            <div class="name">${esc(r.name || '—')}${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</div>
+            <div class="name">${esc(r.name || '—')}${pitFlag}${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</div>
             <div class="time">${fmtLap(r.last_lap)}</div>
             <div class="best">${fmtLap(r.best_lap)}</div>
             <div class="gap">${fmtGap(r.gap_to_leader)}</div>
-            <div class="pit-col" style="text-align:center;">${r.on_pit ? '<span class="pit-flag">PIT</span>' : ''}</div>
+            <div class="inc col-inc">${inc}</div>
+            <div class="col-ot">${fmtOvertakes(r.overtakes, r.overtaken)}</div>
+            <div class="pit-time col-pit-time">${fmtPitDur(r.last_pit_duration)}</div>
           </div>`;
       }
       rowsEl.innerHTML = html;

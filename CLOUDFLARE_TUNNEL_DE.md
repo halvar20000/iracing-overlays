@@ -98,54 +98,116 @@ Befehl laufen lässt.
 
 ---
 
-## Schritt 3 (optional) — Stabile URL mit eigener Domain
+## Schritt 3 — Stabile URL mit eigener Domain (empfohlen)
 
-Wenn Du eine **gleichbleibende URL** willst (statt jedes Mal eine neue
-zufällige), brauchst Du:
+Wenn Du **immer dieselbe URL** zum Teilen willst (statt jedes Mal eine
+neue zufällige Quick-Tunnel-URL), und Du eine eigene Domain hast die
+schon bei Cloudflare verwaltet wird, ist die Einrichtung in ~10 Minuten
+erledigt.
 
-- Ein kostenloses Cloudflare-Konto: <https://dash.cloudflare.com/sign-up>
-- Eine eigene Domain (z.B. `simracing-hub.com` — die hast Du ja
-  sowieso!) bei Cloudflare verwaltet
+> 💡 **Wenn Du bereits `simracing-hub.com` bei Cloudflare hast** (was
+> ja der Fall ist), kannst Du direkt loslegen. Wir verwenden hier
+> als Beispiel die Subdomain `livedata.simracing-hub.com`.
 
-Dann:
+### 3a. Bei Cloudflare einloggen
 
-1. `cloudflared tunnel login` — öffnet Deinen Browser, Du loggst Dich
-   bei Cloudflare ein, autorisierst.
-2. `cloudflared tunnel create iracing-stream` — erzeugt einen neuen
-   Tunnel.
-3. Erstelle eine Konfigurations-Datei `~/.cloudflared/config.yml`
-   (typischerweise `C:\Users\<Du>\.cloudflared\config.yml`):
+```bat
+C:\Tools\cloudflared.exe tunnel login
+```
 
-   ```yaml
-   tunnel: iracing-stream
-   credentials-file: C:\Users\<Du>\.cloudflared\<UUID>.json
+Es öffnet sich Dein Browser. Logge Dich bei Cloudflare ein, wähle
+**simracing-hub.com** aus der Liste, klicke "**Authorize**". Damit wird
+ein Zertifikat in `C:\Users\<Du>\.cloudflared\cert.pem` gespeichert.
 
-   ingress:
-     # Nur die /share/* Pfade öffentlich freigeben
-     - hostname: live.simracing-hub.com
-       path: /share/.*
-       service: http://localhost:5009
-     # Alles andere abblocken
-     - service: http_status:404
-   ```
+### 3b. Tunnel erzeugen
 
-4. DNS-Eintrag erstellen:
-   ```
-   cloudflared tunnel route dns iracing-stream live.simracing-hub.com
-   ```
+```bat
+C:\Tools\cloudflared.exe tunnel create iracing-livedata
+```
 
-5. Tunnel starten:
-   ```
-   cloudflared tunnel run iracing-stream
-   ```
+Du bekommst eine Ausgabe wie:
+```
+Tunnel credentials written to C:\Users\<Du>\.cloudflared\<UUID>.json
+Created tunnel iracing-livedata with id <UUID>
+```
 
-6. Jetzt ist die Live-Chart-Seite immer unter
-   <https://live.simracing-hub.com/share/chart> erreichbar — solange
-   der Tunnel läuft.
+**Notiere die UUID** — Du brauchst sie gleich für die Config-Datei.
 
-> 💡 **Tipp:** Du kannst den Tunnel auch als Windows-Dienst
-> installieren, damit er automatisch startet:
-> `cloudflared service install`
+### 3c. DNS-Eintrag automatisch anlegen
+
+```bat
+C:\Tools\cloudflared.exe tunnel route dns iracing-livedata livedata.simracing-hub.com
+```
+
+Cloudflare legt automatisch einen CNAME-Eintrag an, der
+`livedata.simracing-hub.com` auf den Tunnel zeigt. Du kannst das im
+Cloudflare-Dashboard unter **simracing-hub.com → DNS → Records**
+prüfen — sollte ein neuer CNAME für `livedata` auftauchen.
+
+### 3d. Konfigurations-Datei erstellen
+
+Öffne Notepad und speichere folgenden Inhalt unter
+`C:\Users\<Du>\.cloudflared\config.yml` (UUID anpassen):
+
+```yaml
+tunnel: <UUID-aus-3b>
+credentials-file: C:\Users\<Du>\.cloudflared\<UUID-aus-3b>.json
+
+ingress:
+  - hostname: livedata.simracing-hub.com
+    service: http://localhost:5009
+  - service: http_status:404
+```
+
+> Anmerkung: Wir routen alle Pfade unter `livedata.simracing-hub.com`
+> an den Race Logger. Die `/share/*`-Beschränkung wird vom Race Logger
+> selbst durchgesetzt (über den `Cf-Ray`-Header), nicht im Tunnel.
+> Doppelt abgesichert.
+
+### 3e. Tunnel testen
+
+```bat
+C:\Tools\cloudflared.exe tunnel run iracing-livedata
+```
+
+Öffne in einem Browser (auch gerne vom Handy):
+**<https://livedata.simracing-hub.com/share/chart>**
+
+Funktioniert? → Strg+C im cmd-Fenster, weiter zu Schritt 3f.
+
+### 3f. Als Windows-Dienst installieren (auto-start beim Boot)
+
+Damit der Tunnel automatisch beim Hochfahren startet — Du musst dann
+nie mehr daran denken:
+
+```bat
+C:\Tools\cloudflared.exe service install
+```
+
+Prüfen kannst Du es unter **Win+R → services.msc**, suche nach
+"Cloudflared agent" — sollte auf "Automatisch" stehen und laufen.
+
+Wenn Du den Dienst mal stoppen willst:
+```bat
+sc stop cloudflared
+```
+…oder über das Services-Fenster.
+
+### 3g. Permanente URLs zum Teilen
+
+Ab jetzt sind diese URLs **immer erreichbar**, solange Dein Sim-PC
+läuft und cloudflared als Dienst aktiv ist:
+
+```
+https://livedata.simracing-hub.com/share/chart
+https://livedata.simracing-hub.com/share/standings
+```
+
+Mit vorgewählten Fahrern (für einen Klick im Twitch-Chat):
+```
+https://livedata.simracing-hub.com/share/chart?drivers=11,23,45&type=gap
+https://livedata.simracing-hub.com/share/chart?drivers=11,23&type=laptime
+```
 
 ---
 
