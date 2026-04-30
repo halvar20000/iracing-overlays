@@ -1601,7 +1601,35 @@ class TelemetryPoller:
             self.ir.replay_search(irsdk.RpySrchMode.to_end)
             # Make sure playback is at 1x (not paused or slow-mo).
             self.ir.replay_set_play_speed(1, False)
+            self._reassert_ui_hide()
             return True, "ok"
+        except Exception as e:
+            return False, str(e)
+
+    def set_play_speed(self, speed: int, slow: bool = False):
+        """Set the iRacing replay play speed.
+
+        Speed conventions follow iRacing's `replay_set_play_speed`:
+          0    = paused
+          1    = play at normal speed
+         -N    = rewind at N× (e.g. -2 = 2× rewind)
+          N>1  = fast-forward at N× (e.g. 4 = 4× fast-forward)
+        `slow=True` puts iRacing in slow-motion mode where speed acts
+        as a divisor (e.g. speed=2 slow=True = half speed).
+
+        Always re-asserts the HUD-hidden state afterwards: every call to
+        `replay_set_play_speed` causes iRacing to re-show its broadcast
+        HUD if it was hidden by the user (spacebar). We mirror what the
+        camera-switching code does — re-press spacebar in a tiny
+        delayed thread when poller.iracing_ui_hidden is True.
+        """
+        if not self.connected:
+            return False, "not connected"
+        try:
+            speed = int(speed)
+            self.ir.replay_set_play_speed(speed, bool(slow))
+            self._reassert_ui_hide()
+            return True, f"speed={speed}{' slow' if slow else ''}"
         except Exception as e:
             return False, str(e)
 
@@ -1791,6 +1819,39 @@ DASHBOARD_HTML = """
     .live-pill.rewind .live-dot,
     .live-pill.fast_forward .live-dot,
     .live-pill.slow_motion .live-dot { background: #60a5fa; }
+
+    /* Replay control buttons in the playback block */
+    .rp-controls {
+        display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px;
+    }
+    .rp-btn {
+        background: #1f1f2a;
+        color: #c0c0d0;
+        border: 1px solid #333;
+        padding: 6px 9px;
+        font-size: 12px;
+        font-weight: 600;
+        font-family: inherit;
+        border-radius: 4px;
+        cursor: pointer;
+        min-width: 36px;
+        transition: background .15s, color .15s, border-color .15s;
+    }
+    .rp-btn:hover {
+        background: #2b2b3a;
+        color: #fff;
+        border-color: #555;
+    }
+    .rp-btn:active { transform: translateY(1px); }
+    .rp-btn-primary {
+        background: #2d5d3f; color: #d8f3dc; border-color: #4ade80;
+    }
+    .rp-btn-primary:hover { background: #3a7350; color: #fff; }
+    .rp-btn-live {
+        background: #5a1818; color: #ff8888; border-color: #b83232;
+        font-weight: 800;
+    }
+    .rp-btn-live:hover { background: #7a2424; color: #fff; }
 
     /* Floating controls (top-right, always on top) */
     .floating-controls {
@@ -2110,6 +2171,19 @@ DASHBOARD_HTML = """
             <span class="live-dot"></span>
             <span id="live-text">—</span>
         </div>
+        <!-- Replay control buttons. Each press calls /playback which
+             also re-asserts the HUD-hidden state, so iRacing's
+             broadcast UI doesn't pop up while the user is recording
+             video clips of the replay. -->
+        <div class="rp-controls">
+            <button class="rp-btn" onclick="setPlay(-2)"  title="Rewind 2×">◀◀ 2×</button>
+            <button class="rp-btn" onclick="setPlay(-1)"  title="Rewind 1×">◀</button>
+            <button class="rp-btn" onclick="setPlay(0)"   title="Pause">❚❚</button>
+            <button class="rp-btn rp-btn-primary" onclick="setPlay(1)" title="Play 1×">▶</button>
+            <button class="rp-btn" onclick="setPlay(2)"   title="Fast forward 2×">▶▶ 2×</button>
+            <button class="rp-btn" onclick="setPlay(4)"   title="Fast forward 4×">4×</button>
+            <button class="rp-btn rp-btn-live" onclick="goLive()" title="Jump to live">LIVE</button>
+        </div>
     </div>
 </div>
 
@@ -2218,13 +2292,33 @@ async function hideIracingUI() {
 // --- go live (jump playback to end of replay buffer = live) ----------------
 async function goLive() {
     const btn = document.getElementById("go-live-btn");
-    btn.classList.add("flash");
+    if (btn) btn.classList.add("flash");
     try {
         const r = await fetch("/go_live", { method: "POST" });
         const d = await r.json();
-        if (!d.ok) { console.warn("go live:", d.message); btn.title = "Failed: " + d.message; }
+        if (!d.ok) {
+            console.warn("go live:", d.message);
+            if (btn) btn.title = "Failed: " + d.message;
+        }
     } catch (e) { console.error(e); }
-    setTimeout(() => btn.classList.remove("flash"), 300);
+    if (btn) setTimeout(() => btn.classList.remove("flash"), 300);
+}
+
+// Replay-control buttons in the playback strip. Each call posts to
+// /playback which on the server side: (1) calls iRacing's
+// replay_set_play_speed with the integer speed (negative = rewind,
+// 0 = pause, 1 = play, >1 = fast-forward), then (2) re-asserts the
+// HUD-hidden state so iRacing's broadcast UI doesn't pop up after
+// every press. Use slow=true for slow-motion (not exposed via the
+// dashboard buttons today, but the endpoint accepts it).
+async function setPlay(speed, slow) {
+    try {
+        await fetch("/playback", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ speed: speed, slow: !!slow }),
+        });
+    } catch (e) { console.error("setPlay:", e); }
 }
 
 // --- starred set -----------------------------------------------------------
@@ -2793,6 +2887,29 @@ def replay_5s():
 @app.route("/go_live", methods=["POST"])
 def go_live():
     ok, msg = poller.go_live()
+    return jsonify({"ok": ok, "message": msg})
+
+
+@app.route("/playback", methods=["POST"])
+def playback():
+    """Replay-control button endpoint. Body:
+        {"speed": <int>, "slow": <bool>}
+    Speed convention follows iRacing's replay_set_play_speed:
+        0   = pause
+        1   = play 1×
+       -N   = rewind at N× (negative)
+        N   = fast-forward at N× (positive integer >1)
+    Each call also re-asserts the HUD-hidden state so the iRacing
+    broadcast UI doesn't pop up after every press.
+    """
+    payload = request.get_json(silent=True) or {}
+    speed = payload.get("speed", 1)
+    slow  = bool(payload.get("slow", False))
+    try:
+        speed = int(speed)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "speed must be int"}), 400
+    ok, msg = poller.set_play_speed(speed, slow)
     return jsonify({"ok": ok, "message": msg})
 
 
