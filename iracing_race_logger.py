@@ -187,6 +187,13 @@ class RaceLogger(SDKPoller):
         # Used by the live drivers table and the public /share/standings
         # page to show "last pit time" without parsing the JSONL log.
         self._last_pit_duration: dict[int, float] = {}
+        # First session-rank we ever observed for each driver (rank by
+        # best-lap time, set the first tick they have a valid lap). Used
+        # in practice/qualifying to show "improved by N positions
+        # since you joined / since your first hot lap" without needing
+        # iRacing's race-style CarIdxPosition (which is meaningless in
+        # a hot-lap session).
+        self._first_session_rank: dict[int, int] = {}
 
         # Flag (session-wide) tracking. Watch SessionFlags for newly-set
         # bits we care about; emit a flag event on each transition.
@@ -253,6 +260,7 @@ class RaceLogger(SDKPoller):
         self._pit_entry_lap.clear()
         self._pit_count.clear()
         self._last_pit_duration.clear()
+        self._first_session_rank.clear()
         self._prev_session_flags = 0
         self._prev_car_session_flags.clear()
         self._lap_history.clear()
@@ -872,12 +880,53 @@ class RaceLogger(SDKPoller):
                 "overtaken":   self._overtakes_against.get(idx, 0),
                 "pit_stops":   self._pit_count.get(idx, 0),
                 "last_pit_duration": self._last_pit_duration.get(idx),
+                # session_rank / gap_to_session_best / session_position_delta
+                # are filled in below, once we've sorted everyone by
+                # best lap time.
+                "session_rank":            0,
+                "session_best_lap":        None,
+                "gap_to_session_best":     None,
+                "first_session_rank":      None,
+                "session_position_delta":  0,
             })
-        # Sort: in-world cars first, then by position (unassigned cars at the bottom)
-        out.sort(key=lambda r: (
-            0 if r["in_world"] else 1,
-            r["position"] if r["position"] > 0 else 9999,
-        ))
+
+        # ---- Per-session ranking (useful in practice / qualifying) ----------
+        # Rank drivers by best lap time. Drivers with no lap time set are
+        # unranked (session_rank == 0). The fastest driver becomes rank 1
+        # and is the reference for gap_to_session_best.
+        ranked = [r for r in out if r["best_lap"] and r["best_lap"] > 0]
+        ranked.sort(key=lambda r: r["best_lap"])
+        session_best = ranked[0]["best_lap"] if ranked else None
+        for rank_idx, r in enumerate(ranked, start=1):
+            r["session_rank"]        = rank_idx
+            r["session_best_lap"]    = session_best
+            r["gap_to_session_best"] = max(0.0, r["best_lap"] - session_best)
+            # First time we've seen this driver with a valid lap time?
+            # Stamp the rank they entered the leaderboard at, so we can
+            # later compute "positions gained since first hot lap".
+            cidx = r["car_idx"]
+            if cidx not in self._first_session_rank:
+                self._first_session_rank[cidx] = rank_idx
+            r["first_session_rank"] = self._first_session_rank[cidx]
+            # Positive delta = gained positions, negative = lost.
+            r["session_position_delta"] = (
+                self._first_session_rank[cidx] - rank_idx
+            )
+        # Sort: in-world cars first, then by position (unassigned cars
+        # at the bottom). Race sessions populate position correctly so
+        # this is the right order. In practice / qualifying iRacing's
+        # CarIdxPosition can be zero or stale — fall back to
+        # session_rank (best-lap order) so the fastest driver appears
+        # at the top, which is what viewers expect.
+        def _sort_key(r):
+            if r["position"] and r["position"] > 0:
+                primary = r["position"]
+            elif r["session_rank"] and r["session_rank"] > 0:
+                primary = r["session_rank"]
+            else:
+                primary = 9999
+            return (0 if r["in_world"] else 1, primary)
+        out.sort(key=_sort_key)
         return out
 
     # ----- incident polling thread ---------------------------------------
@@ -1328,6 +1377,11 @@ def share_standings_data():
             "overtakes":    r.get("overtakes", 0),
             "overtaken":    r.get("overtaken", 0),
             "last_pit_duration": r.get("last_pit_duration"),
+            # Practice / qualifying-friendly extras
+            "session_rank":           r.get("session_rank", 0),
+            "session_best_lap":       r.get("session_best_lap"),
+            "gap_to_session_best":    r.get("gap_to_session_best"),
+            "session_position_delta": r.get("session_position_delta", 0),
         })
     return jsonify({
         "track":        poller._log_session_meta.get("track", ""),
@@ -3278,16 +3332,16 @@ SHARE_STANDINGS_HTML = """
     <div class="meta" id="meta">connecting…</div>
   </div>
   <div class="card" style="padding: 0;">
-    <div class="row head">
+    <div class="row head" id="header-row">
       <div>POS</div>
       <div>#</div>
       <div>DRIVER</div>
       <div style="text-align:right;">LAST LAP</div>
       <div style="text-align:right;">BEST</div>
-      <div style="text-align:right;">GAP</div>
-      <div class="col-inc" style="text-align:right;" title="Incidents">INC</div>
-      <div class="col-ot" style="text-align:right;" title="Positions gained / lost">+/&minus;</div>
-      <div class="col-pit-time" style="text-align:right;" title="Last pit-stop duration">PIT TIME</div>
+      <div style="text-align:right;" id="hdr-gap">GAP</div>
+      <div class="col-inc" style="text-align:right;" id="hdr-extra1" title="Incidents">INC</div>
+      <div class="col-ot" style="text-align:right;" id="hdr-extra2" title="Positions gained / lost">+/&minus;</div>
+      <div class="col-pit-time" style="text-align:right;" id="hdr-extra3" title="Last pit-stop duration">PIT TIME</div>
     </div>
     <div id="rows"><div class="empty">Waiting for race data…</div></div>
   </div>
@@ -3329,6 +3383,15 @@ function fmtOvertakes(up, down) {
   return `<span class="ot flat">—</span>`;
 }
 
+function fmtPosDelta(d) {
+  // Practice/quali: delta from first observed session-rank.
+  // +N green ▲ = climbed N spots; -N red ▼ = dropped; 0 grey dash.
+  const n = d || 0;
+  if (n > 0) return `<span class="ot up">▲${n}</span>`;
+  if (n < 0) return `<span class="ot down">▼${-n}</span>`;
+  return `<span class="ot flat">—</span>`;
+}
+
 async function refresh() {
   try {
     const r = await fetch('/share/standings/data');
@@ -3337,6 +3400,39 @@ async function refresh() {
       [d.track, d.track_config].filter(x => x).join(' — ') || 'Live Standings';
     document.getElementById('meta').textContent =
       d.session_name || d.session_type || 'Waiting…';
+
+    // Session-type-aware column relabelling.
+    // Race: GAP column = gap to leader; extras = INC, +/-, PIT TIME.
+    // Practice / Qualifying: GAP column = gap to fastest session lap;
+    // extras = LAPS (laps completed), Δ POS (positions gained since
+    // first hot lap). Pit-time and incidents aren't meaningful enough
+    // in non-race sessions to justify the column space.
+    const stype = (d.session_type || '').toLowerCase();
+    const isRace = stype.includes('race');
+    const hdrGap = document.getElementById('hdr-gap');
+    const hdrE1  = document.getElementById('hdr-extra1');
+    const hdrE2  = document.getElementById('hdr-extra2');
+    const hdrE3  = document.getElementById('hdr-extra3');
+    if (isRace) {
+      hdrGap.textContent = 'GAP';
+      hdrGap.title = 'Gap to leader (race)';
+      hdrE1.textContent = 'INC';
+      hdrE1.title = 'Incident points';
+      hdrE2.innerHTML = '+/&minus;';
+      hdrE2.title = 'Positions gained / lost';
+      hdrE3.textContent = 'PIT TIME';
+      hdrE3.title = 'Last pit-stop duration';
+    } else {
+      hdrGap.textContent = 'GAP';
+      hdrGap.title = 'Gap to fastest session lap';
+      hdrE1.textContent = 'LAPS';
+      hdrE1.title = 'Laps completed in this session';
+      hdrE2.innerHTML = 'Δ POS';
+      hdrE2.title = 'Positions gained since first hot lap';
+      hdrE3.textContent = '';
+      hdrE3.title = '';
+    }
+
     const rowsEl = document.getElementById('rows');
     const drivers = d.drivers || [];
     if (!drivers.length) {
@@ -3344,25 +3440,47 @@ async function refresh() {
     } else {
       let html = '';
       for (const r of drivers) {
-        const posCls = r.position === 1 ? 'p1' :
-                       r.position === 2 ? 'p2' :
-                       r.position === 3 ? 'p3' : '';
+        // For race rows we show iRacing's CarIdxPosition. In quali /
+        // practice that's stale or zero, so we show session_rank
+        // (rank by best lap time) instead.
+        const displayPos = isRace
+          ? (r.position || '—')
+          : (r.session_rank || '—');
+        const posCls = displayPos === 1 ? 'p1' :
+                       displayPos === 2 ? 'p2' :
+                       displayPos === 3 ? 'p3' : '';
         const rowCls = !r.in_world ? 'out' : '';
         const sub = [r.car_class, r.car].filter(x => x).join(' · ');
         const pitFlag = r.on_pit ? '<span class="pit-flag">PIT</span>' : '';
+
+        // Choose the appropriate gap value per session type.
+        const gapVal = isRace ? r.gap_to_leader : r.gap_to_session_best;
+
+        // Extras: INC + overtakes + pit-time for race;
+        //         laps + position-delta + (blank) for quali / practice.
         const inc = (r.incidents != null && r.incidents > 0)
           ? `${r.incidents}x` : '0x';
+        const extra1 = isRace
+          ? `<div class="inc col-inc">${inc}</div>`
+          : `<div class="inc col-inc">${r.lap || 0}</div>`;
+        const extra2 = isRace
+          ? `<div class="col-ot">${fmtOvertakes(r.overtakes, r.overtaken)}</div>`
+          : `<div class="col-ot">${fmtPosDelta(r.session_position_delta)}</div>`;
+        const extra3 = isRace
+          ? `<div class="pit-time col-pit-time">${fmtPitDur(r.last_pit_duration)}</div>`
+          : `<div class="pit-time col-pit-time"></div>`;
+
         html += `
           <div class="row ${rowCls}">
-            <div class="pos ${posCls}">${r.position || '—'}</div>
+            <div class="pos ${posCls}">${displayPos}</div>
             <div><span class="num">#${esc(r.car_number || '—')}</span></div>
             <div class="name">${esc(r.name || '—')}${pitFlag}${sub ? `<span class="sub">${esc(sub)}</span>` : ''}</div>
             <div class="time">${fmtLap(r.last_lap)}</div>
             <div class="best">${fmtLap(r.best_lap)}</div>
-            <div class="gap">${fmtGap(r.gap_to_leader)}</div>
-            <div class="inc col-inc">${inc}</div>
-            <div class="col-ot">${fmtOvertakes(r.overtakes, r.overtaken)}</div>
-            <div class="pit-time col-pit-time">${fmtPitDur(r.last_pit_duration)}</div>
+            <div class="gap">${fmtGap(gapVal)}</div>
+            ${extra1}
+            ${extra2}
+            ${extra3}
           </div>`;
       }
       rowsEl.innerHTML = html;
