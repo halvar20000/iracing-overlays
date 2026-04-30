@@ -194,6 +194,13 @@ class RaceLogger(SDKPoller):
         # iRacing's race-style CarIdxPosition (which is meaningless in
         # a hot-lap session).
         self._first_session_rank: dict[int, int] = {}
+        # Chart-history tracker (separate from the race-only
+        # _last_lap_seen / _maybe_emit_laps pipeline). This one runs
+        # every poll regardless of session type so the live chart works
+        # in practice and qualifying too. Reset whenever the session
+        # changes (track or session number).
+        self._chart_last_lap_seen: dict[int, int] = {}
+        self._chart_session_key: tuple | None = None
 
         # Flag (session-wide) tracking. Watch SessionFlags for newly-set
         # bits we care about; emit a flag event on each transition.
@@ -626,6 +633,71 @@ class RaceLogger(SDKPoller):
         except Exception as e:
             print(f"[logger] pos write error: {e!r}")
 
+    # ----- chart history (always on; race + practice + qualifying) -------
+    def _update_chart_history(self, session_key) -> None:
+        """Maintain `_chart_lap_data` regardless of session type. The
+        race-only `_maybe_emit_laps` writes to the JSONL file and to
+        chart history, but only fires while a log is open. This method
+        runs every poll so the live chart works in practice and
+        qualifying too. It uses `_chart_last_lap_seen` so it doesn't
+        conflict with the race-emission tracker.
+        """
+        ir = self.ir
+        # Reset chart state whenever the session itself changes (track
+        # swap, qualifying -> race, etc). Without this, a previous
+        # session's lap history bleeds into the next.
+        if session_key is not None and session_key != self._chart_session_key:
+            self._chart_lap_data.clear()
+            self._chart_last_lap_seen.clear()
+            self._first_session_rank.clear()
+            # Don't wipe _chart_colors — they're stable per car_idx
+            # which is consistent across sessions in the same week.
+            self._chart_session_key = session_key
+
+        info = ir["DriverInfo"] or {}
+        drivers_raw = info.get("Drivers", []) or []
+        lap_arr   = ir["CarIdxLap"] or []
+        last_lap_t= ir["CarIdxLastLapTime"] or []
+        on_pit    = ir["CarIdxOnPitRoad"] or []
+        cls_pos   = ir["CarIdxClassPosition"] or []
+        ovr_pos   = ir["CarIdxPosition"] or []
+
+        for d in drivers_raw:
+            idx = d.get("CarIdx")
+            if idx is None:
+                continue
+            if d.get("CarIsPaceCar") == 1 or d.get("IsSpectator") == 1:
+                continue
+            # Lazy color assignment so quali / practice drivers get a
+            # color the first time we see them (race opens a fresh
+            # color set in _open_log; this fills in for non-race).
+            if idx not in self._chart_colors:
+                # Pick the next free palette slot deterministically by
+                # current count, so a 1-driver session uses palette[0],
+                # a 5-driver session uses palette[0..4], and so on.
+                self._chart_colors[idx] = CHART_PALETTE[
+                    len(self._chart_colors) % len(CHART_PALETTE)
+                ]
+
+            if idx >= len(lap_arr):
+                continue
+            cur_lap = lap_arr[idx]
+            if cur_lap is None:
+                continue
+            prev = self._chart_last_lap_seen.get(idx)
+            self._chart_last_lap_seen[idx] = cur_lap
+            if prev is None:
+                continue  # first observation — no completion to log
+            if cur_lap > prev:
+                lt = last_lap_t[idx] if idx < len(last_lap_t) else 0.0
+                self._chart_lap_data.setdefault(idx, []).append({
+                    "lap":       int(prev),
+                    "lap_time":  float(lt) if lt and lt > 0 else None,
+                    "position":  int(ovr_pos[idx]) if idx < len(ovr_pos) else 0,
+                    "class_pos": int(cls_pos[idx]) if idx < len(cls_pos) else 0,
+                    "on_pit":    bool(on_pit[idx]) if idx < len(on_pit) else False,
+                })
+
     # ----- lap-completion detection --------------------------------------
     def _maybe_emit_laps(self) -> None:
         if self._log_fp is None:
@@ -690,16 +762,10 @@ class RaceLogger(SDKPoller):
                 self._emit(event)
                 self._laps_logged += 1
 
-                # Append to the chart's per-driver history. Kept for the
-                # full race (not bounded), so charts can plot the entire
-                # lap-time progression.
-                self._chart_lap_data.setdefault(idx, []).append({
-                    "lap":       int(prev),
-                    "lap_time":  event["lap_time"],
-                    "position":  event["position"],
-                    "class_pos": event["class_pos"],
-                    "on_pit":    event["on_pit"],
-                })
+                # Chart history is now maintained by _update_chart_history
+                # which runs every poll regardless of session type. The
+                # old "append here too" path duplicated each lap entry,
+                # so it's been removed.
 
                 # Slow-lap detection. Skip pit laps (they're naturally
                 # slow because of pit-lane time) and the first couple
@@ -995,6 +1061,12 @@ class RaceLogger(SDKPoller):
 
         session_key, session_type, meta = self._detect_session_change()
 
+        # The chart history is always updated, regardless of session type,
+        # so the live chart on /chart/render and /share/chart works in
+        # practice and qualifying — not just races. Must come BEFORE the
+        # not-a-race early-return below.
+        self._update_chart_history(session_key)
+
         # Only log RACE sessions. Practice/quali/warmup get skipped.
         is_race = "race" in session_type.lower()
 
@@ -1100,11 +1172,34 @@ class RaceLogger(SDKPoller):
         """Build the JSON payload the chart-render page polls.
         Includes the operator's selection plus the full lap history per
         selected driver so the chart can render without further fetches.
+        Falls back to live SDK driver info when _log_session_meta is
+        empty (i.e., outside a race session) so the chart still has
+        names + numbers in practice / qualifying.
         """
         drivers_meta = {
             d["car_idx"]: d
             for d in self._log_session_meta.get("drivers", [])
         }
+        # Fallback: read DriverInfo straight from the SDK if our race
+        # meta is empty. Same shape (car_idx, car_number, name) as
+        # _build_session_drivers so downstream code doesn't care which
+        # source served it.
+        if not drivers_meta:
+            try:
+                info = self.ir["DriverInfo"] or {}
+                for d in info.get("Drivers", []) or []:
+                    cidx = d.get("CarIdx")
+                    if cidx is None:
+                        continue
+                    if d.get("CarIsPaceCar") == 1 or d.get("IsSpectator") == 1:
+                        continue
+                    drivers_meta[cidx] = {
+                        "car_idx":    cidx,
+                        "car_number": d.get("CarNumber", "") or "",
+                        "name":       d.get("UserName", "") or "",
+                    }
+            except Exception:
+                pass
         selected = []
         for cidx in self._chart_selected:
             meta = drivers_meta.get(cidx, {})
@@ -1275,13 +1370,43 @@ def chart_render():
 # strings) rather than internal car_idx values — they're stable across
 # sessions and shareable in URLs ("?drivers=11,23").
 
+def _live_drivers_meta() -> list[dict]:
+    """Return a list of {car_idx, car_number, name, car, car_class}
+    for the current session — sourced from _log_session_meta when
+    we're inside a race log, or live from the SDK otherwise. The SDK
+    fallback keeps practice / qualifying chart functionality working
+    even though the logger doesn't open a JSONL file for those."""
+    meta = poller._log_session_meta.get("drivers", []) or []
+    if meta:
+        return meta
+    out = []
+    try:
+        info = poller.ir["DriverInfo"] or {}
+        for d in info.get("Drivers", []) or []:
+            cidx = d.get("CarIdx")
+            if cidx is None:
+                continue
+            if d.get("CarIsPaceCar") == 1 or d.get("IsSpectator") == 1:
+                continue
+            out.append({
+                "car_idx":    cidx,
+                "car_number": d.get("CarNumber", "") or "",
+                "name":       d.get("UserName", "") or "",
+                "car":        d.get("CarScreenNameShort") or d.get("CarScreenName", "") or "",
+                "car_class":  d.get("CarClassShortName") or "",
+            })
+    except Exception:
+        pass
+    return out
+
+
 def _car_numbers_to_idxs(car_numbers: list[str]) -> list[int]:
     """Resolve car-number strings to internal car_idx values for the
     current session. Returns idxs in the order the numbers were given;
     silently drops unknown numbers."""
     by_number = {
         str(d.get("car_number", "")): d["car_idx"]
-        for d in poller._log_session_meta.get("drivers", [])
+        for d in _live_drivers_meta()
     }
     out = []
     for n in car_numbers:
@@ -1317,8 +1442,10 @@ def share_data():
 
     # Build the public-safe driver list (no admin info, no irating, no
     # license, no team data — keep it minimal for public consumption).
+    # _live_drivers_meta falls back to live SDK data when no race log is
+    # open, so practice + qualifying viewers still get a populated list.
+    drivers_meta = _live_drivers_meta()
     drivers_safe = []
-    drivers_meta = poller._log_session_meta.get("drivers", []) or []
     for d in drivers_meta:
         cidx = d["car_idx"]
         drivers_safe.append({
@@ -1340,12 +1467,33 @@ def share_data():
             "laps":       list(poller._chart_lap_data.get(cidx, [])),
         })
 
+    # Session info — prefer the race-log meta, fall back to live SDK.
+    sm = poller._log_session_meta
+    track        = sm.get("track", "")
+    track_config = sm.get("track_config", "")
+    session_name = sm.get("session_name", "")
+    session_type = sm.get("session_type", "")
+    if not track:
+        try:
+            weekend = poller.ir["WeekendInfo"] or {}
+            sess_info = poller.ir["SessionInfo"] or {}
+            track        = weekend.get("TrackDisplayName", "") or ""
+            track_config = weekend.get("TrackConfigName", "") or ""
+            sess_num = poller.ir["SessionNum"]
+            for s in sess_info.get("Sessions", []) or []:
+                if s.get("SessionNum") == sess_num:
+                    session_name = s.get("SessionName", "") or ""
+                    session_type = s.get("SessionType", "") or ""
+                    break
+        except Exception:
+            pass
+
     return jsonify({
         "chart_type":   chart_type,
-        "track":        poller._log_session_meta.get("track", ""),
-        "track_config": poller._log_session_meta.get("track_config", ""),
-        "session_name": poller._log_session_meta.get("session_name", ""),
-        "session_type": poller._log_session_meta.get("session_type", ""),
+        "track":        track,
+        "track_config": track_config,
+        "session_name": session_name,
+        "session_type": session_type,
         "logging":      poller._log_fp is not None,
         "all_drivers":  drivers_safe,
         "selected":     selected,
