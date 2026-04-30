@@ -1,6 +1,6 @@
 # iRacing Broadcast Overlays
 
-A suite of ten Python/Flask overlays that read live telemetry from iRacing via the iRacing SDK and serve web pages you can drop into OBS as Browser Sources. Built for race broadcasters and streamers who want a clean, iOverlay-style look without the subscription. Includes a full race logger with broadcast-friendly live charts plus a standalone tool to render any race as an MP4 replay video.
+A suite of eleven Python/Flask overlays that read live telemetry from iRacing via the iRacing SDK and serve web pages you can drop into OBS as Browser Sources. Built for race broadcasters and streamers who want a clean, iOverlay-style look without the subscription. Includes a full race logger with broadcast-friendly live charts plus a standalone tool to render any race as an MP4 replay video.
 
 > Deutsche Anleitung: [INSTALLATION_DE.md](INSTALLATION_DE.md) · Live-Charts via Cloudflare teilen: [CLOUDFLARE_TUNNEL_DE.md](CLOUDFLARE_TUNNEL_DE.md)
 
@@ -20,6 +20,7 @@ A suite of ten Python/Flask overlays that read live telemetry from iRacing via t
 | **Trackmap**       | `iracing_trackmap.py`         | 5007 | SVG track outline with live car dots (205 tracks bundled, offline)           |
 | **Flag overlay**   | `flag_overlay.py`             | 5008 | Full-screen flag graphics — green, yellow, white, checkered                  |
 | **Race logger**    | `iracing_race_logger.py`      | 5009 | JSONL race recorder + live race monitor + broadcast-friendly chart panel     |
+| **Session info**   | `iracing_session_info.py`     | 5010 | Compact OBS card showing session name + total length + remaining time/laps   |
 
 Plus a separate offline tool: **`render_race.py`** — turns any logged race into a 2D top-down MP4 replay video.
 
@@ -331,6 +332,7 @@ The overlays are transparent by default for OBS Browser Sources. If you're seein
 ├── iracing_trackmap.py         # Port 5007 — SVG track map
 ├── flag_overlay.py             # Port 5008 — flag graphics
 ├── iracing_race_logger.py      # Port 5009 — race logger + live monitor
+├── iracing_session_info.py     # Port 5010 — session name + total + remaining
 │
 ├── render_race.py              # Offline tool — render a logged race to MP4
 ├── iracing_sdk_base.py         # Shared SDKPoller base class for overlays

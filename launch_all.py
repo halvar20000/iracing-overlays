@@ -46,6 +46,7 @@ SCRIPTS = [
     ("trackmap",  "iracing_trackmap.py",       5007, "\033[92m"),  # bright green
     ("flag",      "flag_overlay.py",           5008, "\033[94m"),  # bright blue
     ("logger",    "iracing_race_logger.py",    5009, "\033[33m"),  # amber
+    ("sess",      "iracing_session_info.py",   5010, "\033[36m"),  # teal/cyan
 ]
 RESET = "\033[0m"
 

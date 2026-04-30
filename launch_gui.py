@@ -51,6 +51,7 @@ OVERLAYS = [
     ("trackmap",  "Track Map",                "iracing_trackmap.py",       5007, "#4ade80"),  # green
     ("flag",      "Flag Overlay",             "flag_overlay.py",           5008, "#61b4ff"),  # bright blue
     ("logger",    "Race Logger",              "iracing_race_logger.py",    5009, "#ffb347"),  # amber
+    ("sess",      "Session Info",             "iracing_session_info.py",   5010, "#22c9a3"),  # teal
 ]
 
 HERE = Path(__file__).resolve().parent

@@ -19,6 +19,7 @@ GitHub:   https://github.com/halvar20000/iracing-overlays (primary repo,
 | trackmap    | `iracing_trackmap.py`         | 5007 | SVG track map + live car dots              |
 | flag        | `flag_overlay.py`             | 5008 | Flag status overlay (session flags)        |
 | logger      | `iracing_race_logger.py`      | 5009 | Race logger — JSONL log per race           |
+| sess        | `iracing_session_info.py`     | 5010 | Session name + total length + remaining    |
 
 All overlays are Flask apps that read iRacing telemetry via `pyirsdk`,
 designed to be added as browser sources in OBS. They run in parallel on

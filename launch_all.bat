@@ -27,6 +27,7 @@ echo   Livery overlay    http://localhost:5006
 echo   Track map         http://localhost:5007
 echo   Flag overlay      http://localhost:5008
 echo   Race logger       http://localhost:5009
+echo   Session info      http://localhost:5010
 echo.
 
 start "iRacing Dashboard"       cmd /k python iracing_dashboard.py
@@ -39,6 +40,7 @@ start "iRacing Livery"          cmd /k python iracing_livery.py
 start "iRacing Trackmap"        cmd /k python iracing_trackmap.py
 start "iRacing Flag Overlay"    cmd /k python flag_overlay.py
 start "iRacing Race Logger"     cmd /k python iracing_race_logger.py
+start "iRacing Session Info"    cmd /k python iracing_session_info.py
 
-echo All 10 overlays launched. You can close this window.
+echo All 11 overlays launched. You can close this window.
 timeout /t 5 >nul
