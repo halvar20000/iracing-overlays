@@ -658,9 +658,19 @@ class RaceLogger(SDKPoller):
         drivers_raw = info.get("Drivers", []) or []
         lap_arr   = ir["CarIdxLap"] or []
         last_lap_t= ir["CarIdxLastLapTime"] or []
+        best_lap  = ir["CarIdxBestLapTime"] or []
+        f2_arr    = ir["CarIdxF2Time"] or []
         on_pit    = ir["CarIdxOnPitRoad"] or []
         cls_pos   = ir["CarIdxClassPosition"] or []
         ovr_pos   = ir["CarIdxPosition"] or []
+
+        # Session-best lap time across the whole field at this poll.
+        # Used as the "gap" reference in practice / qualifying, where
+        # F2Time isn't a meaningful race-time gap.
+        session_best_now = None
+        for v in best_lap:
+            if v and v > 0 and (session_best_now is None or v < session_best_now):
+                session_best_now = v
 
         for d in drivers_raw:
             idx = d.get("CarIdx")
@@ -690,12 +700,28 @@ class RaceLogger(SDKPoller):
                 continue  # first observation — no completion to log
             if cur_lap > prev:
                 lt = last_lap_t[idx] if idx < len(last_lap_t) else 0.0
+                lt_val = float(lt) if lt and lt > 0 else None
+                # Gap-to-leader semantics differ by session type:
+                #   Race:   F2Time = race-time gap to class leader
+                #           (always positive, 0 = the leader)
+                #   Quali / practice: F2Time isn't meaningful, so fall
+                #           back to (this lap_time - current session
+                #           best lap). Negative if this lap was faster
+                #           than every previous lap in the session.
+                f2 = f2_arr[idx] if idx < len(f2_arr) else None
+                if f2 and f2 > 0:
+                    gap_val = float(f2)
+                elif lt_val is not None and session_best_now is not None:
+                    gap_val = lt_val - session_best_now
+                else:
+                    gap_val = None
                 self._chart_lap_data.setdefault(idx, []).append({
                     "lap":       int(prev),
-                    "lap_time":  float(lt) if lt and lt > 0 else None,
+                    "lap_time":  lt_val,
                     "position":  int(ovr_pos[idx]) if idx < len(ovr_pos) else 0,
                     "class_pos": int(cls_pos[idx]) if idx < len(cls_pos) else 0,
                     "on_pit":    bool(on_pit[idx]) if idx < len(on_pit) else False,
+                    "gap_to_leader": gap_val,
                 })
 
     # ----- lap-completion detection --------------------------------------
