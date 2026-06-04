@@ -118,19 +118,34 @@ def tga_to_png_bytes(tga_path: Path) -> bytes | None:
     return data
 
 
+def _car_path_variants(car_path: str) -> list[str]:
+    """Folder-name interpretations of a DriverInfo CarPath.
+
+    The Mazda MX-5 is the only iRacing car with a NESTED paint folder:
+    its CarPath is reported as "mx5 mx52016" but the on-disk location is
+    paint\\mx5\\mx52016\\ — the space is really a path separator. Every
+    other car is a flat folder. Try both readings (plus backslash
+    variants) so the MX-5 resolves like every other car.
+    """
+    variants = [car_path]
+    if " " in car_path:
+        variants.append(car_path.replace(" ", "/"))
+    if "\\" in car_path:
+        variants.append(car_path.replace("\\", "/"))
+    return variants
+
+
 def find_paint_file(car_path: str, cust_id: int) -> Path | None:
     """Return the path to the driver's custom paint TGA, if iRacing has it."""
     if not car_path or not cust_id:
         return None
-    folder = PAINT_ROOT / car_path
-    candidate = folder / f"car_{cust_id}.tga"
-    if candidate.is_file():
-        return candidate
-    # Some older/shared paints use slightly different names
-    for alt in (f"car_num_{cust_id}.tga",):
-        p = folder / alt
-        if p.is_file():
-            return p
+    for fol in _car_path_variants(car_path):
+        folder = PAINT_ROOT / fol
+        # Some older/shared paints use slightly different names
+        for name in (f"car_{cust_id}.tga", f"car_num_{cust_id}.tga"):
+            p = folder / name
+            if p.is_file():
+                return p
     return None
 
 
@@ -278,7 +293,9 @@ class LiveryPoller(SDKPoller):
         # card is showing (missing file vs. path mismatch vs. no custom paint).
         expected_path = ""
         if car_path and cust_id:
-            expected_path = str(PAINT_ROOT / car_path / f"car_{cust_id}.tga")
+            expected_path = " | ".join(
+                str(PAINT_ROOT / v / f"car_{cust_id}.tga")
+                for v in _car_path_variants(car_path))
         log_key = (cam_idx, cust_id, car_path, bool(paint_file))
         if log_key != self._last_logged_key:
             self._last_logged_key = log_key
@@ -287,8 +304,9 @@ class LiveryPoller(SDKPoller):
                 print(f"[livery] Camera -> {name_str} (custId={cust_id}, car={car_path}) "
                       f"-> paint FOUND: {paint_file}")
             else:
-                folder = PAINT_ROOT / car_path if car_path else None
-                folder_exists = bool(folder and folder.is_dir())
+                folder_exists = bool(car_path and any(
+                    (PAINT_ROOT / v).is_dir()
+                    for v in _car_path_variants(car_path)))
                 print(f"[livery] Camera -> {name_str} (custId={cust_id}, car={car_path}) "
                       f"-> NO paint. Tried: {expected_path or '(no carpath/custid)'} "
                       f"(folder_exists={folder_exists})")
@@ -331,7 +349,9 @@ class LiveryPoller(SDKPoller):
             "design":       parse_design_str(design),
             "paint_available": bool(paint_file),
             "paint_path":   expected_path,
-            "paint_folder_exists": bool(car_path and (PAINT_ROOT / car_path).is_dir()),
+            "paint_folder_exists": bool(car_path and any(
+                (PAINT_ROOT / v).is_dir()
+                for v in _car_path_variants(car_path))),
             "position":     position,
             "last_lap":     last_lap,
             "best_lap":     best_lap,
@@ -472,6 +492,12 @@ def _build_render_params(driver: dict, paint_path: str) -> dict:
     if car_path:
         params["carPath"] = car_path
 
+    # Numeric car id as an extra hint. Harmless if the render server
+    # ignores it; helps when carPath alone is ambiguous (nested MX-5).
+    car_id = driver.get("CarID")
+    if car_id:
+        params["carId"] = str(car_id)
+
     # CarDesignStr = "pattern,color1,color2,color3"
     design = (driver.get("CarDesignStr") or "").strip()
     parts = [p.strip() for p in design.split(",")] if design else []
@@ -555,22 +581,84 @@ def _fetch_iracing_render(driver: dict, paint_path: str) -> bytes | None:
         return None
     from urllib.parse import urlencode, quote
     params = _build_render_params(driver, paint_path)
-    query = urlencode(params, quote_via=quote)
-    url = f"{IRACING_RENDER_URL}?{query}"
-    try:
-        resp = requests.get(url, timeout=IRACING_RENDER_TIMEOUT)
-    except Exception as e:
-        print(f"[livery] iRacing render fetch failed: {type(e).__name__}: {e}")
-        return None
-    if resp.status_code != 200:
-        print(f"[livery] iRacing render HTTP {resp.status_code} for "
-              f"carPath={params.get('carPath', '?')!r}")
-        return None
-    ctype = resp.headers.get("Content-Type", "").lower()
-    if not ctype.startswith("image/"):
-        print(f"[livery] iRacing render bad content-type: {ctype!r}")
-        return None
-    return resp.content
+
+    # MX-5 ("mx5 mx52016") is a nested car folder. IMPORTANT: the render
+    # server returns a DEFAULT car image (Skippy / Ray FF1600) for a
+    # carPath it doesn't recognise — a wrong-car response is
+    # indistinguishable from success, so "try raw first and fall through
+    # on error" does NOT work. For nested paths the separator forms go
+    # FIRST (matching the on-disk paint layout); the raw spaced form is
+    # the last resort. Flat-folder cars are unaffected (single variant).
+    raw_cp = params.get("carPath", "")
+    cp_variants = ([raw_cp.replace(" ", "\\"), raw_cp.replace(" ", "/"),
+                    raw_cp]
+                   if " " in raw_cp else [raw_cp])
+    for cp in cp_variants:
+        if cp:
+            params["carPath"] = cp
+        query = urlencode(params, quote_via=quote)
+        url = f"{IRACING_RENDER_URL}?{query}"
+        try:
+            resp = requests.get(url, timeout=IRACING_RENDER_TIMEOUT)
+        except Exception as e:
+            print(f"[livery] iRacing render fetch failed: "
+                  f"{type(e).__name__}: {e}")
+            return None     # server unreachable — variants won't help
+        if resp.status_code != 200:
+            print(f"[livery] iRacing render HTTP {resp.status_code} for "
+                  f"carPath={cp!r}"
+                  + (" — trying next variant" if cp != cp_variants[-1] else ""))
+            continue
+        ctype = resp.headers.get("Content-Type", "").lower()
+        if not ctype.startswith("image/"):
+            print(f"[livery] iRacing render bad content-type: {ctype!r} for "
+                  f"carPath={cp!r}"
+                  + (" — trying next variant" if cp != cp_variants[-1] else ""))
+            continue
+        return resp.content
+    return None
+
+
+@app.route("/carview_test")
+def carview_test():
+    """DEBUG page for the wrong-car problem (MX-5): renders the current
+    on-camera driver's car once per carPath variant, with images fetched
+    straight from iRacing's local render server. The server silently
+    falls back to a default car (Skippy / Ray FF1600) for unknown paths,
+    so the only way to know the right form is to LOOK. Open
+    http://localhost:5006/carview_test during a session and check which
+    image shows the correct car."""
+    from urllib.parse import urlencode, quote
+    with poller._lock:
+        driver = dict(poller.current_driver)
+        paint_path = poller.current_paint_path
+    if not driver:
+        return ("<body style='background:#222;color:#eee'>"
+                "<h3>No driver on camera — connect to a session first.</h3>"
+                "</body>")
+    params = _build_render_params(driver, paint_path)
+    raw_cp = params.get("carPath", "")
+    variants = ([raw_cp.replace(" ", "\\"), raw_cp.replace(" ", "/"), raw_cp]
+                if " " in raw_cp else [raw_cp])
+    cases = []
+    for cp in variants:
+        q = dict(params)
+        q["carPath"] = cp
+        cases.append((f"carPath = {cp!r}", q))
+    if params.get("carId"):
+        q = {k: v for k, v in params.items() if k != "carPath"}
+        cases.append((f"carId={params['carId']} only (no carPath)", q))
+    blocks = "".join(
+        f"<div style='margin:14px 0'><code style='color:#8fd'>{label}</code>"
+        f"<br><img src='{IRACING_RENDER_URL}?"
+        f"{urlencode(q, quote_via=quote)}' style='max-width:440px;"
+        f"background:#333;border:1px solid #555'></div>"
+        for label, q in cases)
+    return (f"<body style='background:#222;color:#eee;"
+            f"font-family:sans-serif;padding:18px'>"
+            f"<h3>carPath variants for "
+            f"{driver.get('UserName','?')} — which one shows the right car?"
+            f"</h3>{blocks}</body>")
 
 
 @app.route("/carview/<int:car_id>/<int:cust_id>.png")

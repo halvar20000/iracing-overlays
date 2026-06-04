@@ -19,8 +19,7 @@ GitHub:   https://github.com/halvar20000/iracing-overlays (primary repo,
 | trackmap    | `iracing_trackmap.py`         | 5007 | SVG track map + live car dots              |
 | flag        | `flag_overlay.py`             | 5008 | Flag status overlay (session flags)        |
 | logger      | `iracing_race_logger.py`      | 5009 | Race logger — JSONL log per race           |
-| champ       | `iracing_championship.py`     | 5010 | Live championship overlay (CLS league-manager API) |
-| sess        | `iracing_session_info.py`     | 5011 | Session name + total / remaining time card |
+| sess        | `iracing_session_info.py`     | 5010 | Session name + total length + remaining    |
 
 All overlays are Flask apps that read iRacing telemetry via `pyirsdk`,
 designed to be added as browser sources in OBS. They run in parallel on
@@ -135,253 +134,42 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
-**June 4, 2026 (livery — MX-5 fixed, nested CarPath):** The livery
-overlay failed ONLY for the Mazda MX-5: it is the one iRacing car
-with a NESTED paint folder — DriverInfo reports CarPath
-"mx5 mx52016" but the on-disk paints live at `paint\mx5\mx52016\`
-(the space is really a path separator), so the flat-folder TGA lookup
-never matched. New `_car_path_variants()` in `iracing_livery.py`
-tries the raw CarPath first (every other car), then space→"/" and
-backslash variants — used by `find_paint_file`, the
-`/pk_car.png` render fetch (retries carPath variants until one
-returns an image), and the debug fields. Verified offline with a
-simulated paint cache (5/5). If another nested car ever appears, the
-same variants cover it automatically.
+**May 21, 2026 (dashboard — incident detection overhaul):** The feed was
+missing real accidents/collisions vs iOverlay's RaceControl. Root cause:
+the spec-mode local-yellow detector used the wrong `CarIdxSessionFlags`
+bitmask — `0x4000` (caution, a full-course yellow, rare in road racing)
+and `0x2000` (random_waving, an internal test signal) instead of the real
+local-yellow bits `0x0008` (yellow) and `0x0100` (yellow_waving). With the
+wrong bits this detector — the primary spec-mode signal, the same one
+iOverlay keys off — almost never fired. Fixes this session:
+  1. `YELLOW_MASK` corrected to `0x0008 | 0x0100`.
+  2. Yellow dedup is per TRACK LOCATION via `_yellow_zone_seen` (the lap
+     split into 5 % zones). A zone stays "warm" while any car still
+     carries a yellow there — the same ongoing incident — and only
+     re-emits once the zone goes cold (~10 s with no yellow = incident
+     cleared). The old single global 5 s timer silently dropped any
+     second incident; this fires each distinct one exactly once even as
+     the whole field streams past.
+  3. New `_find_zone_culprit()` — a local yellow is carried by every car
+     near an incident, so the incident is attributed to the off-track /
+     stopped car in the zone (not a clean car driving past). The
+     auto-replay back-dates to the culprit's last forward-motion time so
+     it rewinds to the actual crash.
+  4. The yellow detector is AUTHORITATIVE: it is no longer gated by
+     `_spin_cooldown`, so a real crash can never be suppressed just
+     because a heuristic detector fired on that car moments before. It
+     still SETS `_spin_cooldown` to keep the stopped / backwards / vanish
+     detectors quiet for the same event, and `_emit_incident`'s own
+     per-(car,type) 15 s dedup blocks repeats.
 
-FOLLOW-UP same day (wrong car shown — Skippy/Ray FF1600 instead of
-MX-5): the render server returns a DEFAULT car image for an unknown
-carPath, so a wrong-path request is INDISTINGUISHABLE from success in
-code — the variant-retry loop happily accepted the first (raw spaced)
-form. Changes: (a) for nested paths the separator forms now go FIRST
-(backslash, then slash, then raw — matching the on-disk layout);
-(b) `carId=<DriverInfo.CarID>` is sent as an extra hint (harmless if
-ignored); (c) NEW debug page **http://localhost:5006/carview_test** —
-renders the on-camera car once per carPath variant with images served
-straight from the render server, so the correct form can be IDENTIFIED
-BY LOOKING during the next MX-5 session. If the backslash-first guess
-is still wrong, open that page on an MX-5 and lock in whichever
-variant shows the right car.
-
-**June 4, 2026 (dashboard — never show Scenic, TV1 fallback):** After
-a replay finished, the auto-return sometimes landed on iRacing's
-Scenic view (user rule: Scenic must NEVER appear on stream). Two
-causes: (a) when the previously-watched car couldn't be resolved, the
-return made NO camera switch at all and iRacing fell back to Scenic
-on its own; (b) camera switches reused `_current_cam_group` blindly.
-Fix: new `TelemetryPoller._safe_cam_group()` — returns the current
-group unless it's Scenic, else TV1 (exact then fuzzy match, handles
-"TV 1"), else the first non-Scenic group. ALL automatic camera paths
-go through it now: replay start, replay auto-return (which also
-always makes an explicit switch — to the previous car or, if unknown,
-the live leader), auto-follow, focus-leader, focus-crashes, and the
-cam-disconnect watchdog. Explicit user clicks on a camera-group
-button still use the group as-is. Startup default remains TV3 (from
-April); change `_apply_default_camera` if TV1 should be the global
-default too. Unit-checked the group picker offline (5/5).
-
-**June 4, 2026 (trackmap — Okayama added from OpenStreetMap):** PCCD
-round 8 (18.06.) runs Okayama Full Course; not in `tracks/` and not in
-SIMRacingApps upstream (their Tracks folder last updated Sept 2024 —
-don't bother re-checking it for new tracks). New workflow used instead
-of the Monza hand-drawing path: extracted the circuit centreline (OSM
-way 177330893, closed loop, oneway in DRIVING direction) and pit lane
-(way 267173063) via the Overpass API **through Claude-in-Chrome**
-(overpass-api.de / nominatim / api.openstreetmap.org all return empty
-bodies through the sandbox web_fetch — use the browser's fetch in page
-context instead). Built `tracks/okayama_full.json`: rotated the loop
-to start at the S/F line (interpolated vertex mid-straight at lat
-34.9142, ~60 % up the pit straight — the overlay places car dots by
-arc-length from the polyline's FIRST point, finish_line in the JSON is
-ignored), kept OSM's point order (matches clockwise driving
-direction). Loop length sanity check: 3704 m vs the real 3703 m.
-Rendered SVG visually confirmed against the real layout. NOTICE.txt
-got an OpenStreetMap/ODbL attribution section. NOTE: filename assumes
-iRacing reports TrackName "okayama full" — if the trackmap console
-logs a different filename on 18.06., rename the JSON to match. If the
-S/F dot position looks offset on stream, adjust the interpolated
-vertex (sf_lat in the loop-rotation step).
-
-FOLLOW-UP same day: **Phillip Island added the same way** (OSM way
-43598473 + pit entry/lane/Supercars-exit ways stitched). Loop 4459 m
-vs real 4448 m. S/F placement improved over the Okayama approach: the
-S/F vertex is now the perpendicular foot of the PIT-LANE MIDPOINT
-projected onto the loop (landed 11 m from the pit wall — no manual
-lat guessing). Saved as BOTH `phillipisland.json` and
-`phillipisland_2019.json` since iRacing's exact TrackName for the
-2019 rescan is unconfirmed — delete whichever one the trackmap
-console doesn't ask for. The OSM workflow is now the standard path
-for missing tracks (gpx.studio hand-drawing is the fallback for
-circuits poorly mapped in OSM).
-
-**June 4, 2026 (session-info overlay wired in, port 5010→5011):** The
-"remaining session time" overlay the user asked for already existed —
-`iracing_session_info.py` from a parallel session (30.04.), showing
-session name + total / remaining time. LATER SAME DAY: lap-based
-races now show "Total: N laps / Remaining: M laps" instead of times —
-but ONLY when the session is genuinely lap-limited (lap count set AND
-no finite time cap). League "100 laps OR 25 min" configs keep the
-time view (the lap cap is never reached there). Note: iRacing's
-"unlimited" sentinel for SessionLapsRemain is 32767, NOT ~1e7 like
-the time fields — the guard is `> 9000`. It was unusable because it
-hardcoded port 5010, which the championship overlay now owns. Fixed:
-moved to **port 5011** (docstring, banner, app.run), added tag "sess"
-to all launchers (`launch_all.bat`, `launch_all.py`, `launch_gui.py`)
-per the maintenance rule, and added the scripts-table row. OBS source:
-http://localhost:5011 — transparent card, orange session name, amber
-remaining-time row. Also deleted the three Nextcloud "conflicted copy"
-launcher files from 30.04. — both KNOWN ISSUEs from the earlier
-June 4 session are now resolved.
-
-**June 4, 2026 (dashboard — iOverlay-class incident detection, speed
-collapse):** User compared the dashboard's incident feed against
-iOverlay Race Control and found it lacking: missed spins, named the
-wrong driver, and (when driving) spammed off-tracks. Requirements:
-detect collisions + spins (incl. RECOVERED spins where the driver
-continues), keep off-tracks visible but quiet, low noise overall.
-Spectator/broadcast mode is the priority. Changes in
-`iracing_dashboard.py`:
-  • NEW PRIMARY (spec-mode) — **speed-collapse detector**: per-car
-    speed derived from `CarIdxLapDistPct` × track length at 10 Hz
-    (`_update_speed`, history deques, S/F-wrap + teleport + data-gap
-    safe). Fires when speed collapses from ≥90 km/h to ≤32 km/h losing
-    ≥65 km/h within a 2.5 s window (tuning constants `SC_*` at module
-    top). The 32 km/h floor sits below every legitimate corner-apex
-    speed, so braking for hairpins / pit entry can NOT fire it.
-    Catches recovered spins, names the right car, works for every car
-    without driving. Classification via `_is_collision_for`: another
-    car currently within 0.45 % of track distance OR a second collapse
-    within 1.5 % in the last 3 s → collision, else lost_control.
-  • REMOVED — the yaw-rate spin detector read `CarIdxYawRate`, which
-    DOES NOT EXIST in the iRacing SDK (only the local car's `YawRate`
-    is broadcast). The array was always empty; the detector never
-    fired once. Don't reintroduce it.
-  • Yellow-zone detector: culprit scoring now weights a recent speed
-    collapse (+5) above off-track (+3) / vanished (+2) / stopped-ticks
-    — the old picker often blamed a random passing car because the
-    actual culprit was still rolling when the yellow appeared. If the
-    culprit was already reported via speed-collapse in the last 12 s,
-    the yellow-zone emission is SKIPPED (collapse beats the flag by
-    1-2 s; this killed the duplicate-entry noise). Classification uses
-    `_is_collision_for` (the old `_car_nearby` @ 1.2 % labelled solo
-    spins with traffic passing as collisions; it's now unused but kept).
-  • NEW — quiet **off_track** entries (spec mode): `CarIdxTrackSurface`
-    == 0 sustained ≥4 polls (0.4 s — kerb hops don't reach this) while
-    still carrying ≥43 km/h (a car LOSING speed off-track is reported
-    by the collapse detector as spin/contact instead). 30 s per-car
-    cooldown. UI renders off_track muted (dim border, 0.62 opacity).
-    Off-tracks never auto-replay / camera-snap (`_auto_replay_types`
-    unchanged). The driving-mode 1x emission stays (also muted).
-Verified offline (`test_incident_detection.py`, stubbed irsdk): solo
-recovered spin → 1× lost_control; two-car collapse → collision for
-both; 47 km/h-hairpin braking → nothing; pit entry → nothing; 0.2 s
-kerb hop → nothing; 1 s off at speed → 1× quiet off_track; yellow
-2 s after collapse → no duplicate, right culprit. 11/11 pass.
-
-FOLLOW-UP same day (dashboard driver list lagging behind track
-position): the operator dashboard's driver list still sorted by
-`CarIdxClassPosition`, which iRacing only updates at S/F crossings —
-mid-lap overtakes took up to a lap to appear while the standings
-overlay (fixed 23.04. with live-progress sorting) was already correct.
-`_build_driver_list()` now sorts RACE sessions by live track progress
-(`CarIdxLap + CarIdxLapDistPct`, in-world cars first, towed/garage
-sink to bottom) and renumbers `position` 1..N live; the stale iRacing
-value is kept as `iracing_pos`. Practice/quali keep iRacing's
-best-lap ordering (track progress is meaningless there). Verified
-offline: mid-lap overtake reorders immediately, out-of-world car
-sinks, quali order untouched. 3/3 pass.
-
-FOLLOW-UP same day (Miami stream feedback): "stopped on track" fired
-for every car in very slow corners. Root cause: the static test was a
-per-poll pct-delta (< 0.0003/poll) — track-length dependent, and the
-"12 polls ≈ 3 s" comment assumed 250 ms ticks while the poller runs at
-10 Hz, so it tripped after only 1.2 s. Fixed: "stopped" now means REAL
-speed (kinematics) < `STOP_MAX_MPS` (1.4 m/s ≈ 5 km/h — below any
-driveable corner) held for `STOP_MIN_TICKS` (30 = 3 s). New test
-scenarios: staggered 40 km/h slow-corner crawl → nothing; gentle
-coast-to-stall → 1× stopped on track (a FAST stop is caught earlier by
-the speed-collapse detector and labelled spin — that's correct, only
-one report either way). 13/13 pass.
-
-FOLLOW-UP same day (connection-flaky driver spammed the feed): a
-driver with network problems blinked out of the world and back
-repeatedly; every blink was reported (the telemetry FREEZE before each
-blink-out looks like a speed collapse → "spin"; the blink-out itself
-fired the vanish detector → "crashed"). Three-layer fix in
-`iracing_dashboard.py`:
-  1. **Frozen-telemetry guard** in the speed-collapse detector: a car
-     about to blink out freezes — its last lap-pct samples are
-     bit-identical (an impossible instant stop). A real crashing car
-     still translates while decelerating. Frozen → skip, log
-     `[speed-collapse-skip]`.
-  2. **Vanish confirmation** (`VANISH_CONFIRM_S` = 10 s): vanish
-     reports are queued in `_pending_vanish` and only emitted if the
-     car STAYS out of the world (a real tow does); a return cancels
-     the report. Processed OUTSIDE the per-car loop (vanished cars can
-     be skipped by its early-continue guards).
-  3. **Unstable window** (`UNSTABLE_WINDOW_S` = 90 s): any car that
-     returns from out-of-world is connection-unstable — speed-collapse
-     / stopped / lap-regression (reconnects jump backwards!) /
-     off-track / vanish all ignore it, the yellow-zone culprit picker
-     never blames it. Window refreshes on every new blink.
-Verified offline (`test_blink.py`): 3× freeze-blink-return cycle → 0
-incidents; real crash + tow 8 s later → exactly 1 (the spin);
-instant-freeze permanent disconnect → 1 collision after the confirm
-window (unavoidable — indistinguishable from a crash without more
-signals). All 13 prior incident scenarios still pass.
-
-**June 4, 2026 (flag overlay — timed-race white flag fixed, SessionFlags
-primary):** White flag wasn't showing in timed league races (PCCD
-Silverstone 21.05., both races). Race-log forensics (`logs/*.jsonl` flag
-events) found TWO kill switches in `flag_overlay.py`:
-  1. League sessions set BOTH `SessionLaps` (e.g. a 100-lap cap) AND
-     `SessionTime` (the real 25-min limit). `_get_total_laps()` returned
-     100, the exclusive `if total_laps: lap-based else: timed` branch
-     waited for lap 100 forever — the timed logic never ran.
-  2. The timed branch's late-join detection fired whenever
-     `SessionState >= 5`, but iRacing flips that at TIMER EXPIRY
-     (mid-lap), so every normal timed race got its white flag silently
-     swallowed and checkered fired a lap early.
-Rewrite: all detectors now run in PARALLEL, first one wins:
-  • PRIMARY — iRacing's own `SessionFlags` white (0x0002) / checkered
-    (0x0001) bits. Log analysis proved the white bit fires exactly when
-    the leader starts the final lap (Spa 27.05., Thruxton 02.06.,
-    Magny-Cours 26.05.) — works for lap AND timed races, any ending
-    rule. BUT: both PCCD Silverstone races broadcast NO bits at all
-    (league session-ending config?), so fallbacks remain mandatory.
-  • Fallback lap: `cur_lap == total_laps` at a crossing (real lap races;
-    harmless under a 100-lap cap — never reached).
-  • Fallback timed — CORRECTED SAME EVENING (Miami 40-min race, no
-    white shown): iRacing's REAL rule is white at the LAST crossing
-    BEFORE the clock expires (`time_rem <= lap_estimate`, median of
-    the leader's recent laps → EstLapTime → 120 s), checkered at the
-    NEXT crossing (first one past expiry, `time_rem <= 0.5` required
-    for timed sessions). The morning version used "+1 lap after
-    expiry" — one lap LATE, white fired at the real finish, nothing
-    visible. Re-analysis of ALL logs (Spa/Thruxton/Magny bit
-    timestamps + Silverstone/Miami end sequences) confirms every
-    logged league uses the same rule; the "extra lap" seen at
-    Silverstone was a cool-down crossing, not racing. Median (not
-    mean) lap estimate so one pit/incident lap can't fire white a
-    lap early; even if it did, the checkered still waits for expiry
-    — white just flies longer.
-  • Checkered: checkered bit, OR next crossing ≥15 s after white
-    (MIN_FINAL_LAP_S guard — bit and crossing arrive within a tick, an
-    unguarded crossed_sf killed white instantly), OR lap counter past
-    total, OR safety net (state checkered AND 1.5×avg_lap since white —
-    anchored to the WHITE moment, not timer expiry, because the final
-    lap can END two laps after the clock hits zero).
-  • Late-join skip now gated to the first ~5 s of observing a session
-    (`_ticks_in_session < 50`) so it can't hijack mid-race.
-Verified offline by replaying log-derived scenarios (PCCD no-bits,
-Spa-with-bits, pure lap race, late join) through the state machine with
-a stubbed irsdk — 13/13 checks pass. Startup banner no longer claims
-"lap-based races only". Also this session: created
-`championship_config.json` pinned to CAS PCCD 4th season for the
-2026-06-04 Hockenheim stream. KNOWN ISSUE: `iracing_session_info.py`
-(from a parallel session, not in launchers) hardcodes port 5010 which
-collides with the championship overlay — needs its own port + launcher
-entries; three Nextcloud "conflicted copy" launcher files from 30.04.
-should be cleaned up.
+A first attempt this session also added a "running below own pace"
+detector to catch limping cars — it was REMOVED the same session: a car
+slow relative to its own pace also covers out-laps, lapped cars yielding,
+fuel-saving, and slow corner complexes, and `CarIdxLapDistPct` deltas
+alone can't separate those from an incident. It made the feed far too
+noisy and (by consuming `_spin_cooldown`) suppressed the genuine crash.
+Limping cars are now covered by the local-yellow detector instead. No
+off-track-excursion detector added (chosen scope: collisions & spins).
 
 **April 21, 2026:** Created the 5 overlay scripts.
 **April 22, 2026:** Added `launch_all.bat`, `launch_all.py`, `launch_gui.py`
@@ -904,72 +692,3 @@ can never propagate out of the poll loop. `/debug` endpoint exposes
 `poller_last_error`, `last_startup_status`, `last_state` — essential
 for diagnosing SDK-connection edge cases. `requests` is a soft import:
 if missing, just disables the render feature and logs a note.
-
-**May 28, 2026 (championship overlay — wired to CLS league-manager):**
-Added `iracing_championship.py` (port 5010, tag "champ") — F1-broadcast
-style live championship overlay. Two views, hotkey `V` to toggle:
-  • **View A — Race + championship delta:** live race standings table
-    (sorted by track progress, in-pit/DNF demoted), with a ▲N / ▼N / =
-    chip per row showing how many championship positions the driver
-    would gain/lose if the race ended right now.
-  • **View B — Championship projection:** the pre-race championship
-    table reordered live; each row shows projected post-race points =
-    pre-race points + race-position points (from `pointsTable`), with
-    a `Race P# → +N` sub-line. Pro/Am seasons project class-relative
-    points using `classPointsTable` and class position within the live
-    race; non-Pro/Am seasons mirror the overall projection.
-
-Stream-mode toggle on `H` (transparent BG default for OBS, dark panel
-for layout debugging). Two pages on the same Flask app:
-  • `/` — config picker (league + season dropdowns, populated from
-    `/api/leagues`; persists to `championship_config.json`).
-  • `/overlay` — the OBS browser source URL. 540 px wide, transparent.
-
-Driver matching is strict by iRacing customer ID: `UserID` from the
-SDK's `DriverInfo.Drivers[]` joins to `User.iracingMemberId` from the
-league-manager. Drivers not registered for the season show as
-"unranked" in view A and are absent from view B (they don't influence
-the projection). Drivers in the championship but not in this race
-keep their pre-race points unchanged for the projection.
-
-Data source is a new public API on the deployed league-manager (Next.js
-on Vercel, `league.simracing-hub.com`):
-  • `GET /api/overlay/standings?league=<slug>&season=<id?>` — returns
-    league/season metadata, the `ScoringSystem` points tables (overall
-    + class), all standings rows (rank, name, country, team, car
-    class, Pro/Am, points, incidents, iRating) plus the linked
-    `iracingMemberId` per row. Reuses `computeDriverStandings()` so
-    the overlay always matches what `/leagues/.../standings` shows.
-  • `GET /api/overlay/leagues` — list of leagues with their currently
-    runnable (ACTIVE / OPEN_REGISTRATION) seasons; used by the config
-    picker dropdowns.
-Both endpoints are public, CORS-open (`Access-Control-Allow-Origin: *`),
-edge-cached briefly. They live in `src/app/api/overlay/{standings,leagues}/`
-in the league-manager repo (`halvar20000/simracing-hub-league-manager`)
-and deploy automatically on push to `main` via Vercel.
-
-Implementation notes:
-  • The overlay has two daemon threads: a `RacePoller` (subclass of
-    `SDKPoller`, 1 Hz iRacing snapshots — same pattern as the other
-    overlays) and a `ChampionshipFetcher` that re-pulls `/standings`
-    every `refresh_seconds` (default 60). The Flask `/api/state`
-    handler joins them via `build_projection()`.
-  • Live race ordering uses `CarIdxLap + CarIdxLapDistPct` (same fix
-    as the standings overlay) so mid-lap overtakes appear immediately,
-    not at the next S/F line. Out-of-world cars sink to the bottom.
-  • Pro/Am class position is computed by walking the live order and
-    assigning sequential class positions to championship-registered
-    drivers only — so non-registered drivers in the same race don't
-    shift Pro/Am point projections.
-  • Projected championship rank is computed by sorting a copy of the
-    rows by `(-proj_points, current_rank)` and assigning new positions;
-    `delta = current_rank - proj_rank` (+ve = gaining, -ve = losing).
-
-Maintenance: all four launchers (`launch_all.bat`, `launch_all.py`,
-`launch_gui.py`, `launch_gui.bat`) updated per the maintenance rule —
-`launch_gui.bat` doesn't list scripts so nothing changed there.
-Scripts table at the top of this file updated with the new row.
-
-To deploy the API side, run:
-  `bash ~/Library/CloudStorage/Nextcloud-admin@cloud․smarthomeworld68․fr/AI/league-manager/outputs/deploy_overlay_api.sh`
-(typechecks, commits, pushes; Vercel rebuilds in 1-2 minutes).

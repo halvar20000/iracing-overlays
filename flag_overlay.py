@@ -51,6 +51,22 @@ class FlagWatcher:
     WHITE_FLAG_DURATION   = 0.0   # stays until checkered
     CHECKERED_DURATION    = 60.0  # hide after 60s
 
+    # iRacing SessionFlags bits (pyirsdk Flags). These are iRacing's OWN
+    # session-wide flag broadcast — the authoritative signal when present.
+    # Race-log analysis (2026-06-04) showed the white bit fires at the
+    # exact moment the leader starts the final lap (Spa 27.05., Thruxton
+    # 02.06., Magny-Cours 26.05.) — but in BOTH PCCD Silverstone races
+    # (21.05.) the bits never appeared at all, so heuristic fallbacks
+    # below are still required.
+    FLAG_BIT_CHECKERED = 0x00000001
+    FLAG_BIT_WHITE     = 0x00000002
+
+    # A leader lap can't plausibly be shorter than this; used to stop the
+    # checkered trigger from firing on the SAME S/F crossing that raised
+    # the white flag (the white flag-bit and the crossing arrive within
+    # the same tick or two).
+    MIN_FINAL_LAP_S = 15.0
+
     def __init__(self):
         self.ir = irsdk.IRSDK()
         self.connected = False
@@ -87,6 +103,9 @@ class FlagWatcher:
         self._lap_time_max     = 5     # how many laps to average over
         self._last_lap_start_t = None  # session_time when leader last crossed S/F
         self._timed_last_lap   = False # True once we've decided this is the last lap
+        self._timed_seen       = False # SessionTimeRemain was finite at least once
+        self._ticks_in_session = 0     # ticks since we started watching this session
+        self._white_fired_at   = 0.0   # wall-clock time the white flag was raised
 
     # --- helpers ------------------------------------------------------------
     def _find_leader(self):
@@ -190,165 +209,172 @@ class FlagWatcher:
             self._last_lap_start_t = sess_t
 
         # ════════════════════════════════════════════════════════════════════
-        # LAP-BASED RACE
+        # UNIFIED DETECTION — all triggers run in parallel, first one wins.
+        #
+        # WHY (rewritten 2026-06-04, after PCCD Silverstone 21.05. failed):
+        # League sessions routinely set BOTH SessionLaps (e.g. a 100-lap
+        # cap) and SessionTime (the real 25-min limit). The old exclusive
+        # `if total_laps is not None: lap-based else: timed` branch saw
+        # "100 laps" and waited for lap 100 forever — the timed logic
+        # never ran, so no flag ever appeared. Detectors must run side
+        # by side; whichever recognises the final lap first wins.
         # ════════════════════════════════════════════════════════════════════
-        if self._total_laps is not None:
+        self._ticks_in_session += 1
 
-            # White flag: leader transitions onto the final lap.
-            # iRacing increments lap count at S/F, so cur_lap == total_laps
-            # means the car just started its last lap.
-            if not self._white_shown and cur_lap == self._total_laps:
+        sess_state    = self.ir["SessionState"]
+        session_flags = self.ir["SessionFlags"] or 0
+        time_rem      = self.ir["SessionTimeRemain"]
+
+        # SessionState: Invalid=0, GetInCar=1, Warmup=2, ParadeLaps=3,
+        # Racing=4, Checkered=5, CoolDown=6.
+        racing          = sess_state is not None and int(sess_state) >= 4
+        state_checkered = sess_state is not None and int(sess_state) >= 5
+
+        # Is there a finite race clock? ("unlimited" shows up as a huge
+        # sentinel value, typically 604800.)
+        timed_clock = time_rem is not None and 0 <= time_rem < 1e6
+        if timed_clock:
+            self._timed_seen = True
+
+        avg_lap = (sum(self._lap_times) / len(self._lap_times)
+                   if self._lap_times else None)
+
+        # Leader lap-time estimate for the timed-race white-flag rule.
+        # MEDIAN of the rolling window — robust against one pit-stop or
+        # incident lap inflating the estimate and firing white too early.
+        # Fallbacks: iRacing's EstLapTime, then a 120 s default.
+        if self._lap_times:
+            srt = sorted(self._lap_times)
+            lap_estimate = srt[len(srt) // 2]
+            estimate_src = "median_lap"
+        else:
+            est = self.ir["EstLapTime"]
+            if est and est > 0:
+                lap_estimate = float(est)
+                estimate_src = "EstLapTime"
+            else:
+                lap_estimate = 120.0
+                estimate_src = "default_120s"
+
+        # ── LATE-JOIN DETECTION (first ~5 s of watching this session ONLY) ──
+        # If we start observing a session that is ALREADY in its checkered
+        # phase, we missed the white-flag moment — arm straight for
+        # checkered. The tick-count gate is essential: iRacing flips
+        # SessionState to Checkered at TIMER EXPIRY (mid-lap, before the
+        # leader starts the final lap), so without the gate this branch
+        # hijacked every normal timed race and silently swallowed the
+        # white flag — the exact failure of the May 2026 streams.
+        if (not self._white_shown and not self._timed_last_lap
+                and self._ticks_in_session < 50
+                and state_checkered):
+            self._white_shown    = True
+            self._timed_last_lap = True
+            print(f"[flag] LATE JOIN — SessionState={sess_state} on first "
+                  f"observation, skipping white flag, armed for checkered")
+
+        # ── WHITE FLAG ──────────────────────────────────────────────────────
+        fired_white_this_tick = False
+        if racing and not self._white_shown:
+            white_via = None
+
+            # (1) AUTHORITATIVE: iRacing's own session-wide white-flag bit.
+            #     Verified against race logs: fires exactly when the leader
+            #     starts the final lap — in lap-based AND timed races, and
+            #     regardless of the league's "session ending" setting.
+            if session_flags & self.FLAG_BIT_WHITE:
+                white_via = "SessionFlags white bit"
+
+            # (2) FALLBACK, lap-count: leader just started the final lap of
+            #     a genuinely lap-limited race. (In "100 laps OR 25 min"
+            #     league configs this never fires — the timer fallback
+            #     below covers those.)
+            elif (self._total_laps is not None
+                    and cur_lap == self._total_laps and crossed_sf):
+                white_via = f"lap_count {cur_lap}/{self._total_laps}"
+
+            # (3) FALLBACK, timed: iRacing's actual rule (verified against
+            #     ALL logged races, 2026-06-04 evening): the leader takes
+            #     the white flag at the LAST S/F crossing BEFORE the clock
+            #     expires — i.e. the crossing where the remaining time no
+            #     longer fits a full lap — and the checkered at the NEXT
+            #     crossing (the first one past expiry). Confirmed by the
+            #     white/checkered bit timestamps at Spa 27.05. / Thruxton
+            #     02.06. / Magny-Cours 26.05., and by the end sequences of
+            #     the no-bits PCCD Silverstone 21.05. and Miami 04.06.
+            #     races (race over at the first crossing after expiry,
+            #     cooldown right behind it).
+            #     NOTE: the morning-of-2026-06-04 version used a "+1 lap
+            #     after expiry" rule — one lap LATE; white fired at the
+            #     real finish. The Miami 40-min race exposed it. The
+            #     `time_rem <= lap_estimate` form also covers a missed
+            #     earlier crossing (negative time_rem still matches).
+            elif (self._timed_seen and crossed_sf
+                    and time_rem is not None and time_rem <= lap_estimate):
+                white_via = (f"timed_last_crossing time_rem={time_rem:.1f}s "
+                             f"< {lap_estimate:.1f}s ({estimate_src})")
+
+            if white_via:
                 with self._lock:
                     self.state = "white_flag"
-                self._white_shown = True
-                print(f"[flag] WHITE FLAG (lap) — #{leader_num} {leader_name} "
-                      f"started lap {cur_lap}/{self._total_laps}")
+                self._white_shown     = True
+                self._timed_last_lap  = True
+                self._white_fired_at  = time.time()
+                fired_white_this_tick = True
+                print(f"[flag] WHITE FLAG (via {white_via}) — "
+                      f"#{leader_num} {leader_name} lap={cur_lap}")
 
-            # Checkered flag: leader crosses S/F AGAIN after starting the
-            # last lap. Two signals, either one is enough:
-            #   (a) cur_lap > total_laps — the counter ticked past the
-            #       final lap, which happens when the leader crosses for
-            #       the final time.
-            #   (b) iRacing's SessionState becomes "Checkered" (value 5).
-            #
-            # The previous code also had `cur_lap == total_laps AND prev_pct
-            # high AND cur_pct low` as a fallback — that fires the SAME
-            # tick as the white-flag trigger (because the start-of-last-lap
-            # crossing IS prev_pct high → cur_pct low), so the overlay
-            # raced past white straight to checkered. Removed.
-            if self._white_shown and not self._check_shown:
-                # SessionState values — iRacing: Invalid=0, GetInCar=1,
-                # Warmup=2, ParadeLaps=3, Racing=4, Checkered=5, CoolDown=6.
-                sess_state = self.ir["SessionState"]
-                state_checkered = (sess_state is not None and int(sess_state) >= 5)
+        # ── CHECKERED FLAG ──────────────────────────────────────────────────
+        if (self._white_shown and not self._check_shown
+                and not fired_white_this_tick):
+            check_via = None
+            white_age = time.time() - self._white_fired_at
 
-                if (cur_lap > self._total_laps) or state_checkered:
-                    with self._lock:
-                        self.state = "checkered"
-                    self._check_shown    = True
-                    self._check_shown_at = time.time()
-                    print(f"[flag] CHECKERED (lap) — #{leader_num} {leader_name} "
-                          f"cur_lap={cur_lap} total={self._total_laps} "
-                          f"sess_state={sess_state}")
+            # (1) AUTHORITATIVE: iRacing's checkered bit.
+            if session_flags & self.FLAG_BIT_CHECKERED:
+                check_via = "SessionFlags checkered bit"
 
-        # ════════════════════════════════════════════════════════════════════
-        # TIMED RACE
-        # ════════════════════════════════════════════════════════════════════
-        else:
-            time_rem = self.ir["SessionTimeRemain"]
-            if time_rem is None or time_rem > 1e7:
-                return   # session time not available yet
+            # (2) Leader crosses S/F again after the white flag. For timed
+            #     sessions the crossing must also be PAST expiry
+            #     (time_rem <= 0.5) — that's iRacing's actual finish rule,
+            #     and it stops a too-early white (inflated lap estimate)
+            #     from dragging the checkered forward with it: we'd just
+            #     show white one lap longer and still finish correctly.
+            #     The MIN_FINAL_LAP_S guard stops this firing on the same
+            #     crossing that raised the white flag (bit + crossing
+            #     arrive within a tick of each other). _white_fired_at
+            #     is 0 on late-join, so late joins pass the age guard.
+            elif (crossed_sf
+                    and (not self._timed_seen
+                         or (time_rem is not None and time_rem <= 0.5))
+                    and (self._white_fired_at == 0.0
+                         or white_age > self.MIN_FINAL_LAP_S)):
+                check_via = f"crossed_sf time_rem={time_rem}"
 
-            avg_lap = (sum(self._lap_times) / len(self._lap_times)
-                       if self._lap_times else None)
+            # (3) Lap counter ticked past the final lap (lap races).
+            elif (self._total_laps is not None
+                    and cur_lap > self._total_laps):
+                check_via = f"lap_count {cur_lap}>{self._total_laps}"
 
-            # ── LATE-JOIN DETECTION ────────────────────────────────────────
-            # If the overlay started up after iRacing had already flipped
-            # SessionState to Checkered (5) or CoolDown (6) — i.e. the
-            # leader's final lap was already under way when we connected —
-            # we missed the white-flag moment. Skip directly to "ready
-            # for checkered" so the next S/F crossing still fires the
-            # checkered flag correctly. Without this, joining a session
-            # mid-final-lap meant neither flag ever appeared.
-            sess_state = self.ir["SessionState"]
-            if (not self._white_shown and not self._timed_last_lap):
-                already_in_final = (
-                    sess_state is not None and int(sess_state) >= 5
-                )
-                if already_in_final:
-                    self._white_shown    = True
-                    self._timed_last_lap = True
-                    print(f"[flag] LATE JOIN (timed) — SessionState="
-                          f"{sess_state} on first observation, skipping "
-                          f"white flag, armed for checkered")
+            # (4) Safety net: state says checkered AND 1.5 lap-lengths have
+            #     passed since the white flag — the leader's final lap is
+            #     long over, so we must have missed the crossing between
+            #     polls. Anchored to the white-flag moment, NOT to timer
+            #     expiry: under the +1-lap rule the final lap can END up to
+            #     two full laps after the clock hits zero, so any
+            #     "time_rem < -avg_lap" style condition fires mid-final-lap.
+            elif (state_checkered and avg_lap is not None
+                    and self._white_fired_at > 0.0
+                    and white_age > 1.5 * avg_lap + 5.0):
+                check_via = "safety_net"
 
-            # Both of the conditions below look at crossed_sf, which is True
-            # for exactly one tick per S/F crossing. An `if / if` pair
-            # would therefore fire BOTH the white-flag and checkered
-            # branches on the same start-of-last-lap crossing (same root
-            # bug as the lap-based section). Use elif so only one of
-            # them can trigger per tick.
-            if not self._white_shown and crossed_sf:
-                # White-flag trigger for TIMED races. iRacing's rule:
-                # white flag flies at the S/F crossing where there is
-                # less than one full lap of time remaining — the leader
-                # is starting their final lap.
-                #
-                # We need an estimate of "one lap of time" to decide
-                # whether the leader has less than that left. Priority:
-                #   1. avg_lap = rolling mean of observed leader laps
-                #      (most accurate once we have data)
-                #   2. EstLapTime = iRacing's predicted lap time for
-                #      the current car/track (always available; useful
-                #      when we just joined and haven't seen any laps)
-                #   3. Hardcoded 120 s default — last-resort fallback
-                #
-                # We deliberately do NOT trigger off SessionState >= 5
-                # here. iRacing flips SessionState to "Checkered" the
-                # moment the TIMER expires, which is typically mid-lap —
-                # well before the leader has actually started their
-                # final lap. Triggering white off that jumps the flag
-                # too early; the next S/F crossing then immediately
-                # flips to checkered, so white is barely visible. Late
-                # joins are handled separately above.
-                if avg_lap is not None:
-                    lap_estimate = avg_lap
-                    estimate_source = "avg_lap"
-                else:
-                    est = self.ir["EstLapTime"]
-                    if est and est > 0:
-                        lap_estimate = float(est)
-                        estimate_source = "EstLapTime"
-                    else:
-                        lap_estimate = 120.0
-                        estimate_source = "default_120s"
-
-                trigger_a = time_rem < lap_estimate
-
-                if trigger_a:
-                    with self._lock:
-                        self.state = "white_flag"
-                    self._white_shown    = True
-                    self._timed_last_lap = True
-                    print(f"[flag] WHITE FLAG (timed, via {estimate_source}) — "
-                          f"#{leader_num} {leader_name} "
-                          f"time_rem={time_rem:.1f}s "
-                          f"lap_estimate={lap_estimate:.1f}s")
-            elif not self._check_shown and self._timed_last_lap:
-                # Checkered: ONLY fires when the leader actually crosses
-                # the finish line again after the white flag. iRacing's
-                # SessionState >= 5 is no longer a fallback because it
-                # flips at timer-expiry (mid-lap), not at the leader's
-                # final S/F crossing — using it caused the white flag to
-                # disappear early.
-                #
-                # If for some reason we miss the crossed_sf tick (the
-                # poll cadence is 0.5 s and the leader could pass S/F
-                # between polls), the safety net is the SessionState
-                # check below — but only if the timer has been
-                # significantly negative AND we've covered a full
-                # lap-length of additional negative time, meaning we're
-                # genuinely past any plausible "leader still on last lap"
-                # interpretation.
-                sess_state = self.ir["SessionState"]
-                state_checkered = (sess_state is not None and int(sess_state) >= 5)
-                # "Safety-net" condition: state is checkered AND the timer
-                # is more than one full lap into the negative. This is
-                # only true once the leader has run a full lap of overtime
-                # — well after they should have finished.
-                missed_sf = (state_checkered
-                             and avg_lap is not None
-                             and time_rem < -avg_lap)
-
-                if crossed_sf or missed_sf:
-                    with self._lock:
-                        self.state = "checkered"
-                    self._check_shown    = True
-                    self._check_shown_at = time.time()
-                    via = "crossed_sf" if crossed_sf else "safety_net"
-                    print(f"[flag] CHECKERED (timed, via {via}) — "
-                          f"#{leader_num} {leader_name} "
-                          f"sess_state={sess_state} time_rem={time_rem:.1f}s")
+            if check_via:
+                with self._lock:
+                    self.state = "checkered"
+                self._check_shown    = True
+                self._check_shown_at = time.time()
+                print(f"[flag] CHECKERED (via {check_via}) — "
+                      f"#{leader_num} {leader_name} "
+                      f"sess_state={sess_state}")
 
     def _check_connection(self):
         if self.connected and not (self.ir.is_initialized and self.ir.is_connected):
@@ -378,6 +404,9 @@ class FlagWatcher:
         self._lap_times       = []
         self._last_lap_start_t = None
         self._timed_last_lap  = False
+        self._timed_seen      = False
+        self._ticks_in_session = 0
+        self._white_fired_at  = 0.0
         with self._lock:
             self.state       = "idle"
             self.leader_num  = ""
@@ -773,10 +802,9 @@ if __name__ == "__main__":
     print("  Flags:")
     print("  WHITE FLAG   — leader starts their final lap")
     print("  CHECKERED    — leader crosses the finish line")
-    print("  (auto-hides 12s after checkered)")
+    print("  (auto-hides 60s after checkered)")
     print()
-    print("  Works with lap-based races only.")
-    print("  Timed races (no fixed lap count) are not supported.")
+    print("  Supports lap-based AND timed races (incl. 'laps OR time').")
     print("  Press Ctrl+C to stop")
     print("=" * 60 + "\n")
 

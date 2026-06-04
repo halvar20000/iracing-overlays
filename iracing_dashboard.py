@@ -89,6 +89,45 @@ SURFACE_IN_PIT_STALL = 1
 SURFACE_APPROACHING_PITS = 2
 SURFACE_ON_TRACK     = 3
 
+# --- Speed-collapse detector tuning (spectator-mode spin/crash detection) ---
+# A car is considered to have spun/crashed when its speed collapses from
+# racing pace to near-stop within a short window. Thresholds chosen so that
+# normal braking (even into 45-55 km/h hairpins) can NOT fire: the final
+# speed floor of 32 km/h sits below every legitimate corner-apex speed.
+SC_PEAK_MIN_MPS   = 25.0   # must have been ≥ 90 km/h within the window
+SC_FINAL_MAX_MPS  = 9.0    # and now be ≤ 32 km/h
+SC_DROP_MIN_MPS   = 18.0   # and have lost ≥ 65 km/h
+SC_WINDOW_S       = 2.5    # lookback for the recent peak
+SC_COOLDOWN_S     = 8.0    # per-car re-arm time
+# Collision classification: a collapse counts as contact when another car
+# is within PAIR_PCT of track distance and collapsed within PAIR_WINDOW_S,
+# or is currently within TOUCH_PCT (close enough to be alongside).
+SC_PAIR_PCT       = 0.015
+SC_PAIR_WINDOW_S  = 3.0
+SC_TOUCH_PCT      = 0.0045
+# Off-track (quiet feed entries): all four wheels off for ≥ N polls while
+# still carrying speed (a collapsing car is reported as a spin instead).
+OFF_MIN_TICKS     = 4      # 0.4 s at 10 Hz — kerb hops don't reach this
+OFF_MIN_SPEED_MPS = 12.0   # still moving: an excursion, not an incident
+OFF_COOLDOWN_S    = 30.0   # per-car
+# Stopped-on-track: a car is "stopped" only below a real-speed floor that
+# no driveable corner gets under (walking pace), held for a full 3 s.
+# The old per-poll pct-delta threshold was track-length dependent and, at
+# 10 Hz, tripped after 1.2 s — every car crawling through a very slow
+# corner (Miami) got reported. Speed-based instead.
+STOP_MAX_MPS      = 1.4    # ≈ 5 km/h — slow corners are 40+ km/h
+STOP_MIN_TICKS    = 30     # 3.0 s at 10 Hz
+# Connection-flaky cars: a driver with network problems blinks out of the
+# world and back, over and over. Each blink used to fire incidents (the
+# telemetry freeze before the blink looks like a speed collapse → "spin",
+# the blink-out itself fired the vanish detector → "crashed"). A vanish is
+# now only reported if the car STAYS gone (a real tow does; a lag blink
+# returns within seconds), and a car that returns from out-of-world is
+# treated as connection-unstable: all heuristic detectors ignore it for a
+# while (the window refreshes on every new blink).
+UNSTABLE_WINDOW_S = 90.0   # heuristics ignore a car this long after a return
+VANISH_CONFIRM_S  = 10.0   # report a vanish only if the car stays gone
+
 
 # -----------------------------------------------------------------------------
 # Telemetry poller
@@ -178,13 +217,32 @@ class TelemetryPoller:
         self._finished = set()             # car_idxs considered finished
         self._incidents = deque(maxlen=40)
         self._incident_cooldown = {}     # (car_idx, type) -> last session_time emitted
-        # Global cooldown for yellow-zone emissions. When iRacing raises a
-        # local yellow, multiple cars in the zone get the flag bit set
-        # simultaneously — we only want ONE incident per actual event, so
-        # this gate lets the first car emit and suppresses the rest for a
-        # short window. Per-car _incident_cooldown still dedupes against
-        # yaw/regression-based emissions for the same car.
-        self._last_yellow_emit_t = -1e9  # session_time of last yellow-based emit
+        # Per-track-LOCATION dedup for the local-yellow detector. A real
+        # incident keeps the yellow up for many seconds while the whole
+        # field streams past it — we only want ONE feed entry, not one per
+        # passing car. _yellow_zone_seen records the last session_time we
+        # saw ANY car carrying a yellow in each 5% zone; while that stays
+        # "warm" the zone is the same ongoing incident and won't re-emit.
+        # Once it goes cold (yellow cleared) the zone can report the next.
+        self._yellow_zone_seen = {}      # pct-bucket -> last session_time a yellow was seen
+
+        # --- Per-car kinematics (speed-collapse detection, 2026-06-04) ----
+        # iOverlay-class incident detection works in SPECTATOR mode by
+        # watching each car's speed (derived from CarIdxLapDistPct ×
+        # track length at 10 Hz). A car that goes from racing speed to
+        # near-zero within ~2 s has spun or crashed — no SDK incident
+        # count or yaw rate needed (neither is broadcast for other cars).
+        self._track_len_m = None         # parsed from WeekendInfo.TrackLength
+        self._prog_hist = {}             # car_idx -> deque[(t_session, cum_progress)]
+        self._cum_progress = {}          # car_idx -> unwrapped lap-pct accumulator
+        self._speed_hist = {}            # car_idx -> deque[(t_session, v_mps)]
+        self._collapse_at = {}           # car_idx -> t_session of last speed collapse
+        self._off_ticks = {}             # car_idx -> consecutive polls fully off-track
+        self._off_cooldown = {}          # car_idx -> last t an off_track was emitted
+        # Connection-blink filter (see UNSTABLE_WINDOW_S / VANISH_CONFIRM_S)
+        self._world_returns = {}         # car_idx -> t_session of last -1 -> in-world return
+        self._seen_in_world = set()      # car_idxs ever seen in-world this session
+        self._pending_vanish = {}        # car_idx -> {vanish_t, crash_t, details}
 
         # Auto-replay on incidents (opt-in via dashboard toggle)
         self.auto_replay = False
@@ -232,7 +290,17 @@ class TelemetryPoller:
         self._finished.clear()
         self._incidents.clear()
         self._incident_cooldown.clear()
-        self._last_yellow_emit_t = -1e9
+        self._yellow_zone_seen.clear()
+        self._track_len_m = None
+        self._prog_hist.clear()
+        self._cum_progress.clear()
+        self._speed_hist.clear()
+        self._collapse_at.clear()
+        self._off_ticks.clear()
+        self._off_cooldown.clear()
+        self._world_returns.clear()
+        self._seen_in_world.clear()
+        self._pending_vanish.clear()
         self._cam_lost_since = None
         self._last_cam_recover_at = 0.0
 
@@ -446,7 +514,7 @@ class TelemetryPoller:
             if now >= self._focus_crash_until:
                 try:
                     self.ir.cam_switch_num(
-                        str(info["car_number"]), self._current_cam_group, 0
+                        str(info["car_number"]), self._safe_cam_group(), 0
                     )
                     self._reassert_ui_hide()
                     self._focus_crash_until = now + self._focus_crash_hold_seconds
@@ -537,6 +605,171 @@ class TelemetryPoller:
         # Kept as a no-op so existing call-sites don't break if any remain.
         pass
 
+    def _car_nearby(self, idx, pct_arr, surfaces, threshold: float = 0.012) -> bool:
+        """True if another in-world car is within `threshold` of car
+        `idx`'s track position. Used to tell a collision (someone right
+        there) from a solo spin. 0.012 ≈ 1.2 % of the lap."""
+        if idx >= len(pct_arr):
+            return False
+        me = pct_arr[idx]
+        if me is None or me < 0:
+            return False
+        for j in range(len(pct_arr)):
+            if j == idx:
+                continue
+            jsurf = surfaces[j] if j < len(surfaces) else -1
+            if jsurf == SURFACE_NOT_IN_WORLD:
+                continue
+            jp = pct_arr[j]
+            if jp is None or jp < 0:
+                continue
+            d = abs(jp - me)
+            if d > 0.5:
+                d = 1.0 - d           # start/finish wrap
+            if d < threshold:
+                return True
+        return False
+
+    def _get_track_len_m(self):
+        """Parse + cache track length in meters from WeekendInfo."""
+        if self._track_len_m is not None:
+            return self._track_len_m
+        wk = self.ir["WeekendInfo"] or {}
+        raw = str(wk.get("TrackLength", "") or "")     # e.g. "3.93 km"
+        try:
+            val = float(raw.split()[0])
+            self._track_len_m = val * (1000.0 if "km" in raw else 1.0)
+            print(f"[kinematics] track length {self._track_len_m:.0f} m")
+        except (ValueError, IndexError):
+            return None
+        return self._track_len_m
+
+    def _update_speed(self, idx, t_now, cur_pct):
+        """Update the car's unwrapped progress + speed history.
+
+        Returns the current speed estimate in m/s (slope of lap progress
+        over the last ~0.5 s × track length), or None if not enough data.
+        Robust against the S/F wrap, teleports (pit tow) and data gaps —
+        both reset the history rather than producing a garbage spike.
+        """
+        L = self._get_track_len_m()
+        if L is None or cur_pct is None or cur_pct < 0:
+            return None
+        hist = self._prog_hist.get(idx)
+        if hist is None:
+            hist = self._prog_hist[idx] = deque(maxlen=45)   # ~4.5 s @ 10 Hz
+        cum = self._cum_progress.get(idx)
+        if hist and cum is not None:
+            t_prev, cum_prev = hist[-1]
+            delta = cur_pct - (cum_prev % 1.0)
+            if delta < -0.5:
+                delta += 1.0          # S/F wrap forward
+            elif delta > 0.5:
+                delta -= 1.0          # reversed over S/F
+            if t_now - t_prev > 2.0 or abs(delta) > 0.2:
+                # data gap or teleport — restart history
+                hist.clear()
+                self._speed_hist.get(idx, deque()).clear()
+                cum = None
+        if cum is None:
+            cum = cur_pct
+        else:
+            cum = hist[-1][1] + delta
+        self._cum_progress[idx] = cum
+        hist.append((t_now, cum))
+
+        # Speed = slope over the samples spanning the last ~0.5 s.
+        v = None
+        for t_old, cum_old in hist:
+            if t_now - t_old <= 0.65:
+                if t_now - t_old >= 0.35:
+                    v = (cum - cum_old) * L / (t_now - t_old)
+                break
+        if v is None and len(hist) >= 2:
+            t_old, cum_old = hist[0]
+            if 0.05 < t_now - t_old <= 0.65:
+                v = (cum - cum_old) * L / (t_now - t_old)
+        if v is not None:
+            sh = self._speed_hist.get(idx)
+            if sh is None:
+                sh = self._speed_hist[idx] = deque(maxlen=45)
+            sh.append((t_now, v))
+        return v
+
+    def _recent_peak_speed(self, idx, t_now, window=SC_WINDOW_S):
+        sh = self._speed_hist.get(idx)
+        if not sh:
+            return None
+        vals = [v for (t, v) in sh if t_now - t <= window]
+        return max(vals) if vals else None
+
+    def _is_collision_for(self, idx, t_now, pct_arr, surfaces):
+        """Classify a speed collapse / yellow-zone event as contact:
+        another in-world car collapsed within SC_PAIR_WINDOW_S nearby,
+        or is currently practically alongside (SC_TOUCH_PCT)."""
+        if idx >= len(pct_arr) or pct_arr[idx] is None or pct_arr[idx] < 0:
+            return False
+        me = pct_arr[idx]
+        for j in range(len(pct_arr)):
+            if j == idx:
+                continue
+            jsurf = surfaces[j] if j < len(surfaces) else -1
+            if jsurf == SURFACE_NOT_IN_WORLD:
+                continue
+            jp = pct_arr[j]
+            if jp is None or jp < 0:
+                continue
+            d = abs(jp - me)
+            if d > 0.5:
+                d = 1.0 - d
+            if d < SC_TOUCH_PCT:
+                return True
+            if d < SC_PAIR_PCT:
+                col_t = self._collapse_at.get(j)
+                if col_t is not None and t_now - col_t < SC_PAIR_WINDOW_S:
+                    return True
+        return False
+
+    def _find_zone_culprit(self, zone_pct, pct_arr, surfaces, idx_fallback,
+                           t_now=0.0):
+        """A local yellow is carried by every car NEAR an incident, not
+        just the one that caused it. Given the zone's track position,
+        return the CarIdx most likely to be the cause: an off-track or
+        vanished car scores highest, then whichever car has been slow /
+        stopped the longest. Falls back to the flag carrier if nobody in
+        the zone looks troubled."""
+        best_idx, best_score = idx_fallback, 0.0
+        for j in range(len(pct_arr)):
+            jp = pct_arr[j]
+            if jp is None or jp < 0:
+                continue
+            d = abs(jp - zone_pct)
+            if d > 0.5:
+                d = 1.0 - d
+            if d > 0.06:              # only cars within ~6 % of the zone
+                continue
+            # Never blame a connection-unstable car — it blinks in and
+            # out of the world and would score via NOT_IN_WORLD/stopped.
+            if t_now - self._world_returns.get(j, -1e9) < UNSTABLE_WINDOW_S:
+                continue
+            jsurf = surfaces[j] if j < len(surfaces) else -1
+            score = 0.0
+            # Strongest signal: this car's speed recently collapsed —
+            # the spinning/crashed car itself, even if it's still rolling
+            # and hasn't gone off-track or stopped yet. This is what used
+            # to make the old culprit picker name a random passing car.
+            col_t = self._collapse_at.get(j)
+            if col_t is not None and t_now - col_t < 8.0:
+                score += 5.0
+            if jsurf == SURFACE_OFF_TRACK:
+                score += 3.0
+            elif jsurf == SURFACE_NOT_IN_WORLD:
+                score += 2.0
+            score += min(self._stopped_ticks.get(j, 0), 20) * 0.3
+            if score > best_score:
+                best_score, best_idx = score, j
+        return best_idx
+
     def _update_incidents(self):
         t_now = self.ir["SessionTime"] or 0.0
         surfaces = self.ir["CarIdxTrackSurface"] or []
@@ -544,12 +777,16 @@ class TelemetryPoller:
         pct_arr   = self.ir["CarIdxLapDistPct"] or []
         positions = self.ir["CarIdxClassPosition"] or []
         on_pit    = self.ir["CarIdxOnPitRoad"] or []
-        yaw_arr   = self.ir["CarIdxYawRate"] or []
         laps_arr  = self.ir["CarIdxLap"] or []
 
-        # Per-car yellow-flag bit mask from CarIdxSessionFlags:
-        #   0x2000 = yellow-waving, 0x4000 = caution
-        YELLOW_MASK = 0x00004000 | 0x00002000
+        # Per-car LOCAL-yellow bits from CarIdxSessionFlags. iRacing's
+        # flag enum:  yellow = 0x0008,  yellow_waving = 0x0100.
+        # The old mask used 0x4000 (caution) and 0x2000 (random_waving) —
+        # both WRONG: caution is a full-course yellow, rare in road
+        # racing, and random_waving is an internal test signal. With the
+        # wrong bits this detector almost never fired, which is the main
+        # reason spectator-mode incidents were being missed.
+        YELLOW_MASK = 0x0008 | 0x0100
 
         # --- Finished-the-race detection --------------------------------
         # Once the session reaches CHECKERED (5) we snapshot each car's
@@ -601,6 +838,26 @@ class TelemetryPoller:
                 except (TypeError, ValueError):
                     incidents_by_idx[cidx] = 0
 
+        # --- pending-vanish confirmation (connection-blink filter) ---------
+        # A vanish is only reported once the car has stayed out of the
+        # world for VANISH_CONFIRM_S. A car that comes back sooner was a
+        # connection blink, not a crash — cancel the report and mark the
+        # car unstable. Runs OUTSIDE the per-car loop because vanished
+        # cars can be skipped by the loop's early-continue guards.
+        for vidx in list(self._pending_vanish.keys()):
+            info = self._pending_vanish[vidx]
+            vsurf = surfaces[vidx] if vidx < len(surfaces) else SURFACE_NOT_IN_WORLD
+            if vsurf != SURFACE_NOT_IN_WORLD:
+                del self._pending_vanish[vidx]
+                self._world_returns[vidx] = t_now
+                print(f"[vanish-cancel] idx={vidx} returned after "
+                      f"{t_now - info['vanish_t']:.1f}s — connection blink, "
+                      f"heuristics muted {UNSTABLE_WINDOW_S:.0f}s")
+            elif t_now - info["vanish_t"] >= VANISH_CONFIRM_S:
+                del self._pending_vanish[vidx]
+                self._emit_incident(vidx, "collision",
+                                    info["crash_t"], info["details"])
+
         for idx in range(len(surfaces)):
             # Skip pace car / spectator-ish slots (position 0 and no lap data)
             pos = positions[idx] if idx < len(positions) else 0
@@ -616,6 +873,19 @@ class TelemetryPoller:
             prev_surf = self._prev_surface.get(idx, surf)
             self._prev_surface[idx] = surf
             is_pit = bool(on_pit[idx]) if idx < len(on_pit) else False
+
+            # Connection-blink tracking: a car that RETURNS from out-of-
+            # world (after having been in the world before) is unstable —
+            # its telemetry can't be trusted for incident heuristics.
+            if surf != SURFACE_NOT_IN_WORLD:
+                if (prev_surf == SURFACE_NOT_IN_WORLD
+                        and idx in self._seen_in_world):
+                    self._world_returns[idx] = t_now
+                    print(f"[unstable] idx={idx} returned to world — "
+                          f"heuristics muted {UNSTABLE_WINDOW_S:.0f}s")
+                self._seen_in_world.add(idx)
+            unstable = (t_now - self._world_returns.get(idx, -1e9)
+                        < UNSTABLE_WINDOW_S)
 
             # --- stopped / crashed: surface became NotInWorld from in-world ---
             # Intentionally NOT emitted: too many causes (garage, finished,
@@ -668,35 +938,82 @@ class TelemetryPoller:
                         f"off track (+{delta}x, total {new_cnt}x)",
                     )
 
-            # --- yaw-rate spin detection (for visible spins iRacing did
-            # NOT score itself). Fires when abs(yaw_rate) > 2.5 rad/s AND
-            # the car is on the racing surface (on-track OR just off),
-            # but NOT in the pit lane / pit approach / out-of-world.
-            # 2.5 rad/s (~143 deg/s) catches a fast 45° snap rotation
-            # over ~300 ms, as well as anything more violent. Will also
-            # fire on some aggressive corner-exit oversteer moments —
-            # user-chosen trade-off for catching every visible slide.
-            # Per-car 8-second cooldown.
-            if (idx < len(yaw_arr)
+            # NOTE: the old yaw-rate spin detector was REMOVED (2026-06-04).
+            # It read "CarIdxYawRate", which does not exist in the iRacing
+            # SDK (only the local car's "YawRate" is broadcast) — the array
+            # was always empty and the detector never fired once. Replaced
+            # by the speed-collapse detector below, which works for every
+            # car in spectator mode.
+
+            # --- per-car speed tracking (10 Hz kinematics) ------------------
+            v_now = self._update_speed(
+                idx, t_now, pct_arr[idx] if idx < len(pct_arr) else None)
+
+            # --- SPEED-COLLAPSE detector (spec-mode PRIMARY: spins+crashes) -
+            # Racing speed → near-stop within ~2.5 s = the car spun, hit
+            # something, or got hit. Catches RECOVERED spins too (driver
+            # gathers it up and drives on) — those never trip the stopped/
+            # vanish/regression detectors. Normal braking can't fire it:
+            # no legitimate corner apex is slower than the 32 km/h floor.
+            # Pit entry can't fire it: pit road + pit approach surfaces are
+            # excluded, and braking for the pit-speed limit on the racing
+            # surface doesn't get under the floor either.
+            if (v_now is not None
+                    and not unstable
                     and surf in (SURFACE_OFF_TRACK, SURFACE_ON_TRACK)
-                    and not is_pit):
-                yaw = yaw_arr[idx]
-                # Diagnostic: log near-miss yaw readings so we can see if
-                # the threshold is in the right ballpark for this car type.
-                if yaw is not None and abs(yaw) > 1.8:
-                    deg = abs(yaw) * 57.2958
-                    print(f"[yaw-peek] idx={idx} yaw={abs(yaw):.2f} rad/s "
-                          f"({deg:.0f} deg/s) surf={surf}")
-                if yaw is not None and abs(yaw) > 2.5:
-                    last = self._spin_cooldown.get(idx, -1e9)
-                    if t_now - last > 8.0:
-                        self._spin_cooldown[idx] = t_now
-                        deg_per_sec = abs(yaw) * 57.2958
-                        where = "on track" if surf == SURFACE_ON_TRACK else "off track"
+                    and not is_pit
+                    and sess_state != 3            # parade lap / grid forming
+                    and v_now < SC_FINAL_MAX_MPS):
+                peak = self._recent_peak_speed(idx, t_now)
+                if (peak is not None
+                        and peak >= SC_PEAK_MIN_MPS
+                        and peak - v_now >= SC_DROP_MIN_MPS):
+                    # Frozen-telemetry guard: a car about to blink out
+                    # FREEZES — its lap-pct samples become bit-identical,
+                    # which looks like an impossible instant stop. A real
+                    # crashing car still translates while decelerating.
+                    ph = self._prog_hist.get(idx)
+                    frozen = (ph is not None and len(ph) >= 3
+                              and ph[-1][1] == ph[-2][1] == ph[-3][1])
+                    last = self._collapse_at.get(idx, -1e9)
+                    if frozen:
+                        print(f"[speed-collapse-skip] idx={idx} telemetry "
+                              f"frozen (connection?) — not a crash")
+                    elif t_now - last > SC_COOLDOWN_S:
+                        self._collapse_at[idx] = t_now
+                        self._spin_cooldown[idx] = t_now  # quiet the heuristics
+                        contact = self._is_collision_for(
+                            idx, t_now, pct_arr, surfaces)
+                        print(f"[speed-collapse] idx={idx} "
+                              f"{peak*3.6:.0f}->{v_now*3.6:.0f} km/h "
+                              f"surf={surf} contact={contact}")
                         self._emit_incident(
-                            idx, "lost_control", t_now,
-                            f"spin ({where}, {deg_per_sec:.0f} deg/s)",
+                            idx,
+                            "collision" if contact else "lost_control",
+                            t_now,
+                            f"{'contact' if contact else 'spin'} "
+                            f"({peak*3.6:.0f} → {max(v_now,0)*3.6:.0f} km/h)",
                         )
+
+            # --- off-track excursion (quiet feed entry, spec-mode) ----------
+            # All four wheels off for ≥ 0.4 s while still carrying speed.
+            # Kerb hops / two-wheels-off don't register (surface stays 3);
+            # a car LOSING speed off-track is the speed-collapse detector's
+            # job and is reported as a spin/contact instead, not here.
+            if surf == SURFACE_OFF_TRACK and not is_pit and not unstable:
+                self._off_ticks[idx] = self._off_ticks.get(idx, 0) + 1
+                if (self._off_ticks[idx] == OFF_MIN_TICKS
+                        and v_now is not None
+                        and v_now > OFF_MIN_SPEED_MPS
+                        and t_now - self._off_cooldown.get(idx, -1e9)
+                            > OFF_COOLDOWN_S):
+                    self._off_cooldown[idx] = t_now
+                    self._emit_incident(
+                        idx, "off_track", t_now,
+                        f"four wheels off ({v_now*3.6:.0f} km/h)",
+                    )
+            else:
+                self._off_ticks[idx] = 0
 
             # --- lap-position regression (car moving BACKWARDS) -----------
             # A car that's been hit or has spun often ends up going the
@@ -721,6 +1038,7 @@ class TelemetryPoller:
                 self._prev_lap_pct[idx] = cur_pct
                 if (prev_pct is not None
                         and cur_pct is not None
+                        and not unstable              # reconnect jumps backwards
                         and prev_pct < 0.9            # not the 0.99→0.01 wrap
                         and cur_pct < prev_pct - 0.003):
                     delta_m_pct = (prev_pct - cur_pct) * 100.0
@@ -742,14 +1060,13 @@ class TelemetryPoller:
                     delta_pct_signed = raw
 
             # --- stopped-on-track (spec-mode crash proxy) ------------------
-            # When CarIdxYawRate isn't available (spec mode), a car that's
-            # crashed / beached typically shows as "still on the racing
-            # surface but no longer moving forward". Count consecutive
-            # polls with very small |delta|; trip the alarm at 12 polls
-            # (~3 s at 250 ms tick) — less sensitive than 1 s because
-            # rolling starts, corner exits, and traffic jams produced too
-            # many false positives. A real stuck/beached car will easily
-            # hold still for 3 s.
+            # A car that's crashed / beached shows as "still on the racing
+            # surface but no longer moving". "Stopped" is judged on REAL
+            # speed (kinematics, m/s) below STOP_MAX_MPS (~5 km/h) held
+            # for STOP_MIN_TICKS (3 s). The old per-poll pct-delta test
+            # (< 0.0003/poll) was track-length dependent and fired after
+            # only 1.2 s at 10 Hz — every car through a very slow corner
+            # (Miami 2026-06) got a false "stopped on track" report.
             # Guardrail: require at least one OTHER car to be moving
             # forward, otherwise a full-course yellow / red flag /
             # paused session triggers the alarm for every car at once.
@@ -780,25 +1097,26 @@ class TelemetryPoller:
 
             if (surf == SURFACE_ON_TRACK
                     and not is_pit
-                    and delta_pct_signed is not None
+                    and not unstable
+                    and v_now is not None
                     and cur_pct is not None
                     and any_other_moving
                     # Ignore the start/finish line area — cars here can
                     # legitimately be held for formation / pit-exit lights
                     and 0.02 < cur_pct < 0.98):
-                if abs(delta_pct_signed) < 0.0003:
+                if v_now < STOP_MAX_MPS:
                     self._stopped_ticks[idx] = self._stopped_ticks.get(idx, 0) + 1
                 else:
-                    if self._stopped_ticks.get(idx, 0) >= 12:
+                    if self._stopped_ticks.get(idx, 0) >= STOP_MIN_TICKS:
                         print(f"[stopped-on-track] idx={idx} resumed after "
                               f"{self._stopped_ticks[idx]} static ticks")
                     self._stopped_ticks[idx] = 0
-                if self._stopped_ticks.get(idx, 0) == 12:
+                if self._stopped_ticks.get(idx, 0) == STOP_MIN_TICKS:
                     last = self._spin_cooldown.get(idx, -1e9)
                     if t_now - last > 15.0:
                         self._spin_cooldown[idx] = t_now
                         print(f"[stopped-on-track] idx={idx} FIRE "
-                              f"(pct={cur_pct:.3f})")
+                              f"(pct={cur_pct:.3f}, v={v_now*3.6:.1f} km/h)")
                         self._emit_incident(
                             idx, "lost_control", t_now,
                             "stopped on track",
@@ -807,6 +1125,15 @@ class TelemetryPoller:
                 # Car in pits, off-track, out-of-world, or session-wide
                 # slowdown — reset counter
                 self._stopped_ticks[idx] = 0
+
+            # NOTE: a "running below own pace" detector was tried here and
+            # removed — flagging a car as slow relative to its own pace
+            # also flags out-laps, lapped cars yielding, fuel-saving, and
+            # slow corner complexes. Distinguishing those from a real
+            # incident needs more than CarIdxLapDistPct deltas. Spins /
+            # contact are instead covered by the local-yellow detector
+            # (iRacing's own signal) plus the stopped / backwards / vanish
+            # detectors above.
 
             # --- vanished-from-world (spec-mode heavy-crash proxy) --------
             # Surface went 3 -> -1 while the car was mid-lap (not near pit
@@ -830,6 +1157,9 @@ class TelemetryPoller:
                 stop_duration = (t_now - last_moved) if last_moved is not None else 0.0
                 if last_known_pct is None or last_known_pct >= 0.95:
                     pass  # near pit entrance — probably pitted
+                elif unstable:
+                    print(f"[vanish-skip] idx={idx} connection-unstable, "
+                          f"ignoring blink-out")
                 elif stop_duration < 1.0:
                     # Was moving a moment ago: disconnect / retire / tow
                     # from pit. Not a crash.
@@ -840,53 +1170,82 @@ class TelemetryPoller:
                     if t_now - last > 15.0:
                         self._spin_cooldown[idx] = t_now
                         crash_t = last_moved if last_moved is not None else t_now
+                        # NOT emitted immediately — queued until the car
+                        # has stayed gone for VANISH_CONFIRM_S. A real
+                        # tow stays out for 20-30 s; a connection blink
+                        # returns within seconds and cancels the report.
                         print(f"[vanish] idx={idx} surface 3->-1 at pct "
                               f"{last_known_pct:.3f}, stopped for "
-                              f"{stop_duration:.1f}s, crash_t={crash_t:.1f}")
-                        self._emit_incident(
-                            idx, "collision", crash_t,
-                            f"crashed (stopped {stop_duration:.0f}s then vanished)",
-                        )
+                              f"{stop_duration:.1f}s, crash_t={crash_t:.1f} "
+                              f"— queued ({VANISH_CONFIRM_S:.0f}s confirm)")
+                        self._pending_vanish[idx] = {
+                            "vanish_t": t_now,
+                            "crash_t":  crash_t,
+                            "details":  f"crashed (stopped "
+                                        f"{stop_duration:.0f}s then vanished)",
+                        }
 
-            # --- iRacing local-yellow zone (spec-mode supplementary) -------
-            # CarIdxSessionFlags exposes a per-car bitmask. iRacing sets
-            # the LOCAL_YELLOW / yellow-waving bits on cars that are in
-            # the zone of an incident — that IS iRacing's own "an incident
-            # just happened here" signal. Useful because CarIdxYawRate and
-            # CurDriverIncidentCount don't work in spectator mode, so
-            # smaller incidents (a light tap, a brief slide that doesn't
-            # cross our yaw or lap-regress thresholds) can slip through
-            # the other detectors.
+            # --- iRacing local-yellow zone (spec-mode PRIMARY detector) ----
+            # CarIdxSessionFlags carries a per-car bitmask; iRacing sets the
+            # local-yellow bits on every car near an incident. That IS
+            # iRacing's own "an incident happened here" signal — the same
+            # thing broadcast tools like iOverlay key off — and it works in
+            # spectator mode. So this is the authoritative detector and is
+            # deliberately NOT gated by _spin_cooldown: a real crash must
+            # never be suppressed just because a heuristic detector fired
+            # on that car moments earlier. (It still SETS _spin_cooldown so
+            # the heuristic detectors stay quiet for the same event, and
+            # _emit_incident's own per-(car,type) 15 s dedup blocks repeats.)
             #
-            # Two layers of deduplication:
-            #   (1) Global 5-second cooldown. One physical incident
-            #       usually raises the yellow bit on several cars
-            #       simultaneously — the zone is broad. Without this,
-            #       we'd fire N incidents for the one event.
-            #   (2) Per-car _incident_cooldown inside _emit_incident. If
-            #       the yaw or regression detector already fired for this
-            #       car in the last 15 s, the yellow-based emission is
-            #       suppressed there.
+            # Dedup is per TRACK LOCATION. A real incident keeps the yellow
+            # up for many seconds while the whole field streams past, so we
+            # must NOT emit once per passing car. _yellow_zone_seen tracks
+            # the last time ANY car carried a yellow in each 5 % zone; while
+            # that zone stays "warm" it's the same ongoing incident and is
+            # not re-emitted. Once it goes cold (~10 s with no yellow = the
+            # incident cleared) the zone is free to report the next one.
             if idx < len(flags_arr):
                 raw_flags = int(flags_arr[idx] or 0)
-                cur_yellow_bits = raw_flags & YELLOW_MASK
-                cur_yellow = cur_yellow_bits != 0
+                cur_yellow = (raw_flags & YELLOW_MASK) != 0
                 prev_yellow = self._prev_yellow.get(idx, False)
                 self._prev_yellow[idx] = cur_yellow
-                if (cur_yellow
-                        and not prev_yellow
-                        and surf == SURFACE_ON_TRACK
-                        and not is_pit
-                        and t_now - self._last_yellow_emit_t > 5.0):
-                    self._last_yellow_emit_t = t_now
-                    pct_str = (f"{cur_pct:.3f}"
-                               if cur_pct is not None else "?")
-                    print(f"[yellow-zone] idx={idx} bits=0x{cur_yellow_bits:x} "
-                          f"at pct {pct_str}")
-                    self._emit_incident(
-                        idx, "lost_control", t_now,
-                        f"local yellow raised (flags=0x{cur_yellow_bits:x})",
-                    )
+                if cur_yellow and cur_pct is not None and not is_pit:
+                    zone = int(round(cur_pct * 20))
+                    zone_cold = (
+                        t_now - self._yellow_zone_seen.get(zone, -1e9) > 10.0)
+                    self._yellow_zone_seen[zone] = t_now
+                    if not prev_yellow and zone_cold:
+                        culprit = self._find_zone_culprit(
+                            cur_pct, pct_arr, surfaces, idx, t_now)
+                        # The speed-collapse detector usually beats the
+                        # yellow by 1-2 s and names the culprit precisely —
+                        # don't double-report the same event when it
+                        # already did.
+                        if t_now - self._collapse_at.get(culprit, -1e9) < 12.0:
+                            print(f"[yellow-zone] zone={zone} culprit="
+                                  f"{culprit} already reported via "
+                                  f"speed-collapse, skipping")
+                        else:
+                            self._spin_cooldown[culprit] = t_now
+                            near = self._is_collision_for(
+                                culprit, t_now, pct_arr, surfaces)
+                            # Back-date to the culprit's last forward motion
+                            # so an auto-replay rewinds to the crash, not to
+                            # the moment the flag flipped.
+                            moved = self._last_moving_t.get(culprit)
+                            crash_t = t_now
+                            if moved is not None and 0.0 < t_now - moved < 20.0:
+                                crash_t = moved
+                            print(f"[yellow-zone] zone={zone} carrier={idx} "
+                                  f"culprit={culprit} near={near} "
+                                  f"crash_t={crash_t:.1f}")
+                            self._emit_incident(
+                                culprit,
+                                "collision" if near else "lost_control",
+                                crash_t,
+                                "incident in local-yellow zone"
+                                + (" (contact)" if near else ""),
+                            )
 
     # --- driver list --------------------------------------------------------
     def _build_driver_list(self) -> list:
@@ -906,6 +1265,20 @@ class TelemetryPoller:
         if est_lap_time <= 0:
             est_lap_time = 100.0  # sane default
 
+        # Live-progress ordering only makes sense in a RACE — in practice /
+        # qualifying iRacing's position (best-lap rank) is the right order.
+        is_race = False
+        try:
+            sessions = (ir["SessionInfo"] or {}).get("Sessions", []) or []
+            sess_num = ir["SessionNum"] or 0
+            for s in sessions:
+                if s.get("SessionNum") == sess_num:
+                    is_race = "race" in (s.get("SessionType") or "").lower()
+                    break
+        except Exception:
+            pass
+        surfaces = ir["CarIdxTrackSurface"] or []
+
         rows = []
         for d in drivers_raw:
             idx = d.get("CarIdx")
@@ -913,20 +1286,38 @@ class TelemetryPoller:
                 continue
             if d.get("CarIsPaceCar") == 1 or d.get("IsSpectator") == 1:
                 continue
+            lap_v = laps[idx]    if idx < len(laps)    else 0
+            pct_v = lap_pct[idx] if idx < len(lap_pct) else 0.0
+            surf_v = surfaces[idx] if idx < len(surfaces) else SURFACE_ON_TRACK
             rows.append({
                 "car_idx":     idx,
                 "name":        d.get("UserName", "") or "",
                 "car_number":  d.get("CarNumber", "") or "",
                 "car":         d.get("CarScreenNameShort") or d.get("CarScreenName", ""),
                 "position":    positions[idx] if idx < len(positions) else 0,
-                "lap":         laps[idx]      if idx < len(laps)      else 0,
-                "lap_pct":     lap_pct[idx]   if idx < len(lap_pct)   else 0.0,
+                "lap":         lap_v,
+                "lap_pct":     pct_v,
                 "on_pit_road": bool(on_pit[idx]) if idx < len(on_pit) else False,
                 "best_lap":    best_lap[idx] if idx < len(best_lap) else 0.0,
                 "gap_to_leader": f2_time[idx] if idx < len(f2_time) else 0.0,
                 "starred":     idx in self._starred_car_idxs,
+                "in_world":    surf_v != SURFACE_NOT_IN_WORLD,
+                "progress":    (lap_v or 0) + max(pct_v or 0.0, 0.0),
             })
-        rows.sort(key=lambda d: (d["position"] == 0, d["position"]))
+        if is_race:
+            # Sort by LIVE track progress (lap + lap pct) — iRacing's own
+            # position array only updates at S/F crossings, so overtakes
+            # used to take up to a full lap to appear here while the
+            # standings overlay (fixed 23.04.) already showed them.
+            # In-world cars first by progress; towed/garage cars sink to
+            # the bottom. The stale iRacing position is kept as
+            # `iracing_pos` for diagnostics.
+            rows.sort(key=lambda d: (not d["in_world"], -d["progress"]))
+            for i, r in enumerate(rows):
+                r["iracing_pos"] = r["position"]
+                r["position"] = i + 1
+        else:
+            rows.sort(key=lambda d: (d["position"] == 0, d["position"]))
         for i, r in enumerate(rows):
             if i == 0 or r["position"] == 0:
                 r["gap_ahead"] = 0.0
@@ -985,7 +1376,7 @@ class TelemetryPoller:
         if target["car_idx"] == current_cam_idx:
             return
         try:
-            self.ir.cam_switch_num(str(target["car_number"]), self._current_cam_group, 0)
+            self.ir.cam_switch_num(str(target["car_number"]), self._safe_cam_group(), 0)
             self._last_auto_switch = t_now
             self._reassert_ui_hide()
             tag = "*" if target["starred"] else "  "
@@ -1021,7 +1412,7 @@ class TelemetryPoller:
             return
         try:
             self.ir.cam_switch_num(
-                str(leader["car_number"]), self._current_cam_group, 0
+                str(leader["car_number"]), self._safe_cam_group(), 0
             )
             self._reassert_ui_hide()
             self._last_leader_car_idx = leader_idx
@@ -1097,7 +1488,7 @@ class TelemetryPoller:
         try:
             self.ir.cam_switch_num(
                 str(fallback["car_number"]),
-                self._current_cam_group,
+                self._safe_cam_group(),
                 0,
             )
             self._reassert_ui_hide()
@@ -1362,6 +1753,38 @@ class TelemetryPoller:
         self._reassert_ui_hide()
         return True
 
+    def _safe_cam_group(self) -> int:
+        """Return a camera group id that is guaranteed NOT to be Scenic.
+
+        Preference: the currently selected group (if it isn't Scenic),
+        then TV1, then the first non-Scenic group. iRacing falls back to
+        its Scenic camera on its own in some situations (e.g. returning
+        from a replay without an explicit camera switch) — every code
+        path that restores a view goes through this guard. The user's
+        rule: NEVER show Scenic on stream; TV1 is the safe default.
+        """
+        groups = self._camera_groups or []
+
+        def norm_name(gid):
+            for g in groups:
+                if int(g["id"]) == int(gid):
+                    return (g["name"] or "").upper().replace(" ", "")
+            return None
+
+        cur = norm_name(self._current_cam_group)
+        if cur and "SCENIC" not in cur:
+            return self._current_cam_group
+        for exact in (True, False):
+            for g in groups:
+                nm = (g["name"] or "").upper().replace(" ", "")
+                if (nm == "TV1") if exact else ("TV1" in nm):
+                    return int(g["id"])
+        for g in groups:
+            nm = (g["name"] or "").upper().replace(" ", "")
+            if nm and "SCENIC" not in nm:
+                return int(g["id"])
+        return self._current_cam_group
+
     def switch_camera_group(self, group: int):
         if not self.connected:
             return False
@@ -1495,7 +1918,8 @@ class TelemetryPoller:
                     if d.get("CarIdx") == prev_cam_idx:
                         original_car_number = str(d.get("CarNumber", "")) or None
                         break
-            cam_group = self._current_cam_group
+            # NEVER Scenic — neither for the replay itself nor the return.
+            cam_group = self._safe_cam_group()
 
             # 1) Compute the absolute target session time.
             if t_session is not None:
@@ -1577,12 +2001,29 @@ class TelemetryPoller:
                 try:
                     self.ir.replay_search(irsdk.RpySrchMode.to_end)
                     self.ir.replay_set_play_speed(1, False)
-                    if original_car_number:
-                        self.ir.cam_switch_num(original_car_number, cam_group, 0)
+                    # ALWAYS make an explicit camera switch after going
+                    # back to live — without one iRacing can fall back to
+                    # its Scenic view, which must never appear on stream.
+                    # If we don't know the previously-watched car, target
+                    # the live leader instead.
+                    target_car = original_car_number
+                    if not target_car:
+                        positions = self.ir["CarIdxPosition"] or []
+                        drivers = (self.ir["DriverInfo"] or {}) \
+                            .get("Drivers", []) or []
+                        for d in drivers:
+                            di = d.get("CarIdx")
+                            if (di is not None and di < len(positions)
+                                    and positions[di] == 1):
+                                target_car = str(d.get("CarNumber", "")) or None
+                                break
+                    if target_car:
+                        self.ir.cam_switch_num(
+                            target_car, self._safe_cam_group(), 0)
                         self._reassert_ui_hide()
-                        print(f"[replay] back to live, camera on #{original_car_number}")
+                        print(f"[replay] back to live, camera on #{target_car}")
                     else:
-                        print("[replay] back to live")
+                        print("[replay] back to live (no camera target found)")
                 except Exception as e:
                     print(f"[replay] auto-return failed: {e}")
 
@@ -2060,7 +2501,8 @@ DASHBOARD_HTML = """
         border-radius: 4px; padding: 12px; margin-bottom: 10px;
         font-size: 15px;
     }
-    .incident.off_track       { border-left-color: #facc15; }
+    /* off_track is deliberately MUTED — informational only, never urgent */
+    .incident.off_track       { border-left-color: #6b6428; opacity: 0.62; }
     .incident.lost_control    { border-left-color: #c084fc; }
     .incident.collision       { border-left-color: #ef4444; }
     /* Legacy accents kept for any already-queued incidents from older sessions. */
@@ -2076,7 +2518,7 @@ DASHBOARD_HTML = """
         font-size: 13px; font-weight: 700; text-transform: uppercase;
         letter-spacing: 1px;
     }
-    .incident.off_track .incident-type       { color: #facc15; }
+    .incident.off_track .incident-type       { color: #a89b3e; }
     .incident.lost_control .incident-type    { color: #c084fc; }
     .incident.collision .incident-type       { color: #ef4444; }
     /* Legacy accents kept for any already-queued incidents from older sessions. */

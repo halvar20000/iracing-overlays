@@ -5,17 +5,17 @@ A minimal standalone OBS overlay that shows the current session name on
 top, with the session's total length and remaining time below.
 
 Examples of what it shows:
-    RACE
-    Total:      45:00
-    Remaining:  12:34
+    RACE                       (timed session — incl. "laps OR time"
+    Total:      45:00           league configs, where the lap cap is
+    Remaining:  12:34           never reached)
 
-    QUALIFYING                 (lap-based session)
-    Total:      8 laps
-    Remaining:  3 laps
+    RACE                       (genuinely lap-limited session: lap
+    Total:      20 laps         count set, no finite time cap)
+    Remaining:  7 laps
 
 Requirements:  pip install pyirsdk flask
 Run:           python iracing_session_info.py
-Open:          http://localhost:5010
+Open:          http://localhost:5011
 
 Designed as an OBS browser source — transparent background, centred
 content, scales to whatever source size you set.
@@ -71,8 +71,10 @@ class SessionInfoPoller(SDKPoller):
         # iRacing reports session length in TWO different ways:
         #   - "SessionLaps":  string. "unlimited" or a number, e.g. "8"
         #   - "SessionTime":  string. e.g. "1800.0000 sec" or "unlimited"
-        # If SessionLaps is a number, treat as a lap-based session.
-        # Otherwise SessionTime gives us the timed-race length.
+        # We collect both so the snapshot is informative, but the
+        # rendered card always shows TIME (heat-race format puts a time
+        # cap on top of a lap count, and the user wants the wall-clock
+        # view rather than the lap counter).
         total_laps = None
         total_seconds = None
         is_lap_based = False
@@ -85,14 +87,15 @@ class SessionInfoPoller(SDKPoller):
             except ValueError:
                 total_laps = None
 
-        if not is_lap_based:
-            raw_time = str(cur_session.get("SessionTime", "")).strip()
-            if raw_time and "unlimited" not in raw_time.lower():
-                # Format is e.g. "1800.0000 sec"
-                try:
-                    total_seconds = float(raw_time.split()[0])
-                except (ValueError, IndexError):
-                    total_seconds = None
+        # Always read SessionTime when it's specified — heat-race
+        # sessions have BOTH a lap count AND a time cap, and we want
+        # the time cap as the "total" for the time-view card.
+        raw_time = str(cur_session.get("SessionTime", "")).strip()
+        if raw_time and "unlimited" not in raw_time.lower():
+            try:
+                total_seconds = float(raw_time.split()[0])
+            except (ValueError, IndexError):
+                total_seconds = None
 
         # ─── remaining ──────────────────────────────────────────────────
         # iRacing exposes both. SessionTimeRemain is huge (~1e7) when the
@@ -103,8 +106,11 @@ class SessionInfoPoller(SDKPoller):
         if remain_seconds is None or remain_seconds > 1e6:
             remain_seconds = None
 
+        # iRacing uses 32767 as the "unlimited" sentinel for laps (NOT a
+        # huge float like the time fields) — treat anything implausibly
+        # large as "no lap limit".
         remain_laps = ir["SessionLapsRemain"]
-        if remain_laps is None or remain_laps > 1e6 or remain_laps < 0:
+        if remain_laps is None or remain_laps > 9000 or remain_laps < 0:
             remain_laps = None
 
         return {
@@ -260,18 +266,23 @@ async function tick() {
         document.getElementById('session-name').textContent =
             (d.session_name || d.session_type || '—').toUpperCase();
 
-        // Choose the unit (laps vs time) per session length type
-        let totalStr, remainStr;
-        if (d.is_lap_based) {
-            totalStr  = fmtLaps(d.total_laps)    || '—';
-            remainStr = fmtLaps(d.remain_laps)   || '—';
+        // LAP view only for genuinely lap-limited sessions: a lap count
+        // with NO finite time cap. League "100 laps OR 25 min" configs
+        // set BOTH — those are really timed races, where the lap cap is
+        // never reached, so they keep the time countdown.
+        const lapView = d.total_seconds == null
+                        && (d.total_laps != null || d.remain_laps != null);
+        if (lapView) {
+            document.getElementById('total').textContent  =
+                fmtLaps(d.total_laps)  || '—';
+            document.getElementById('remain').textContent =
+                fmtLaps(d.remain_laps) || '—';
         } else {
-            totalStr  = fmtTime(d.total_seconds)  || '—';
-            remainStr = fmtTime(d.remain_seconds) || '—';
+            document.getElementById('total').textContent  =
+                fmtTime(d.total_seconds)  || '—';
+            document.getElementById('remain').textContent =
+                fmtTime(d.remain_seconds) || '—';
         }
-
-        document.getElementById('total').textContent  = totalStr;
-        document.getElementById('remain').textContent = remainStr;
     } catch (e) {
         // Server unreachable — show offline state
         const card = document.getElementById('card');
@@ -308,13 +319,13 @@ if __name__ == "__main__":
 
     print("\n" + "=" * 60)
     print("  iRacing Session Info Overlay")
-    print("  Open in browser:  http://localhost:5010")
+    print("  Open in browser:  http://localhost:5011")
     print("  Transparent background — designed as an OBS browser source.")
     print("  Shows the active session name + total / remaining time.")
     print("  Press Ctrl+C to stop")
     print("=" * 60 + "\n")
 
     try:
-        app.run(host="0.0.0.0", port=5010, debug=False, use_reloader=False)
+        app.run(host="0.0.0.0", port=5011, debug=False, use_reloader=False)
     finally:
         poller.stop()

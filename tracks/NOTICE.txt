@@ -31,3 +31,19 @@ same folder and released under the same licence as the rest of this repo.
 
 User-drawn tracks (as of April 2026):
   - monza_full.json   (drawn April 24, 2026)
+
+---
+
+Some tracks are derived from OpenStreetMap data, © OpenStreetMap
+contributors, licensed under the Open Database License (ODbL) 1.0
+(https://www.openstreetmap.org/copyright). The track centreline and pit
+lane geometry were extracted from OSM raceway ways via the Overpass API
+and converted to this folder's JSON format (loop rotated to start at the
+start/finish line, in driving direction).
+
+OSM-derived tracks (as of June 2026):
+  - okayama_full.json (OSM ways 177330893 + 267173063, extracted June 4, 2026)
+  - phillipisland.json / phillipisland_2019.json (OSM ways 43598473 +
+    1436851708 + 1436851709 + 903048485, extracted June 4, 2026; same
+    data under two filenames because iRacing's TrackName for the 2019
+    rescan is unconfirmed)
