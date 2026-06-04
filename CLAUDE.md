@@ -135,6 +135,29 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**June 4, 2026 (trackmap — gap analysis + 3 more OSM tracks +
+Zandvoort 2023 slugs):** Generated `tracks/MISSING_TRACKS.md` (bundled
+205 SRA tracks vs iRacing's ~140 facilities / 400+ configs, with
+buildability classification). KEY INSIGHT: the race logs contain the
+EXACT TrackName slug for every raced track (session_start →
+`track_name`) — that solved the filename problem for: **thruxton**
+(3771 m vs 3790), **brandshatch_grandprix** (3900 m vs 3908 — OSM maps
+Brands as named corner segments; new endpoint-stitcher joins them, and
+removing the "McLaren" link way yields the GP loop instead of Indy),
+**miami_gp** (5416 m vs 5412 — alternate-layout way excluded by
+trying removals until the closed loop matches the real length), and
+**zandvoort_2023_*** (5 renamed copies of the old-scan files — the
+2023 rescan changed the TrackName, races were asking for files that
+didn't exist). Driving direction verified against OSM oneway tags
+(stitching can reverse segments). S/F = pit-midpoint perpendicular
+projection (14-16 m from pit-mid on all three). NOT OSM-buildable
+(hand-draw in gpx.studio): stpete (slug confirmed), adelaide (slug
+confirmed — parklands circuit is only a stub in OSM), Chicago Street,
+fictional tracks, Oran Park (demolished). Brands Indy geometry is
+cached in the build session but unsaved (slug unconfirmed). The OSM
+extraction MUST go through Claude-in-Chrome — overpass/nominatim/OSM
+APIs return empty through the sandbox web_fetch.
+
 **June 4, 2026 (livery — MX-5 fixed, nested CarPath):** The livery
 overlay failed ONLY for the Mazda MX-5: it is the one iRacing car
 with a NESTED paint folder — DriverInfo reports CarPath

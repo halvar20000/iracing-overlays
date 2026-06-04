@@ -47,3 +47,14 @@ OSM-derived tracks (as of June 2026):
     1436851708 + 1436851709 + 903048485, extracted June 4, 2026; same
     data under two filenames because iRacing's TrackName for the 2019
     rescan is unconfirmed)
+  - thruxton.json (stitched from OSM raceway segments around
+    51.208N 1.609W + pit way 168899566, extracted June 4, 2026)
+  - brandshatch_grandprix.json (stitched from OSM raceway segments
+    around 51.357N 0.263E, Indy-link way 4928103 excluded to obtain
+    the GP loop; pit way 4906930; extracted June 4, 2026)
+  - miami_gp.json (stitched from OSM "Miami International Autodrome"
+    ways around 25.958N 80.239W, alternate-layout way 1233165737
+    excluded; pit way 1017340352; extracted June 4, 2026)
+
+zandvoort_2023_*.json are renamed copies of the SRA-derived zandvoort_*
+files (same circuit, new iRacing TrackName after the 2023 rescan).
