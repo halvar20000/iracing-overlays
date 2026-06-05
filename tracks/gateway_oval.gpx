@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="SimRacing overlays (OpenStreetMap, ODbL)" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>World Wide Technology Raceway (Gateway)</name>
+    <desc>Driving direction. Source: OpenStreetMap contributors (ODbL).</desc></metadata>
+  <trk><name>gateway_oval ONTRACK</name><trkseg>
+      <trkpt lat="38.654836" lon="-90.136180"/>
+      <trkpt lat="38.654835" lon="-90.136278"/>
+      <trkpt lat="38.654779" lon="-90.136611"/>
+      <trkpt lat="38.654675" lon="-90.136889"/>
+      <trkpt lat="38.654580" lon="-90.137124"/>
+      <trkpt lat="38.654390" lon="-90.137426"/>
+      <trkpt lat="38.654030" lon="-90.137726"/>
+      <trkpt lat="38.653511" lon="-90.137887"/>
+      <trkpt lat="38.653250" lon="-90.137885"/>
+      <trkpt lat="38.653000" lon="-90.137823"/>
+      <trkpt lat="38.652726" lon="-90.137737"/>
+      <trkpt lat="38.652036" lon="-90.137501"/>
+      <trkpt lat="38.648173" lon="-90.136128"/>
+      <trkpt lat="38.647724" lon="-90.135917"/>
+      <trkpt lat="38.647603" lon="-90.135836"/>
+      <trkpt lat="38.647489" lon="-90.135715"/>
+      <trkpt lat="38.647405" lon="-90.135593"/>
+      <trkpt lat="38.647309" lon="-90.135421"/>
+      <trkpt lat="38.647224" lon="-90.135232"/>
+      <trkpt lat="38.647179" lon="-90.135083"/>
+      <trkpt lat="38.647145" lon="-90.134904"/>
+      <trkpt lat="38.647143" lon="-90.134628"/>
+      <trkpt lat="38.647161" lon="-90.134458"/>
+      <trkpt lat="38.647188" lon="-90.134285"/>
+      <trkpt lat="38.647240" lon="-90.134110"/>
+      <trkpt lat="38.647345" lon="-90.133883"/>
+      <trkpt lat="38.647471" lon="-90.133714"/>
+      <trkpt lat="38.647587" lon="-90.133613"/>
+      <trkpt lat="38.647806" lon="-90.133474"/>
+      <trkpt lat="38.647963" lon="-90.133400"/>
+      <trkpt lat="38.648132" lon="-90.133360"/>
+      <trkpt lat="38.648730" lon="-90.133430"/>
+      <trkpt lat="38.650224" lon="-90.133741"/>
+      <trkpt lat="38.652070" lon="-90.134106"/>
+      <trkpt lat="38.653058" lon="-90.134315"/>
+      <trkpt lat="38.654031" lon="-90.134588"/>
+      <trkpt lat="38.654131" lon="-90.134647"/>
+      <trkpt lat="38.654334" lon="-90.134830"/>
+      <trkpt lat="38.654451" lon="-90.134953"/>
+      <trkpt lat="38.654575" lon="-90.135105"/>
+      <trkpt lat="38.654665" lon="-90.135316"/>
+      <trkpt lat="38.654793" lon="-90.135696"/>
+      <trkpt lat="38.654838" lon="-90.135999"/>
+      <trkpt lat="38.654836" lon="-90.136180"/>
+  </trkseg></trk>
+  <trk><name>gateway_oval ONPITROAD</name><trkseg>
+      <trkpt lat="38.653228" lon="-90.134362"/>
+      <trkpt lat="38.653437" lon="-90.134483"/>
+      <trkpt lat="38.653772" lon="-90.134590"/>
+      <trkpt lat="38.654001" lon="-90.134688"/>
+      <trkpt lat="38.654161" lon="-90.134838"/>
+      <trkpt lat="38.654286" lon="-90.134982"/>
+      <trkpt lat="38.654374" lon="-90.135067"/>
+      <trkpt lat="38.654463" lon="-90.135285"/>
+      <trkpt lat="38.654529" lon="-90.135514"/>
+      <trkpt lat="38.654553" lon="-90.135790"/>
+      <trkpt lat="38.654561" lon="-90.136028"/>
+      <trkpt lat="38.654556" lon="-90.136190"/>
+      <trkpt lat="38.654537" lon="-90.136331"/>
+      <trkpt lat="38.654489" lon="-90.136521"/>
+      <trkpt lat="38.654431" lon="-90.136708"/>
+      <trkpt lat="38.654388" lon="-90.136809"/>
+      <trkpt lat="38.654314" lon="-90.136946"/>
+      <trkpt lat="38.654080" lon="-90.137228"/>
+      <trkpt lat="38.653877" lon="-90.137406"/>
+      <trkpt lat="38.653683" lon="-90.137531"/>
+      <trkpt lat="38.653466" lon="-90.137601"/>
+      <trkpt lat="38.653332" lon="-90.137635"/>
+      <trkpt lat="38.653100" lon="-90.137629"/>
+      <trkpt lat="38.652942" lon="-90.137604"/>
+  </trkseg></trk>
+</gpx>

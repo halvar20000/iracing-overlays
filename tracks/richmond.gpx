@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="SimRacing overlays (OpenStreetMap, ODbL)" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>Richmond Raceway</name>
+    <desc>Driving direction. Source: OpenStreetMap contributors (ODbL).</desc></metadata>
+  <trk><name>richmond ONTRACK</name><trkseg>
+      <trkpt lat="37.591128" lon="-77.419263"/>
+      <trkpt lat="37.591192" lon="-77.418909"/>
+      <trkpt lat="37.591393" lon="-77.418280"/>
+      <trkpt lat="37.591490" lon="-77.418019"/>
+      <trkpt lat="37.591751" lon="-77.417529"/>
+      <trkpt lat="37.592032" lon="-77.417140"/>
+      <trkpt lat="37.592150" lon="-77.417011"/>
+      <trkpt lat="37.592275" lon="-77.416922"/>
+      <trkpt lat="37.592387" lon="-77.416872"/>
+      <trkpt lat="37.592615" lon="-77.416814"/>
+      <trkpt lat="37.592734" lon="-77.416808"/>
+      <trkpt lat="37.592862" lon="-77.416827"/>
+      <trkpt lat="37.592947" lon="-77.416851"/>
+      <trkpt lat="37.593081" lon="-77.416916"/>
+      <trkpt lat="37.593208" lon="-77.417008"/>
+      <trkpt lat="37.593286" lon="-77.417086"/>
+      <trkpt lat="37.593364" lon="-77.417179"/>
+      <trkpt lat="37.593457" lon="-77.417324"/>
+      <trkpt lat="37.593518" lon="-77.417462"/>
+      <trkpt lat="37.593571" lon="-77.417652"/>
+      <trkpt lat="37.593590" lon="-77.417745"/>
+      <trkpt lat="37.593605" lon="-77.417898"/>
+      <trkpt lat="37.593602" lon="-77.418025"/>
+      <trkpt lat="37.593584" lon="-77.418172"/>
+      <trkpt lat="37.592951" lon="-77.421164"/>
+      <trkpt lat="37.592910" lon="-77.421313"/>
+      <trkpt lat="37.592827" lon="-77.421486"/>
+      <trkpt lat="37.592742" lon="-77.421620"/>
+      <trkpt lat="37.592653" lon="-77.421736"/>
+      <trkpt lat="37.592497" lon="-77.421861"/>
+      <trkpt lat="37.592348" lon="-77.421933"/>
+      <trkpt lat="37.592201" lon="-77.421972"/>
+      <trkpt lat="37.592080" lon="-77.421987"/>
+      <trkpt lat="37.591934" lon="-77.421971"/>
+      <trkpt lat="37.591812" lon="-77.421937"/>
+      <trkpt lat="37.591669" lon="-77.421872"/>
+      <trkpt lat="37.591483" lon="-77.421732"/>
+      <trkpt lat="37.591307" lon="-77.421490"/>
+      <trkpt lat="37.591251" lon="-77.421363"/>
+      <trkpt lat="37.591185" lon="-77.421147"/>
+      <trkpt lat="37.591118" lon="-77.420794"/>
+      <trkpt lat="37.591068" lon="-77.420300"/>
+      <trkpt lat="37.591062" lon="-77.420036"/>
+      <trkpt lat="37.591073" lon="-77.419654"/>
+      <trkpt lat="37.591102" lon="-77.419404"/>
+      <trkpt lat="37.591128" lon="-77.419263"/>
+  </trkseg></trk>
+  <trk><name>richmond ONPITROAD</name><trkseg>
+      <trkpt lat="37.592497" lon="-77.421861"/>
+      <trkpt lat="37.592192" lon="-77.421823"/>
+      <trkpt lat="37.592052" lon="-77.421838"/>
+      <trkpt lat="37.591894" lon="-77.421804"/>
+      <trkpt lat="37.591776" lon="-77.421736"/>
+      <trkpt lat="37.591633" lon="-77.421601"/>
+      <trkpt lat="37.591448" lon="-77.421322"/>
+      <trkpt lat="37.591391" lon="-77.421184"/>
+      <trkpt lat="37.591354" lon="-77.421052"/>
+      <trkpt lat="37.591316" lon="-77.420881"/>
+      <trkpt lat="37.591302" lon="-77.420698"/>
+      <trkpt lat="37.591332" lon="-77.420378"/>
+      <trkpt lat="37.591903" lon="-77.417755"/>
+      <trkpt lat="37.591940" lon="-77.417619"/>
+      <trkpt lat="37.591990" lon="-77.417498"/>
+      <trkpt lat="37.592182" lon="-77.417241"/>
+      <trkpt lat="37.592266" lon="-77.417154"/>
+      <trkpt lat="37.592361" lon="-77.417079"/>
+      <trkpt lat="37.592538" lon="-77.417009"/>
+      <trkpt lat="37.592665" lon="-77.416975"/>
+      <trkpt lat="37.593081" lon="-77.416916"/>
+  </trkseg></trk>
+</gpx>

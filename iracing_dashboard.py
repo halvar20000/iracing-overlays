@@ -127,6 +127,21 @@ STOP_MIN_TICKS    = 30     # 3.0 s at 10 Hz
 # while (the window refreshes on every new blink).
 UNSTABLE_WINDOW_S = 90.0   # heuristics ignore a car this long after a return
 VANISH_CONFIRM_S  = 10.0   # report a vanish only if the car stays gone
+# Overtake detection (broadcast highlight feed, separate from incidents).
+# Live progress rank (lap + lap pct) swaps the instant a pass happens, and
+# lapping never changes it (the leader is already a full lap ahead), so
+# only genuine position swaps register at all.
+OT_CONFIRM_S       = 3.0     # the new order must HOLD this long (no flicker)
+OT_PROX_PCT        = 0.006   # cars must be within 0.6 % of the lap at the swap
+OT_MARGIN_PCT      = 0.0008  # confirmed once the gap has grown past this
+OT_MIN_SPEED_MPS   = 12.0    # overtaken car must still be racing (≥43 km/h)
+OT_PAIR_COOLDOWN_S = 25.0    # same pair, same direction: no ping-pong spam
+OT_REVERSE_COOLDOWN_S = 10.0 # the counter-attack may be reported after this
+FLAG_BLUE          = 0x0020  # CarIdxSessionFlags blue-flag bit
+# Auto-replay priority: overtakes outrank incidents — they may fire during
+# the post-replay cooldown of a lower-priority event (but NEVER interrupt
+# a replay that is currently playing).
+REPLAY_PRIORITY = {"overtake": 2, "collision": 1, "lost_control": 1}
 
 
 # -----------------------------------------------------------------------------
@@ -244,8 +259,27 @@ class TelemetryPoller:
         self._seen_in_world = set()      # car_idxs ever seen in-world this session
         self._pending_vanish = {}        # car_idx -> {vanish_t, crash_t, details}
 
+        # Session-change tracking for the detection state. The two PCCD
+        # Hockenheim races (04.06. evening) are SEPARATE hosted sessions:
+        # SessionTime RESET to ~0 between them, but all cooldown /
+        # kinematics state still carried race-1 timestamps (~3000 s) —
+        # "t_now - last" went NEGATIVE, cooldowns never expired, and the
+        # detectors were silently muted for the whole second race, while
+        # the feed kept (and the logger re-imported) stale race-1 entries.
+        self._last_session_key = None     # (SessionUniqueID, SessionNum)
+        self._last_t_session = 0.0        # detects backwards time jumps
+
+        # Overtake feed (separate panel from incidents)
+        self._overtakes = deque(maxlen=30)
+        self._ot_prev_rank = {}          # car_idx -> live race rank last tick
+        self._ot_pending = {}            # (x,y) -> {"t0":…, "pos":…}
+        self._ot_pair_last = {}          # (x,y) -> last emit t_session
+        self._ot_last_swap = {}          # frozenset({x,y}) -> last rank-swap t
+        self._last_auto_replay_priority = 0
+
         # Auto-replay on incidents (opt-in via dashboard toggle)
-        self.auto_replay = False
+        self.auto_replay = False             # incidents (spins / collisions)
+        self.auto_replay_overtakes = False   # overtakes (separate toggle)
         self._last_auto_replay_at = 0.0            # wall clock time of last auto-replay
         self._auto_replay_cooldown_seconds = 15.0  # min time between auto-replays
         # Types that should trigger an auto-replay when enabled
@@ -301,6 +335,14 @@ class TelemetryPoller:
         self._world_returns.clear()
         self._seen_in_world.clear()
         self._pending_vanish.clear()
+        self._overtakes.clear()
+        self._ot_prev_rank.clear()
+        self._ot_pending.clear()
+        self._ot_pair_last.clear()
+        self._ot_last_swap.clear()
+        self._last_auto_replay_priority = 0
+        self._last_session_key = None
+        self._last_t_session = 0.0
         self._cam_lost_since = None
         self._last_cam_recover_at = 0.0
 
@@ -487,8 +529,9 @@ class TelemetryPoller:
         if not info:
             return
         session_num = self.ir["SessionNum"] if self.ir is not None else 0
+        inc_id = int(t_session * 1000) + car_idx     # unique-ish
         self._incidents.appendleft({
-            "id": int(t_session * 1000) + car_idx,   # unique-ish
+            "id": inc_id,
             "t_session": t_session,
             "session_num": int(session_num or 0),
             "wall_clock": time.time(),
@@ -497,13 +540,15 @@ class TelemetryPoller:
             "name": info["name"],
             "type": inc_type,
             "details": details,
+            "replayed": False,   # set True once a replay of it was shown
         })
         print(f"[incident] {inc_type:10s} #{info['car_number']:>3s} {info['name']:<20s} {details}")
 
         # Auto-replay handoff: if enabled and this incident qualifies, kick
         # off the replay flow.  All safety gating happens inside.
         if self.auto_replay and inc_type in self._auto_replay_types:
-            self._try_auto_replay(info["car_number"], info["name"], inc_type, t_session)
+            self._try_auto_replay(info["car_number"], info["name"], inc_type,
+                                  t_session, incident_id=inc_id)
 
         # Focus-on-crashes handoff: if enabled and this is a crash/spin,
         # snap the camera straight to the incident car and hold it there
@@ -523,7 +568,21 @@ class TelemetryPoller:
                 except Exception as e:
                     print(f"[focus-crashes] switch failed: {e}")
 
-    def _try_auto_replay(self, car_number: str, driver_name: str, inc_type: str, t_session: float):
+    def mark_incident_replayed(self, incident_id) -> bool:
+        """Flag a feed entry as 'replay was shown' (auto or manual)."""
+        try:
+            target = int(incident_id)
+        except (TypeError, ValueError):
+            return False
+        for store in (self._incidents, self._overtakes):
+            for inc in store:
+                if inc.get("id") == target:
+                    inc["replayed"] = True
+                    return True
+        return False
+
+    def _try_auto_replay(self, car_number: str, driver_name: str, inc_type: str, t_session: float,
+                         incident_id=None):
         """
         Guarded auto-replay trigger.  Respects:
           - global cooldown between auto-replays
@@ -532,10 +591,15 @@ class TelemetryPoller:
           - skips if a manual override is in effect
         """
         now = time.time()
+        priority = REPLAY_PRIORITY.get(inc_type, 1)
 
-        # Cooldown: don't fire more often than every N seconds
+        # Cooldown: don't fire more often than every N seconds — UNLESS
+        # this event outranks the one that started the cooldown (an
+        # overtake may jump an incident's cooldown). A replay that is
+        # actively PLAYING is never interrupted (is_live check below).
         if now - self._last_auto_replay_at < self._auto_replay_cooldown_seconds:
-            return
+            if priority <= self._last_auto_replay_priority:
+                return
         # Respect manual overrides (dashboard click just happened)
         if now < self._manual_override_until:
             return
@@ -588,15 +652,23 @@ class TelemetryPoller:
         except Exception:
             pass
         rewind = 15.0 if inc_type == "collision" else 10.0
+        # Overtakes: rewind to the start of the MOVE and show the battle
+        # into the corner — a slightly longer buildup than incidents.
+        buildup = 8.0 if inc_type == "overtake" else 5.0
         ok, msg = self.replay_5s_of_car(
             car_number,
             t_session=t_session,
             session_num=sess_num,
             rewind_seconds=rewind,
+            buildup_seconds=buildup,
         )
         if ok:
             self._last_auto_replay_at = now
-            print(f"[auto-replay] {inc_type} -> #{car_number} {driver_name}")
+            self._last_auto_replay_priority = priority
+            if incident_id is not None:
+                self.mark_incident_replayed(incident_id)
+            print(f"[auto-replay] {inc_type} -> #{car_number} {driver_name} "
+                  f"(prio {priority})")
         else:
             print(f"[auto-replay] failed: {msg}")
 
@@ -770,8 +842,204 @@ class TelemetryPoller:
                 best_score, best_idx = score, j
         return best_idx
 
+    # --- overtake detection (separate broadcast-highlight feed) -------------
+    def _is_race_session(self) -> bool:
+        try:
+            sessions = (self.ir["SessionInfo"] or {}).get("Sessions", []) or []
+            sess_num = self.ir["SessionNum"] or 0
+            for s in sessions:
+                if s.get("SessionNum") == sess_num:
+                    return "race" in (s.get("SessionType") or "").lower()
+        except Exception:
+            pass
+        return False
+
+    def _car_speed_now(self, idx):
+        sh = self._speed_hist.get(idx)
+        return sh[-1][1] if sh else None
+
+    def _consider_overtake(self, x, y, position, t_now, prog,
+                           surfaces, on_pit, flags_arr):
+        """X just moved ahead of Y in live progress order. Queue it as a
+        PENDING overtake if it looks like a genuine on-track pass."""
+        key = (x, y)
+        if key in self._ot_pending:
+            return
+        if t_now - self._ot_pair_last.get(key, -1e9) < OT_PAIR_COOLDOWN_S:
+            return
+        if t_now - self._ot_pair_last.get((y, x), -1e9) < OT_REVERSE_COOLDOWN_S:
+            return
+        for idx in (x, y):
+            surf = surfaces[idx] if idx < len(surfaces) else -1
+            if surf not in (SURFACE_ON_TRACK, SURFACE_OFF_TRACK):
+                return                      # pit / out of world — not a pass
+            if idx < len(on_pit) and on_pit[idx]:
+                return                      # pit-cycle position change
+            if t_now - self._world_returns.get(idx, -1e9) < UNSTABLE_WINDOW_S:
+                return                      # connection-flaky car
+        # must be a real battle: physically close at the moment of the swap
+        d = abs(prog[x] - prog[y])
+        if d > OT_PROX_PCT:
+            return
+        # overtaken car must still be racing (passing a spun/crawling car
+        # is the incident detector's story, not an overtake)
+        vx, vy = self._car_speed_now(x), self._car_speed_now(y)
+        if vx is None or vy is None:
+            return
+        if vy < max(OT_MIN_SPEED_MPS, 0.5 * vx):
+            return
+        # user rule: no overtake highlight when the overtaken car is being
+        # shown the blue flag (letting someone by)
+        if y < len(flags_arr) and int(flags_arr[y] or 0) & FLAG_BLUE:
+            return
+        self._ot_pending[key] = {"t0": t_now, "pos": position}
+
+    def _update_overtakes(self, t_now, surfaces, pct_arr, laps_arr,
+                          on_pit, flags_arr, sess_state):
+        if sess_state != 4 or not self._is_race_session():
+            self._ot_pending.clear()
+            self._ot_prev_rank = {}
+            return
+        # live progress for every in-world car
+        prog = {}
+        for idx in range(len(pct_arr)):
+            surf = surfaces[idx] if idx < len(surfaces) else -1
+            pct = pct_arr[idx]
+            if surf == SURFACE_NOT_IN_WORLD or pct is None or pct < 0:
+                continue
+            lap = laps_arr[idx] if idx < len(laps_arr) else 0
+            prog[idx] = (lap or 0) + max(pct, 0.0)
+        order = sorted(prog, key=lambda i: -prog[i])
+        rank = {idx: r + 1 for r, idx in enumerate(order)}
+        prev = self._ot_prev_rank
+
+        # new swap candidates: X improved its rank past Y
+        for x, rx in rank.items():
+            px = prev.get(x)
+            if px is None or rx >= px:
+                continue
+            for y, ry in rank.items():
+                if y == x:
+                    continue
+                py = prev.get(y)
+                if py is None:
+                    continue
+                if py < px and ry > rx:     # Y was ahead of X, now behind
+                    # Pair-churn guard: if these two swapped only moments
+                    # ago, this is the tail end of a failed move (defender
+                    # re-passing) — not a fresh overtake.
+                    fs = frozenset((x, y))
+                    prev_swap = self._ot_last_swap.get(fs, -1e9)
+                    self._ot_last_swap[fs] = t_now
+                    if t_now - prev_swap > OT_CONFIRM_S + 0.5:
+                        self._consider_overtake(x, y, rx, t_now, prog,
+                                                surfaces, on_pit, flags_arr)
+        self._ot_prev_rank = rank
+
+        # confirm / drop pending swaps
+        for key in list(self._ot_pending.keys()):
+            x, y = key
+            info = self._ot_pending[key]
+            if x not in prog or y not in prog:
+                del self._ot_pending[key]
+                continue
+            if prog[x] <= prog[y]:          # re-passed — battle continues
+                del self._ot_pending[key]
+                continue
+            if t_now - info["t0"] >= OT_CONFIRM_S:
+                del self._ot_pending[key]
+                # Re-check the overtaken car at CONFIRM time: the 0.5 s
+                # speed window lags at the swap tick, so a car that had
+                # just spun could still read as "racing speed" there. By
+                # now its real state is unambiguous — and a recent speed
+                # collapse means this was passing an incident, not a pass.
+                vy = self._car_speed_now(y)
+                if (prog[x] - prog[y] >= OT_MARGIN_PCT
+                        and vy is not None and vy >= OT_MIN_SPEED_MPS
+                        and t_now - self._collapse_at.get(y, -1e9) > 10.0):
+                    self._ot_pair_last[key] = t_now
+                    self._emit_overtake(x, y, info["pos"], info["t0"])
+
+    def _emit_overtake(self, x_idx, y_idx, position, t_move):
+        xi = self._driver_name(x_idx)
+        yi = self._driver_name(y_idx)
+        if not xi or not yi:
+            return
+        session_num = self.ir["SessionNum"] or 0
+        ot_id = int(t_move * 1000) + 500000 + x_idx   # offset vs incident ids
+        self._overtakes.appendleft({
+            "id": ot_id,
+            "t_session": t_move,
+            "session_num": int(session_num or 0),
+            "wall_clock": time.time(),
+            "car_idx": x_idx,
+            "car_number": xi["car_number"],
+            "name": xi["name"],
+            "type": "overtake",
+            "details": f"passed #{yi['car_number']} {yi['name']} for P{position}",
+            "position": position,
+            "replayed": False,
+        })
+        print(f"[overtake] #{xi['car_number']} {xi['name']} passed "
+              f"#{yi['car_number']} {yi['name']} for P{position}")
+        if self.auto_replay_overtakes:
+            self._try_auto_replay(xi["car_number"], xi["name"], "overtake",
+                                  t_move, incident_id=ot_id)
+
+    def _reset_detection_state(self, reason: str):
+        """Zero everything the incident/overtake detection accumulates for
+        one session: per-car trackers, cooldown timestamps, kinematics
+        histories, pending queues AND both feeds. Called on session change
+        (new SessionNum / SessionUniqueID) and on backwards SessionTime
+        jumps — stale timestamps from the previous session otherwise make
+        every 'time since X' check negative and mute all detectors, and
+        CarIdx assignments don't even mean the same drivers anymore."""
+        print(f"[telemetry] session change ({reason}) — resetting "
+              f"incident/overtake detection state and feeds")
+        self._prev_surface.clear()
+        self._prev_yellow.clear()
+        self._prev_incidents.clear()
+        self._spin_cooldown.clear()
+        self._prev_lap_pct.clear()
+        self._stopped_ticks.clear()
+        self._last_moving_t.clear()
+        self._checker_lap_at_trigger.clear()
+        self._finished.clear()
+        self._incidents.clear()
+        self._incident_cooldown.clear()
+        self._yellow_zone_seen.clear()
+        self._track_len_m = None
+        self._prog_hist.clear()
+        self._cum_progress.clear()
+        self._speed_hist.clear()
+        self._collapse_at.clear()
+        self._off_ticks.clear()
+        self._off_cooldown.clear()
+        self._world_returns.clear()
+        self._seen_in_world.clear()
+        self._pending_vanish.clear()
+        self._overtakes.clear()
+        self._ot_prev_rank.clear()
+        self._ot_pending.clear()
+        self._ot_pair_last.clear()
+        self._ot_last_swap.clear()
+
     def _update_incidents(self):
         t_now = self.ir["SessionTime"] or 0.0
+
+        # ── Session-change / time-jump detection ──────────────────────────
+        sess_key = (self.ir["SessionUniqueID"], self.ir["SessionNum"])
+        if self._last_session_key is None:
+            self._last_session_key = sess_key
+        elif sess_key != self._last_session_key:
+            self._reset_detection_state(
+                f"session {self._last_session_key} -> {sess_key}")
+            self._last_session_key = sess_key
+        elif t_now + 5.0 < self._last_t_session:
+            self._reset_detection_state(
+                f"SessionTime jumped {self._last_t_session:.0f} -> {t_now:.0f}")
+        self._last_t_session = t_now
+
         surfaces = self.ir["CarIdxTrackSurface"] or []
         flags_arr = self.ir["CarIdxSessionFlags"] or []
         pct_arr   = self.ir["CarIdxLapDistPct"] or []
@@ -1247,6 +1515,10 @@ class TelemetryPoller:
                                 + (" (contact)" if near else ""),
                             )
 
+        # --- overtake detection (separate highlight feed) ------------------
+        self._update_overtakes(t_now, surfaces, pct_arr, laps_arr,
+                               on_pit, flags_arr, sess_state)
+
     # --- driver list --------------------------------------------------------
     def _build_driver_list(self) -> list:
         ir = self.ir
@@ -1665,6 +1937,7 @@ class TelemetryPoller:
             "track": track_name,
             "auto_follow": self.auto_follow,
             "auto_replay": self.auto_replay,
+            "auto_replay_overtakes": self.auto_replay_overtakes,
             "camera_groups": self._camera_groups,
             "current_cam_group": self._current_cam_group,
             "auto_camera_active": self.is_auto_camera_active(),
@@ -1673,6 +1946,7 @@ class TelemetryPoller:
             "drivers": driver_list,
             "sectors": self._sector_snapshot(cam_car_idx),
             "incidents": list(self._incidents),   # newest first
+            "overtakes": list(self._overtakes),   # newest first
             "session_time": ir["SessionTime"] or 0.0,
             "race_progress": self._race_progress(),
             "playback": self._playback_status(),
@@ -2086,7 +2360,12 @@ class TelemetryPoller:
 
     def set_auto_replay(self, enabled: bool):
         self.auto_replay = bool(enabled)
-        print(f"[auto-replay] {'ENABLED' if self.auto_replay else 'disabled'}")
+        print(f"[auto-replay] incidents {'ENABLED' if self.auto_replay else 'disabled'}")
+
+    def set_auto_replay_overtakes(self, enabled: bool):
+        self.auto_replay_overtakes = bool(enabled)
+        print(f"[auto-replay] overtakes "
+              f"{'ENABLED' if self.auto_replay_overtakes else 'disabled'}")
 
     def set_focus_leader(self, enabled: bool):
         self.focus_leader = bool(enabled)
@@ -2114,14 +2393,19 @@ class TelemetryPoller:
         self._starred_car_idxs = set(int(x) for x in car_idxs)
 
     def dismiss_incident(self, incident_id: int):
-        # Rebuild deque without the matching entry
-        new_items = [i for i in self._incidents if i["id"] != incident_id]
-        self._incidents.clear()
-        for it in new_items:
-            self._incidents.append(it)
+        # Rebuild deques without the matching entry (covers both feeds)
+        for store in (self._incidents, self._overtakes):
+            new_items = [i for i in store if i["id"] != incident_id]
+            if len(new_items) != len(store):
+                store.clear()
+                for it in new_items:
+                    store.append(it)
 
     def clear_incidents(self):
         self._incidents.clear()
+
+    def clear_overtakes(self):
+        self._overtakes.clear()
 
     def stop(self):
         self._running = False
@@ -2171,11 +2455,10 @@ DASHBOARD_HTML = """
 
     .layout {
         display: grid;
-        /* Drivers (left) widened from 360 -> 480 so long names fit
-           without truncation. Camera column is 1fr and auto-shrinks;
-           the camera-group buttons use flex-wrap so they just flow
-           onto more rows as needed. */
-        grid-template-columns: 480px 1fr 340px;
+        /* Four columns: standings | cameras (squeezed) | overtakes |
+           incidents. The camera-group buttons use flex-wrap, so the
+           narrow camera column just flows them onto more rows. */
+        grid-template-columns: 480px 280px 1fr 1fr;
         gap: 16px;
         min-height: calc(100vh - 32px);
     }
@@ -2526,6 +2809,22 @@ DASHBOARD_HTML = """
     .incident.yellow .incident-type          { color: #facc15; }
     .incident.incident_points .incident-type { color: #ef4444; }
 
+    /* Overtake feed (separate frame below the incidents) */
+    .sub-panel {
+        margin-top: 18px; padding-top: 14px;
+        border-top: 2px solid #2a2a2a;
+    }
+    .incident.overtake       { border-left-color: #4ade80; }
+    .incident.overtake .incident-type { color: #4ade80; }
+
+    .replayed-badge {
+        color: #4ade80; font-size: 10px; font-weight: 700;
+        letter-spacing: 1px; text-transform: uppercase;
+        background: rgba(74, 222, 128, 0.12);
+        border: 1px solid rgba(74, 222, 128, 0.35);
+        border-radius: 3px; padding: 1px 6px; margin-left: 8px;
+        vertical-align: middle;
+    }
     .incident-dismiss {
         background: transparent; border: none; color: #555; cursor: pointer;
         font-size: 14px; padding: 0 4px;
@@ -2679,7 +2978,20 @@ DASHBOARD_HTML = """
         <!-- Sector Times card removed -->
     </div>
 
-    <!-- RIGHT: incident feed -->
+    <!-- THIRD column: overtake feed -->
+    <div class="panel">
+        <h2>
+            <span>Overtakes</span>
+            <button onclick="clearOvertakes()" style="background:#1f1f2a; border:1px solid #333; color:#888; font-size:10px; padding:3px 8px; border-radius:3px; cursor:pointer;">Clear all</button>
+        </h2>
+        <div class="toggle-btn" id="auto-replay-ot-btn" onclick="toggleAutoReplayOvertakes()" style="margin-bottom:10px;">
+            <span>Auto-replay overtakes</span>
+            <span class="toggle-indicator"></span>
+        </div>
+        <div id="overtake-list"></div>
+    </div>
+
+    <!-- FOURTH column: incident feed -->
     <div class="panel">
         <h2>
             <span>Incidents</span>
@@ -2898,14 +3210,32 @@ async function toggleAutoReplay() {
 }
 function updateAutoReplayBtn() { document.getElementById("auto-replay-btn").classList.toggle("on", autoReplay); }
 
+let autoReplayOvertakes = false;
+async function toggleAutoReplayOvertakes() {
+    const newState = !autoReplayOvertakes;
+    try {
+        const r = await fetch("/auto_replay_overtakes", { method: "POST", headers: {"Content-Type": "application/json"},
+                                                          body: JSON.stringify({enabled: newState}) });
+        const d = await r.json();
+        autoReplayOvertakes = !!d.enabled;
+        updateAutoReplayOtBtn();
+    } catch (e) { console.error(e); }
+}
+function updateAutoReplayOtBtn() { document.getElementById("auto-replay-ot-btn").classList.toggle("on", autoReplayOvertakes); }
+
 async function clearIncidents() {
     try { await fetch("/incidents/clear", { method: "POST" }); } catch (e) { console.error(e); }
     dismissedIncidentIds.clear();
 }
-async function dismissIncident(id, ev) {
+const dismissedOvertakeIds = new Set();
+async function clearOvertakes() {
+    try { await fetch("/overtakes/clear", { method: "POST" }); } catch (e) { console.error(e); }
+    dismissedOvertakeIds.clear();
+}
+async function dismissFeedItem(hostId, dismissedSet, id, ev) {
     ev.stopPropagation();
-    dismissedIncidentIds.add(id);
-    document.getElementById("incident-list").dataset.sig = "";
+    dismissedSet.add(id);
+    document.getElementById(hostId).dataset.sig = "";
     try { await fetch("/incidents/dismiss", { method: "POST", headers: {"Content-Type": "application/json"},
                                               body: JSON.stringify({id}) });
     } catch (e) {}
@@ -3083,17 +3413,30 @@ const INCIDENT_LABELS = {
     "incident_points": "INCIDENT POINTS",
     "stopped":         "STOPPED / CRASHED",
     "yellow":          "YELLOW FLAG",
+    "overtake":        "OVERTAKE",
 };
 
 function renderIncidents(incidents) {
-    const host = document.getElementById("incident-list");
-    const filtered = incidents.filter(i => !dismissedIncidentIds.has(i.id));
-    const sig = filtered.map(i => i.id).join("|");
+    renderFeed("incident-list", incidents, dismissedIncidentIds,
+        'No active incidents.<br>Off-tracks, spins and collisions will appear here.');
+}
+
+function renderOvertakes(overtakes) {
+    renderFeed("overtake-list", overtakes, dismissedOvertakeIds,
+        'No overtakes yet.<br>Confirmed on-track passes will appear here.');
+}
+
+function renderFeed(hostId, items, dismissedSet, emptyHtml) {
+    const host = document.getElementById(hostId);
+    const filtered = items.filter(i => !dismissedSet.has(i.id));
+    // include the replayed flag in the change signature so the badge
+    // appears as soon as a replay has been shown
+    const sig = filtered.map(i => i.id + (i.replayed ? "r" : "")).join("|");
     if (host.dataset.sig === sig) return;
     host.dataset.sig = sig;
 
     if (filtered.length === 0) {
-        host.innerHTML = '<div class="no-incidents">No active incidents.<br>Off-tracks, spins and collisions will appear here.</div>';
+        host.innerHTML = '<div class="no-incidents">' + emptyHtml + '</div>';
         return;
     }
 
@@ -3103,7 +3446,9 @@ function renderIncidents(incidents) {
         div.className = "incident " + inc.type;
         div.innerHTML = `
             <div class="incident-head">
-                <div class="incident-type">${INCIDENT_LABELS[inc.type] || inc.type.toUpperCase()}</div>
+                <div class="incident-type">${INCIDENT_LABELS[inc.type] || inc.type.toUpperCase()}
+                    ${inc.replayed ? '<span class="replayed-badge">▶ replayed</span>' : ''}
+                </div>
                 <button class="incident-dismiss" title="Dismiss">✕</button>
             </div>
             <div class="incident-driver">
@@ -3113,11 +3458,11 @@ function renderIncidents(incidents) {
             <div class="incident-details">${inc.details || ""}</div>
             <div class="incident-buttons">
                 <button class="btn-jump"   data-action="jump">Jump to car</button>
-                <button class="btn-replay" data-action="replay">Replay 10s</button>
+                <button class="btn-replay" data-action="replay">${inc.replayed ? 'Replay again' : 'Replay 10s'}</button>
             </div>
         `;
         // wire up handlers
-        div.querySelector(".incident-dismiss").onclick = (ev) => dismissIncident(inc.id, ev);
+        div.querySelector(".incident-dismiss").onclick = (ev) => dismissFeedItem(hostId, dismissedSet, inc.id, ev);
         div.querySelector("[data-action=jump]").onclick   = () => switchToCarNumber(inc.car_number);
         div.querySelector("[data-action=replay]").onclick = () => triggerReplay(inc.car_number, inc.id);
         host.appendChild(div);
@@ -3143,6 +3488,7 @@ async function tick() {
 
         if (autoFollow !== d.auto_follow) { autoFollow = d.auto_follow; updateAutoFollowBtn(); }
         if (autoReplay !== d.auto_replay) { autoReplay = d.auto_replay; updateAutoReplayBtn(); }
+        if (autoReplayOvertakes !== d.auto_replay_overtakes) { autoReplayOvertakes = d.auto_replay_overtakes; updateAutoReplayOtBtn(); }
 
         if (d.active_driver) {
             activeCarIdx = d.active_driver.car_idx;
@@ -3159,6 +3505,7 @@ async function tick() {
         currentDrivers = d.drivers || [];
         renderDrivers(currentDrivers, activeCarIdx);
         renderIncidents(d.incidents || []);
+        renderOvertakes(d.overtakes || []);
         renderRaceProgress(d.race_progress);
         renderPlayback(d.playback);
     } catch (e) { console.error(e); }
@@ -3253,6 +3600,14 @@ def auto_follow():
     return jsonify({"enabled": poller.auto_follow})
 
 
+@app.route("/auto_replay_overtakes", methods=["POST"])
+def auto_replay_overtakes():
+    payload = request.get_json(silent=True) or {}
+    enabled = bool(payload.get("enabled"))
+    poller.set_auto_replay_overtakes(enabled)
+    return jsonify({"enabled": poller.auto_replay_overtakes})
+
+
 @app.route("/auto_replay", methods=["POST"])
 def auto_replay():
     payload = request.get_json(silent=True) or {}
@@ -3303,19 +3658,23 @@ def replay_5s():
     if incident_id is not None:
         try:
             target_id = int(incident_id)
-            for inc in poller._incidents:
-                if inc.get("id") == target_id:
-                    t_session   = inc.get("t_session")
-                    session_num = inc.get("session_num")
-                    inc_type    = inc.get("type")
+            for store in (poller._incidents, poller._overtakes):
+                for inc in store:
+                    if inc.get("id") == target_id:
+                        t_session   = inc.get("t_session")
+                        session_num = inc.get("session_num")
+                        inc_type    = inc.get("type")
+                        break
+                if inc_type is not None:
                     break
         except (ValueError, TypeError):
             pass
 
     # Collisions are back-dated to the last-moving timestamp (the moment
     # the car actually stopped = the crash), so the standard 5s buildup
-    # now covers the real impact rather than the aftermath.
-    buildup = 7.0 if inc_type == "collision" else 5.0
+    # now covers the real impact rather than the aftermath. Overtakes get
+    # a longer buildup so the battle into the corner is visible.
+    buildup = {"collision": 7.0, "overtake": 8.0}.get(inc_type, 5.0)
 
     ok, msg = poller.replay_5s_of_car(
         str(car_number),
@@ -3323,6 +3682,8 @@ def replay_5s():
         session_num=session_num,
         buildup_seconds=buildup,
     )
+    if ok and incident_id is not None:
+        poller.mark_incident_replayed(incident_id)
     return jsonify({"ok": ok, "message": msg})
 
 
@@ -3358,6 +3719,12 @@ def playback():
 @app.route("/incidents/clear", methods=["POST"])
 def incidents_clear():
     poller.clear_incidents()
+    return jsonify({"ok": True})
+
+
+@app.route("/overtakes/clear", methods=["POST"])
+def overtakes_clear():
+    poller.clear_overtakes()
     return jsonify({"ok": True})
 
 
@@ -3434,6 +3801,7 @@ def incidents_dismiss():
 #   Go Live:                http://localhost:5000/streamdeck/go_live
 #   Toggle Auto-Follow:     http://localhost:5000/streamdeck/toggle_auto_follow
 #   Toggle Auto-Replay:     http://localhost:5000/streamdeck/toggle_auto_replay
+#   Toggle OT Auto-Replay:  http://localhost:5000/streamdeck/toggle_auto_replay_overtakes
 #   Replay last incident:   http://localhost:5000/streamdeck/replay_last
 #   Replay last spin:       http://localhost:5000/streamdeck/replay_last_lost_control
 #   Replay last collision:  http://localhost:5000/streamdeck/replay_last_incident_points
@@ -3462,11 +3830,18 @@ def streamdeck(action, param=None):
         poller.set_auto_replay(not poller.auto_replay)
         ok, msg = True, f"auto_replay={'on' if poller.auto_replay else 'off'}"
 
+    elif action == "toggle_auto_replay_overtakes":
+        poller.set_auto_replay_overtakes(not poller.auto_replay_overtakes)
+        ok, msg = True, ("auto_replay_overtakes="
+                         f"{'on' if poller.auto_replay_overtakes else 'off'}")
+
     # --- replay last incident (any type) ---
     elif action == "replay_last":
         incidents = snap.get("incidents", [])
         if incidents:
             ok, msg = poller.replay_5s_of_car(incidents[0]["car_number"])
+            if ok:
+                poller.mark_incident_replayed(incidents[0].get("id"))
             msg = f"replaying #{incidents[0]['car_number']} ({incidents[0]['type']})"
         else:
             ok, msg = False, "no incidents in feed"
@@ -3479,6 +3854,8 @@ def streamdeck(action, param=None):
         match = next((i for i in incidents if i["type"] == wanted_type), None)
         if match:
             ok, msg = poller.replay_5s_of_car(match["car_number"])
+            if ok:
+                poller.mark_incident_replayed(match.get("id"))
             msg = f"replaying #{match['car_number']} ({wanted_type})"
         else:
             ok, msg = False, f"no '{wanted_type}' incident in feed"

@@ -109,17 +109,45 @@ class FlagWatcher:
 
     # --- helpers ------------------------------------------------------------
     def _find_leader(self):
-        """Return (car_idx, car_number, driver_name) of the class-position-1 car."""
-        positions = self.ir["CarIdxClassPosition"] or []
-        drivers   = (self.ir["DriverInfo"] or {}).get("Drivers", []) or []
+        """Return (car_idx, car_number, driver_name) of the OVERALL race
+        leader, by live track progress (CarIdxLap + CarIdxLapDistPct).
+
+        Was previously "first car with CarIdxClassPosition == 1" — WRONG in
+        multiclass races (every class has a class-P1 car, and whichever
+        appears first in the Drivers list won), so at the Le Mans IEC race
+        the overlay tracked a class leader instead of the overall leader:
+        white flew far too long and the checkered missed the real finish.
+        Live progress also avoids the position-array lag at the line.
+        """
+        drivers = (self.ir["DriverInfo"] or {}).get("Drivers", []) or []
+        laps    = self.ir["CarIdxLap"] or []
+        pcts    = self.ir["CarIdxLapDistPct"] or []
+        best = None   # (progress, idx, number, name)
         for d in drivers:
             idx = d.get("CarIdx")
             if idx is None:
                 continue
             if d.get("CarIsPaceCar") == 1 or d.get("IsSpectator") == 1:
                 continue
-            pos = positions[idx] if idx < len(positions) else 0
-            if pos == 1:
+            lap = laps[idx] if idx < len(laps) else None
+            pct = pcts[idx] if idx < len(pcts) else None
+            if lap is None or pct is None or pct < 0:
+                continue
+            prog = (lap or 0) + max(pct, 0.0)
+            if best is None or prog > best[0]:
+                best = (prog, idx, str(d.get("CarNumber", "")),
+                        d.get("UserName", ""))
+        if best is not None:
+            return best[1], best[2], best[3]
+        # Fallback (no lap data yet): old class-position approach
+        positions = self.ir["CarIdxClassPosition"] or []
+        for d in drivers:
+            idx = d.get("CarIdx")
+            if idx is None:
+                continue
+            if d.get("CarIsPaceCar") == 1 or d.get("IsSpectator") == 1:
+                continue
+            if idx < len(positions) and positions[idx] == 1:
                 return idx, str(d.get("CarNumber", "")), d.get("UserName", "")
         return None, "", ""
 
@@ -245,8 +273,13 @@ class FlagWatcher:
         # Fallbacks: iRacing's EstLapTime, then a 120 s default.
         if self._lap_times:
             srt = sorted(self._lap_times)
-            lap_estimate = srt[len(srt) // 2]
-            estimate_src = "median_lap"
+            median = srt[len(srt) // 2]
+            # min(median, most recent lap): a caution-inflated median must
+            # not fire the white a lap early — the checkered now follows
+            # the NEXT crossing unconditionally, so an early white would
+            # drag the finish forward with it.
+            lap_estimate = min(median, self._lap_times[-1])
+            estimate_src = "median/last_lap"
         else:
             est = self.ir["EstLapTime"]
             if est and est > 0:
@@ -333,19 +366,17 @@ class FlagWatcher:
             if session_flags & self.FLAG_BIT_CHECKERED:
                 check_via = "SessionFlags checkered bit"
 
-            # (2) Leader crosses S/F again after the white flag. For timed
-            #     sessions the crossing must also be PAST expiry
-            #     (time_rem <= 0.5) — that's iRacing's actual finish rule,
-            #     and it stops a too-early white (inflated lap estimate)
-            #     from dragging the checkered forward with it: we'd just
-            #     show white one lap longer and still finish correctly.
-            #     The MIN_FINAL_LAP_S guard stops this firing on the same
-            #     crossing that raised the white flag (bit + crossing
-            #     arrive within a tick of each other). _white_fired_at
-            #     is 0 on late-join, so late joins pass the age guard.
+            # (2) Leader crosses S/F again after the white flag — that IS
+            #     the finish, fire the checkered immediately (user rule:
+            #     "checkered as soon as the leader crosses the line").
+            #     The old extra requirement `time_rem <= 0.5` was meant to
+            #     protect against a too-early white, but it delayed the
+            #     checkered whenever the timing was off in the other
+            #     direction. The MIN_FINAL_LAP_S guard still stops this
+            #     firing on the same crossing that raised the white flag
+            #     (bit + crossing arrive within a tick of each other).
+            #     _white_fired_at is 0 on late-join, so late joins pass.
             elif (crossed_sf
-                    and (not self._timed_seen
-                         or (time_rem is not None and time_rem <= 0.5))
                     and (self._white_fired_at == 0.0
                          or white_age > self.MIN_FINAL_LAP_S)):
                 check_via = f"crossed_sf time_rem={time_rem}"

@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="SimRacing overlays (OpenStreetMap, ODbL)" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>Homestead-Miami Speedway (Oval)</name>
+    <desc>Driving direction. Source: OpenStreetMap contributors (ODbL).</desc></metadata>
+  <trk><name>homestead_oval ONTRACK</name><trkseg>
+      <trkpt lat="25.453688" lon="-80.409729"/>
+      <trkpt lat="25.452817" lon="-80.411693"/>
+      <trkpt lat="25.452705" lon="-80.411909"/>
+      <trkpt lat="25.452552" lon="-80.412179"/>
+      <trkpt lat="25.452398" lon="-80.412412"/>
+      <trkpt lat="25.452197" lon="-80.412682"/>
+      <trkpt lat="25.452070" lon="-80.412816"/>
+      <trkpt lat="25.451902" lon="-80.412959"/>
+      <trkpt lat="25.451718" lon="-80.413086"/>
+      <trkpt lat="25.451532" lon="-80.413189"/>
+      <trkpt lat="25.451342" lon="-80.413259"/>
+      <trkpt lat="25.451059" lon="-80.413329"/>
+      <trkpt lat="25.450827" lon="-80.413362"/>
+      <trkpt lat="25.450644" lon="-80.413349"/>
+      <trkpt lat="25.450463" lon="-80.413322"/>
+      <trkpt lat="25.450259" lon="-80.413256"/>
+      <trkpt lat="25.449888" lon="-80.413096"/>
+      <trkpt lat="25.449726" lon="-80.412979"/>
+      <trkpt lat="25.449584" lon="-80.412852"/>
+      <trkpt lat="25.449434" lon="-80.412702"/>
+      <trkpt lat="25.449214" lon="-80.412346"/>
+      <trkpt lat="25.449133" lon="-80.412156"/>
+      <trkpt lat="25.449055" lon="-80.411916"/>
+      <trkpt lat="25.448994" lon="-80.411629"/>
+      <trkpt lat="25.448964" lon="-80.411203"/>
+      <trkpt lat="25.449001" lon="-80.410823"/>
+      <trkpt lat="25.449124" lon="-80.410366"/>
+      <trkpt lat="25.449229" lon="-80.410053"/>
+      <trkpt lat="25.449430" lon="-80.409597"/>
+      <trkpt lat="25.451261" lon="-80.405623"/>
+      <trkpt lat="25.451429" lon="-80.405363"/>
+      <trkpt lat="25.451586" lon="-80.405147"/>
+      <trkpt lat="25.451829" lon="-80.404883"/>
+      <trkpt lat="25.452031" lon="-80.404703"/>
+      <trkpt lat="25.452377" lon="-80.404463"/>
+      <trkpt lat="25.452633" lon="-80.404353"/>
+      <trkpt lat="25.452865" lon="-80.404287"/>
+      <trkpt lat="25.453051" lon="-80.404253"/>
+      <trkpt lat="25.453322" lon="-80.404250"/>
+      <trkpt lat="25.453593" lon="-80.404307"/>
+      <trkpt lat="25.453819" lon="-80.404403"/>
+      <trkpt lat="25.454072" lon="-80.404537"/>
+      <trkpt lat="25.454270" lon="-80.404693"/>
+      <trkpt lat="25.454427" lon="-80.404850"/>
+      <trkpt lat="25.454565" lon="-80.405036"/>
+      <trkpt lat="25.454667" lon="-80.405226"/>
+      <trkpt lat="25.454773" lon="-80.405456"/>
+      <trkpt lat="25.454878" lon="-80.405946"/>
+      <trkpt lat="25.454896" lon="-80.406320"/>
+      <trkpt lat="25.454887" lon="-80.406703"/>
+      <trkpt lat="25.454824" lon="-80.407030"/>
+      <trkpt lat="25.454737" lon="-80.407363"/>
+      <trkpt lat="25.453688" lon="-80.409729"/>
+  </trkseg></trk>
+  <trk><name>homestead_oval ONPITROAD</name><trkseg>
+      <trkpt lat="25.454534" lon="-80.407265"/>
+      <trkpt lat="25.452400" lon="-80.411953"/>
+  </trkseg></trk>
+</gpx>

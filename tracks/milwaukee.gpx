@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="SimRacing overlays (OpenStreetMap, ODbL)" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>Milwaukee Mile</name>
+    <desc>Driving direction. Source: OpenStreetMap contributors (ODbL).</desc></metadata>
+  <trk><name>milwaukee ONTRACK</name><trkseg>
+      <trkpt lat="43.019918" lon="-88.012929"/>
+      <trkpt lat="43.019498" lon="-88.012939"/>
+      <trkpt lat="43.019222" lon="-88.012912"/>
+      <trkpt lat="43.019055" lon="-88.012875"/>
+      <trkpt lat="43.018686" lon="-88.012741"/>
+      <trkpt lat="43.018459" lon="-88.012596"/>
+      <trkpt lat="43.018221" lon="-88.012336"/>
+      <trkpt lat="43.018027" lon="-88.012006"/>
+      <trkpt lat="43.017945" lon="-88.011759"/>
+      <trkpt lat="43.017878" lon="-88.011486"/>
+      <trkpt lat="43.017854" lon="-88.011239"/>
+      <trkpt lat="43.017851" lon="-88.010981"/>
+      <trkpt lat="43.017874" lon="-88.010708"/>
+      <trkpt lat="43.017949" lon="-88.010423"/>
+      <trkpt lat="43.018062" lon="-88.010134"/>
+      <trkpt lat="43.018215" lon="-88.009882"/>
+      <trkpt lat="43.018396" lon="-88.009694"/>
+      <trkpt lat="43.018619" lon="-88.009554"/>
+      <trkpt lat="43.018835" lon="-88.009452"/>
+      <trkpt lat="43.019067" lon="-88.009383"/>
+      <trkpt lat="43.019314" lon="-88.009361"/>
+      <trkpt lat="43.021412" lon="-88.009318"/>
+      <trkpt lat="43.022471" lon="-88.009324"/>
+      <trkpt lat="43.022761" lon="-88.009383"/>
+      <trkpt lat="43.023094" lon="-88.009501"/>
+      <trkpt lat="43.023252" lon="-88.009591"/>
+      <trkpt lat="43.023404" lon="-88.009737"/>
+      <trkpt lat="43.023592" lon="-88.009973"/>
+      <trkpt lat="43.023729" lon="-88.010268"/>
+      <trkpt lat="43.023820" lon="-88.010568"/>
+      <trkpt lat="43.023865" lon="-88.010809"/>
+      <trkpt lat="43.023888" lon="-88.011031"/>
+      <trkpt lat="43.023888" lon="-88.011181"/>
+      <trkpt lat="43.023854" lon="-88.011513"/>
+      <trkpt lat="43.023816" lon="-88.011679"/>
+      <trkpt lat="43.023744" lon="-88.011869"/>
+      <trkpt lat="43.023667" lon="-88.012027"/>
+      <trkpt lat="43.023542" lon="-88.012249"/>
+      <trkpt lat="43.023420" lon="-88.012423"/>
+      <trkpt lat="43.023177" lon="-88.012628"/>
+      <trkpt lat="43.023051" lon="-88.012703"/>
+      <trkpt lat="43.022828" lon="-88.012789"/>
+      <trkpt lat="43.022657" lon="-88.012834"/>
+      <trkpt lat="43.021580" lon="-88.012891"/>
+      <trkpt lat="43.019918" lon="-88.012929"/>
+  </trkseg></trk>
+  <trk><name>milwaukee ONPITROAD</name><trkseg>
+      <trkpt lat="43.021947" lon="-88.012873"/>
+      <trkpt lat="43.021578" lon="-88.012628"/>
+      <trkpt lat="43.019080" lon="-88.012649"/>
+      <trkpt lat="43.018829" lon="-88.012563"/>
+      <trkpt lat="43.018339" lon="-88.012274"/>
+      <trkpt lat="43.018193" lon="-88.012134"/>
+      <trkpt lat="43.017990" lon="-88.011895"/>
+  </trkseg></trk>
+</gpx>

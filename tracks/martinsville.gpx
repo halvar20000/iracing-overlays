@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="SimRacing overlays (OpenStreetMap, ODbL)" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>Martinsville Speedway</name>
+    <desc>Driving direction. Source: OpenStreetMap contributors (ODbL).</desc></metadata>
+  <trk><name>martinsville ONTRACK</name><trkseg>
+      <trkpt lat="36.634382" lon="-79.852166"/>
+      <trkpt lat="36.634231" lon="-79.852237"/>
+      <trkpt lat="36.633234" lon="-79.852761"/>
+      <trkpt lat="36.633093" lon="-79.852786"/>
+      <trkpt lat="36.632972" lon="-79.852781"/>
+      <trkpt lat="36.632859" lon="-79.852745"/>
+      <trkpt lat="36.632770" lon="-79.852685"/>
+      <trkpt lat="36.632689" lon="-79.852580"/>
+      <trkpt lat="36.632629" lon="-79.852459"/>
+      <trkpt lat="36.632601" lon="-79.852328"/>
+      <trkpt lat="36.632601" lon="-79.852162"/>
+      <trkpt lat="36.632621" lon="-79.852011"/>
+      <trkpt lat="36.632673" lon="-79.851845"/>
+      <trkpt lat="36.632750" lon="-79.851724"/>
+      <trkpt lat="36.632875" lon="-79.851614"/>
+      <trkpt lat="36.634841" lon="-79.850582"/>
+      <trkpt lat="36.635002" lon="-79.850537"/>
+      <trkpt lat="36.635124" lon="-79.850527"/>
+      <trkpt lat="36.635249" lon="-79.850572"/>
+      <trkpt lat="36.635358" lon="-79.850638"/>
+      <trkpt lat="36.635463" lon="-79.850743"/>
+      <trkpt lat="36.635535" lon="-79.850904"/>
+      <trkpt lat="36.635568" lon="-79.851040"/>
+      <trkpt lat="36.635572" lon="-79.851196"/>
+      <trkpt lat="36.635519" lon="-79.851392"/>
+      <trkpt lat="36.635447" lon="-79.851533"/>
+      <trkpt lat="36.635337" lon="-79.851674"/>
+      <trkpt lat="36.635208" lon="-79.851775"/>
+      <trkpt lat="36.634382" lon="-79.852166"/>
+  </trkseg></trk>
+  <trk><name>martinsville ONPITROAD</name><trkseg>
+      <trkpt lat="36.634122" lon="-79.850959"/>
+      <trkpt lat="36.634378" lon="-79.850898"/>
+      <trkpt lat="36.634574" lon="-79.850799"/>
+      <trkpt lat="36.634675" lon="-79.850762"/>
+      <trkpt lat="36.634781" lon="-79.850742"/>
+      <trkpt lat="36.634916" lon="-79.850736"/>
+      <trkpt lat="36.635070" lon="-79.850736"/>
+      <trkpt lat="36.635165" lon="-79.850762"/>
+      <trkpt lat="36.635239" lon="-79.850812"/>
+      <trkpt lat="36.635316" lon="-79.850894"/>
+      <trkpt lat="36.635356" lon="-79.850993"/>
+      <trkpt lat="36.635377" lon="-79.851135"/>
+      <trkpt lat="36.635374" lon="-79.851261"/>
+      <trkpt lat="36.635353" lon="-79.851350"/>
+      <trkpt lat="36.635281" lon="-79.851442"/>
+      <trkpt lat="36.635210" lon="-79.851498"/>
+      <trkpt lat="36.633616" lon="-79.852389"/>
+      <trkpt lat="36.633208" lon="-79.852607"/>
+      <trkpt lat="36.633134" lon="-79.852617"/>
+      <trkpt lat="36.633047" lon="-79.852607"/>
+      <trkpt lat="36.632965" lon="-79.852567"/>
+      <trkpt lat="36.632901" lon="-79.852518"/>
+      <trkpt lat="36.632845" lon="-79.852448"/>
+      <trkpt lat="36.632811" lon="-79.852356"/>
+      <trkpt lat="36.632800" lon="-79.852273"/>
+      <trkpt lat="36.632803" lon="-79.852155"/>
+      <trkpt lat="36.632838" lon="-79.852029"/>
+      <trkpt lat="36.632885" lon="-79.851917"/>
+      <trkpt lat="36.632999" lon="-79.851680"/>
+      <trkpt lat="36.633052" lon="-79.851604"/>
+      <trkpt lat="36.633131" lon="-79.851524"/>
+      <trkpt lat="36.633397" lon="-79.851339"/>
+  </trkseg></trk>
+</gpx>

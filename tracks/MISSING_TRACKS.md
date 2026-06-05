@@ -16,30 +16,68 @@ Bundled: 205 SIMRacingApps tracks (frozen Sept 2024) + Monza (hand-drawn)
 | miami_gp.json | 5416 m vs 5412 m | OSM |
 | zandvoort_2023_* (5 configs) | — | copies of old-scan files (same circuit) |
 
+## Added 2026-06-05
+
+| File | Length check | Source |
+|------|--------------|--------|
+| stpete.json (+ stpete.gpx) | 2903 m vs 2897 m | OSM relation 8668325 (ways tagged `disused:highway=raceway` — the 06-04 raceway-tag search missed them; pit lane included, S/F via pit-midpoint projection, direction verified against official track map — OSM "forward" roles are REVERSED there) |
+
+## Added 2026-06-05 evening (BULK OSM BUILD — 8 parallel agents, 36 facilities)
+
+All slugs UNCONFIRMED unless noted — each facility saved under 2-3
+plausible names; delete whichever the trackmap console doesn't ask for.
+Previews in `_previews/`. Lengths verified (±2% road / ±5% oval),
+directions verified via shoelace + pit-lane flow. Full per-track build
+reports archived in the session outputs (report_road_a-d, report_ovals_a-d).
+
+Road: sebring_international+sebring, roadamerica_full+roadamerica,
+lagunaseca_full+lagunaseca (NO pit in JSON — OSM "Pit Lane" way is
+mis-tagged; S/F via front-straight hint), midohio_full+midohio,
+roadatlanta_full+roadatlanta (raw OSM order was REVERSED),
+barber_full+barber, sonoma_gp+sonoma_full, mosport+mosport_gp,
+bathurst+mountpanorama (anti-clockwise), interlagos_gp+interlagos+
+interlagos_grandprix (S/F via hint — OSM pit way includes long
+entry/exit roads), mexico_gp+mexicocity_gp+hermanosrodriguez_gp (incl.
+Foro Sol), montreal+montreal_gp+gillesvilleneuve, motegi_gp+
+motegi_grandprix+twinring_gp, motegi_east, donington_gp+
+donington_grandprix, donington_national, oulton_international+
+oultonpark_international, oulton_island, zolder_gp+zolder_grandprix+
+zolder, thebend_international+thebend_intl+thebend,
+thebend_gt+thebend_gtcircuit, portland+portland_full (CLOCKWISE —
+Wikipedia confirms; gap-list assumption of CCW was wrong),
+brandshatch_indy, **adelaide** (slug confirmed; type=circuit relation
+3121459 — the 06-04 "stub" classification was wrong),
+**chicago_street** (relation 16546690; relation roles reversed vs
+driving direction, St. Pete pattern).
+
+Ovals (all counterclockwise): daytona_oval+daytona_2011_oval,
+talladega+talladega_oval, texas_oval+texas, bristol_oval+bristol+
+bristol_fullpit (S/F hint on the WEST straight — if the dot looks
+wrong on stream, flip sf_hint to the east-straight midpoint and
+rebuild), martinsville+martinsville_oval, richmond+richmond_oval,
+dover+dover_oval, kansas_oval+kansas, michigan+michigan_oval,
+lasvegas_oval+lasvegas, homestead_oval+homestead, darlington+
+darlington_oval, kentucky_oval+kentucky, chicagoland+chicagoland_oval,
+newhampshire_oval+loudon_oval+newhampshire, milwaukee+milwaukee_oval+
+themilwaukeemile, gateway_oval+gateway, rockingham_oval+rockingham
+(NC "The Rock" — if iRacing's bare `rockingham` slug is the UK track,
+delete rockingham.json and build UK separately),
+indianapolis_oval+indy_oval (S/F = OSM Yard-of-Bricks way, exact),
+atlanta_oval+atlanta (post-2022 reprofile).
+
 ## NOT buildable from OSM → hand-draw in gpx.studio + gpx_to_json.py
 
-- **stpete** (slug confirmed) — temporary street circuit, roads not
-  tagged as raceway in OSM
-- **adelaide** (slug confirmed) — parklands street circuit, only a stub
-  in OSM
-- Chicago Street Course — temporary street circuit (check whether the
-  bundled `chicago.json` is actually this track at the first session)
-- iRacing Superspeedway, Centripetal Circuit — fictional, no real-world
-  geometry anywhere
+- Auto Club Speedway / Fontana — demolished 2023, DELETED from OSM
+  (exhaustive lifecycle-tag search found only stubs); needs OSM
+  history data or hand-drawing
+- Motegi superspeedway oval — demolished ~2021, deleted from OSM
+- Sonoma Cup/NASCAR config — the chute connector is not mapped (GP
+  loop built fine)
+- Sebring Club/Modified, Road Atlanta Short, Mid-Ohio Short/Chicane —
+  alt-config link roads are unconnected stubs in OSM
+- iRacing Superspeedway, Centripetal Circuit — fictional, no
+  real-world geometry anywhere
 - Oran Park — demolished (housing estate), gone from OSM
-
-## Buildable from OSM, slug UNCONFIRMED (build on demand)
-
-Road: Sebring, Road America, Laguna Seca, Mid-Ohio, Road Atlanta,
-Barber, Sonoma (GP/Cup configs), Canadian Tire Motorsport Park,
-Bathurst/Mount Panorama, Interlagos, Mexico City, Circuit
-Gilles-Villeneuve, Motegi, Donington, Oulton Park, Zolder, The Bend,
-Portland, Brands Hatch Indy (geometry already cached from the GP build).
-
-Ovals: Daytona, Talladega, Texas, Bristol, Martinsville, Richmond,
-Dover, Kansas, Michigan, Las Vegas, Homestead, Darlington, Auto Club,
-Kentucky, Chicagoland, New Hampshire, Milwaukee, Gateway, Rockingham,
-Indianapolis oval, Atlanta/Echo Park, plus assorted short ovals.
 
 Dirt ovals: mostly unmapped or too small in OSM — case by case.
 

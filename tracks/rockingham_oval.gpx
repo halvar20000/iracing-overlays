@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="SimRacing overlays (OpenStreetMap, ODbL)" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>Rockingham Speedway (NC) Oval</name>
+    <desc>Driving direction. Source: OpenStreetMap contributors (ODbL).</desc></metadata>
+  <trk><name>rockingham_oval ONTRACK</name><trkseg>
+      <trkpt lat="34.973173" lon="-79.610247"/>
+      <trkpt lat="34.973190" lon="-79.609215"/>
+      <trkpt lat="34.973192" lon="-79.608948"/>
+      <trkpt lat="34.973201" lon="-79.608531"/>
+      <trkpt lat="34.973208" lon="-79.608394"/>
+      <trkpt lat="34.973224" lon="-79.608238"/>
+      <trkpt lat="34.973255" lon="-79.608098"/>
+      <trkpt lat="34.973310" lon="-79.607938"/>
+      <trkpt lat="34.973376" lon="-79.607817"/>
+      <trkpt lat="34.973454" lon="-79.607685"/>
+      <trkpt lat="34.973550" lon="-79.607549"/>
+      <trkpt lat="34.973692" lon="-79.607413"/>
+      <trkpt lat="34.973804" lon="-79.607315"/>
+      <trkpt lat="34.974014" lon="-79.607198"/>
+      <trkpt lat="34.974145" lon="-79.607148"/>
+      <trkpt lat="34.974292" lon="-79.607112"/>
+      <trkpt lat="34.974403" lon="-79.607108"/>
+      <trkpt lat="34.974519" lon="-79.607115"/>
+      <trkpt lat="34.974646" lon="-79.607135"/>
+      <trkpt lat="34.974748" lon="-79.607167"/>
+      <trkpt lat="34.974842" lon="-79.607211"/>
+      <trkpt lat="34.974950" lon="-79.607265"/>
+      <trkpt lat="34.975061" lon="-79.607338"/>
+      <trkpt lat="34.975183" lon="-79.607437"/>
+      <trkpt lat="34.975285" lon="-79.607541"/>
+      <trkpt lat="34.975391" lon="-79.607684"/>
+      <trkpt lat="34.975470" lon="-79.607811"/>
+      <trkpt lat="34.975536" lon="-79.607951"/>
+      <trkpt lat="34.975591" lon="-79.608102"/>
+      <trkpt lat="34.975632" lon="-79.608250"/>
+      <trkpt lat="34.975679" lon="-79.608470"/>
+      <trkpt lat="34.975746" lon="-79.608808"/>
+      <trkpt lat="34.975810" lon="-79.609169"/>
+      <trkpt lat="34.975845" lon="-79.609451"/>
+      <trkpt lat="34.975865" lon="-79.609690"/>
+      <trkpt lat="34.975872" lon="-79.609886"/>
+      <trkpt lat="34.975871" lon="-79.610566"/>
+      <trkpt lat="34.975868" lon="-79.610895"/>
+      <trkpt lat="34.975866" lon="-79.611052"/>
+      <trkpt lat="34.975852" lon="-79.611242"/>
+      <trkpt lat="34.975812" lon="-79.611554"/>
+      <trkpt lat="34.975573" lon="-79.612618"/>
+      <trkpt lat="34.975513" lon="-79.612838"/>
+      <trkpt lat="34.975440" lon="-79.613053"/>
+      <trkpt lat="34.975341" lon="-79.613255"/>
+      <trkpt lat="34.975206" lon="-79.613470"/>
+      <trkpt lat="34.975032" lon="-79.613663"/>
+      <trkpt lat="34.974859" lon="-79.613779"/>
+      <trkpt lat="34.974673" lon="-79.613870"/>
+      <trkpt lat="34.974446" lon="-79.613925"/>
+      <trkpt lat="34.974215" lon="-79.613925"/>
+      <trkpt lat="34.974020" lon="-79.613892"/>
+      <trkpt lat="34.973857" lon="-79.613810"/>
+      <trkpt lat="34.973686" lon="-79.613709"/>
+      <trkpt lat="34.973567" lon="-79.613591"/>
+      <trkpt lat="34.973452" lon="-79.613446"/>
+      <trkpt lat="34.973356" lon="-79.613279"/>
+      <trkpt lat="34.973288" lon="-79.613149"/>
+      <trkpt lat="34.973236" lon="-79.613011"/>
+      <trkpt lat="34.973177" lon="-79.612838"/>
+      <trkpt lat="34.973148" lon="-79.612680"/>
+      <trkpt lat="34.973138" lon="-79.612531"/>
+      <trkpt lat="34.973138" lon="-79.612355"/>
+      <trkpt lat="34.973145" lon="-79.611991"/>
+      <trkpt lat="34.973173" lon="-79.610247"/>
+  </trkseg></trk>
+  <trk><name>rockingham_oval ONPITROAD</name><trkseg>
+      <trkpt lat="34.973177" lon="-79.612838"/>
+      <trkpt lat="34.973205" lon="-79.612664"/>
+      <trkpt lat="34.973228" lon="-79.612539"/>
+      <trkpt lat="34.973250" lon="-79.612339"/>
+      <trkpt lat="34.973266" lon="-79.612120"/>
+      <trkpt lat="34.973286" lon="-79.610932"/>
+      <trkpt lat="34.973322" lon="-79.608882"/>
+      <trkpt lat="34.973318" lon="-79.608713"/>
+      <trkpt lat="34.973310" lon="-79.608431"/>
+      <trkpt lat="34.973312" lon="-79.608225"/>
+      <trkpt lat="34.973329" lon="-79.608063"/>
+      <trkpt lat="34.973376" lon="-79.607884"/>
+      <trkpt lat="34.973454" lon="-79.607685"/>
+  </trkseg></trk>
+</gpx>

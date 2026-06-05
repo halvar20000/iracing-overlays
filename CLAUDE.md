@@ -135,6 +135,83 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**June 5, 2026 (trackmap — BULK OSM BUILD, 36 facilities via 8 parallel
+agents; Nextcloud incident):** Built ALL remaining buildable tracks from
+MISSING_TRACKS.md in one evening: 19 road facilities (incl. alt configs
+Donington National, Oulton Island, Motegi East, The Bend GT) + 21 ovals
+— 99 new JSONs (2-3 slug-variant copies each, slugs UNCONFIRMED — the
+trackmap console prints the wanted filename on first load; delete the
+losing variants), plus GPX + previews in tracks/_previews/. Adelaide
+and Chicago Street ARE buildable (type=circuit relations — the
+disused-raceway/relation trick is 3-for-3 on street circuits). NOT
+buildable: Fontana + Motegi oval (demolished, deleted from OSM),
+Sonoma Cup chute, several alt-config link roads. Notable: Road
+Atlanta's raw OSM order was reversed; Portland is CLOCKWISE; Laguna's
+OSM pit way is mis-tagged (JSON ships without pit); Bristol S/F is a
+west-straight guess (flip to east mid-straight if wrong on stream);
+Indy S/F sits exactly on the OSM Yard-of-Bricks way; rockingham.json
+is the NC oval (provisional — UK track may claim the bare slug).
+Method per track: Overpass via Claude-in-Chrome (assigned mirrors,
+in-page retry/backoff — kumi.systems stalled, overpass-api.de
+rate-limited under 8 concurrent agents), RDP-simplify in-page, chunked
+transfer (≤900 chars, NO '=' in returned strings — proxy blocks them),
+parametrized outputs/build_track.py (loop close, length check,
+direction via shoelace+pit-flow, pit-mid S/F, slug fan-out, preview).
+INCIDENT during the run: everything in tracks/ predating the bulk
+write + 3 root files (iracing_championship.py, iracing_session_info.py,
+launch_all.bat) vanished from the LOCAL folder (~210 files); agents
+were NOT the cause (sandbox blocks deletes — multiple agents hit
+EPERM on their own temp files). Deletions synced to the server; all
+files restored from Nextcloud web trash ("Deleted files"), verified
+complete (316 track JSONs). Root cause unconfirmed — suspect Nextcloud
+FileProvider misbehaving under a ~150-file write burst. LESSON: before
+any future bulk write into the synced folder, snapshot tracks/ to a
+tar in outputs first (done this time, kept), and prefer staging bulk
+output outside the sync root.
+
+**June 5, 2026 (trackmap — St. Petersburg added from OSM):** The 06-04
+"NOT OSM-buildable" classification for **stpete** was WRONG — the circuit
+IS in OSM (relation 8668325, "Grand Prix of Saint Petersburg Raceway"),
+but its ways are tagged `disused:highway=raceway` (temporary circuit),
+which the raceway-tag search missed. Lesson for future street circuits:
+also query `disused:highway=raceway` and `type=circuit` relations.
+Built `tracks/stpete.json` + `tracks/stpete.gpx` via Claude-in-Chrome
+Overpass fetch (sandbox web_fetch still returns empty for OSM APIs).
+Loop 2903 m vs real 2897 m; pit lane (772 m, incl. "Dali Boulevard"
+stub) bundled in onpitroad. S/F = pit-midpoint perpendicular projection
+(38 m offset — pit sits on the parallel taxiway). CRITICAL: the
+relation's "forward" roles are REVERSED vs the real driving direction —
+verified against the official track map (T10 Dali → Bay Shore Dr → Dan
+Wheldon Dr → T12/13/14 → runway ENE → S/F → T1 at the bay) and the pit
+flow; the loop was reversed before rotation. Rendered SVG visually
+matches the official racingcircuits.info map. Don't blindly trust OSM
+forward/oneway roles on circuit relations — cross-check pit-lane flow.
+MISSING_TRACKS.md updated (stpete moved out of the not-buildable list).
+
+**June 4, 2026 (dashboard — session-change reset; PCCD Hockenheim
+forensics):** Race 2 of the evening detected NOTHING (two real spins
+missed) and its log re-imported race 1's stale incidents. Root cause:
+the two races were SEPARATE HOSTED SESSIONS — SessionTime reset to ~0
+between them, but the dashboard poller had NO session-change reset
+(same bug class the flag overlay had in April): every cooldown /
+kinematics timestamp still held race-1 values (~3000 s), all
+"t_now - last" checks went negative, cooldowns never expired →
+detectors muted; the feeds kept the old entries (which the race
+logger then re-imported into the new file with identical timestamps —
+that's the tell in the logs). Fix: `_reset_detection_state()` clears
+ALL per-car trackers, cooldowns, kinematics histories, pending queues
+and BOTH feeds; triggered on (SessionUniqueID, SessionNum) change or
+a >5 s backwards SessionTime jump. Verified offline: back-to-back
+sessions with time reset — race-2 spin detected, no stale entries.
+Tonight's flag-overlay complaint was NOT a code bug: replaying race
+2's real timeline (green 37, expiry 1537, crossings from the log)
+through the CURRENT flag overlay gives white at 1526.5 / checkered at
+1626.0 — exactly right. The running process was simply never
+restarted after the afternoon fix (behavior matched the morning "+1
+lap" version: white at the real finish, checkered at the cool-down
+crossing). LESSON: after code changes, overlays MUST be restarted —
+they keep the old version in memory.
+
 **June 4, 2026 (trackmap — gap analysis + 3 more OSM tracks +
 Zandvoort 2023 slugs):** Generated `tracks/MISSING_TRACKS.md` (bundled
 205 SRA tracks vs iRacing's ~140 facilities / 400+ configs, with
@@ -352,6 +429,44 @@ instant-freeze permanent disconnect → 1 collision after the confirm
 window (unavoidable — indistinguishable from a crash without more
 signals). All 13 prior incident scenarios still pass.
 
+FOLLOW-UP same day (replayed marker): incident feed entries now carry
+`replayed: False` and get flagged via
+`TelemetryPoller.mark_incident_replayed(id)` whenever a replay of them
+was shown — by auto-replay (incident id passed through
+`_try_auto_replay`), the feed's "Replay 10s" button (`/replay_5s` with
+incident_id), or the Stream Deck replay_last* endpoints. UI: green
+"▶ replayed" chip next to the type label, button text flips to
+"Replay again"; the render signature includes the flag so the chip
+appears on the next poll. Lifecycle unit-checked offline (4/4).
+
+FOLLOW-UP same day (overtake detection + priority auto-replay):
+NEW "Overtakes" feed (green accent, same card UI incl. replayed-chip,
+own Clear-all + /overtakes/clear). LAYOUT (user request): four columns
+— standings (480px) | cameras (squeezed to 280px, buttons flex-wrap) |
+overtakes (1fr) | incidents (1fr). The old `.sub-panel` CSS is unused
+but kept.
+Detection in `_update_overtakes` (race sessions only): live progress
+rank (lap+pct) swaps the instant a pass happens, and LAPPING NEVER
+CHANGES IT (leader already a lap ahead) — so only real position swaps
+register. A swap only counts when: cars within 0.6 % at the swap, both
+on track (no pit-cycle), overtaken car still at racing speed (≥43 km/h,
+re-checked at confirm time because the 0.5 s speed window lags right
+after a spin — plus a _collapse_at check), no blue flag on the
+overtaken car (user rule), neither car connection-unstable, and the
+new order HOLDS for 3 s (side-by-side flicker) with a pair-churn guard
+so a failed move + defender re-pass doesn't count either way.
+Auto-replay: SEPARATE toggle from incidents (user request) —
+`auto_replay_overtakes` flag, own button in the Overtakes sub-panel,
+`/auto_replay_overtakes` endpoint, Stream Deck
+`/streamdeck/toggle_auto_replay_overtakes`. When enabled, overtakes
+run at PRIORITY 2 vs incidents' 1 (`REPLAY_PRIORITY`) — they may jump
+the post-replay cooldown of a lower-priority event but never
+interrupt an active replay (is_live check). Buildup 8 s before the
+start of the move.
+Verified offline (`test_overtakes.py`): clean pass → 1 entry;
+flicker → 0; pit cycle → 0; blue flag → 0; passing a spun car → 0.
+6/6, plus all 13 incident + 3 blink scenarios still pass.
+
 **June 4, 2026 (flag overlay — timed-race white flag fixed, SessionFlags
 primary):** White flag wasn't showing in timed league races (PCCD
 Silverstone 21.05., both races). Race-log forensics (`logs/*.jsonl` flag
@@ -395,6 +510,22 @@ Rewrite: all detectors now run in PARALLEL, first one wins:
     lap can END two laps after the clock hits zero).
   • Late-join skip now gated to the first ~5 s of observing a session
     (`_ticks_in_session < 50`) so it can't hijack mid-race.
+
+FOLLOW-UP same evening (Le Mans IEC: white far too long, checkered
+late): TWO fixes. (a) `_find_leader` picked the first car with
+CarIdxClassPosition == 1 — WRONG in MULTICLASS races (every class has
+a class-P1; whichever is first in the Drivers list won), so the
+overlay tracked a class leader's crossings instead of the overall
+leader's. Now: overall leader by live progress (CarIdxLap +
+CarIdxLapDistPct), class-position fallback only when lap data is
+missing. (b) Checkered-via-crossing dropped the `time_rem <= 0.5`
+requirement — once white is out, the leader's NEXT crossing IS the
+finish (user rule: checkered the moment the leader crosses). To keep
+an early white from dragging the finish forward, the white estimate
+is now `min(median, most recent lap)` (caution-inflated medians can't
+fire a lap early). New multiclass test scenario; 15/15 pass. NOTE:
+at Le Mans a correct white still flies ~5 min — that's one full lap
+there, inherent to the rule.
 Verified offline by replaying log-derived scenarios (PCCD no-bits,
 Spa-with-bits, pure lap race, late join) through the state machine with
 a stubbed irsdk — 13/13 checks pass. Startup banner no longer claims

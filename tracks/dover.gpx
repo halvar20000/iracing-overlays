@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="SimRacing overlays (OpenStreetMap, ODbL)" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>Dover Motor Speedway</name>
+    <desc>Driving direction. Source: OpenStreetMap contributors (ODbL).</desc></metadata>
+  <trk><name>dover ONTRACK</name><trkseg>
+      <trkpt lat="39.189271" lon="-75.528425"/>
+      <trkpt lat="39.189866" lon="-75.528559"/>
+      <trkpt lat="39.191336" lon="-75.528874"/>
+      <trkpt lat="39.191468" lon="-75.528912"/>
+      <trkpt lat="39.191683" lon="-75.529007"/>
+      <trkpt lat="39.191889" lon="-75.529136"/>
+      <trkpt lat="39.191987" lon="-75.529227"/>
+      <trkpt lat="39.192056" lon="-75.529302"/>
+      <trkpt lat="39.192211" lon="-75.529514"/>
+      <trkpt lat="39.192336" lon="-75.529758"/>
+      <trkpt lat="39.192439" lon="-75.530045"/>
+      <trkpt lat="39.192497" lon="-75.530331"/>
+      <trkpt lat="39.192526" lon="-75.530634"/>
+      <trkpt lat="39.192513" lon="-75.530954"/>
+      <trkpt lat="39.192452" lon="-75.531286"/>
+      <trkpt lat="39.192336" lon="-75.531601"/>
+      <trkpt lat="39.192192" lon="-75.531884"/>
+      <trkpt lat="39.191992" lon="-75.532137"/>
+      <trkpt lat="39.191770" lon="-75.532324"/>
+      <trkpt lat="39.191558" lon="-75.532432"/>
+      <trkpt lat="39.191362" lon="-75.532494"/>
+      <trkpt lat="39.191136" lon="-75.532515"/>
+      <trkpt lat="39.190860" lon="-75.532490"/>
+      <trkpt lat="39.189560" lon="-75.532199"/>
+      <trkpt lat="39.188199" lon="-75.531909"/>
+      <trkpt lat="39.187852" lon="-75.531826"/>
+      <trkpt lat="39.187681" lon="-75.531768"/>
+      <trkpt lat="39.187523" lon="-75.531697"/>
+      <trkpt lat="39.187417" lon="-75.531631"/>
+      <trkpt lat="39.187282" lon="-75.531519"/>
+      <trkpt lat="39.187144" lon="-75.531357"/>
+      <trkpt lat="39.187009" lon="-75.531137"/>
+      <trkpt lat="39.186886" lon="-75.530875"/>
+      <trkpt lat="39.186806" lon="-75.530626"/>
+      <trkpt lat="39.186761" lon="-75.530377"/>
+      <trkpt lat="39.186735" lon="-75.530145"/>
+      <trkpt lat="39.186735" lon="-75.529887"/>
+      <trkpt lat="39.186767" lon="-75.529592"/>
+      <trkpt lat="39.186835" lon="-75.529327"/>
+      <trkpt lat="39.186932" lon="-75.529082"/>
+      <trkpt lat="39.187047" lon="-75.528866"/>
+      <trkpt lat="39.187189" lon="-75.528683"/>
+      <trkpt lat="39.187337" lon="-75.528530"/>
+      <trkpt lat="39.187485" lon="-75.528409"/>
+      <trkpt lat="39.187646" lon="-75.528314"/>
+      <trkpt lat="39.187813" lon="-75.528243"/>
+      <trkpt lat="39.188003" lon="-75.528210"/>
+      <trkpt lat="39.188212" lon="-75.528202"/>
+      <trkpt lat="39.188489" lon="-75.528248"/>
+      <trkpt lat="39.189271" lon="-75.528425"/>
+  </trkseg></trk>
+  <trk><name>dover ONPITROAD</name><trkseg>
+      <trkpt lat="39.186787" lon="-75.530521"/>
+      <trkpt lat="39.186778" lon="-75.530131"/>
+      <trkpt lat="39.186796" lon="-75.529884"/>
+      <trkpt lat="39.186852" lon="-75.529644"/>
+      <trkpt lat="39.186956" lon="-75.529400"/>
+      <trkpt lat="39.187043" lon="-75.529244"/>
+      <trkpt lat="39.187194" lon="-75.529023"/>
+      <trkpt lat="39.187397" lon="-75.528747"/>
+      <trkpt lat="39.187503" lon="-75.528639"/>
+      <trkpt lat="39.187648" lon="-75.528541"/>
+      <trkpt lat="39.187802" lon="-75.528457"/>
+      <trkpt lat="39.187888" lon="-75.528423"/>
+      <trkpt lat="39.188014" lon="-75.528392"/>
+      <trkpt lat="39.188193" lon="-75.528385"/>
+      <trkpt lat="39.188362" lon="-75.528399"/>
+      <trkpt lat="39.191303" lon="-75.529064"/>
+      <trkpt lat="39.191609" lon="-75.529151"/>
+      <trkpt lat="39.191750" lon="-75.529214"/>
+      <trkpt lat="39.191847" lon="-75.529278"/>
+      <trkpt lat="39.191960" lon="-75.529369"/>
+      <trkpt lat="39.192143" lon="-75.529559"/>
+      <trkpt lat="39.192242" lon="-75.529685"/>
+      <trkpt lat="39.192334" lon="-75.529835"/>
+      <trkpt lat="39.192439" lon="-75.530045"/>
+  </trkseg></trk>
+</gpx>

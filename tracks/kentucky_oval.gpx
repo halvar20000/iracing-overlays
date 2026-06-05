@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="SimRacing overlays (OpenStreetMap, ODbL)" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>Kentucky Speedway</name>
+    <desc>Driving direction. Source: OpenStreetMap contributors (ODbL).</desc></metadata>
+  <trk><name>kentucky_oval ONTRACK</name><trkseg>
+      <trkpt lat="38.712472" lon="-84.918669"/>
+      <trkpt lat="38.712381" lon="-84.918762"/>
+      <trkpt lat="38.712151" lon="-84.918968"/>
+      <trkpt lat="38.711797" lon="-84.919208"/>
+      <trkpt lat="38.711494" lon="-84.919371"/>
+      <trkpt lat="38.711232" lon="-84.919483"/>
+      <trkpt lat="38.709868" lon="-84.919873"/>
+      <trkpt lat="38.709607" lon="-84.919920"/>
+      <trkpt lat="38.709355" lon="-84.919931"/>
+      <trkpt lat="38.709039" lon="-84.919914"/>
+      <trkpt lat="38.708734" lon="-84.919859"/>
+      <trkpt lat="38.708318" lon="-84.919688"/>
+      <trkpt lat="38.708180" lon="-84.919582"/>
+      <trkpt lat="38.708009" lon="-84.919425"/>
+      <trkpt lat="38.707824" lon="-84.919219"/>
+      <trkpt lat="38.707673" lon="-84.919010"/>
+      <trkpt lat="38.707548" lon="-84.918783"/>
+      <trkpt lat="38.707447" lon="-84.918525"/>
+      <trkpt lat="38.707377" lon="-84.918275"/>
+      <trkpt lat="38.707293" lon="-84.917818"/>
+      <trkpt lat="38.707258" lon="-84.917498"/>
+      <trkpt lat="38.707248" lon="-84.917192"/>
+      <trkpt lat="38.707257" lon="-84.916898"/>
+      <trkpt lat="38.707279" lon="-84.916683"/>
+      <trkpt lat="38.707328" lon="-84.916457"/>
+      <trkpt lat="38.707401" lon="-84.916238"/>
+      <trkpt lat="38.707484" lon="-84.916039"/>
+      <trkpt lat="38.707594" lon="-84.915848"/>
+      <trkpt lat="38.707796" lon="-84.915550"/>
+      <trkpt lat="38.708019" lon="-84.915256"/>
+      <trkpt lat="38.708275" lon="-84.914961"/>
+      <trkpt lat="38.710972" lon="-84.912085"/>
+      <trkpt lat="38.711210" lon="-84.911881"/>
+      <trkpt lat="38.711424" lon="-84.911729"/>
+      <trkpt lat="38.711640" lon="-84.911607"/>
+      <trkpt lat="38.711893" lon="-84.911513"/>
+      <trkpt lat="38.712154" lon="-84.911448"/>
+      <trkpt lat="38.712410" lon="-84.911447"/>
+      <trkpt lat="38.712810" lon="-84.911504"/>
+      <trkpt lat="38.713038" lon="-84.911597"/>
+      <trkpt lat="38.713189" lon="-84.911684"/>
+      <trkpt lat="38.713415" lon="-84.911836"/>
+      <trkpt lat="38.713603" lon="-84.912012"/>
+      <trkpt lat="38.713778" lon="-84.912223"/>
+      <trkpt lat="38.713968" lon="-84.912512"/>
+      <trkpt lat="38.714098" lon="-84.912783"/>
+      <trkpt lat="38.714238" lon="-84.913128"/>
+      <trkpt lat="38.714296" lon="-84.913368"/>
+      <trkpt lat="38.714351" lon="-84.913816"/>
+      <trkpt lat="38.714360" lon="-84.914343"/>
+      <trkpt lat="38.714327" lon="-84.914700"/>
+      <trkpt lat="38.714247" lon="-84.915096"/>
+      <trkpt lat="38.713936" lon="-84.916156"/>
+      <trkpt lat="38.713698" lon="-84.916792"/>
+      <trkpt lat="38.713441" lon="-84.917375"/>
+      <trkpt lat="38.713192" lon="-84.917808"/>
+      <trkpt lat="38.713052" lon="-84.918035"/>
+      <trkpt lat="38.712845" lon="-84.918290"/>
+      <trkpt lat="38.712472" lon="-84.918669"/>
+  </trkseg></trk>
+  <trk><name>kentucky_oval ONPITROAD</name><trkseg>
+      <trkpt lat="38.714296" lon="-84.913368"/>
+      <trkpt lat="38.714278" lon="-84.913819"/>
+      <trkpt lat="38.714216" lon="-84.914394"/>
+      <trkpt lat="38.714152" lon="-84.914667"/>
+      <trkpt lat="38.713989" lon="-84.915173"/>
+      <trkpt lat="38.713834" lon="-84.915559"/>
+      <trkpt lat="38.713650" lon="-84.915924"/>
+      <trkpt lat="38.713424" lon="-84.916278"/>
+      <trkpt lat="38.713143" lon="-84.916686"/>
+      <trkpt lat="38.712825" lon="-84.917067"/>
+      <trkpt lat="38.711415" lon="-84.918526"/>
+      <trkpt lat="38.711189" lon="-84.918730"/>
+      <trkpt lat="38.710946" lon="-84.918912"/>
+      <trkpt lat="38.710280" lon="-84.919363"/>
+      <trkpt lat="38.710059" lon="-84.919465"/>
+      <trkpt lat="38.709657" lon="-84.919620"/>
+      <trkpt lat="38.708999" lon="-84.919712"/>
+      <trkpt lat="38.708598" lon="-84.919636"/>
+      <trkpt lat="38.708009" lon="-84.919425"/>
+  </trkseg></trk>
+</gpx>

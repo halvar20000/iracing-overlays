@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="SimRacing overlays (OpenStreetMap, ODbL)" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>Chicagoland Speedway</name>
+    <desc>Driving direction. Source: OpenStreetMap contributors (ODbL).</desc></metadata>
+  <trk><name>chicagoland ONTRACK</name><trkseg>
+      <trkpt lat="41.473082" lon="-88.059861"/>
+      <trkpt lat="41.472863" lon="-88.059658"/>
+      <trkpt lat="41.472252" lon="-88.058868"/>
+      <trkpt lat="41.471815" lon="-88.057933"/>
+      <trkpt lat="41.471140" lon="-88.056018"/>
+      <trkpt lat="41.471084" lon="-88.055656"/>
+      <trkpt lat="41.471005" lon="-88.055134"/>
+      <trkpt lat="41.471069" lon="-88.054276"/>
+      <trkpt lat="41.471300" lon="-88.053521"/>
+      <trkpt lat="41.471731" lon="-88.052860"/>
+      <trkpt lat="41.472272" lon="-88.052439"/>
+      <trkpt lat="41.472915" lon="-88.052216"/>
+      <trkpt lat="41.473571" lon="-88.052268"/>
+      <trkpt lat="41.474432" lon="-88.052688"/>
+      <trkpt lat="41.474541" lon="-88.052777"/>
+      <trkpt lat="41.474681" lon="-88.052892"/>
+      <trkpt lat="41.475429" lon="-88.053504"/>
+      <trkpt lat="41.476555" lon="-88.054542"/>
+      <trkpt lat="41.477281" lon="-88.055340"/>
+      <trkpt lat="41.477931" lon="-88.056113"/>
+      <trkpt lat="41.478375" lon="-88.056913"/>
+      <trkpt lat="41.478632" lon="-88.057838"/>
+      <trkpt lat="41.478642" lon="-88.058069"/>
+      <trkpt lat="41.478670" lon="-88.058679"/>
+      <trkpt lat="41.478522" lon="-88.059400"/>
+      <trkpt lat="41.478259" lon="-88.060035"/>
+      <trkpt lat="41.477841" lon="-88.060627"/>
+      <trkpt lat="41.477204" lon="-88.061048"/>
+      <trkpt lat="41.476613" lon="-88.061168"/>
+      <trkpt lat="41.474992" lon="-88.060945"/>
+      <trkpt lat="41.474259" lon="-88.060696"/>
+      <trkpt lat="41.473564" lon="-88.060310"/>
+      <trkpt lat="41.473082" lon="-88.059861"/>
+  </trkseg></trk>
+  <trk><name>chicagoland ONPITROAD</name><trkseg>
+      <trkpt lat="41.476613" lon="-88.061168"/>
+      <trkpt lat="41.475976" lon="-88.060928"/>
+      <trkpt lat="41.475243" lon="-88.060250"/>
+      <trkpt lat="41.472047" lon="-88.057143"/>
+      <trkpt lat="41.471494" lon="-88.056439"/>
+      <trkpt lat="41.471246" lon="-88.055965"/>
+      <trkpt lat="41.471084" lon="-88.055656"/>
+  </trkseg></trk>
+</gpx>

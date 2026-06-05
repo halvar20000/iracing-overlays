@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="SimRacing overlays (OpenStreetMap, ODbL)" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>New Hampshire Motor Speedway</name>
+    <desc>Driving direction. Source: OpenStreetMap contributors (ODbL).</desc></metadata>
+  <trk><name>newhampshire_oval ONTRACK</name><trkseg>
+      <trkpt lat="43.363061" lon="-71.462038"/>
+      <trkpt lat="43.362029" lon="-71.462525"/>
+      <trkpt lat="43.361223" lon="-71.462879"/>
+      <trkpt lat="43.361030" lon="-71.462926"/>
+      <trkpt lat="43.360864" lon="-71.462946"/>
+      <trkpt lat="43.360654" lon="-71.462920"/>
+      <trkpt lat="43.360445" lon="-71.462838"/>
+      <trkpt lat="43.360293" lon="-71.462728"/>
+      <trkpt lat="43.360239" lon="-71.462677"/>
+      <trkpt lat="43.360104" lon="-71.462539"/>
+      <trkpt lat="43.359980" lon="-71.462359"/>
+      <trkpt lat="43.359893" lon="-71.462191"/>
+      <trkpt lat="43.359821" lon="-71.462000"/>
+      <trkpt lat="43.359764" lon="-71.461793"/>
+      <trkpt lat="43.359733" lon="-71.461607"/>
+      <trkpt lat="43.359717" lon="-71.461410"/>
+      <trkpt lat="43.359728" lon="-71.461177"/>
+      <trkpt lat="43.359756" lon="-71.460969"/>
+      <trkpt lat="43.359792" lon="-71.460809"/>
+      <trkpt lat="43.359891" lon="-71.460526"/>
+      <trkpt lat="43.359980" lon="-71.460354"/>
+      <trkpt lat="43.360074" lon="-71.460207"/>
+      <trkpt lat="43.360179" lon="-71.460084"/>
+      <trkpt lat="43.360293" lon="-71.459983"/>
+      <trkpt lat="43.360425" lon="-71.459896"/>
+      <trkpt lat="43.360551" lon="-71.459832"/>
+      <trkpt lat="43.361929" lon="-71.459203"/>
+      <trkpt lat="43.362894" lon="-71.458739"/>
+      <trkpt lat="43.363174" lon="-71.458611"/>
+      <trkpt lat="43.364082" lon="-71.458188"/>
+      <trkpt lat="43.364192" lon="-71.458126"/>
+      <trkpt lat="43.364291" lon="-71.458090"/>
+      <trkpt lat="43.364392" lon="-71.458067"/>
+      <trkpt lat="43.364494" lon="-71.458055"/>
+      <trkpt lat="43.364597" lon="-71.458056"/>
+      <trkpt lat="43.364699" lon="-71.458070"/>
+      <trkpt lat="43.364799" lon="-71.458095"/>
+      <trkpt lat="43.364898" lon="-71.458134"/>
+      <trkpt lat="43.364994" lon="-71.458184"/>
+      <trkpt lat="43.365086" lon="-71.458245"/>
+      <trkpt lat="43.365174" lon="-71.458317"/>
+      <trkpt lat="43.365257" lon="-71.458400"/>
+      <trkpt lat="43.365334" lon="-71.458493"/>
+      <trkpt lat="43.365405" lon="-71.458594"/>
+      <trkpt lat="43.365469" lon="-71.458704"/>
+      <trkpt lat="43.365526" lon="-71.458821"/>
+      <trkpt lat="43.365575" lon="-71.458945"/>
+      <trkpt lat="43.365616" lon="-71.459074"/>
+      <trkpt lat="43.365649" lon="-71.459208"/>
+      <trkpt lat="43.365685" lon="-71.459454"/>
+      <trkpt lat="43.365693" lon="-71.459579"/>
+      <trkpt lat="43.365693" lon="-71.459705"/>
+      <trkpt lat="43.365686" lon="-71.459830"/>
+      <trkpt lat="43.365671" lon="-71.459954"/>
+      <trkpt lat="43.365622" lon="-71.460196"/>
+      <trkpt lat="43.365585" lon="-71.460317"/>
+      <trkpt lat="43.365542" lon="-71.460433"/>
+      <trkpt lat="43.365491" lon="-71.460544"/>
+      <trkpt lat="43.365434" lon="-71.460649"/>
+      <trkpt lat="43.365371" lon="-71.460747"/>
+      <trkpt lat="43.365303" lon="-71.460838"/>
+      <trkpt lat="43.365160" lon="-71.460986"/>
+      <trkpt lat="43.365003" lon="-71.461102"/>
+      <trkpt lat="43.364512" lon="-71.461338"/>
+      <trkpt lat="43.363787" lon="-71.461708"/>
+      <trkpt lat="43.363108" lon="-71.462016"/>
+      <trkpt lat="43.363061" lon="-71.462038"/>
+  </trkseg></trk>
+  <trk><name>newhampshire_oval ONPITROAD</name><trkseg>
+      <trkpt lat="43.365622" lon="-71.460196"/>
+      <trkpt lat="43.365561" lon="-71.460260"/>
+      <trkpt lat="43.365378" lon="-71.460510"/>
+      <trkpt lat="43.365203" lon="-71.460707"/>
+      <trkpt lat="43.365056" lon="-71.460805"/>
+      <trkpt lat="43.364381" lon="-71.461113"/>
+      <trkpt lat="43.361174" lon="-71.462657"/>
+      <trkpt lat="43.360971" lon="-71.462703"/>
+      <trkpt lat="43.360534" lon="-71.462723"/>
+      <trkpt lat="43.360394" lon="-71.462703"/>
+      <trkpt lat="43.360210" lon="-71.462647"/>
+  </trkseg></trk>
+</gpx>

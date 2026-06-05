@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="SimRacing overlays (OpenStreetMap, ODbL)" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>Talladega Superspeedway</name>
+    <desc>Driving direction. Source: OpenStreetMap contributors (ODbL).</desc></metadata>
+  <trk><name>talladega ONTRACK</name><trkseg>
+      <trkpt lat="33.566079" lon="-86.071112"/>
+      <trkpt lat="33.565623" lon="-86.070945"/>
+      <trkpt lat="33.565180" lon="-86.070739"/>
+      <trkpt lat="33.564800" lon="-86.070499"/>
+      <trkpt lat="33.564178" lon="-86.070035"/>
+      <trkpt lat="33.560714" lon="-86.067007"/>
+      <trkpt lat="33.560460" lon="-86.066695"/>
+      <trkpt lat="33.560213" lon="-86.066357"/>
+      <trkpt lat="33.560029" lon="-86.066045"/>
+      <trkpt lat="33.559886" lon="-86.065750"/>
+      <trkpt lat="33.559771" lon="-86.065453"/>
+      <trkpt lat="33.559683" lon="-86.065141"/>
+      <trkpt lat="33.559630" lon="-86.064883"/>
+      <trkpt lat="33.559579" lon="-86.064552"/>
+      <trkpt lat="33.559565" lon="-86.064216"/>
+      <trkpt lat="33.559572" lon="-86.063967"/>
+      <trkpt lat="33.559601" lon="-86.063641"/>
+      <trkpt lat="33.559637" lon="-86.063392"/>
+      <trkpt lat="33.559706" lon="-86.063116"/>
+      <trkpt lat="33.559791" lon="-86.062822"/>
+      <trkpt lat="33.559886" lon="-86.062562"/>
+      <trkpt lat="33.559988" lon="-86.062348"/>
+      <trkpt lat="33.560113" lon="-86.062115"/>
+      <trkpt lat="33.560230" lon="-86.061933"/>
+      <trkpt lat="33.560452" lon="-86.061667"/>
+      <trkpt lat="33.560659" lon="-86.061461"/>
+      <trkpt lat="33.560867" lon="-86.061272"/>
+      <trkpt lat="33.561074" lon="-86.061109"/>
+      <trkpt lat="33.561307" lon="-86.060983"/>
+      <trkpt lat="33.561501" lon="-86.060896"/>
+      <trkpt lat="33.561690" lon="-86.060823"/>
+      <trkpt lat="33.561923" lon="-86.060751"/>
+      <trkpt lat="33.562184" lon="-86.060710"/>
+      <trkpt lat="33.562452" lon="-86.060685"/>
+      <trkpt lat="33.562789" lon="-86.060692"/>
+      <trkpt lat="33.563109" lon="-86.060718"/>
+      <trkpt lat="33.563525" lon="-86.060795"/>
+      <trkpt lat="33.572131" lon="-86.063143"/>
+      <trkpt lat="33.572717" lon="-86.063340"/>
+      <trkpt lat="33.573075" lon="-86.063495"/>
+      <trkpt lat="33.573404" lon="-86.063692"/>
+      <trkpt lat="33.573651" lon="-86.063880"/>
+      <trkpt lat="33.573778" lon="-86.063989"/>
+      <trkpt lat="33.573940" lon="-86.064147"/>
+      <trkpt lat="33.574162" lon="-86.064388"/>
+      <trkpt lat="33.574348" lon="-86.064645"/>
+      <trkpt lat="33.574505" lon="-86.064920"/>
+      <trkpt lat="33.574620" lon="-86.065160"/>
+      <trkpt lat="33.574713" lon="-86.065400"/>
+      <trkpt lat="33.574813" lon="-86.065692"/>
+      <trkpt lat="33.574877" lon="-86.065984"/>
+      <trkpt lat="33.574927" lon="-86.066370"/>
+      <trkpt lat="33.574956" lon="-86.066799"/>
+      <trkpt lat="33.574948" lon="-86.067294"/>
+      <trkpt lat="33.574848" lon="-86.067795"/>
+      <trkpt lat="33.574663" lon="-86.068379"/>
+      <trkpt lat="33.574348" lon="-86.068997"/>
+      <trkpt lat="33.574033" lon="-86.069400"/>
+      <trkpt lat="33.573711" lon="-86.069721"/>
+      <trkpt lat="33.573211" lon="-86.070070"/>
+      <trkpt lat="33.572767" lon="-86.070250"/>
+      <trkpt lat="33.572231" lon="-86.070379"/>
+      <trkpt lat="33.569673" lon="-86.070931"/>
+      <trkpt lat="33.568455" lon="-86.071194"/>
+      <trkpt lat="33.567912" lon="-86.071288"/>
+      <trkpt lat="33.567490" lon="-86.071314"/>
+      <trkpt lat="33.567025" lon="-86.071288"/>
+      <trkpt lat="33.566524" lon="-86.071220"/>
+      <trkpt lat="33.566150" lon="-86.071138"/>
+      <trkpt lat="33.566079" lon="-86.071112"/>
+  </trkseg></trk>
+  <trk><name>talladega ONPITROAD</name><trkseg>
+      <trkpt lat="33.569673" lon="-86.070931"/>
+      <trkpt lat="33.568902" lon="-86.070907"/>
+      <trkpt lat="33.568651" lon="-86.070879"/>
+      <trkpt lat="33.568173" lon="-86.070783"/>
+      <trkpt lat="33.567516" lon="-86.070623"/>
+      <trkpt lat="33.564271" lon="-86.069716"/>
+      <trkpt lat="33.564052" lon="-86.069630"/>
+      <trkpt lat="33.563716" lon="-86.069442"/>
+      <trkpt lat="33.563033" lon="-86.069034"/>
+  </trkseg></trk>
+</gpx>

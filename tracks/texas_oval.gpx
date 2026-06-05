@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="SimRacing overlays (OpenStreetMap, ODbL)" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>Texas Motor Speedway</name>
+    <desc>Driving direction. Source: OpenStreetMap contributors (ODbL).</desc></metadata>
+  <trk><name>texas_oval ONTRACK</name><trkseg>
+      <trkpt lat="33.038512" lon="-97.283785"/>
+      <trkpt lat="33.038361" lon="-97.283883"/>
+      <trkpt lat="33.038190" lon="-97.283950"/>
+      <trkpt lat="33.036457" lon="-97.284540"/>
+      <trkpt lat="33.036252" lon="-97.284600"/>
+      <trkpt lat="33.036156" lon="-97.284615"/>
+      <trkpt lat="33.036083" lon="-97.284623"/>
+      <trkpt lat="33.035921" lon="-97.284618"/>
+      <trkpt lat="33.034393" lon="-97.284493"/>
+      <trkpt lat="33.034147" lon="-97.284451"/>
+      <trkpt lat="33.033899" lon="-97.284376"/>
+      <trkpt lat="33.033685" lon="-97.284282"/>
+      <trkpt lat="33.033486" lon="-97.284152"/>
+      <trkpt lat="33.033319" lon="-97.284021"/>
+      <trkpt lat="33.033159" lon="-97.283855"/>
+      <trkpt lat="33.033032" lon="-97.283696"/>
+      <trkpt lat="33.032922" lon="-97.283531"/>
+      <trkpt lat="33.032820" lon="-97.283359"/>
+      <trkpt lat="33.032655" lon="-97.282947"/>
+      <trkpt lat="33.032589" lon="-97.282716"/>
+      <trkpt lat="33.032557" lon="-97.282562"/>
+      <trkpt lat="33.032526" lon="-97.282239"/>
+      <trkpt lat="33.032525" lon="-97.281938"/>
+      <trkpt lat="33.032539" lon="-97.281760"/>
+      <trkpt lat="33.032567" lon="-97.281579"/>
+      <trkpt lat="33.032667" lon="-97.281211"/>
+      <trkpt lat="33.032807" lon="-97.280881"/>
+      <trkpt lat="33.032985" lon="-97.280565"/>
+      <trkpt lat="33.033163" lon="-97.280345"/>
+      <trkpt lat="33.033420" lon="-97.280102"/>
+      <trkpt lat="33.033593" lon="-97.279977"/>
+      <trkpt lat="33.033844" lon="-97.279834"/>
+      <trkpt lat="33.034094" lon="-97.279725"/>
+      <trkpt lat="33.037881" lon="-97.278436"/>
+      <trkpt lat="33.038193" lon="-97.278361"/>
+      <trkpt lat="33.038362" lon="-97.278335"/>
+      <trkpt lat="33.038559" lon="-97.278316"/>
+      <trkpt lat="33.038725" lon="-97.278313"/>
+      <trkpt lat="33.038878" lon="-97.278326"/>
+      <trkpt lat="33.039172" lon="-97.278380"/>
+      <trkpt lat="33.039458" lon="-97.278491"/>
+      <trkpt lat="33.039582" lon="-97.278553"/>
+      <trkpt lat="33.039699" lon="-97.278627"/>
+      <trkpt lat="33.039836" lon="-97.278734"/>
+      <trkpt lat="33.039954" lon="-97.278844"/>
+      <trkpt lat="33.040071" lon="-97.278970"/>
+      <trkpt lat="33.040156" lon="-97.279074"/>
+      <trkpt lat="33.040334" lon="-97.279335"/>
+      <trkpt lat="33.040416" lon="-97.279482"/>
+      <trkpt lat="33.040476" lon="-97.279611"/>
+      <trkpt lat="33.040541" lon="-97.279768"/>
+      <trkpt lat="33.040585" lon="-97.279902"/>
+      <trkpt lat="33.040623" lon="-97.280054"/>
+      <trkpt lat="33.040660" lon="-97.280254"/>
+      <trkpt lat="33.040682" lon="-97.280417"/>
+      <trkpt lat="33.040692" lon="-97.280570"/>
+      <trkpt lat="33.040692" lon="-97.280739"/>
+      <trkpt lat="33.040684" lon="-97.280907"/>
+      <trkpt lat="33.040667" lon="-97.281053"/>
+      <trkpt lat="33.040624" lon="-97.281310"/>
+      <trkpt lat="33.040596" lon="-97.281426"/>
+      <trkpt lat="33.040527" lon="-97.281639"/>
+      <trkpt lat="33.040435" lon="-97.281866"/>
+      <trkpt lat="33.040336" lon="-97.282053"/>
+      <trkpt lat="33.040290" lon="-97.282131"/>
+      <trkpt lat="33.040155" lon="-97.282324"/>
+      <trkpt lat="33.040052" lon="-97.282449"/>
+      <trkpt lat="33.039895" lon="-97.282611"/>
+      <trkpt lat="33.038561" lon="-97.283753"/>
+      <trkpt lat="33.038512" lon="-97.283785"/>
+  </trkseg></trk>
+  <trk><name>texas_oval ONPITROAD</name><trkseg>
+      <trkpt lat="33.039895" lon="-97.282611"/>
+      <trkpt lat="33.037637" lon="-97.283438"/>
+      <trkpt lat="33.036602" lon="-97.283801"/>
+  </trkseg></trk>
+</gpx>

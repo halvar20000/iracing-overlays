@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="SimRacing overlays (OpenStreetMap, ODbL)" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>Chicago Street Course (Grant Park)</name>
+    <desc>Driving direction. Source: OpenStreetMap contributors (ODbL).</desc></metadata>
+  <trk><name>chicago_street ONTRACK</name><trkseg>
+      <trkpt lat="41.875829" lon="-87.620623"/>
+      <trkpt lat="41.874518" lon="-87.620601"/>
+      <trkpt lat="41.873217" lon="-87.620596"/>
+      <trkpt lat="41.873248" lon="-87.617318"/>
+      <trkpt lat="41.873020" lon="-87.617303"/>
+      <trkpt lat="41.872457" lon="-87.617288"/>
+      <trkpt lat="41.870041" lon="-87.617236"/>
+      <trkpt lat="41.869765" lon="-87.617261"/>
+      <trkpt lat="41.869641" lon="-87.617289"/>
+      <trkpt lat="41.869333" lon="-87.617399"/>
+      <trkpt lat="41.869058" lon="-87.617557"/>
+      <trkpt lat="41.868856" lon="-87.617727"/>
+      <trkpt lat="41.867640" lon="-87.618862"/>
+      <trkpt lat="41.867615" lon="-87.619268"/>
+      <trkpt lat="41.867610" lon="-87.619859"/>
+      <trkpt lat="41.867601" lon="-87.620423"/>
+      <trkpt lat="41.867696" lon="-87.620450"/>
+      <trkpt lat="41.868593" lon="-87.620502"/>
+      <trkpt lat="41.870435" lon="-87.620552"/>
+      <trkpt lat="41.873097" lon="-87.620611"/>
+      <trkpt lat="41.873217" lon="-87.620596"/>
+      <trkpt lat="41.873155" lon="-87.624012"/>
+      <trkpt lat="41.873158" lon="-87.624138"/>
+      <trkpt lat="41.874529" lon="-87.624171"/>
+      <trkpt lat="41.874702" lon="-87.623899"/>
+      <trkpt lat="41.874828" lon="-87.623740"/>
+      <trkpt lat="41.874957" lon="-87.623604"/>
+      <trkpt lat="41.875057" lon="-87.623521"/>
+      <trkpt lat="41.875163" lon="-87.623453"/>
+      <trkpt lat="41.875291" lon="-87.623382"/>
+      <trkpt lat="41.875515" lon="-87.623312"/>
+      <trkpt lat="41.875614" lon="-87.623299"/>
+      <trkpt lat="41.875890" lon="-87.623299"/>
+      <trkpt lat="41.875975" lon="-87.623310"/>
+      <trkpt lat="41.876126" lon="-87.623365"/>
+      <trkpt lat="41.876219" lon="-87.623415"/>
+      <trkpt lat="41.876459" lon="-87.623586"/>
+      <trkpt lat="41.876526" lon="-87.623653"/>
+      <trkpt lat="41.876859" lon="-87.624032"/>
+      <trkpt lat="41.876967" lon="-87.624175"/>
+      <trkpt lat="41.877099" lon="-87.624168"/>
+      <trkpt lat="41.877560" lon="-87.624176"/>
+      <trkpt lat="41.878161" lon="-87.624195"/>
+      <trkpt lat="41.878293" lon="-87.624208"/>
+      <trkpt lat="41.878319" lon="-87.621841"/>
+      <trkpt lat="41.878332" lon="-87.620898"/>
+      <trkpt lat="41.878341" lon="-87.620710"/>
+      <trkpt lat="41.875958" lon="-87.620625"/>
+      <trkpt lat="41.875829" lon="-87.620623"/>
+  </trkseg></trk>
+  
+</gpx>

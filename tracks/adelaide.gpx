@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="SimRacing overlays (OpenStreetMap, ODbL)" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata><name>Adelaide Street Circuit (Supercars)</name>
+    <desc>Driving direction. Source: OpenStreetMap contributors (ODbL).</desc></metadata>
+  <trk><name>adelaide ONTRACK</name><trkseg>
+      <trkpt lat="-34.930863" lon="138.620947"/>
+      <trkpt lat="-34.928447" lon="138.618732"/>
+      <trkpt lat="-34.928379" lon="138.618665"/>
+      <trkpt lat="-34.928350" lon="138.618620"/>
+      <trkpt lat="-34.928333" lon="138.618569"/>
+      <trkpt lat="-34.928326" lon="138.618481"/>
+      <trkpt lat="-34.928342" lon="138.618329"/>
+      <trkpt lat="-34.928337" lon="138.618269"/>
+      <trkpt lat="-34.928319" lon="138.618205"/>
+      <trkpt lat="-34.927972" lon="138.617581"/>
+      <trkpt lat="-34.927840" lon="138.617303"/>
+      <trkpt lat="-34.927779" lon="138.616969"/>
+      <trkpt lat="-34.927918" lon="138.614568"/>
+      <trkpt lat="-34.927933" lon="138.613780"/>
+      <trkpt lat="-34.927472" lon="138.613760"/>
+      <trkpt lat="-34.926573" lon="138.613690"/>
+      <trkpt lat="-34.926532" lon="138.613671"/>
+      <trkpt lat="-34.926484" lon="138.613609"/>
+      <trkpt lat="-34.926472" lon="138.613538"/>
+      <trkpt lat="-34.926547" lon="138.612125"/>
+      <trkpt lat="-34.926558" lon="138.611959"/>
+      <trkpt lat="-34.925145" lon="138.611887"/>
+      <trkpt lat="-34.925083" lon="138.613127"/>
+      <trkpt lat="-34.925098" lon="138.613809"/>
+      <trkpt lat="-34.925099" lon="138.617731"/>
+      <trkpt lat="-34.925121" lon="138.618258"/>
+      <trkpt lat="-34.925120" lon="138.618554"/>
+      <trkpt lat="-34.925165" lon="138.618941"/>
+      <trkpt lat="-34.925205" lon="138.619116"/>
+      <trkpt lat="-34.925294" lon="138.619380"/>
+      <trkpt lat="-34.926743" lon="138.621406"/>
+      <trkpt lat="-34.927534" lon="138.622487"/>
+      <trkpt lat="-34.927569" lon="138.622479"/>
+      <trkpt lat="-34.927604" lon="138.622483"/>
+      <trkpt lat="-34.927658" lon="138.622378"/>
+      <trkpt lat="-34.927680" lon="138.622267"/>
+      <trkpt lat="-34.927685" lon="138.622146"/>
+      <trkpt lat="-34.927677" lon="138.621883"/>
+      <trkpt lat="-34.927591" lon="138.621048"/>
+      <trkpt lat="-34.927688" lon="138.620838"/>
+      <trkpt lat="-34.927773" lon="138.620690"/>
+      <trkpt lat="-34.928056" lon="138.620126"/>
+      <trkpt lat="-34.928096" lon="138.620085"/>
+      <trkpt lat="-34.928155" lon="138.620065"/>
+      <trkpt lat="-34.928212" lon="138.620075"/>
+      <trkpt lat="-34.928451" lon="138.620182"/>
+      <trkpt lat="-34.928644" lon="138.620281"/>
+      <trkpt lat="-34.929037" lon="138.620464"/>
+      <trkpt lat="-34.929156" lon="138.620530"/>
+      <trkpt lat="-34.929262" lon="138.620612"/>
+      <trkpt lat="-34.929347" lon="138.620702"/>
+      <trkpt lat="-34.929975" lon="138.621520"/>
+      <trkpt lat="-34.930276" lon="138.621927"/>
+      <trkpt lat="-34.930361" lon="138.622012"/>
+      <trkpt lat="-34.930472" lon="138.622087"/>
+      <trkpt lat="-34.930586" lon="138.622149"/>
+      <trkpt lat="-34.930764" lon="138.622199"/>
+      <trkpt lat="-34.930908" lon="138.622217"/>
+      <trkpt lat="-34.931379" lon="138.622240"/>
+      <trkpt lat="-34.931754" lon="138.622273"/>
+      <trkpt lat="-34.931830" lon="138.622271"/>
+      <trkpt lat="-34.931877" lon="138.622251"/>
+      <trkpt lat="-34.931938" lon="138.622174"/>
+      <trkpt lat="-34.931962" lon="138.622110"/>
+      <trkpt lat="-34.931969" lon="138.622062"/>
+      <trkpt lat="-34.931966" lon="138.622011"/>
+      <trkpt lat="-34.931952" lon="138.621966"/>
+      <trkpt lat="-34.931901" lon="138.621899"/>
+      <trkpt lat="-34.930863" lon="138.620947"/>
+  </trkseg></trk>
+  <trk><name>adelaide ONPITROAD</name><trkseg>
+      <trkpt lat="-34.930908" lon="138.622217"/>
+      <trkpt lat="-34.931312" lon="138.622161"/>
+      <trkpt lat="-34.931686" lon="138.622139"/>
+      <trkpt lat="-34.931729" lon="138.622106"/>
+      <trkpt lat="-34.931761" lon="138.622035"/>
+      <trkpt lat="-34.931757" lon="138.621963"/>
+      <trkpt lat="-34.931742" lon="138.621928"/>
+      <trkpt lat="-34.931561" lon="138.621745"/>
+      <trkpt lat="-34.930026" lon="138.620366"/>
+      <trkpt lat="-34.929549" lon="138.619882"/>
+      <trkpt lat="-34.929132" lon="138.619354"/>
+  </trkseg></trk>
+</gpx>
