@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Grid — loader</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0); overflow: hidden;
+  }
+  iframe {
+    border: 0; width: 100%; height: 100%;
+    background: transparent; display: block;
+  }
+</style>
+</head>
+<body>
+<iframe id="ov" allowtransparency="true"></iframe>
+<script>
+  var URL_ = "http://localhost:5001/";
+  var frame = document.getElementById("ov");
+  var loaded = false;
+
+  function ping() {
+    // no-cors: we only care whether the server answers at all.
+    return fetch(URL_, { mode: "no-cors", cache: "no-store" })
+      .then(function () { return true; })
+      .catch(function () { return false; });
+  }
+
+  function tick() {
+    ping().then(function (up) {
+      if (up && !loaded) {
+        // cache-buster forces a real reload after a server restart
+        frame.src = URL_ + (URL_.indexOf("?") < 0 ? "?" : "&") + "r=" + Date.now();
+        loaded = true;
+      } else if (!up && loaded) {
+        loaded = false;   // server gone — reload as soon as it's back
+      }
+      setTimeout(tick, loaded ? 5000 : 1500);
+    });
+  }
+  tick();
+</script>
+</body>
+</html>

@@ -71,6 +71,10 @@ You can also run any single overlay directly: `python iracing_standings.py`
 
 The overlays bind to `0.0.0.0`, so a second PC on your LAN can reach them via `http://<your-ip>:<port>` — useful for a dedicated streaming PC.
 
+### Tip: self-healing browser sources (no manual refresh)
+
+OBS loads each browser source only once at startup — if the overlay server isn't running yet at that moment, the source stays blank until you click **Refresh**. To avoid this, use the loader pages in `obs_loaders/`: in the browser source properties, check **Local file** and select e.g. `obs_loaders/standings.html` instead of entering a URL. The loader embeds the overlay and retries automatically until the server responds — start order no longer matters, and overlays also come back on their own after a server restart. Regenerate the loader pages with `python make_obs_loaders.py` after adding a new overlay.
+
 ## Track Map — offline track library
 
 The track map needs **no iRacing login and no internet**. Track geometry for ~300 track configurations is bundled in `tracks/` as JSON. The overlay reads the track name from the SDK and loads the matching file; if a track isn't bundled it shows a friendly "TRACK MAP NOT BUNDLED" message.

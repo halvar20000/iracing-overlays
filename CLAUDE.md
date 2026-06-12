@@ -49,6 +49,11 @@ overlays:
    `(tag, "iracing_foo.py", port, "\033[9?m")`.
 3. `launch_gui.py` — append a tuple to the `OVERLAYS` list near the top:
    `(tag, friendly_name, "iracing_foo.py", port, "#hexcolor")`.
+4. `make_obs_loaders.py` — append to its `OVERLAYS` list and re-run
+   (`python make_obs_loaders.py`) to regenerate the self-healing OBS
+   loader pages in `obs_loaders/` (local-file browser sources that
+   auto-retry until the overlay server is up; added June 12, 2026 —
+   OBS sources should point at these files, not at localhost URLs).
 
 Keep tags short (single lowercase word). Use distinct colors per overlay
 so log output and status dots stay visually clear.
