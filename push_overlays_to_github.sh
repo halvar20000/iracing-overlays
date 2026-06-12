@@ -26,7 +26,7 @@ if git diff --cached --quiet; then
   echo ">> Nothing to push - repo already up to date."
 else
   git -c user.name="Thomas Herbrig" -c user.email="thomas.herbrig@gmail.com" \
-    commit -m "${1:-Sync from local: bulk OSM track build (36 facilities, 99 JSONs) + St. Pete + doc updates}"
+    commit -m "${1:-Corner-cue overlay (port 5012) + portrait window, Coronado/Laguna 2026/Watkins Glen Cup tracks, launcher + doc updates}"
   git push origin main
   echo ">> Pushed successfully."
 fi

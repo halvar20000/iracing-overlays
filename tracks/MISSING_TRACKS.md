@@ -5,6 +5,28 @@ iRacing's internal slug from `WeekendInfo.TrackName` (spaces → `_`).
 Bundled: 205 SIMRacingApps tracks (frozen Sept 2024) + Monza (hand-drawn)
 + the OSM-built tracks below. iRacing has ~140 facilities / 400+ configs.
 
+## Added 2026-06-10 (iRacing 2026 S3 new content)
+
+| File | Length check | Source |
+|------|--------------|--------|
+| coronado.json (+ qualcomm, qualcommcircuit slug variants) | 5466 m vs 5472 m (3.4 mi) | iRacing track-map SVG asset (NOT in OSM — temporary street circuit) |
+| lagunaseca_2026.json (+ _2026_full, lagunaseca2026 variants) | copy of SRA lagunaseca_full | same circuit, 2026 rescan slug unconfirmed |
+
+NEW METHOD for tracks missing from OSM: iRacing's own track-map assets.
+From a logged-in members-ng browser session fetch
+`/bff/pub/proxy/data/track/assets` (the bare members-ng `/data/...` API
+rejects cookies — only the `/bff/pub/proxy/` path works from the web
+app), take `track_map` + `active.svg` (two closed subpaths = ribbon
+edges; sample ONE edge), `start-finish.svg` (rect = S/F line, polygon =
+direction arrow), rescale to the official length. Exact sim geometry,
+exact S/F, no OSM stitching. Slug still needs console confirmation.
+
+## Added 2026-06-11 (slug confirmed live by the corner-cue overlay)
+
+| File | Length check | Source |
+|------|--------------|--------|
+| watkinsglen_cupcircuit.json | 3924 m vs 3943 m (2.45 mi) | derived offline from watkinsglen_2021_fullcourse.json — boot section replaced by the short-course chute (tangent 250 m arc off the carousel + straight, tangent rejoin; cut chosen so total length matches official). Corner check: 90/esses/inner-loop R-L-R/carousel 137°/off-camber L/final R, all match. Preview in _previews/. NEW METHOD for alt configs of already-bundled facilities: cut + splice the existing loop, no OSM/browser needed. |
+
 ## Added 2026-06-04 (OSM workflow, slug confirmed from race logs)
 
 | File | Length check | Source |

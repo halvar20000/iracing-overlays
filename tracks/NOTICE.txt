@@ -58,3 +58,19 @@ OSM-derived tracks (as of June 2026):
 
 zandvoort_2023_*.json are renamed copies of the SRA-derived zandvoort_*
 files (same circuit, new iRacing TrackName after the 2023 rescan).
+
+iRacing-derived tracks (added June 10, 2026):
+  - coronado.json / qualcomm.json / qualcommcircuit.json (slug-variant
+    copies; delete whichever the trackmap console does not ask for):
+    Qualcomm Circuit (Naval Base Coronado), new in iRacing 2026 S3.
+    The circuit polyline was sampled from iRacing's own track-map
+    asset (active.svg outer ribbon edge, start-finish + direction
+    layers) and rescaled to the official 3.400 mi length, since the
+    temporary street circuit is not mapped in OpenStreetMap (race
+    debut June 21, 2026). No pit lane (pitroad.svg is a dashed-line
+    asset that doesn't reconstruct into an ordered polyline).
+
+lagunaseca_2026*.json / lagunaseca2026.json are renamed copies of the
+SRA-derived lagunaseca_full file (same physical circuit, new iRacing
+TrackName after the 2026 rescan; slug unconfirmed — delete the losing
+variants once the console prints the wanted filename).

@@ -21,6 +21,7 @@ GitHub:   https://github.com/halvar20000/iracing-overlays (primary repo,
 | logger      | `iracing_race_logger.py`      | 5009 | Race logger — JSONL log per race           |
 | champ       | `iracing_championship.py`     | 5010 | Live championship overlay (CLS league-manager API) |
 | sess        | `iracing_session_info.py`     | 5011 | Session name + total / remaining time card |
+| line        | `iracing_drivingline.py`      | 5012 | Corner cues (driving-line substitute)      |
 
 All overlays are Flask apps that read iRacing telemetry via `pyirsdk`,
 designed to be added as browser sources in OBS. They run in parallel on
@@ -134,6 +135,114 @@ an entry to `CAR_PREFIX_TO_BRAND` in `car_brands.py` if it's a car family
 that isn't already prefix-matched.
 
 ## Recent sessions
+
+**June 11, 2026 (corner-cue overlay — driving-line substitute, port
+5012):** New `iracing_drivingline.py` (tag "line") + companion
+`driving_line_window.py`. Purpose: usable corner cues in sessions
+where iRacing disables the racing-line aid (D class and up — e.g. GT3
+Sprint). The true 3D in-world line is IMPOSSIBLE externally (the SDK
+exposes no camera/view matrix) — this is the practical substitute.
+  • Geometry-only analysis of the bundled `tracks/<TrackName>.json`
+    loops (no recorded laps needed, works for every bundled track):
+    project lat/lon to meters, resample at 4 m, signed curvature
+    (y-south coords → POSITIVE heading change = RIGHT turn), smooth,
+    threshold |k|>1/200, merge same-sign runs <25 m apart (sign flips
+    split runs → chicanes come out as separate L/R corners), discard
+    bends <12°. Per corner: entry/apex/exit pct, dir, min radius,
+    total turn angle, severity (HAIRPIN<35 m / TIGHT<80 / MEDIUM<150 /
+    FAST<280 m radius), estimated apex speed v=sqrt(12·r) capped at
+    270 km/h (car-agnostic ESTIMATE). Distances rescaled to the
+    official WeekendInfo.TrackLength.
+  • Poller 10 Hz; player car via DriverInfo.DriverCarIdx with
+    CamCarIdx fallback when spectating. `/data` serves the cue
+    (in_corner + next two corners with live distance), `/corners`
+    dumps the full analysis for tuning. Overlay page (`/`) shows
+    arrow + T-number + severity + ~speed + countdown bar from 500 m;
+    H toggles debug bg per convention.
+  • `driving_line_window.py` — on-top-of-the-sim client (user's
+    display choice): stdlib Tkinter, polls `/data`, transparent
+    colorkey window, topmost, click-through via pywin32
+    WS_EX_LAYERED|WS_EX_TRANSPARENT (degrades gracefully without
+    pywin32). iRacing must run BORDERLESS WINDOWED. `--debug` =
+    visible bg + draggable, prints geometry to transfer into
+    WIN_X/WIN_Y constants. NOT in the launchers (desktop window, not
+    a Flask overlay) — run manually when driving.
+  • Future enrichment hook: `cues/<track_file>.json` with per-corner
+    overrides keyed by corner number ({"5": {"gear":2, "brake_m":120,
+    "speed_kmh":78, "name":"Hairpin"}}) merges onto the geometry
+    corners — a recorded-reference-lap tool can generate these later.
+  • Verified offline (`test_drivingline.py`, stubbed irsdk, real
+    track JSONs): Okayama 12 corners CW, first corner R, hairpin
+    found; Monza 10 incl. Rettifilo as R/L pair 0 m apart; Laguna
+    Seca 10 CCW incl. Corkscrew L/R; cue countdown monotonic, S/F
+    wrap, corner spanning S/F, override merge. 22/22 pass. NOTE:
+    severity is radius-based, so tight chicane elements label as
+    HAIRPIN — cosmetic.
+  • All four launchers updated per the maintenance rule (port 5012,
+    13 overlays). Fairness note: external corner-cue apps are common
+    (RaceLab etc.), but for league racing check the stewards.
+
+FOLLOW-UP same day (Watkins Glen Cup built by cut-and-splice; ?debug=1):
+First live use hit "track not bundled: watkinsglen_cupcircuit" — only
+the fullcourse (boot) layout existed in tracks/. NEW METHOD for alt
+configs of already-bundled facilities (no OSM, no browser): cut the
+boot out of `watkinsglen_2021_fullcourse.json` and splice the
+short-course chute. Cut pair found numerically (target = official
+2.45 mi vs full 3.4 mi, chord <500 m); entry junction at the carousel
+exit needs the extra ~28° distributed as a TANGENT 250 m ARC (radius
+chosen below the detector's 1/200 threshold) — a straight chord makes
+the carousel read r≈35-58 HAIRPIN/TIGHT (phantom kink), and a Bézier
+fillet reaching back into the carousel is WORSE (control-polygon angle
+includes the carousel's own curvature). Wide-radius tangent arc +
+straight + tangent rejoin gives carousel r=114.9/137.2° — identical to
+the full course. Final: 3924 m vs 3943 official, 8 corners all
+matching reality (90, esses, inner-loop R-L-R, carousel, off-camber L,
+final R). Preview in _previews/, MISSING_TRACKS.md updated.
+SAME DAY: `driving_line_window.py` rewritten to PORTRAIT (user
+request — he drives without OBS; the on-top window IS his display):
+170×520, vertical countdown line with 100 m tick marks, fill runs
+top→down toward a direction-colored corner marker at the bottom,
+white car-position chevron on the fill edge, arrow/T-number/severity/
+~speed/distance stacked above, "then T#" preview below. Default
+position: right screen edge, vertically centered (WIN_X/WIN_Y None);
+--debug = draggable + prints WIN_X/WIN_Y. Layout verified offline by
+replaying draw_cue() onto a PIL fake canvas (tkinter not installable
+in the sandbox). NOTE: the cowork sandbox mount served PERMANENTLY
+STALE copies of edited files this session (truncated mid-write,
+never refreshed) — verify with the direct file tools, test sandbox
+copies via heredoc, and double-check the synced folder afterwards. Overlay
+fix in the same session: failed track loads are no longer cached, so
+a JSON dropped into tracks/ mid-session is picked up without restart
+(success results still cache). Also added `?debug=1` URL param (debug
+bg without keyboard focus) and the debug status line now shows "next
+T# in #m" while the cue is hidden beyond 500 m.
+
+**June 10, 2026 (trackmap — 2026 S3 new tracks; iRacing-SVG method):**
+Added the 2026 Season 3 content: **Qualcomm Circuit (Naval Base
+Coronado)** (`coronado.json` + `qualcomm`/`qualcommcircuit` slug
+variants — delete the losers when the console prints the wanted name)
+and **Laguna Seca 2026 rescan** (`lagunaseca_2026[_full]`/
+`lagunaseca2026` copies of the SRA file — same physical circuit).
+Coronado is NOT in OSM (temporary street circuit, real-world debut
+21.06.); the OSM street-graph stitch came out ~25 % too long because
+the course cuts corners off the base road network. NEW BEST METHOD
+discovered instead: **iRacing's own track-map SVG assets** — from a
+logged-in members-ng tab fetch `/bff/pub/proxy/data/track/assets`
+(bare `/data/...` rejects browser cookies; ONLY the `/bff/pub/proxy/`
+path authenticates from the web app — this also re-enables live car/
+track catalog pulls). Download `active.svg` (one filled ribbon = TWO
+closed subpaths, outer+inner edge; sample ONE edge via
+getPointAtLength — naive whole-path sampling concatenates both and
+corrupts the loop), `start-finish.svg` (rect = S/F line, polygon =
+direction arrow; trust the arrow — turn-label snapping gave a
+contradictory order), rotate loop to the S/F vertex, match direction
+to the arrow, RDP-simplify, rescale to the official length (3.400 mi
+→ 5466 m projected, 0.1 % off). `pitroad.svg` is a dashed asset that
+doesn't reconstruct into an ordered polyline → shipped without pit
+(lagunaseca precedent). Preview `_previews/coronado.png` matches the
+official course map (16 turns, CCW, Ellyson S/F kink, Carrier Corner).
+tracks/ was tar-snapshotted to session outputs before writing (per the
+June 5 lesson). NOTICE.txt + MISSING_TRACKS.md updated.
 
 **June 5, 2026 (trackmap — BULK OSM BUILD, 36 facilities via 8 parallel
 agents; Nextcloud incident):** Built ALL remaining buildable tracks from

@@ -48,6 +48,7 @@ SCRIPTS = [
     ("logger",    "iracing_race_logger.py",    5009, "\033[33m"),  # amber
     ("champ",     "iracing_championship.py",   5010, "\033[36m"),  # cyan
     ("sess",      "iracing_session_info.py",   5011, "\033[37m"),  # white/grey
+    ("line",      "iracing_drivingline.py",    5012, "\033[32m"),  # green
 ]
 RESET = "\033[0m"
 
