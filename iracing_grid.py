@@ -378,7 +378,12 @@ function applyStreamMode(on) {
     try { localStorage.setItem(STREAM_KEY, on ? "1" : "0"); } catch (e) {}
 }
 function toggleStreamMode() { applyStreamMode(!document.body.classList.contains("stream-mode")); }
-try { if (localStorage.getItem(STREAM_KEY) === "1") applyStreamMode(true); } catch (e) {}
+// Transparent (stream) mode is the DEFAULT for OBS browser sources.
+// Press H to toggle the dark debug background back on; the choice persists.
+try {
+    const v = localStorage.getItem(STREAM_KEY);
+    applyStreamMode(v === null ? true : v !== "0");
+} catch (e) { applyStreamMode(true); }
 document.addEventListener("keydown", e => {
     if (e.key === "h" || e.key === "H") toggleStreamMode();
 });
