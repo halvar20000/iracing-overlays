@@ -664,50 +664,62 @@ function renderSectors(secs) {
     });
 }
 
+// Keep the last good frame on screen through brief blips (a dropped request
+// or a single not-connected poll) instead of flashing the "Waiting…" state —
+// the dev server occasionally drops a request under the fast polling, which
+// is what made the overlay blink. Only blank after sustained trouble.
+let badPolls = 0;
+const BAD_LIMIT = 8;   // ~0.8s of trouble before we show the idle state
+
+function showIdle(msg) {
+    document.getElementById("live").classList.add("hidden");
+    const idle = document.getElementById("idle");
+    idle.classList.remove("hidden");
+    idle.textContent = msg;
+}
+
 async function tick() {
+    let d = null;
     try {
         const r = await fetch("/status");
-        const d = await r.json();
-        const live = document.getElementById("live");
-        const idle = document.getElementById("idle");
-
-        if (!d.connected) {
-            live.classList.add("hidden");
-            idle.classList.remove("hidden");
-            idle.textContent = "Waiting for iRacing…";
-            return;
-        }
-        live.classList.remove("hidden");
-        idle.classList.add("hidden");
-
-        document.getElementById("sess").textContent = d.session_label || "—";
-        document.getElementById("watching").textContent =
-            (d.mode === "driving") ? "YOU" : (d.watching || "—");
-
-        renderDelta(d.delta, d.delta_ok);
-        renderBar(d.delta, d.delta_ok);
-        renderSectors(d.sectors);
-
-        document.getElementById("ref-label").textContent = d.ref_label || "Best";
-        document.getElementById("ref").textContent  = fmtLap(d.ref_lap);
-        document.getElementById("last").textContent = fmtLap(d.last_lap);
-
-        // "Building reference…" note while spectating before a pole lap exists
-        const note = document.getElementById("note");
-        if (d.mode === "spectator" && !d.have_reference) {
-            note.classList.remove("hidden");
-            note.textContent = "Building reference lap…";
-        } else if (d.mode === "spectator" && !d.delta_ok) {
-            note.classList.remove("hidden");
-            note.textContent = "Waiting for a flying lap…";
-        } else {
-            note.classList.add("hidden");
-        }
+        d = await r.json();
     } catch (e) {
-        document.getElementById("live").classList.add("hidden");
-        const idle = document.getElementById("idle");
-        idle.classList.remove("hidden");
-        idle.textContent = "Waiting for server…";
+        d = null;
+    }
+
+    if (!d || !d.connected) {
+        badPolls++;
+        if (badPolls < BAD_LIMIT) return;          // transient — hold last frame
+        showIdle(!d ? "Waiting for server…" : "Waiting for iRacing…");
+        return;
+    }
+    badPolls = 0;
+
+    document.getElementById("live").classList.remove("hidden");
+    document.getElementById("idle").classList.add("hidden");
+
+    document.getElementById("sess").textContent = d.session_label || "—";
+    document.getElementById("watching").textContent =
+        (d.mode === "driving") ? "YOU" : (d.watching || "—");
+
+    renderDelta(d.delta, d.delta_ok);
+    renderBar(d.delta, d.delta_ok);
+    renderSectors(d.sectors);
+
+    document.getElementById("ref-label").textContent = d.ref_label || "Best";
+    document.getElementById("ref").textContent  = fmtLap(d.ref_lap);
+    document.getElementById("last").textContent = fmtLap(d.last_lap);
+
+    // "Building reference…" note while spectating before a pole lap exists
+    const note = document.getElementById("note");
+    if (d.mode === "spectator" && !d.have_reference) {
+        note.classList.remove("hidden");
+        note.textContent = "Building reference lap…";
+    } else if (d.mode === "spectator" && !d.delta_ok) {
+        note.classList.remove("hidden");
+        note.textContent = "Waiting for a flying lap…";
+    } else {
+        note.classList.add("hidden");
     }
 }
 
