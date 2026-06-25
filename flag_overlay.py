@@ -13,10 +13,18 @@ Runs in parallel with the other iracing_*.py overlays on port 5008.
 Requirements:  pip install pyirsdk flask
 """
 
+import json
+import os
 import sys
 import threading
 import time
 from flask import Flask, Response, render_template_string
+
+# Forensic log so no-bit timed/heat races can be diagnosed after the fact.
+# One JSON line per leader S/F crossing and per flag fire. Lives in logs/
+# (gitignored). Delete it any time; it's append-only and low-volume.
+DEBUG_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "logs", "flag_debug.jsonl")
 
 # Windows cp1252 stdout + Unicode in prints = UnicodeEncodeError that can
 # kill the poller thread silently. Force UTF-8 like the other overlays do.
@@ -164,6 +172,17 @@ class FlagWatcher:
                     return None
         return None
 
+    def _dbg(self, tag, **kw):
+        """Append one diagnostic JSON line (best-effort, never raises)."""
+        try:
+            rec = {"tag": tag, "wall": time.strftime("%Y-%m-%dT%H:%M:%S")}
+            rec.update(kw)
+            os.makedirs(os.path.dirname(DEBUG_LOG), exist_ok=True)
+            with open(DEBUG_LOG, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(rec) + "\n")
+        except Exception:
+            pass
+
     # --- main loop ----------------------------------------------------------
     def _tick(self):
         self.ir.freeze_var_buffer_latest()
@@ -305,6 +324,21 @@ class FlagWatcher:
             print(f"[flag] LATE JOIN — SessionState={sess_state} on first "
                   f"observation, skipping white flag, armed for checkered")
 
+        # ── DIAGNOSTICS: one line per leader crossing ───────────────────────
+        # Captures the exact inputs the decision is made on, so a no-bit
+        # timed/heat race that misbehaves can be analysed afterwards.
+        if crossed_sf:
+            self._dbg("crossing",
+                      t=round(sess_t, 1), leader=leader_num, cur_lap=cur_lap,
+                      total_laps=self._total_laps,
+                      time_rem=(round(time_rem, 1) if time_rem is not None else None),
+                      laps_rem=self.ir["SessionLapsRemain"],
+                      timed_seen=self._timed_seen,
+                      avg_lap=(round(avg_lap, 1) if avg_lap else None),
+                      lap_est=round(lap_estimate, 1), estimate_src=estimate_src,
+                      sess_state=sess_state, flags=hex(int(session_flags)),
+                      white_shown=self._white_shown, check_shown=self._check_shown)
+
         # ── WHITE FLAG ──────────────────────────────────────────────────────
         fired_white_this_tick = False
         if racing and not self._white_shown:
@@ -346,6 +380,20 @@ class FlagWatcher:
                 white_via = (f"timed_last_crossing time_rem={time_rem:.1f}s "
                              f"< {lap_estimate:.1f}s ({estimate_src})")
 
+            # (4) FALLBACK, timer-expiry safety net: the race clock has run out
+            #     (iRacing flips SessionState to Checkered at expiry, normally
+            #     mid-way through the leader's final lap) but none of the above
+            #     caught the final-lap start — e.g. a no-bit league race where
+            #     the lap-time estimate missed the right crossing. This is the
+            #     failure the heat/feature time-based races hit: NOTHING fired.
+            #     Show the white now so the sequence isn't missed entirely; the
+            #     checkered still follows at the leader's next crossing. Gated
+            #     past the late-join window so it can't hijack the race start,
+            #     and to timed sessions so pure lap races are unaffected.
+            elif (self._timed_seen and state_checkered
+                    and self._ticks_in_session >= 50):
+                white_via = f"timer_expiry sess_state={sess_state}"
+
             if white_via:
                 with self._lock:
                     self.state = "white_flag"
@@ -353,6 +401,9 @@ class FlagWatcher:
                 self._timed_last_lap  = True
                 self._white_fired_at  = time.time()
                 fired_white_this_tick = True
+                self._dbg("WHITE", via=white_via, leader=leader_num,
+                          cur_lap=cur_lap, t=round(sess_t, 1),
+                          time_rem=(round(time_rem, 1) if time_rem is not None else None))
                 print(f"[flag] WHITE FLAG (via {white_via}) — "
                       f"#{leader_num} {leader_name} lap={cur_lap}")
 
@@ -403,6 +454,8 @@ class FlagWatcher:
                     self.state = "checkered"
                 self._check_shown    = True
                 self._check_shown_at = time.time()
+                self._dbg("CHECKERED", via=check_via, leader=leader_num,
+                          cur_lap=cur_lap, t=round(sess_t, 1), sess_state=sess_state)
                 print(f"[flag] CHECKERED (via {check_via}) — "
                       f"#{leader_num} {leader_name} "
                       f"sess_state={sess_state}")
