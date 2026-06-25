@@ -1,0 +1,32 @@
+# ── Python ──────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ── Secrets / credentials (NEVER commit) ────────────────────────────
+iracing_auth.json
+
+# ── Local runtime config (machine-specific, not for the repo) ───────
+championship_config.json
+
+# ── Logs & run output ───────────────────────────────────────────────
+logs/
+*.log
+dashboard_log.txt
+
+# ── Archives / scratch ──────────────────────────────────────────────
+files.zip
+*.zip
+archive/
+
+# ── OS / editor cruft ───────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# ── Nextcloud sync conflict copies ──────────────────────────────────
+*conflicted copy*
+*(Wiederhergestellt)*
