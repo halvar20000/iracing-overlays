@@ -38,6 +38,7 @@ OVERLAYS = [
     ("champ",         "Championship",     5010, "/overlay"),
     ("sess",          "Session Info",     5011),
     ("line",          "Corner Cues",      5012),
+    ("delta",         "Quali Delta",      5013),
 ]
 
 TEMPLATE = """<!doctype html>

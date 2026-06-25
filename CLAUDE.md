@@ -22,6 +22,7 @@ GitHub:   https://github.com/halvar20000/iracing-overlays (primary repo,
 | champ       | `iracing_championship.py`     | 5010 | Live championship overlay (CLS league-manager API) |
 | sess        | `iracing_session_info.py`     | 5011 | Session name + total / remaining time card |
 | line        | `iracing_drivingline.py`      | 5012 | Corner cues (driving-line substitute)      |
+| delta       | `iracing_qualidelta.py`       | 5013 | Qualifying live delta + per-sector splits  |
 
 All overlays are Flask apps that read iRacing telemetry via `pyirsdk`,
 designed to be added as browser sources in OBS. They run in parallel on
@@ -140,6 +141,69 @@ an entry to `CAR_PREFIX_TO_BRAND` in `car_brands.py` if it's a car family
 that isn't already prefix-matched.
 
 ## Recent sessions
+
+**June 25, 2026 (dashboard playback UX + new quali-delta overlay, port
+5013):** Three changes, all from viewer feedback.
+  • **Progressive rewind / fast-forward** on the dashboard playback strip.
+    The two fixed rewind buttons (-1/-2) and two FF buttons (2×/4×) were
+    replaced by ONE `◀◀` and ONE `▶▶` button that DOUBLE on each click:
+    rewind 1→2→4→8→16×, FF 2→4→8→16× (cap 16×, `PB_MAX_SPEED`). Pressing
+    Play resets to 1×. Front-end only — `/playback` already accepted any
+    integer speed. `pbSpeed` (JS) mirrors the poller-reported speed and is
+    advanced optimistically so several quick clicks double correctly
+    between polls; the active button + the live pill show the current ×.
+  • **Jump-to-round** replay control. The poller records the SessionTime
+    of every lap boundary the OVERALL LEADER crosses, LIVE only
+    (`_track_lap_starts`, gated on `is_live` + race; `_leader_max_lap`
+    only increases so scrubbing can't add phantom laps). A dropdown
+    (`Start` + each completed round) + Apply seeks the replay to that
+    boundary via `replay_search_session_time` and plays 1× (new
+    `jump_to_replay_time` / `jump_to_lap` methods, `/replay/jump_lap`
+    endpoint, `replay_laps` snapshot field). CRITICAL: lap data is NOT
+    cleared on backward SessionTime jumps (scrubbing the replay), only on
+    a real session change — otherwise jumping back would wipe the list.
+    Only knows laps observed while running (lap-start times captured
+    live); "Start" = earliest recorded boundary.
+  • **NEW overlay `iracing_qualidelta.py` (tag "delta", port 5013):**
+    qualifying live delta with TWO auto-switching modes. Big centre-zero
+    delta to the SESSION best, green ahead / red behind, bar fills toward
+    the side you're gaining, plus per-sector chips.
+      – DRIVING (IsOnTrack): iRacing's own predictive delta
+        (`LapDeltaToSessionBestLap` + `_OK`) for your car; sectors from
+        `SplitTimeInfo.Sectors[].SectorStartPct` (fallback 3 equal) vs
+        your OWN best-lap sectors (green faster / red slower / purple
+        new personal-best). State machine ARMS only after a clean S/F
+        crossing; an off-track/pit lap can't become the reference.
+      – SPECTATOR (not in car — the broadcaster case): iRacing exposes
+        NO ready-made delta for other cars, so we COMPUTE one. Per-car
+        `CarIdxLapDistPct` is sampled vs `SessionTime` into a (pct→
+        elapsed) buffer; each car's last CLEAN full lap is stashed. The
+        POLE is taken from iRacing's OFFICIAL `CarIdxBestLapTime` (valid
+        laps only — a fast-but-DELETED track-limits lap never wins; this
+        was a real bug — the self-measured "fastest lap" promoted an
+        invalidated lap and showed a pole ~0.3 s too fast). The pole
+        car's matching clean-lap buffer becomes the reference curve,
+        SCALED so its total equals the official best exactly. The
+        on-camera car's (`CamCarIdx`) live elapsed at its current pct is
+        interpolated against that curve → delta; follows the camera
+        automatically, works for ANY driver (leader or not). Sector chips
+        vs the pole lap's sectors. ~15 Hz sampling (vs iRacing's internal
+        60 Hz) so it's broadcast-usable but slightly less precise than
+        the driving delta. Shows "Building reference lap…" until a pole
+        lap exists.
+    Transparent OBS source, `H` / `?debug=1` debug bg, 15 Hz poll.
+    Verified offline (stubbed irsdk): DRIVING — a synthetic 3-sector
+    flying lap sets the reference, faster→best / slower→red chips, the
+    invalid-lap guard holds; SPECTATOR — fastest car promoted to pole,
+    a slower on-camera car reads correctly behind, ahead-case goes
+    negative, sector chips compute vs pole. All four launchers +
+    `make_obs_loaders.py` (+ `obs_loaders/delta.html`) updated per the
+    maintenance rule (14 overlays now). NOTE: the cowork sandbox mount
+    again served STALE/truncated copies of edited files this session —
+    `iracing_dashboard.py` couldn't be byte-compiled in the sandbox
+    (verified via direct file reads + a JS dry-run instead); the brand-new
+    `iracing_qualidelta.py` DID sync fresh and compiled + unit-tested
+    cleanly.
 
 **June 11, 2026 (corner-cue overlay — driving-line substitute, port
 5012):** New `iracing_drivingline.py` (tag "line") + companion
