@@ -41,12 +41,14 @@
         }
       } else {
         // Ignore the occasional dropped request — only reload once the server
-        // has really been unreachable for several pings.
+        // has really been unreachable for several pings. Reloading on a single
+        // blip is what made overlays flicker.
         fails++;
         if (loaded && fails >= FAIL_LIMIT) {
           loaded = false;
         }
       }
+      // Poll fast while there's trouble, slow once stable.
       setTimeout(tick, (loaded && fails === 0) ? 5000 : 1500);
     });
   }

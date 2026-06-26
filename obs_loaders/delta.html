@@ -40,9 +40,9 @@
           loaded = true;
         }
       } else {
-        // Ignore the occasional dropped request — only reload the iframe once
-        // the server has really been unreachable for several pings. Reloading
-        // on a single blip is what made the overlay flicker.
+        // Ignore the occasional dropped request — only reload once the server
+        // has really been unreachable for several pings. Reloading on a single
+        // blip is what made overlays flicker.
         fails++;
         if (loaded && fails >= FAIL_LIMIT) {
           loaded = false;

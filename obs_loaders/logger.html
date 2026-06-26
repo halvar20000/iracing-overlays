@@ -20,6 +20,8 @@
   var URL_ = "http://localhost:5009/";
   var frame = document.getElementById("ov");
   var loaded = false;
+  var fails = 0;
+  var FAIL_LIMIT = 3;   // consecutive failed pings before we treat the server as down
 
   function ping() {
     // no-cors: we only care whether the server answers at all.
@@ -30,14 +32,24 @@
 
   function tick() {
     ping().then(function (up) {
-      if (up && !loaded) {
-        // cache-buster forces a real reload after a server restart
-        frame.src = URL_ + (URL_.indexOf("?") < 0 ? "?" : "&") + "r=" + Date.now();
-        loaded = true;
-      } else if (!up && loaded) {
-        loaded = false;   // server gone — reload as soon as it's back
+      if (up) {
+        fails = 0;
+        if (!loaded) {
+          // cache-buster forces a real reload after a server restart
+          frame.src = URL_ + (URL_.indexOf("?") < 0 ? "?" : "&") + "r=" + Date.now();
+          loaded = true;
+        }
+      } else {
+        // Ignore the occasional dropped request — only reload once the server
+        // has really been unreachable for several pings. Reloading on a single
+        // blip is what made overlays flicker.
+        fails++;
+        if (loaded && fails >= FAIL_LIMIT) {
+          loaded = false;
+        }
       }
-      setTimeout(tick, loaded ? 5000 : 1500);
+      // Poll fast while there's trouble, slow once stable.
+      setTimeout(tick, (loaded && fails === 0) ? 5000 : 1500);
     });
   }
   tick();
