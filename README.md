@@ -104,6 +104,35 @@ The logger has read-only public endpoints (`/share/chart`, `/share/standings`) s
 
 The standings overlay shows manufacturer logos from `brands/*.svg`. To add a brand: drop `brands/<slug>.svg` into the folder and, if needed, add a prefix mapping in `car_brands.py`.
 
+## Race Control / Stewarding (iCASControl)
+
+In addition to the broadcast overlays, this project bundles **iCASControl**, a
+race-control / stewarding dashboard modelled on
+[iRaceControl](https://iracecontrol.com/). It lives in the `racecontrol/`
+subfolder and gives a race director live timing, an animated track map and a
+full incident log with a steward decision workflow (Noted, Investigating, No
+Action, Race Incident, Drive Through, Stop/Go, Time Penalty, DSQ) plus
+race-control commands (pace car, pit open/close, flags).
+
+Unlike the overlays, it is **not** an OBS browser source — it is a full-screen
+control panel you open in a browser at **http://localhost:8080**. It runs as a
+FastAPI server with a swappable data source: it tries live iRacing first and
+falls back to a built-in **simulator** (so it works on any OS for learning or
+demos), and can also **replay** a recorded `.jsonl` race log.
+
+Start it like any other component from the launchers (row **"Race Control /
+Steward"**), or directly:
+
+```bash
+python iracing_racecontrol.py
+```
+
+It shares the bundled `tracks/` folder with the overlays automatically (same
+geometry format), so any circuit you have for the track-map overlay is also
+available to the steward. See `racecontrol/README.md` and
+`racecontrol/ROADMAP.md` for the full feature list and planned work (Sequencer,
+Auto Steward, PDF/CSV exports, multi-operator networking, StreamDeck).
+
 ## Troubleshooting
 
 - **Overlay shows "waiting for iRacing"** — iRacing must be running (a session loaded, not just the UI).

@@ -794,6 +794,42 @@ class RaceLogger(SDKPoller):
         print(f"[logger] Wrote {kind} classification for "
               f"{self._log_session_meta.get('track')} ({len(final)} cars)")
 
+        # ----- Driver of the Day -----------------------------------------
+        # Now that the final classification is on disk, nominate a Driver
+        # of the Day from the whole log and append a driver_of_day event.
+        # Fully defensive: a failure here must never break logging.
+        self._emit_driver_of_day()
+
+    def _emit_driver_of_day(self) -> None:
+        """Compute Driver of the Day from the just-written log and append a
+        `driver_of_day` event + print a short console summary. The DotD
+        overlay (port 5013) reads the same log independently, so this is
+        mainly for the log record and the operator console."""
+        try:
+            import driver_of_the_day as dotd
+            import dotd_streak
+        except Exception as e:
+            print(f"[logger] driver_of_the_day module not available: {e}")
+            return
+        try:
+            if not self._log_path:
+                return
+            # Authoritative recorder: applies the no-back-to-back rule (season
+            # from the league-manager) AND records this winner so the next
+            # race blocks them. record=True writes dotd_history.json.
+            result = dotd_streak.pick(str(self._log_path), no_repeat=True, record=True)
+            if not result.get("ok") or not result.get("winner"):
+                return
+            self._emit(dotd.to_log_event(result))
+            w = result["winner"]
+            if result.get("previous_winner"):
+                print(f"[logger] no back-to-back: {result['previous_winner']} "
+                      f"won the previous round and was blocked")
+            print(f"[logger] *** DRIVER OF THE DAY: #{w['car_number']} "
+                  f"{w['name']} *** — {w['why']} (score {w['score']:.3f})")
+        except Exception as e:
+            print(f"[logger] could not compute Driver of the Day: {e}")
+
     def _write_final_provisional(self) -> None:
         """Best-effort attempt to write session_end when we're about to
         close the log without having seen ResultsOfficial flip. Reads
