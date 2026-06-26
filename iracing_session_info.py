@@ -248,48 +248,58 @@ function fmtLaps(n) {
     return n === 1 ? '1 lap' : `${n} laps`;
 }
 
+// Hold the last good card through brief blips instead of flashing the
+// offline "—" state on every dropped request. Only blank after sustained
+// trouble — stops the flicker when the dev server drops a request under load.
+let badPolls = 0;
+const BAD_LIMIT = 4;   // ~2s at 2 Hz before we show offline
+
+function showOffline() {
+    document.getElementById('card').classList.add('offline');
+    document.getElementById('session-name').textContent = '—';
+    document.getElementById('total').textContent  = '—';
+    document.getElementById('remain').textContent = '—';
+}
+
 async function tick() {
+    let d = null;
     try {
         const r = await fetch('/status');
-        const d = await r.json();
-        const card = document.getElementById('card');
-
-        if (!d.connected || !d.session_name) {
-            card.classList.add('offline');
-            document.getElementById('session-name').textContent = '—';
-            document.getElementById('total').textContent  = '—';
-            document.getElementById('remain').textContent = '—';
-            return;
-        }
-        card.classList.remove('offline');
-
-        document.getElementById('session-name').textContent =
-            (d.session_name || d.session_type || '—').toUpperCase();
-
-        // LAP view only for genuinely lap-limited sessions: a lap count
-        // with NO finite time cap. League "100 laps OR 25 min" configs
-        // set BOTH — those are really timed races, where the lap cap is
-        // never reached, so they keep the time countdown.
-        const lapView = d.total_seconds == null
-                        && (d.total_laps != null || d.remain_laps != null);
-        if (lapView) {
-            document.getElementById('total').textContent  =
-                fmtLaps(d.total_laps)  || '—';
-            document.getElementById('remain').textContent =
-                fmtLaps(d.remain_laps) || '—';
-        } else {
-            document.getElementById('total').textContent  =
-                fmtTime(d.total_seconds)  || '—';
-            document.getElementById('remain').textContent =
-                fmtTime(d.remain_seconds) || '—';
-        }
+        d = await r.json();
     } catch (e) {
-        // Server unreachable — show offline state
-        const card = document.getElementById('card');
-        card.classList.add('offline');
-        document.getElementById('session-name').textContent = '—';
-        document.getElementById('total').textContent  = '—';
-        document.getElementById('remain').textContent = '—';
+        d = null;
+    }
+
+    if (!d || !d.connected || !d.session_name) {
+        badPolls++;
+        if (badPolls < BAD_LIMIT) return;          // transient — keep last card
+        showOffline();
+        return;
+    }
+    badPolls = 0;
+
+    const card = document.getElementById('card');
+    card.classList.remove('offline');
+
+    document.getElementById('session-name').textContent =
+        (d.session_name || d.session_type || '—').toUpperCase();
+
+    // LAP view only for genuinely lap-limited sessions: a lap count
+    // with NO finite time cap. League "100 laps OR 25 min" configs
+    // set BOTH — those are really timed races, where the lap cap is
+    // never reached, so they keep the time countdown.
+    const lapView = d.total_seconds == null
+                    && (d.total_laps != null || d.remain_laps != null);
+    if (lapView) {
+        document.getElementById('total').textContent  =
+            fmtLaps(d.total_laps)  || '—';
+        document.getElementById('remain').textContent =
+            fmtLaps(d.remain_laps) || '—';
+    } else {
+        document.getElementById('total').textContent  =
+            fmtTime(d.total_seconds)  || '—';
+        document.getElementById('remain').textContent =
+            fmtTime(d.remain_seconds) || '—';
     }
 }
 setInterval(tick, 500);
@@ -326,6 +336,7 @@ if __name__ == "__main__":
     print("=" * 60 + "\n")
 
     try:
-        app.run(host="0.0.0.0", port=5011, debug=False, use_reloader=False)
+        app.run(host="0.0.0.0", port=5011, debug=False,
+                use_reloader=False, threaded=True)
     finally:
         poller.stop()

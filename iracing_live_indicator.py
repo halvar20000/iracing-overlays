@@ -243,27 +243,41 @@ const LABELS = {
     "offline":      "—",
 };
 
+// Hold the last good state through brief blips instead of strobing to
+// "offline" on every dropped request. The dev server occasionally drops a
+// request under load (more so with many overlays running), which is what
+// makes the badge flicker. Only go offline after sustained trouble.
+let badPolls = 0;
+const BAD_LIMIT = 6;   // ~1.2s at 5 Hz before we show offline
+
 async function tick() {
+    let d = null;
     try {
         const r = await fetch("/status");
-        const d = await r.json();
-        const badge = document.getElementById("badge");
-        const label = document.getElementById("label");
-        const mode = d.connected ? (d.mode || "replay") : "offline";
-        if (badge.dataset.mode !== mode) {
-            badge.dataset.mode = mode;
-            // Clear all mode classes then apply the current one
-            badge.className = "badge " + mode;
-            label.textContent = LABELS[mode] || mode.toUpperCase();
-        }
+        d = await r.json();
     } catch (e) {
-        // Server not reachable - show offline
-        const badge = document.getElementById("badge");
+        d = null;
+    }
+    const badge = document.getElementById("badge");
+    const label = document.getElementById("label");
+
+    if (!d || !d.connected) {
+        badPolls++;
+        if (badPolls < BAD_LIMIT) return;          // transient — keep last badge
         if (badge.dataset.mode !== "offline") {
             badge.dataset.mode = "offline";
             badge.className = "badge offline";
-            document.getElementById("label").textContent = "—";
+            label.textContent = "—";
         }
+        return;
+    }
+    badPolls = 0;
+
+    const mode = d.mode || "replay";
+    if (badge.dataset.mode !== mode) {
+        badge.dataset.mode = mode;
+        badge.className = "badge " + mode;
+        label.textContent = LABELS[mode] || mode.toUpperCase();
     }
 }
 setInterval(tick, 200);   // 5 Hz is plenty for a big badge
@@ -307,6 +321,7 @@ if __name__ == "__main__":
     print("=" * 60 + "\n")
 
     try:
-        app.run(host="0.0.0.0", port=5004, debug=False, use_reloader=False)
+        app.run(host="0.0.0.0", port=5004, debug=False,
+                use_reloader=False, threaded=True)
     finally:
         poller.stop()
