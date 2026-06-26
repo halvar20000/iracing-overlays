@@ -10,6 +10,8 @@ iracing_auth.json
 
 # ── Local runtime config (machine-specific, not for the repo) ───────
 championship_config.json
+# Driver-of-the-Day streak state, rebuilt at runtime:
+dotd_history.json
 
 # ── Logs & run output ───────────────────────────────────────────────
 logs/

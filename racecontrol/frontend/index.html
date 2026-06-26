@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>iCASControl</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <!-- ================= HEADER ================= -->
+  <header id="topbar">
+    <div class="brand">
+      <div class="brand-mark">iCAS</div>
+      <div class="brand-text">
+        <strong>iCASControl</strong>
+        <span class="ver" id="app-version">v0.1</span>
+      </div>
+    </div>
+
+    <div class="clocks">
+      <div class="metric"><label>Real Time</label><span id="real-time">--:--:--</span></div>
+      <div class="metric"><label>Session</label><span id="session-time">--:--:--</span></div>
+      <div class="metric"><label>Remaining</label><span id="time-remain">--:--:--</span></div>
+      <div class="metric"><label>Leader Lap</label><span id="leader-lap">0</span></div>
+      <div class="metric inc"><label>Total Inc</label><span id="total-inc">0</span></div>
+      <div class="metric"><label>Cars</label><span id="car-count">0</span></div>
+    </div>
+
+    <div class="session-block">
+      <div class="session-line"><span id="session-type">RACE</span> &middot; <span id="session-state">--</span></div>
+      <div class="track-name" id="track-name">Waiting for data&hellip;</div>
+    </div>
+
+    <div class="flagbox" id="flagbox"><span>NO FLAG</span></div>
+
+    <div class="conn">
+      <button id="run-toggle" class="run-toggle run" title="RUN / STOP the controller">RUN</button>
+      <div class="badges">
+        <span id="source-badge" class="badge">source: &mdash;</span>
+        <span id="ws-badge" class="badge bad">connecting&hellip;</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ================= MAIN ================= -->
+  <main>
+    <!-- ---- LEFT: track map + selected car ---- -->
+    <section class="col-left">
+      <div class="panel map-panel">
+        <div class="panel-head">
+          Track Map
+          <span class="map-legend">
+            <i class="dot leader"></i>Leader
+            <i class="dot selected"></i>Selected
+            <i class="dot off"></i>Off-track
+          </span>
+        </div>
+        <div class="map-wrap">
+          <canvas id="trackmap"></canvas>
+        </div>
+      </div>
+
+      <div class="panel selected-panel">
+        <div class="tabs">
+          <button class="tab-btn active" data-tab="car">Selected Car</button>
+          <button class="tab-btn" data-tab="weather">Weather</button>
+        </div>
+
+        <div class="tab-body" id="tab-car">
+          <div class="sel-empty" id="sel-empty">Click a car in the timing list.</div>
+          <div class="sel-detail hidden" id="sel-detail">
+            <div class="sel-head">
+              <span class="sel-num" id="sel-num">--</span>
+              <div class="sel-names">
+                <strong id="sel-driver">&mdash;</strong>
+                <span id="sel-team">&mdash;</span>
+              </div>
+              <img class="sel-brand hidden" id="sel-brand" alt="">
+              <span class="sel-class" id="sel-class">&mdash;</span>
+            </div>
+            <div class="sel-grid">
+              <div><label>Pos</label><span id="sel-pos">--</span></div>
+              <div><label>Lap</label><span id="sel-lap">--</span></div>
+              <div><label>Last</label><span id="sel-last">--</span></div>
+              <div><label>Best</label><span id="sel-best">--</span></div>
+              <div><label>Gap</label><span id="sel-gap">--</span></div>
+              <div><label>Pit Stops</label><span id="sel-pits">--</span></div>
+              <div class="inc"><label>Incidents</label><span id="sel-inc">--</span></div>
+              <div><label>NIW</label><span id="sel-niw">--</span></div>
+              <div><label>Time Pen.</label><span id="sel-pen">--</span></div>
+            </div>
+            <div class="sel-actions">
+              <button data-car-cmd="0x">0x</button>
+              <button data-car-cmd="notify">Notify</button>
+              <button data-car-cmd="wave_around">Wave</button>
+              <button data-car-cmd="eol">EOL</button>
+              <button data-car-cmd="clear_penalties">Clr Pens</button>
+              <button data-car-cmd="dsq" class="danger">DSQ</button>
+            </div>
+            <div class="car-log-head">Car Log</div>
+            <div class="car-log" id="car-log"></div>
+          </div>
+        </div>
+
+        <div class="tab-body hidden" id="tab-weather">
+          <div class="sel-grid weather-grid">
+            <div><label>Air Temp</label><span id="w-air">--</span></div>
+            <div><label>Track Temp</label><span id="w-track">--</span></div>
+            <div><label>Humidity</label><span id="w-hum">--</span></div>
+            <div><label>Wind</label><span id="w-wind">--</span></div>
+            <div><label>Skies</label><span id="w-sky">--</span></div>
+            <div><label>Track</label><span id="w-wet">--</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---- CENTRE: live timing ---- -->
+    <section class="panel col-center">
+      <div class="panel-head">
+        Live Timing
+        <div class="timing-toggles">
+          <button id="tg-name" class="mini-toggle">DRVR</button>
+          <button id="tg-gap" class="mini-toggle">GAP</button>
+          <button id="tg-speed" class="mini-toggle off">SPD</button>
+        </div>
+      </div>
+      <div class="timing-wrap">
+        <table id="timing">
+          <thead>
+            <tr>
+              <th class="c-flag"></th>
+              <th class="c-pos">P</th>
+              <th class="c-num">#</th>
+              <th class="c-name">Driver</th>
+              <th class="c-cls">Cls</th>
+              <th class="c-cpos">Cl.P</th>
+              <th class="c-lap">Lap</th>
+              <th class="c-last">Last</th>
+              <th class="c-best">Best</th>
+              <th class="c-gap" id="th-gap">Gap</th>
+              <th class="c-inc">Inc</th>
+              <th class="c-pit">Pit</th>
+              <th class="c-spd off" id="th-spd">Spd</th>
+            </tr>
+          </thead>
+          <tbody id="timing-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ---- RIGHT: race log + commands ---- -->
+    <section class="col-right">
+      <div class="panel log-panel">
+        <div class="panel-head">
+          Race Log <span class="log-count" id="log-count">0</span>
+        </div>
+        <div class="log-filters" id="log-filters"></div>
+        <div class="log-list" id="log-list"></div>
+        <div class="rc-message">
+          <select id="rc-target" title="Message recipient">
+            <option value="RC">RC</option>
+            <option value="PRIVATE">Private (selected car)</option>
+            <option value="NOTES">Race Notes</option>
+          </select>
+          <input id="rc-input" type="text" maxlength="200"
+                 placeholder="Race control message&hellip;">
+          <button id="rc-send">Send</button>
+        </div>
+      </div>
+
+      <div class="panel command-panel">
+        <div class="panel-head">Race Control</div>
+        <div class="command-grid">
+          <button data-cmd="pace_deploy" class="cmd cmd-yellow">Deploy Pace Car</button>
+          <button data-cmd="pace_end" class="cmd cmd-green">End Pace Car</button>
+          <button data-cmd="pit_open" class="cmd">Pit Open</button>
+          <button data-cmd="pit_close" class="cmd">Pit Close</button>
+          <button data-cmd="wave_lapped" class="cmd">Wave Lapped</button>
+          <button data-cmd="clear_all" class="cmd">Clear Penalties</button>
+          <button data-cmd="red_flag" class="cmd cmd-red">Red Flag</button>
+          <button data-cmd="green_flag" class="cmd cmd-green">Green Flag</button>
+        </div>
+
+        <div class="incident-actions" id="incident-actions">
+          <div class="ia-head" id="ia-head">No incident selected</div>
+          <div class="ia-grid">
+            <button data-res="NOTED">Noted</button>
+            <button data-res="UNDER INVESTIGATION">Investigate</button>
+            <button data-res="NO ACTION">No Action</button>
+            <button data-res="RACE INCIDENT">Race Incident</button>
+            <button data-res="WARNING">Warning</button>
+            <button data-res="DRIVE THROUGH">Drive Thru</button>
+            <button data-res="STOP/GO">Stop/Go</button>
+            <button data-res="TIME PENALTY" data-needs-seconds="1">Time Pen.</button>
+            <button data-res="DSQ" class="danger">DSQ</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="trackmap.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

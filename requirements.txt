@@ -23,3 +23,10 @@ pywin32>=306; sys_platform == "win32"
 # installed system-wide. Bundles a self-contained ffmpeg binary as a
 # Python wheel so Windows users don't have to install ffmpeg manually.
 imageio-ffmpeg>=0.4.9
+
+# Race Control (iCASControl) — racecontrol/ subfolder, port 8080. Its FastAPI
+# steward backend. Only needed if you run the "racectrl" overlay. (racecontrol
+# has its own racecontrol/requirements.txt with the same pins.)
+fastapi>=0.110
+uvicorn>=0.29
+websockets>=12.0

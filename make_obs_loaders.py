@@ -38,7 +38,11 @@ OVERLAYS = [
     ("champ",         "Championship",     5010, "/overlay"),
     ("sess",          "Session Info",     5011),
     ("line",          "Corner Cues",      5012),
-    ("delta",         "Quali Delta",      5013),
+    ("dotd",          "Driver of the Day", 5013),
+    ("delta",         "Quali Delta",      5014),
+    # Note: racecontrol (iCASControl, port 8080) is an interactive steward
+    # web app, opened directly in a browser — NOT an OBS browser source — so
+    # it intentionally has no loader page here.
 ]
 
 TEMPLATE = """<!doctype html>

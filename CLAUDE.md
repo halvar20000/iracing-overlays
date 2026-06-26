@@ -22,7 +22,9 @@ GitHub:   https://github.com/halvar20000/iracing-overlays (primary repo,
 | champ       | `iracing_championship.py`     | 5010 | Live championship overlay (CLS league-manager API) |
 | sess        | `iracing_session_info.py`     | 5011 | Session name + total / remaining time card |
 | line        | `iracing_drivingline.py`      | 5012 | Corner cues (driving-line substitute)      |
-| delta       | `iracing_qualidelta.py`       | 5013 | Qualifying live delta + per-sector splits  |
+| dotd        | `iracing_dotd_overlay.py`     | 5013 | Driver of the Day (from race logs, no SDK) |
+| delta       | `iracing_qualidelta.py`       | 5014 | Qualifying live delta + per-sector splits  |
+| racectrl    | `iracing_racecontrol.py`      | 8080 | iCASControl steward dashboard (FastAPI; `racecontrol/`) |
 
 All overlays are Flask apps that read iRacing telemetry via `pyirsdk`,
 designed to be added as browser sources in OBS. They run in parallel on
@@ -142,8 +144,39 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**June 26, 2026 (TWO LINEAGES MERGED — DotD + racecontrol folded into the
+GitHub repo; Quali Delta moved 5013→5014):** The project had diverged into
+two copies that never met: the GitHub `main` lineage (corner-cue overlay +
+this session's Quali Delta, dashboard rewind-doubling / jump-to-round / 20s
+replay, flag timer-expiry fix) and a Mac-only lineage (Driver-of-the-Day
+overlay, June 22, port 5013 + the iCASControl `racecontrol/` merge, June 25,
+port 8080). Nextcloud sync mixed them in the Windows folder — the Mac's
+files OVERWROTE the working-tree dashboard/launchers (our work survived only
+in the GitHub commits). Recovery: `git checkout -- .` restored the GitHub
+(Version A) tracked files while the Mac's UNTRACKED files (DotD trio,
+`racecontrol/`, `iracing_racecontrol.py`, `img/`) were preserved, then both
+were reconciled into one tree:
+  • **Port clash resolved:** DotD and Quali Delta both wanted 5013. DotD
+    KEEPS 5013 (it's referenced throughout its own code/docs); **Quali Delta
+    moved to 5014** (`PORT`, docstring, `obs_loaders/delta.html`, all four
+    launchers, `make_obs_loaders.py`).
+  • **DotD wired in** (tag "dotd", 5013) to all launchers + `make_obs_loaders`
+    (+ debounced `obs_loaders/dotd.html`). It reads the newest race log (no
+    SDK) and nominates a Driver of the Day; deps: flask only.
+  • **racecontrol wired in** (tag "racectrl", 8080) to `launch_all.py/.bat`
+    and `launch_gui.py`. `iracing_racecontrol.py` is a shim that runs
+    `racecontrol/backend/server.py` (FastAPI) in-process. NOT an OBS source
+    (interactive steward web app) — intentionally excluded from
+    `make_obs_loaders.py`. Deps added to root `requirements.txt`: fastapi,
+    uvicorn, websockets. `dotd_history.json` added to `.gitignore` (runtime
+    state). 16 overlays now. LESSON: the Mac and Windows copies were NOT both
+    git clones of the same remote — the Mac was a downloaded ZIP that got the
+    racecontrol merge but never pulled GitHub. Keep BOTH machines as clones
+    of `halvar20000/iracing-overlays` and sync via git, not Nextcloud, to
+    avoid this divergence again.
+
 **June 25, 2026 (dashboard playback UX + new quali-delta overlay, port
-5013):** Three changes, all from viewer feedback.
+5014 — originally built on 5013, moved 2026-06-26):** Three changes, all from viewer feedback.
   • **Progressive rewind / fast-forward** on the dashboard playback strip.
     The two fixed rewind buttons (-1/-2) and two FF buttons (2×/4×) were
     replaced by ONE `◀◀` and ONE `▶▶` button that DOUBLE on each click:

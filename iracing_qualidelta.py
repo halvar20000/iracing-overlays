@@ -27,7 +27,7 @@ What it shows either way:
 
 Requirements:  pip install pyirsdk flask
 Run:           python iracing_qualidelta.py
-Open:          http://localhost:5013
+Open:          http://localhost:5014
 Stream:        transparent background by default (OBS browser source).
                Press H (or add ?debug=1) for a debug background.
 """
@@ -39,7 +39,7 @@ from flask import Flask, jsonify, render_template_string
 from iracing_sdk_base import SDKPoller, setup_utf8_stdout
 setup_utf8_stdout()
 
-PORT = 5013
+PORT = 5014   # 5013 is the Driver-of-the-Day overlay; Quali Delta moved to 5014
 
 # CarIdxTrackSurface values we care about
 SURF_NOT_IN_WORLD = -1

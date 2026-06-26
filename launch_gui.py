@@ -54,7 +54,9 @@ OVERLAYS = [
     ("champ",     "Championship Overlay",     "iracing_championship.py",   5010, "#22c9e0"),  # cyan
     ("sess",      "Session Info (time left)", "iracing_session_info.py",   5011, "#e0e0e8"),  # white/grey
     ("line",      "Corner Cues (drive line)", "iracing_drivingline.py",    5012, "#7bd964"),  # leaf green
-    ("delta",     "Quali Delta",              "iracing_qualidelta.py",     5013, "#19d36b"),  # delta green
+    ("dotd",      "Driver of the Day",        "iracing_dotd_overlay.py",   5013, "#a371f7"),  # violet
+    ("delta",     "Quali Delta",              "iracing_qualidelta.py",     5014, "#19d36b"),  # delta green
+    ("racectrl",  "Race Control (iCAS)",      "iracing_racecontrol.py",    8080, "#3b82f6"),  # blue steward
 ]
 
 HERE = Path(__file__).resolve().parent

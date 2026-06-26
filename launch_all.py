@@ -49,7 +49,9 @@ SCRIPTS = [
     ("champ",     "iracing_championship.py",   5010, "\033[36m"),  # cyan
     ("sess",      "iracing_session_info.py",   5011, "\033[37m"),  # white/grey
     ("line",      "iracing_drivingline.py",    5012, "\033[32m"),  # green
-    ("delta",     "iracing_qualidelta.py",     5013, "\033[96m"),  # bright cyan
+    ("dotd",      "iracing_dotd_overlay.py",   5013, "\033[35m"),  # violet
+    ("delta",     "iracing_qualidelta.py",     5014, "\033[96m"),  # bright cyan
+    ("racectrl",  "iracing_racecontrol.py",    8080, "\033[34m"),  # blue (iCASControl steward)
 ]
 RESET = "\033[0m"
 
