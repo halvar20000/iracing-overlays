@@ -90,6 +90,7 @@ class QualiDeltaPoller(SDKPoller):
         self._ref_sectors = []        # pole lap sector times
         self._ref_src = None          # (car_idx, pole_time) the ref curve came from
         self._session_best = None     # official pole time (min CarIdxBestLapTime)
+        self._ref_driver_idx = None   # car idx that holds the pole/reference lap
         # on-camera car sector tracking
         self._cam_idx = None
         self._cam_lap = None
@@ -271,6 +272,7 @@ class QualiDeltaPoller(SDKPoller):
         self._session_best = best
         if best is None or pole_idx is None:
             return
+        self._ref_driver_idx = pole_idx   # who's on pole (for the header)
         buf = self._car_last_buf.get(pole_idx)
         meas = self._car_last_meas.get(pole_idx)
         if not buf or meas is None or meas <= 0:
@@ -380,6 +382,49 @@ class QualiDeltaPoller(SDKPoller):
             pass
         return ""
 
+    @staticmethod
+    def _lic_hex(col):
+        """iRacing's LicColor comes as an int or a '0x..'/'#..' string.
+        Return a '#rrggbb' hex, or None if it can't be parsed."""
+        if col is None:
+            return None
+        try:
+            if isinstance(col, str):
+                s = col.strip()
+                if s.startswith("#"):
+                    return s
+                v = int(s, 16) if s.lower().startswith("0x") else int(s)
+            else:
+                v = int(col)
+            return "#%06x" % (v & 0xFFFFFF)
+        except Exception:
+            return None
+
+    def _driver_info(self, idx):
+        """Broadcast header fields for a car index: number, SURNAME (caps),
+        license letter + color. Safe defaults when the car isn't found."""
+        out = {"number": "", "surname": "", "lic": "", "lic_color": "#27d367"}
+        if idx is None or idx < 0:
+            return out
+        try:
+            drivers = self.ir["DriverInfo"]["Drivers"] if self.ir["DriverInfo"] else []
+            for d in drivers:
+                if d.get("CarIdx") == idx:
+                    out["number"] = str(d.get("CarNumber", ""))
+                    name = (d.get("UserName") or "").strip()
+                    if name:
+                        out["surname"] = name.split()[-1].upper()
+                    lic = (d.get("LicString") or "").strip()
+                    if lic:
+                        out["lic"] = lic[0].upper()
+                    hexcol = self._lic_hex(d.get("LicColor"))
+                    if hexcol:
+                        out["lic_color"] = hexcol
+                    break
+        except Exception:
+            pass
+        return out
+
     # --- session label ----------------------------------------------------
     def _session_label(self):
         try:
@@ -415,6 +460,11 @@ class QualiDeltaPoller(SDKPoller):
                 self._update_sectors(pct, lap, t, on_pit, on_track)
             delta = ir["LapDeltaToSessionBestLap"]
             delta_ok = bool(ir["LapDeltaToSessionBestLap_OK"])
+            try:
+                dci = self.ir["DriverInfo"]["DriverCarIdx"] if self.ir["DriverInfo"] else None
+            except Exception:
+                dci = None
+            info = self._driver_info(dci)
             return {
                 "connected": True,
                 "mode": "driving",
@@ -427,6 +477,12 @@ class QualiDeltaPoller(SDKPoller):
                 "ref_label": "Best",
                 "ref_lap": ir["LapBestLapTime"] or 0.0,
                 "last_lap": ir["LapLastLapTime"] or 0.0,
+                "pos": int(ir["PlayerCarPosition"] or 0),
+                "number": info["number"],
+                "surname": info["surname"] or "YOU",
+                "lic": info["lic"],
+                "lic_color": info["lic_color"],
+                "ref_driver": "",
             }
 
         # ── SPECTATOR MODE ──────────────────────────────────────────────
@@ -436,6 +492,7 @@ class QualiDeltaPoller(SDKPoller):
         surfaces = ir["CarIdxTrackSurface"] or []
         lastlaps = ir["CarIdxLastLapTime"] or []
         bestlaps = ir["CarIdxBestLapTime"] or []
+        positions = ir["CarIdxPosition"] or []
         t = ir["SessionTime"] or 0.0
 
         self._spec_update_refs(pcts, laps, on_pits, surfaces, bestlaps, t)
@@ -445,6 +502,12 @@ class QualiDeltaPoller(SDKPoller):
         cam_last = 0.0
         if cam is not None and 0 <= cam < len(lastlaps):
             cam_last = lastlaps[cam] if lastlaps[cam] and lastlaps[cam] > 0 else 0.0
+
+        info = self._driver_info(cam)
+        ref_info = self._driver_info(self._ref_driver_idx)
+        pos = 0
+        if cam is not None and 0 <= cam < len(positions) and positions[cam]:
+            pos = positions[cam]
 
         return {
             "connected": True,
@@ -458,6 +521,12 @@ class QualiDeltaPoller(SDKPoller):
             "ref_label": "Pole",
             "ref_lap": self._session_best or 0.0,
             "last_lap": cam_last,
+            "pos": int(pos),
+            "number": info["number"],
+            "surname": info["surname"],
+            "lic": info["lic"],
+            "lic_color": info["lic_color"],
+            "ref_driver": ref_info["surname"],
         }
 
 
@@ -485,10 +554,11 @@ PAGE_HTML = """
 <title>iRacing Quali Delta</title>
 <style>
     :root {
-        --green: #19d36b;
-        --red:   #ff4d4d;
-        --purple:#b06bff;
-        --amber: #ffd166;
+        --green:  #27d367;
+        --red:    #ff4d4d;
+        --purple: #b06bff;
+        --amber:  #ffcf33;
+        --panel:  rgba(10, 10, 14, 0.90);   /* dark broadcast bar */
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
@@ -502,172 +572,183 @@ PAGE_HTML = """
     body.debug { background: #15151c; }
 
     .card {
-        display: inline-flex; flex-direction: column; gap: 8px;
-        padding: 16px 22px; border-radius: 14px;
-        /* Semi-opaque panel so the text stays readable over gameplay.
-           Raise/lower the last value (0=clear, 1=solid) to taste. */
-        background: rgba(14, 14, 20, 0.80);
-        border: 2px solid rgba(255,255,255,0.12);
-        box-shadow: 0 4px 24px rgba(0,0,0,0.55);
-        min-width: 380px; user-select: none;
+        display: inline-block; min-width: 430px; user-select: none;
+        border-radius: 6px; overflow: hidden;
+        box-shadow: 0 6px 26px rgba(0, 0, 0, 0.6);
     }
-    body.debug .card {
-        background: rgba(14, 14, 20, 0.94);
-        border-color: rgba(255,255,255,0.18);
+    body.debug .card { box-shadow: 0 0 0 1px rgba(255,255,255,0.12), 0 6px 26px rgba(0,0,0,0.6); }
+
+    /* ---- main body: left (driver + delta) | right (reference) ---- */
+    .body { display: flex; background: var(--panel); }
+    .left { flex: 1 1 auto; padding: 11px 16px 13px; min-width: 0; }
+    .right {
+        flex: 0 0 auto; min-width: 124px;
+        display: flex; flex-direction: column; justify-content: center;
+        padding: 11px 18px; text-align: right;
+        border-left: 2px solid rgba(255, 255, 255, 0.10);
     }
 
-    .head {
-        display: flex; align-items: flex-start; justify-content: space-between;
-        gap: 16px;
+    .top { display: flex; align-items: center; gap: 11px; }
+    .pos {
+        flex: 0 0 auto; min-width: 30px; height: 30px; padding: 0 7px;
+        display: flex; align-items: center; justify-content: center;
+        background: var(--green); color: #06210f;
+        font-weight: 900; font-size: 20px; border-radius: 5px;
     }
-    .head .title {
-        font-size: 13px; font-weight: 700; letter-spacing: 2px;
-        color: #9aa0b4; text-transform: uppercase; display: block;
+    .name {
+        font-size: 27px; font-weight: 800; letter-spacing: 1px; color: #fff;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        text-shadow: 0 2px 8px rgba(0,0,0,0.5);
     }
-    .head .watching {
-        font-size: 15px; font-weight: 800; letter-spacing: .5px;
-        color: #e8ebf2; display: block; margin-top: 2px;
-    }
-    .head .sess {
-        font-size: 13px; font-weight: 800; letter-spacing: 1.5px;
-        color: var(--amber); text-transform: uppercase; white-space: nowrap;
+    .lic {
+        flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 13px; font-weight: 900; color: #fff;
+        background: var(--green);
+        box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.22);
     }
 
     .delta-big {
-        font-size: 64px; font-weight: 900; line-height: 1;
-        text-align: center; letter-spacing: 1px;
-        text-shadow: 0 3px 14px rgba(0,0,0,0.6);
-        color: #d6dae6;
+        margin-top: 8px; font-size: 52px; line-height: 1; font-weight: 900;
+        letter-spacing: 1px; color: var(--amber);
+        text-shadow: 0 3px 12px rgba(0, 0, 0, 0.55);
     }
     .delta-big.ahead  { color: var(--green); }
-    .delta-big.behind { color: var(--red); }
+    .delta-big.behind { color: var(--amber); }
 
-    .bar {
-        position: relative; height: 16px; border-radius: 8px;
-        background: rgba(255,255,255,0.10); overflow: hidden;
+    .ref-name {
+        font-size: 14px; font-weight: 700; letter-spacing: 1px; color: #9aa0b4;
+        text-transform: uppercase; white-space: nowrap;
     }
-    .bar .center {
-        position: absolute; left: 50%; top: -2px; bottom: -2px;
-        width: 2px; background: rgba(255,255,255,0.55);
-        transform: translateX(-1px); z-index: 2;
-    }
-    .bar .fill {
-        position: absolute; top: 0; bottom: 0; width: 0%;
-        background: var(--green); transition: width .07s linear;
-    }
+    .ref-time { font-size: 26px; font-weight: 800; color: #fff; margin-top: 3px; }
 
-    .sectors { display: flex; gap: 6px; margin-top: 2px; }
+    /* ---- bottom sector strip ---- */
+    .sectors { display: flex; gap: 2px; background: var(--panel); padding: 0 2px 2px; }
     .sector {
-        flex: 1; min-width: 0;
-        display: flex; flex-direction: column; align-items: center; gap: 2px;
-        padding: 6px 4px; border-radius: 8px;
-        background: rgba(255,255,255,0.06);
-        border: 1px solid rgba(255,255,255,0.08);
+        flex: 1 1 0; min-width: 0; height: 26px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 12px; font-weight: 800; letter-spacing: 1px;
+        text-transform: uppercase; color: #cfd3e0;
+        background: rgba(255, 255, 255, 0.07);
+        border-bottom: 3px solid rgba(255, 255, 255, 0.14);
     }
-    .sector .s-name {
-        font-size: 11px; font-weight: 700; letter-spacing: 1px;
-        color: #8b91a6; text-transform: uppercase;
-    }
-    .sector .s-delta { font-size: 17px; font-weight: 800; color: #c7ccdb; }
-    .sector.faster { background: rgba(25,211,107,0.16); border-color: rgba(25,211,107,0.5); }
-    .sector.faster .s-delta { color: var(--green); }
-    .sector.slower { background: rgba(255,77,77,0.14);  border-color: rgba(255,77,77,0.5); }
-    .sector.slower .s-delta { color: var(--red); }
-    .sector.best   { background: rgba(176,107,255,0.18); border-color: rgba(176,107,255,0.6); }
-    .sector.best   .s-delta { color: var(--purple); }
-    .sector.pending { opacity: 0.45; }
+    .sector.faster  { background: rgba(39, 211, 103, 0.24); border-color: var(--green);  color: #e3fcec; }
+    .sector.slower  { background: rgba(255, 77, 77, 0.18);  border-color: var(--red);    color: #ffe6e6; }
+    .sector.best    { background: rgba(176, 107, 255, 0.24); border-color: var(--purple); color: #f0e6ff; }
+    .sector.current { background: rgba(255, 207, 51, 0.16); border-color: var(--amber);  color: #fff; }
+    .sector.pending { opacity: 0.5; }
 
-    .foot {
-        display: flex; justify-content: space-between; gap: 16px;
-        font-size: 12px; color: #8b91a6; font-weight: 600;
+    .note {
+        background: var(--panel); color: #6f93c9;
+        font-size: 12px; font-weight: 700; text-align: center; padding: 4px 0 8px;
     }
-    .foot .v { color: #c7ccdb; font-weight: 800; }
-    .note { font-size: 12px; color: #6f93c9; font-weight: 700; text-align: center; }
-
-    .idle { text-align: center; font-size: 22px; font-weight: 700;
-            color: #5a6072; letter-spacing: 1px; padding: 18px 0; }
+    .idle {
+        background: var(--panel); text-align: center;
+        font-size: 20px; font-weight: 700; color: #5a6072;
+        letter-spacing: 1px; padding: 22px 28px;
+    }
     .hidden { display: none !important; }
 </style>
 </head>
 <body>
 
 <div class="card" id="card">
-    <div class="head">
-        <div>
-            <span class="title">Δ to session best</span>
-            <span class="watching" id="watching"></span>
-        </div>
-        <span class="sess" id="sess">—</span>
-    </div>
-
     <div id="live">
-        <div class="delta-big" id="delta">—</div>
-        <div class="bar">
-            <div class="fill" id="bar-fill"></div>
-            <div class="center"></div>
+        <div class="body">
+            <div class="left">
+                <div class="top">
+                    <div class="pos" id="pos">—</div>
+                    <div class="name" id="surname">—</div>
+                    <div class="lic" id="lic">—</div>
+                </div>
+                <div class="delta-big" id="delta">—</div>
+            </div>
+            <div class="right">
+                <div class="ref-name" id="ref-driver">—</div>
+                <div class="ref-time" id="ref-time">—</div>
+            </div>
         </div>
         <div class="sectors" id="sectors"></div>
         <div class="note hidden" id="note"></div>
-        <div class="foot">
-            <span><span id="ref-label">Best</span> <span class="v" id="ref">—</span></span>
-            <span>Last <span class="v" id="last">—</span></span>
-        </div>
     </div>
 
     <div class="idle hidden" id="idle">Waiting for iRacing…</div>
 </div>
 
 <script>
-const SCALE = 1.5;   // seconds = full half-bar
-
 function fmtLap(sec) {
     if (!sec || sec <= 0) return "—";
     const m = Math.floor(sec / 60);
     const s = (sec - m * 60).toFixed(3).padStart(6, "0");
     return m + ":" + s;
 }
+
+function renderHeader(d) {
+    const posEl = document.getElementById("pos");
+    if (d.pos && d.pos > 0) { posEl.textContent = d.pos; posEl.classList.remove("hidden"); }
+    else posEl.classList.add("hidden");
+
+    document.getElementById("surname").textContent =
+        d.surname || d.watching || "—";
+
+    const licEl = document.getElementById("lic");
+    if (d.lic) {
+        licEl.textContent = d.lic;
+        licEl.style.background = d.lic_color || "var(--green)";
+        licEl.classList.remove("hidden");
+    } else licEl.classList.add("hidden");
+}
+
 function renderDelta(d, ok) {
     const el = document.getElementById("delta");
     el.classList.remove("ahead", "behind");
     if (!ok || d == null) { el.textContent = "—"; return; }
     el.textContent = (d >= 0 ? "+" : "") + d.toFixed(3);
-    if (d < -0.005) el.classList.add("ahead");
-    else if (d > 0.005) el.classList.add("behind");
+    if (d < -0.005) el.classList.add("ahead");        // ahead of pole → green
+    else if (d > 0.005) el.classList.add("behind");   // behind → amber (broadcast look)
 }
-function renderBar(d, ok) {
-    const fill = document.getElementById("bar-fill");
-    if (!ok || d == null) { fill.style.width = "0%"; return; }
-    const w = Math.min(Math.abs(d) / SCALE, 1) * 50;   // each half = 50%
-    fill.style.width = w + "%";
-    if (d < 0) { fill.style.right = "50%"; fill.style.left = "auto";  fill.style.background = "var(--green)"; }
-    else       { fill.style.left = "50%";  fill.style.right = "auto"; fill.style.background = "var(--red)"; }
+
+function renderRef(d) {
+    // Right block: who set the reference + their lap. In driving mode there's
+    // no named holder, so we show the label ("Best") instead of a name.
+    document.getElementById("ref-driver").textContent =
+        d.ref_driver || d.ref_label || "BEST";
+    document.getElementById("ref-time").textContent = fmtLap(d.ref_lap);
 }
+
 function renderSectors(secs) {
     const wrap = document.getElementById("sectors");
     secs = secs || [];
     if (wrap.children.length !== secs.length) {
         wrap.innerHTML = "";
-        secs.forEach(s => {
+        secs.forEach(() => {
             const cell = document.createElement("div");
             cell.className = "sector";
-            cell.innerHTML = '<span class="s-name">S' + s.idx + '</span><span class="s-delta"></span>';
             wrap.appendChild(cell);
         });
     }
+    // The active sector = first one not yet completed.
+    let curIdx = -1;
+    for (let i = 0; i < secs.length; i++) {
+        if (secs[i].state === "pending" || secs[i].time == null) { curIdx = i; break; }
+    }
     secs.forEach((s, i) => {
         const cell = wrap.children[i];
-        cell.className = "sector " + (s.state || "neutral");
-        const d = cell.querySelector(".s-delta");
-        if (s.state === "pending" || s.time == null) d.textContent = "–";
-        else if (s.delta == null) d.textContent = s.time.toFixed(2);
-        else d.textContent = (s.delta >= 0 ? "+" : "") + s.delta.toFixed(2);
+        if (i === curIdx) {
+            cell.className = "sector current";
+            cell.textContent = "SECTOR " + s.idx;     // in-progress shows full word
+        } else if (s.state === "pending" || s.time == null) {
+            cell.className = "sector pending";
+            cell.textContent = "S" + s.idx;
+        } else {
+            cell.className = "sector " + (s.state || "neutral");
+            cell.textContent = "S" + s.idx;           // colour encodes faster/slower/best
+        }
     });
 }
 
 // Keep the last good frame on screen through brief blips (a dropped request
-// or a single not-connected poll) instead of flashing the "Waiting…" state —
-// the dev server occasionally drops a request under the fast polling, which
-// is what made the overlay blink. Only blank after sustained trouble.
+// or a single not-connected poll) instead of flashing the "Waiting…" state.
 let badPolls = 0;
 const BAD_LIMIT = 8;   // ~0.8s of trouble before we show the idle state
 
@@ -698,17 +779,10 @@ async function tick() {
     document.getElementById("live").classList.remove("hidden");
     document.getElementById("idle").classList.add("hidden");
 
-    document.getElementById("sess").textContent = d.session_label || "—";
-    document.getElementById("watching").textContent =
-        (d.mode === "driving") ? "YOU" : (d.watching || "—");
-
+    renderHeader(d);
     renderDelta(d.delta, d.delta_ok);
-    renderBar(d.delta, d.delta_ok);
+    renderRef(d);
     renderSectors(d.sectors);
-
-    document.getElementById("ref-label").textContent = d.ref_label || "Best";
-    document.getElementById("ref").textContent  = fmtLap(d.ref_lap);
-    document.getElementById("last").textContent = fmtLap(d.last_lap);
 
     // "Building reference…" note while spectating before a pole lap exists
     const note = document.getElementById("note");
