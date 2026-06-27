@@ -34,98 +34,90 @@ setup_utf8_stdout()
 class SessionInfoPoller(SDKPoller):
     tag = "sess"
 
-    def __init__(self, poll_hz: int = 4):
+    def __init__(self, poll_hz: int = 2):
+        # 2 Hz is plenty — session name / total length are static and the
+        # remaining-time countdown only needs a sub-second refresh.
         super().__init__(poll_interval=1.0 / poll_hz)
+        self._cache_key = None       # (SessionUniqueID, SessionNum)
+        self._cache_static = None    # parsed once per session
 
-    def _read_snapshot(self) -> dict:
-        ir = self.ir
-
-        weekend  = ir["WeekendInfo"] or {}
-        info     = ir["SessionInfo"] or {}
-        sess_num = ir["SessionNum"]
-
-        # Find the active session block in the SessionInfo YAML
-        cur_session = None
+    def _parse_static(self, ir, sess_num):
+        """Parse the heavy SessionInfo/WeekendInfo YAML for the current
+        session's STATIC fields (name, type, total length, track). Returns
+        None if the session block isn't available yet (so we don't cache it)."""
+        info    = ir["SessionInfo"] or {}
+        weekend = ir["WeekendInfo"] or {}
+        cur = None
         for s in info.get("Sessions", []) or []:
             if s.get("SessionNum") == sess_num:
-                cur_session = s
+                cur = s
                 break
-
-        if cur_session is None:
-            return {
-                "connected":     True,
-                "session_name":  "",
-                "session_type":  "",
-                "is_lap_based":  False,
-                "total_seconds": None,
-                "total_laps":    None,
-                "remain_seconds": None,
-                "remain_laps":   None,
-            }
-
-        session_name = (cur_session.get("SessionName") or "") or \
-                       (cur_session.get("SessionType") or "")
-        session_type = (cur_session.get("SessionType") or "")
-
-        # ─── total length ───────────────────────────────────────────────
-        # iRacing reports session length in TWO different ways:
-        #   - "SessionLaps":  string. "unlimited" or a number, e.g. "8"
-        #   - "SessionTime":  string. e.g. "1800.0000 sec" or "unlimited"
-        # We collect both so the snapshot is informative, but the
-        # rendered card always shows TIME (heat-race format puts a time
-        # cap on top of a lap count, and the user wants the wall-clock
-        # view rather than the lap counter).
+        if cur is None:
+            return None
+        session_name = (cur.get("SessionName") or "") or (cur.get("SessionType") or "")
+        session_type = (cur.get("SessionType") or "")
         total_laps = None
         total_seconds = None
         is_lap_based = False
-
-        raw_laps = str(cur_session.get("SessionLaps", "")).strip().lower()
+        raw_laps = str(cur.get("SessionLaps", "")).strip().lower()
         if raw_laps and raw_laps != "unlimited":
             try:
                 total_laps = int(raw_laps)
                 is_lap_based = total_laps > 0
             except ValueError:
                 total_laps = None
-
-        # Always read SessionTime when it's specified — heat-race
-        # sessions have BOTH a lap count AND a time cap, and we want
-        # the time cap as the "total" for the time-view card.
-        raw_time = str(cur_session.get("SessionTime", "")).strip()
+        raw_time = str(cur.get("SessionTime", "")).strip()
         if raw_time and "unlimited" not in raw_time.lower():
             try:
                 total_seconds = float(raw_time.split()[0])
             except (ValueError, IndexError):
                 total_seconds = None
+        return {
+            "session_name":  session_name,
+            "session_type":  session_type,
+            "is_lap_based":  is_lap_based,
+            "total_seconds": total_seconds,
+            "total_laps":    total_laps,
+            "track":         (weekend.get("TrackDisplayName") or "") or
+                             (weekend.get("TrackName") or ""),
+        }
 
-        # ─── remaining ──────────────────────────────────────────────────
-        # iRacing exposes both. SessionTimeRemain is huge (~1e7) when the
-        # session has no time limit; treat that as "no time remaining
-        # info available". SessionLapsRemain is similar — large for
-        # unlimited.
+    def _read_snapshot(self) -> dict:
+        ir = self.ir
+        sess_num = ir["SessionNum"]   # cheap telemetry int
+
+        # Parse the (GROWING) SessionInfo YAML only when the session actually
+        # changes. Re-parsing it every poll is CPU/GIL-heavy, and as the YAML
+        # accumulates race results it eventually starves the web handler — the
+        # card would blank a few minutes into a race. Name/total-length are
+        # static within a session, so one parse per session is enough.
+        key = (ir["SessionUniqueID"], sess_num)
+        if key != self._cache_key or self._cache_static is None:
+            static = self._parse_static(ir, sess_num)
+            if static is not None:
+                self._cache_static = static
+                self._cache_key = key
+
+        if self._cache_static is None:
+            return {
+                "connected": True, "session_name": "", "session_type": "",
+                "is_lap_based": False, "total_seconds": None, "total_laps": None,
+                "remain_seconds": None, "remain_laps": None, "track": "",
+            }
+
+        # Cheap per-poll telemetry (NOT the YAML) — the live countdown.
         remain_seconds = ir["SessionTimeRemain"]
         if remain_seconds is None or remain_seconds > 1e6:
             remain_seconds = None
-
-        # iRacing uses 32767 as the "unlimited" sentinel for laps (NOT a
-        # huge float like the time fields) — treat anything implausibly
-        # large as "no lap limit".
         remain_laps = ir["SessionLapsRemain"]
         if remain_laps is None or remain_laps > 9000 or remain_laps < 0:
             remain_laps = None
 
-        return {
-            "connected":      True,
-            "session_name":   session_name,
-            "session_type":   session_type,
-            "is_lap_based":   is_lap_based,
-            "total_seconds":  total_seconds,
-            "total_laps":     total_laps,
-            "remain_seconds": float(remain_seconds) if remain_seconds is not None else None,
-            "remain_laps":    int(remain_laps) if remain_laps is not None else None,
-            # Track / event identification, useful as a sub-line
-            "track":          (weekend.get("TrackDisplayName") or "") or
-                              (weekend.get("TrackName") or ""),
-        }
+        out = dict(self._cache_static)
+        out["connected"] = True
+        out["remain_seconds"] = float(remain_seconds) if remain_seconds is not None else None
+        out["remain_laps"] = int(remain_laps) if remain_laps is not None else None
+        return out
 
 
 # -----------------------------------------------------------------------------
@@ -248,11 +240,15 @@ function fmtLaps(n) {
     return n === 1 ? '1 lap' : `${n} laps`;
 }
 
-// Hold the last good card through brief blips instead of flashing the
-// offline "—" state on every dropped request. Only blank after sustained
-// trouble — stops the flicker when the dev server drops a request under load.
-let badPolls = 0;
-const BAD_LIMIT = 4;   // ~2s at 2 Hz before we show offline
+// Keep the last good card on screen until there has been NO good response
+// for a sustained period. Time-based (not poll-count) so it's robust both to
+// the dev server stalling for a few seconds AND to OBS throttling this page's
+// timer. The card only blanks after OFFLINE_AFTER_MS of continuous trouble.
+let lastGood = Date.now();
+// 30s: OBS throttles a background browser source's JS timers (you race with
+// OBS behind iRacing), occasionally pausing the poll loop for several seconds.
+// A wide window means such a pause holds the last card instead of blanking it.
+const OFFLINE_AFTER_MS = 30000;
 
 function showOffline() {
     document.getElementById('card').classList.add('offline');
@@ -261,22 +257,27 @@ function showOffline() {
     document.getElementById('remain').textContent = '—';
 }
 
+async function getStatus() {
+    // Hard timeout so a hung request can't occupy a browser connection slot
+    // (only ~6 per host — without this they pile up over minutes, exhaust the
+    // pool, and every fetch stalls -> the card blanks).
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 4000);
+    try { const r = await fetch('/status', { signal: ctrl.signal, cache: 'no-store' }); return await r.json(); }
+    catch (e) { return null; }
+    finally { clearTimeout(to); }
+}
+
 async function tick() {
-    let d = null;
-    try {
-        const r = await fetch('/status');
-        d = await r.json();
-    } catch (e) {
-        d = null;
-    }
+    const d = await getStatus();
 
     if (!d || !d.connected || !d.session_name) {
-        badPolls++;
-        if (badPolls < BAD_LIMIT) return;          // transient — keep last card
+        // No good data this tick — hold the last card unless it's been too long.
+        if (Date.now() - lastGood < OFFLINE_AFTER_MS) return;
         showOffline();
         return;
     }
-    badPolls = 0;
+    lastGood = Date.now();
 
     const card = document.getElementById('card');
     card.classList.remove('offline');
@@ -302,8 +303,9 @@ async function tick() {
             fmtTime(d.remain_seconds) || '—';
     }
 }
-setInterval(tick, 500);
-tick();
+// Self-scheduling loop: never start a new request until the previous one has
+// finished, so requests can never accumulate.
+(function loop() { tick().finally(() => setTimeout(loop, 500)); })();
 </script>
 </body>
 </html>

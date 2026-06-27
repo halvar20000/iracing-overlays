@@ -139,6 +139,7 @@ Auto Steward, PDF/CSV exports, multi-operator networking, StreamDeck).
 - **Changed a script but see old behavior** — overlays keep the old code in memory; restart the overlay.
 - **Black box instead of transparency in OBS** — press `H` in the browser source (Interact) to toggle stream mode.
 - **Port already in use** — another overlay or app owns that port; each script's port is set at the bottom in `app.run(...)`.
+- **An overlay stutters or briefly disappears mid-stream (especially Live Indicator / Session Info)** — this is OBS, not the overlay. OBS uses an embedded Chromium that *throttles* a browser source's timers when the OBS window is in the background (e.g. while you race with iRacing in the foreground), so the overlay's poll loop is slowed and can be paused for a few seconds. The overlays already tolerate this — they hold the last frame for 30 s before showing an offline state, so they shouldn't go invisible. If you still see stutter you don't like, two things help: (1) keep the OBS window **not minimized** while racing (minimized = hardest throttling); (2) point the OBS source at the overlay **directly** (`http://localhost:<port>`) instead of the `obs_loaders/` file — the loader wraps the page in an iframe, which OBS throttles a little harder. The trade-off of the direct URL is that you lose the auto-start-order safety net, so **reload that browser source once before the race starts** if it came up blank.
 
 ## License & attribution
 

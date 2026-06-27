@@ -243,45 +243,54 @@ const LABELS = {
     "offline":      "—",
 };
 
-// Hold the last good state through brief blips instead of strobing to
-// "offline" on every dropped request. The dev server occasionally drops a
-// request under load (more so with many overlays running), which is what
-// makes the badge flicker. Only go offline after sustained trouble.
-let badPolls = 0;
-const BAD_LIMIT = 6;   // ~1.2s at 5 Hz before we show offline
+// Keep the last good badge on screen until there has been NO good response
+// for a sustained period. Time-based (not poll-count) so it's robust both to
+// the dev server stalling for a few seconds AND to OBS throttling this page's
+// timer (which makes "missed polls" span much longer than expected). The
+// badge only goes offline after OFFLINE_AFTER_MS of continuous trouble.
+let lastGood = Date.now();
+// 30s: OBS throttles a background browser source's JS timers (you race with
+// OBS behind iRacing), occasionally pausing the poll loop for several seconds.
+// A wide window means such a pause holds the last badge instead of blanking it.
+const OFFLINE_AFTER_MS = 30000;
+
+async function getStatus() {
+    // Hard timeout so a hung request can't occupy a browser connection slot
+    // (browsers allow only ~6 per host — without this they pile up over a few
+    // minutes, exhaust the pool, and every fetch stalls -> the overlay blanks).
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 4000);
+    try { const r = await fetch("/status", { signal: ctrl.signal, cache: "no-store" }); return await r.json(); }
+    catch (e) { return null; }
+    finally { clearTimeout(to); }
+}
 
 async function tick() {
-    let d = null;
-    try {
-        const r = await fetch("/status");
-        d = await r.json();
-    } catch (e) {
-        d = null;
-    }
+    const d = await getStatus();
     const badge = document.getElementById("badge");
     const label = document.getElementById("label");
 
-    if (!d || !d.connected) {
-        badPolls++;
-        if (badPolls < BAD_LIMIT) return;          // transient — keep last badge
-        if (badge.dataset.mode !== "offline") {
-            badge.dataset.mode = "offline";
-            badge.className = "badge offline";
-            label.textContent = "—";
+    if (d && d.connected) {
+        lastGood = Date.now();
+        const mode = d.mode || "replay";
+        if (badge.dataset.mode !== mode) {
+            badge.dataset.mode = mode;
+            badge.className = "badge " + mode;
+            label.textContent = LABELS[mode] || mode.toUpperCase();
         }
         return;
     }
-    badPolls = 0;
-
-    const mode = d.mode || "replay";
-    if (badge.dataset.mode !== mode) {
-        badge.dataset.mode = mode;
-        badge.className = "badge " + mode;
-        label.textContent = LABELS[mode] || mode.toUpperCase();
+    // No good data this tick — hold the last badge unless it's been too long.
+    if (Date.now() - lastGood < OFFLINE_AFTER_MS) return;
+    if (badge.dataset.mode !== "offline") {
+        badge.dataset.mode = "offline";
+        badge.className = "badge offline";
+        label.textContent = "—";
     }
 }
-setInterval(tick, 200);   // 5 Hz is plenty for a big badge
-tick();
+// Self-scheduling loop: never start a new request until the previous one has
+// finished, so requests can never accumulate. ~5 Hz when healthy.
+(function loop() { tick().finally(() => setTimeout(loop, 200)); })();
 </script>
 </body>
 </html>

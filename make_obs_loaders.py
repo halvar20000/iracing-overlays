@@ -64,11 +64,14 @@ TEMPLATE = """<!doctype html>
 <body>
 <iframe id="ov" allowtransparency="true"></iframe>
 <script>
+  // LOAD-ONCE loader. It waits until the overlay server first responds, loads
+  // the page exactly ONCE, then stops touching it. The overlay page itself now
+  // recovers from any server hiccup (it keeps polling /status and re-renders),
+  // so the loader must NOT reload the iframe — reloading on every multi-second
+  // server flicker was the visible "blinking" the overlays showed mid-stream.
   var URL_ = "http://localhost:{port}{path}";
   var frame = document.getElementById("ov");
   var loaded = false;
-  var fails = 0;
-  var FAIL_LIMIT = 3;   // consecutive failed pings before we treat the server as down
 
   function ping() {{
     // no-cors: we only care whether the server answers at all.
@@ -78,25 +81,14 @@ TEMPLATE = """<!doctype html>
   }}
 
   function tick() {{
+    if (loaded) return;                 // already loaded — never touch it again
     ping().then(function (up) {{
       if (up) {{
-        fails = 0;
-        if (!loaded) {{
-          // cache-buster forces a real reload after a server restart
-          frame.src = URL_ + (URL_.indexOf("?") < 0 ? "?" : "&") + "r=" + Date.now();
-          loaded = true;
-        }}
+        frame.src = URL_ + (URL_.indexOf("?") < 0 ? "?" : "&") + "r=" + Date.now();
+        loaded = true;                  // done: the overlay page self-heals from here
       }} else {{
-        // Ignore the occasional dropped request — only reload once the server
-        // has really been unreachable for several pings. Reloading on a single
-        // blip is what made overlays flicker.
-        fails++;
-        if (loaded && fails >= FAIL_LIMIT) {{
-          loaded = false;
-        }}
+        setTimeout(tick, 1500);         // keep retrying ONLY until the first load
       }}
-      // Poll fast while there's trouble, slow once stable.
-      setTimeout(tick, (loaded && fails === 0) ? 5000 : 1500);
     }});
   }}
   tick();
