@@ -147,6 +147,18 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**July 3, 2026 (dashboard — Stream Deck camera-by-NAME endpoint):**
+User asked how to drive the dashboard's cameras from a Stream Deck.
+Answer: the /streamdeck/<action> GET API already existed (cam_next,
+cam_prev, cam/<id>, driver_next/prev, go_live, replay_last*, toggles) —
+Stream Deck's built-in "System: Website" action with "Access in
+background" checked fires them without opening a browser; no plugin
+needed. NEW: /streamdeck/cam_name/<name> — camera group by NAME
+(case-insensitive; exact → space-insensitive ("TV 1"=="TV1") →
+substring), because group IDs can be renumbered between tracks/sessions
+while names are stable. Buttons should use cam_name. Startup banner
+updated; byte-compile verified.
+
 **July 3, 2026 (NEW overlay `iracing_drivercard.py` — broadcast driver
 card, tag "driver", port 5017):** Lower-third card for the ON-CAMERA
 driver (CamCarIdx): name (abbrev) + team, iRating, license/SR chip

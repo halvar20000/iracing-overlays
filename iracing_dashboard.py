@@ -4156,6 +4156,30 @@ def streamdeck(action, param=None):
         except ValueError:
             ok, msg = False, f"invalid group id: {param}"
 
+    # --- camera group by NAME:  /streamdeck/cam_name/TV1 ---
+    # Group IDs can change between tracks/sessions; names are stable, so
+    # Stream Deck buttons should use this. Match is case-insensitive:
+    # exact first, then space-insensitive ("TV 1" == "TV1"), then substring.
+    elif action == "cam_name" and param is not None:
+        groups = snap.get("camera_groups", [])
+        want = param.strip().lower()
+        match = next((g for g in groups
+                      if (g.get("name") or "").strip().lower() == want), None)
+        if match is None:
+            norm = want.replace(" ", "")
+            match = next((g for g in groups
+                          if (g.get("name") or "").strip().lower()
+                          .replace(" ", "") == norm), None)
+        if match is None:
+            match = next((g for g in groups
+                          if want in (g.get("name") or "").strip().lower()),
+                         None)
+        if match:
+            ok = poller.switch_camera_group(match["id"])
+            msg = f"camera -> {match['name']} (group {match['id']})"
+        else:
+            ok, msg = False, f"no camera group matching '{param}'"
+
     # --- driver cycling ---
     elif action == "driver_next":
         drivers = snap.get("drivers", [])
@@ -4197,6 +4221,7 @@ if __name__ == "__main__":
     print("  Replay collision  http://localhost:5000/streamdeck/replay_last_incident_points")
     print("  Cam next/prev     http://localhost:5000/streamdeck/cam_next")
     print("  Cam by id         http://localhost:5000/streamdeck/cam/4")
+    print("  Cam by name       http://localhost:5000/streamdeck/cam_name/TV1")
     print("  Driver next/prev  http://localhost:5000/streamdeck/driver_next")
     print("  Toggle follow     http://localhost:5000/streamdeck/toggle_auto_follow")
     print("  Open in browser:  http://localhost:5000")
