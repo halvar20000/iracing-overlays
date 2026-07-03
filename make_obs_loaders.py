@@ -42,6 +42,7 @@ OVERLAYS = [
     ("delta",         "Quali Delta",      5014),
     ("catch",         "Catch-Up Battle",  5015),
     ("weather",       "Weather",          5016),
+    ("driver",        "Driver Card",      5017),
     # Note: racecontrol (iCASControl, port 8080) is an interactive steward
     # web app, opened directly in a browser — NOT an OBS browser source — so
     # it intentionally has no loader page here.

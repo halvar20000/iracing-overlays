@@ -26,6 +26,7 @@ GitHub:   https://github.com/halvar20000/iracing-overlays (primary repo,
 | delta       | `iracing_qualidelta.py`       | 5014 | Qualifying live delta + per-sector splits  |
 | catch       | `iracing_catchup.py`          | 5015 | F1-style catch-up battle (gap + catch prediction) |
 | weather     | `iracing_weather.py`          | 5016 | Weather strip (temps, rain, wind, sky + live trends) |
+| driver      | `iracing_drivercard.py`       | 5017 | Driver card (name, team, iRating, license, laps, inc) |
 | racectrl    | `iracing_racecontrol.py`      | 8080 | iCASControl steward dashboard (FastAPI; `racecontrol/`) |
 
 All overlays are Flask apps that read iRacing telemetry via `pyirsdk`,
@@ -145,6 +146,33 @@ an entry to `CAR_PREFIX_TO_BRAND` in `car_brands.py` if it's a car family
 that isn't already prefix-matched.
 
 ## Recent sessions
+
+**July 3, 2026 (NEW overlay `iracing_drivercard.py` — broadcast driver
+card, tag "driver", port 5017):** Lower-third card for the ON-CAMERA
+driver (CamCarIdx): name (abbrev) + team, iRating, license/SR chip
+(LicColor-tinted), car number + class chip, class position, best/last
+lap, incident count. User requested fields incl. incidents.
+  • iRating comes from DriverInfo.Drivers[].IRating — iRacing reports
+    the rating for THIS session's license category, which IS "the
+    iRating of the driven car class" the user asked for. No API needed.
+  • Incidents: CurDriverIncidentCount, fallback TeamIncidentCount
+    (team sessions). DriverInfo re-parsed every 5 s EVEN when cached —
+    unlike other overlays' driver caches, incidents are live data.
+  • Position: CarIdxClassPosition, fallback CarIdxPosition when class
+    position is 0 (single-class sessions report 0 there).
+  • Lap times: CarIdxBestLapTime / CarIdxLastLapTime; 0/negative → None
+    (never show "0.000"). LAST cell turns green when last == best
+    (personal best just set). Team line hidden when TeamName equals
+    UserName (solo sessions report the driver as their own team).
+  • Stateless poller (no session-change bookkeeping needed — everything
+    read fresh per poll). 2 Hz. Transparent lower third, H / ?debug=1.
+  • Four launchers + make_obs_loaders.py updated (19 overlays);
+    obs_loaders/driver.html written directly. test_drivercard.py:
+    20/20 pass (readout, PB flash, no-laps None, solo-team suppression,
+    class-pos fallback, team-incident fallback, hidden states).
+  • NOTE: mid-session the Cowork folder connection dropped and
+    /Volumes/AI/... was briefly unreachable — user re-selected the
+    folder via the picker and all earlier edits were intact.
 
 **July 3, 2026 (NEW overlay `iracing_weather.py` — weather strip, tag
 "weather", port 5016):** Horizontal OBS strip: track temp (orange) +

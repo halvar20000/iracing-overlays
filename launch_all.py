@@ -53,6 +53,7 @@ SCRIPTS = [
     ("delta",     "iracing_qualidelta.py",     5014, "\033[96m"),  # bright cyan
     ("catch",     "iracing_catchup.py",        5015, "\033[95m"),  # bright magenta
     ("weather",   "iracing_weather.py",        5016, "\033[36m"),  # cyan
+    ("driver",    "iracing_drivercard.py",     5017, "\033[93m"),  # bright yellow
     ("racectrl",  "iracing_racecontrol.py",    8080, "\033[34m"),  # blue (iCASControl steward)
 ]
 RESET = "\033[0m"

@@ -58,6 +58,7 @@ OVERLAYS = [
     ("delta",     "Quali Delta",              "iracing_qualidelta.py",     5014, "#19d36b"),  # delta green
     ("catch",     "Catch-Up Battle",          "iracing_catchup.py",        5015, "#f43f8e"),  # battle pink
     ("weather",   "Weather (conditions)",     "iracing_weather.py",        5016, "#61b4ff"),  # sky blue
+    ("driver",    "Driver Card",              "iracing_drivercard.py",     5017, "#ffd166"),  # card amber
     ("racectrl",  "Race Control (iCAS)",      "iracing_racecontrol.py",    8080, "#3b82f6"),  # blue steward
 ]
 
