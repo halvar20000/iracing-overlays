@@ -24,6 +24,8 @@ GitHub:   https://github.com/halvar20000/iracing-overlays (primary repo,
 | line        | `iracing_drivingline.py`      | 5012 | Corner cues (driving-line substitute)      |
 | dotd        | `iracing_dotd_overlay.py`     | 5013 | Driver of the Day (from race logs, no SDK) |
 | delta       | `iracing_qualidelta.py`       | 5014 | Qualifying live delta + per-sector splits  |
+| catch       | `iracing_catchup.py`          | 5015 | F1-style catch-up battle (gap + catch prediction) |
+| weather     | `iracing_weather.py`          | 5016 | Weather strip (temps, rain, wind, sky + live trends) |
 | racectrl    | `iracing_racecontrol.py`      | 8080 | iCASControl steward dashboard (FastAPI; `racecontrol/`) |
 
 All overlays are Flask apps that read iRacing telemetry via `pyirsdk`,
@@ -143,6 +145,107 @@ an entry to `CAR_PREFIX_TO_BRAND` in `car_brands.py` if it's a car family
 that isn't already prefix-matched.
 
 ## Recent sessions
+
+**July 3, 2026 (NEW overlay `iracing_weather.py` — weather strip, tag
+"weather", port 5016):** Horizontal OBS strip: track temp (orange) +
+air temp (amber) with trend arrows, humidity %, rain cell (precip % +
+TrackWetness label, turns blue when WeatherDeclaredWet or precip ≥1 %),
+wind km/h + compass, sky condition, and a green TREND cell.
+  • "Forecast" decision (user choice): iRacing's REAL forecast is only
+    on the members API (OAuth still paused — trackmap precedent), so
+    the overlay shows LIVE TRENDS instead: one sample per 30 s into
+    deque(maxlen=20) (~10 min window); trend = mean(last third) vs
+    mean(first third) with flat bands (0.15 °C / 0.02 precip); needs
+    ≥4 samples (~2 min). Text like "Track cooling · Rain increasing".
+  • Telemetry: TrackTempCrew (fallback TrackTemp — some sessions
+    report one or the other), AirTemp, RelativeHumidity, Precipitation,
+    TrackWetness (enum 0-7 → DRY…EXTREMELY WET), WeatherDeclaredWet,
+    WindVel (m/s → km/h), WindDir (radians → 8-point compass), Skies
+    (0-3). ALL reads None-safe — pre-rain builds lack the rain vars.
+  • Session-change reset clears trend history (June 4 lesson). 1 Hz
+    poll (weather moves slowly). Shows in EVERY session type incl.
+    practice/quali — conditions matter there too. Transparent strip,
+    H / ?debug=1 per convention.
+  • All four launchers + make_obs_loaders.py updated (18 overlays);
+    obs_loaders/weather.html written directly (stale-mount workaround
+    again). Verified offline (test_weather.py, stubbed irsdk, fake
+    clock): readout/units, TrackTemp fallback, missing rain vars,
+    warming/cooling/rain trends, flat band, declared-wet cell, session
+    reset, compass wrap. 26/26 pass.
+
+**July 3, 2026 (NEW overlay `iracing_catchup.py` — F1-style catch-up
+battle, tag "catch", port 5015):** Shows, for the ON-CAMERA driver
+(CamCarIdx), the battle with the next SAME-CLASS car ahead: live gap,
+pace delta from the last 3 clean laps of both drivers, and the F1-style
+prediction "CATCH IN ~N LAPS (≈M:SS)". Design decisions (user choices):
+camera-follow focus (broadcast use), same-class ahead in multiclass,
+3-lap average window, lower-third banner style.
+  • Gap = CarIdxF2Time diff between the two cars (F2Time is cumulative
+    "behind CLASS leader", so same-class diff = real gap, no S/F lag —
+    same technique as the standings overlay). Lap-1 fallback: progress
+    diff × EstLapTime. Car ahead a full lap+ up → "+N LAP" shown, no
+    prediction (un-lapping isn't a catch battle).
+  • Lap-time capture: per-car lap-increment watcher; CarIdxLastLapTime
+    is trusted only ≥0.3 s after the crossing (settle window, 3 s
+    deadline). Laps touching pit road are EXCLUDED (the pit-road flag
+    taints the current lap; since pit road spans S/F this covers both
+    in- and out-lap). deque(maxlen=3) per car; car needs ≥2 clean laps
+    before a prediction (chip shows GATHERING until then).
+  • States: CATCHING (green, prediction shown), LOSING (red), HOLDING
+    (gray, |delta| < 0.05 s/lap). Catch laps = gap / pace_delta,
+    catch time = catch_laps × focus avg lap.
+  • Session-change reset (SessionUniqueID/SessionNum change or >5 s
+    backwards SessionTime jump) clears ALL per-car trackers — June 4
+    lesson. Renders only in RACE sessions; hides when the camera car
+    leads its class or is out of the world. SessionInfo YAML parsed
+    ONCE per session, DriverInfo every 5 s (YAML-cost lesson from the
+    session-info overlay). 4 Hz poll. Transparent OBS lower-third;
+    H / ?debug=1 debug bg per convention.
+  • All four launchers updated per the maintenance rule (17 overlays);
+    `obs_loaders/catch.html` written directly (copy of the delta loader
+    with port 5015) because the sandbox mount again served STALE
+    truncated copies — `make_obs_loaders.py` list updated too, so a
+    future re-run regenerates it identically.
+  • Verified offline (`test_catchup.py`, stubbed irsdk+flask, fake
+    clock): catching 3.0s/+0.5 → 6 laps & 540 s, losing, holding band,
+    pit-lap exclusion, multiclass picks same-class ahead (LMP in
+    between ignored), class-leader hides, lapped-ahead suppresses
+    prediction, practice hides, session-change reset. 22/22 pass.
+    NOTE: the stale-mount problem forced running the test from a /tmp
+    heredoc copy — the mounted test file showed truncated pages for
+    minutes after writing.
+  • Also this session: confirmed the local folder is AHEAD of GitHub
+    (July 1 Driving Mode files, SIMHUB_PLUGIN_FEASIBILITY.md, youtube/,
+    requirements.txt pywebview addition were never pushed; everything
+    else matches byte-for-byte). Folder is a ZIP download, NOT a git
+    clone — added `push_to_github.sh` (clone → rsync → commit → push,
+    same pattern as SimRacing-News) for Thomas to run in Mac Terminal.
+    LESSON: GitHub deploy keys are REPO-SPECIFIC — ~/.ssh/id_ed25519
+    (SimRacing-News) is REJECTED for this repo ("Permission denied to
+    deploy key"). This repo uses its own key ~/.ssh/id_ed25519_iracing;
+    the push script generates it on first run and prints/copies the
+    public key for GitHub → Settings → Deploy keys (write access!).
+  • FOLLOW-UP same day (car livery images, F1-style): both driver
+    blocks now show the rendered car via iRacing's LOCAL render server
+    (http://127.0.0.1:32034/pk_car.png — the livery-overlay discovery),
+    incl. custom Trading Paints TGAs from the on-disk paint cache. The
+    fetch logic is a compact SELF-CONTAINED copy of iracing_livery.py's
+    (_car_path_variants / find_paint_file / _build_render_params /
+    _fetch_iracing_render — importing the livery overlay would execute
+    its module-level Flask/poller setup; render_race.py precedent).
+    All livery-overlay lessons preserved: %20 not '+' in the query
+    (urlencode quote_via=quote), nested-MX-5 separator variants FIRST
+    (unknown carPath returns a DEFAULT car — wrong path looks like
+    success), requests as SOFT dependency (no requests / render server
+    down → banner works without images). New Flask route
+    /car/<cidx>.png with bounded in-memory cache keyed on
+    (carPath, cust_id, design, paint_path); failures NOT cached and
+    the front-end retries every 20 s, so a render server that comes up
+    later self-heals; route overrides the global no-store with
+    max-age=300. Front-end: .carimg at the outer edge of each driver
+    block, hidden until onload fires (onerror keeps it hidden — no
+    broken-image icons on stream). test_catchup.py extended with
+    render-helper checks: 30/30 pass.
 
 **June 26, 2026 (TWO LINEAGES MERGED — DotD + racecontrol folded into the
 GitHub repo; Quali Delta moved 5013→5014):** The project had diverged into

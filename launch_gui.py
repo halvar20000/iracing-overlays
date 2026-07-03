@@ -56,6 +56,8 @@ OVERLAYS = [
     ("line",      "Corner Cues (drive line)", "iracing_drivingline.py",    5012, "#7bd964"),  # leaf green
     ("dotd",      "Driver of the Day",        "iracing_dotd_overlay.py",   5013, "#a371f7"),  # violet
     ("delta",     "Quali Delta",              "iracing_qualidelta.py",     5014, "#19d36b"),  # delta green
+    ("catch",     "Catch-Up Battle",          "iracing_catchup.py",        5015, "#f43f8e"),  # battle pink
+    ("weather",   "Weather (conditions)",     "iracing_weather.py",        5016, "#61b4ff"),  # sky blue
     ("racectrl",  "Race Control (iCAS)",      "iracing_racecontrol.py",    8080, "#3b82f6"),  # blue steward
 ]
 
