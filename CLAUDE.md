@@ -147,6 +147,34 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**July 4, 2026 (standings — periodic "positions gained/lost" view):**
+User request: the tower normally shows gap/interval; every 5 min it should
+flip for 20 s to show how many places each driver has gained/lost, then
+flip back. Implemented in `iracing_standings.py` (no new overlay/port, so
+launchers untouched). Design (user chose defaults): baseline = each car's
+class position on the STARTING GRID; delta counted WITHIN CLASS; 20 s view
+swaps the interval column for ▲N green / ▼N red / = grey + a pulsing
+"POSITIONS GAINED / LOST" info-bar pill + "GAINED / LOST" column header;
+tower keeps its running order (no re-sort).
+  • Cadence constants at module top: `INTERVAL_VIEW_SEC=300`,
+    `DELTA_VIEW_SEC=20`. View cycle computed server-side in `_read_snapshot`
+    from `time.monotonic()` vs `_cycle_anchor` (phase >= 300 → delta), so
+    all browser sources agree. Race sessions only; quali/practice always
+    show the interval/lap-time column.
+  • Baseline captured ONCE per race in `_build_race_standings`: cars ranked
+    within class by iRacing's official `CarIdxPosition` (grid order, stable
+    at the start — unlike the live-progress sort in the opening seconds).
+    `pos_delta = start_pos - class_position` (+ = gained). Cars with no
+    baseline (late joiners) → `=`.
+  • Session-change reset: `(SessionUniqueID, SessionNum)` change clears the
+    baseline AND re-anchors the cycle, so every race starts fresh in
+    interval mode and re-captures its own grid. If the overlay is started
+    mid-race, baseline = order at first sight (delta = places since we
+    joined) — noted as expected behavior.
+  • Verified offline (stubbed irsdk, fake clock): grid capture, +2/-1
+    deltas after an overtake, view interval→delta→wrap at 305/330 s,
+    session-change reset. 14/14 pass.
+
 **July 4, 2026 (dashboard — `/cameras` endpoint for custom camera sets):**
 Context: colleague uses custom iRacing camera sets ("FPV cams") for
 better broadcast angles. Custom sets are just camera files dropped into
