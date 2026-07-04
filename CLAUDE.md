@@ -147,6 +147,36 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**July 4, 2026 (dashboard — `/cameras` endpoint for custom camera sets):**
+Context: colleague uses custom iRacing camera sets ("FPV cams") for
+better broadcast angles. Custom sets are just camera files dropped into
+`Documents\iRacing\cameras\tracks\<track>\` — they appear as ordinary
+named camera GROUPS, so the existing `/streamdeck/cam_name/<name>`
+endpoint already selects them; NO overlay/launcher change needed.
+Added a discovery helper: **`GET /cameras`** on the dashboard (port
+5000) returns the loaded session's camera groups (id, name, current
+flag, ready-to-use `streamdeck_url`). `?format=text` gives a
+copy-paste list with full `http://localhost:5000/streamdeck/cam_name/…`
+URLs (spaces %20-encoded) so Stream Deck buttons can be labeled by the
+actual group names without guessing. Reads from `poller.get()` snapshot
+(camera_groups / current_cam_group already populated). Startup banner +
+byte-compile verified; text/json formatting unit-checked offline. Not
+an OBS source, so make_obs_loaders.py untouched. Also wrote
+`CUSTOM_CAMERAS_GUIDE.md` (pack recommendations + install + wiring).
+  • FOLLOW-UP: user added the **FCP broadcast camera pack** to
+    `custom_cameras/` (95 tracks + 90 cars, all `fcp.cam`). Binary iRacing
+    .cam files; uses STANDARD group names (TV1/TV2/TV3/Chase/Far Chase/
+    Rear Chase/Blimp/Chopper/Pit Lane for tracks; Cockpit/Nose/Gearbox/
+    Gyro/susp for cars) re-tuned for broadcast — so existing
+    `/streamdeck/cam_name/<name>` buttons work unchanged, no code needed.
+    Wrote `install_fcp_cameras.bat` (run on the Windows iRacing PC, sim
+    closed): backs up `Documents\iRacing\cameras` to a timestamped folder,
+    then robocopies `custom_cameras\cars` + `\tracks` in. Guide updated
+    with FCP section + ready-to-paste Stream Deck button list. NOTE: the
+    281 binary .cam files live in the project folder but must be copied
+    into `Documents\iRacing\cameras\` to take effect — syncing the project
+    folder alone does NOT install them.
+
 **July 3, 2026 (dashboard — Stream Deck camera-by-NAME endpoint):**
 User asked how to drive the dashboard's cameras from a Stream Deck.
 Answer: the /streamdeck/<action> GET API already existed (cam_next,

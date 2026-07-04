@@ -3811,6 +3811,55 @@ def switch_cam_group():
     return jsonify({"ok": ok, "group_id": group_id})
 
 
+@app.route("/cameras")
+def list_cameras():
+    """List the camera groups available in the CURRENT session.
+
+    Purpose: custom camera sets (TrackCams, Studio DaVeed, self-built,
+    etc.) appear as ordinary named camera groups that vary per track.
+    Group IDs get renumbered between tracks/sessions, but NAMES are
+    stable, so Stream Deck buttons should fire /streamdeck/cam_name/<name>.
+    This endpoint shows exactly which names the loaded set exposes so
+    buttons can be labeled/mapped without guessing.
+
+    JSON by default; add ?format=text for a copy-paste-friendly list
+    (each row already includes the ready-to-use Stream Deck URL).
+    """
+    snap = poller.get()
+    groups = snap.get("camera_groups", []) or []
+    current = snap.get("current_cam_group", 0)
+
+    def sd_url(name):
+        # Camera names are simple ("TV 1", "Drone", "Nose"); %20 the spaces
+        # so the URL is valid as-is in a Stream Deck "Website" key.
+        return "/streamdeck/cam_name/" + (name or "").replace(" ", "%20")
+
+    if request.args.get("format") == "text":
+        lines = [f"Camera groups in this session ({len(groups)}):"]
+        if not groups:
+            lines.append("  (none - start iRacing and load a session first)")
+        for g in groups:
+            marker = "   <-- current" if g["id"] == current else ""
+            lines.append(f"  id {g['id']:>3}  {g['name']:<16}  "
+                         f"http://localhost:5000{sd_url(g['name'])}{marker}")
+        return "\n".join(lines) + "\n", 200, {
+            "Content-Type": "text/plain; charset=utf-8"}
+
+    return jsonify({
+        "count": len(groups),
+        "current_cam_group": current,
+        "cameras": [
+            {
+                "id": g["id"],
+                "name": g["name"],
+                "current": g["id"] == current,
+                "streamdeck_url": sd_url(g["name"]),
+            }
+            for g in groups
+        ],
+    })
+
+
 @app.route("/auto_camera", methods=["POST"])
 def auto_camera():
     payload = request.get_json(silent=True) or {}
@@ -4235,6 +4284,7 @@ if __name__ == "__main__":
     print("  Cam next/prev     http://localhost:5000/streamdeck/cam_next")
     print("  Cam by id         http://localhost:5000/streamdeck/cam/4")
     print("  Cam by name       http://localhost:5000/streamdeck/cam_name/TV1")
+    print("  List cameras      http://localhost:5000/cameras?format=text")
     print("  Driver next/prev  http://localhost:5000/streamdeck/driver_next")
     print("  Toggle follow     http://localhost:5000/streamdeck/toggle_auto_follow")
     print("  Open in browser:  http://localhost:5000")
