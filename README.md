@@ -23,6 +23,11 @@ All telemetry is read locally from the iRacing SDK via `pyirsdk`. Nothing leaves
 | Championship | `iracing_championship.py` | 5010 | Live championship projection (requires an external league-manager backend) |
 | Session Info | `iracing_session_info.py` | 5011 | Session name + total / remaining time or laps |
 | Corner Cues | `iracing_drivingline.py` | 5012 | Corner cues (direction, severity, distance) for tracks where the racing-line aid is disabled |
+| Driver of the Day | `iracing_dotd_overlay.py` | 5013 | Driver-of-the-Day nomination from race logs (no SDK needed) |
+| Quali Delta | `iracing_qualidelta.py` | 5014 | Live qualifying delta to the session best + per-sector splits |
+| Catch-Up | `iracing_catchup.py` | 5015 | F1-style catch-up battle: live gap, pace delta and a "catch in N laps" prediction |
+| Weather | `iracing_weather.py` | 5016 | Weather strip: track/air temp, humidity, rain, wind, sky + live trends |
+| Driver Card | `iracing_drivercard.py` | 5017 | Lower-third card for the on-camera driver: name, team, iRating, license, laps, incidents |
 
 All overlays run in parallel — each has its own port.
 

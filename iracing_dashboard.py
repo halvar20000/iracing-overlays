@@ -4065,6 +4065,7 @@ def incidents_dismiss():
 # software pointing at one of these URLs (no plugin required):
 #
 #   Go Live:                http://localhost:5000/streamdeck/go_live
+#   Hide/Show iRacing UI:   http://localhost:5000/streamdeck/hide_ui
 #   Toggle Auto-Follow:     http://localhost:5000/streamdeck/toggle_auto_follow
 #   Toggle Auto-Replay:     http://localhost:5000/streamdeck/toggle_auto_replay
 #   Toggle OT Auto-Replay:  http://localhost:5000/streamdeck/toggle_auto_replay_overtakes
@@ -4086,6 +4087,17 @@ def streamdeck(action, param=None):
     # --- playback ---
     if action == "go_live":
         ok, msg = poller.go_live()
+
+    # --- hide / show iRacing's broadcast HUD (toggle) ---
+    # Same logic as the dashboard's Hide-UI button and the POST
+    # /hide_iracing_ui endpoint, exposed here as a GET so a Stream Deck
+    # "Website" key (background) can fire it. Spacebar toggles iRacing's
+    # HUD; we mirror the state so later camera switches keep it hidden.
+    elif action == "hide_ui":
+        ok, msg = send_key_to_iracing(VK_SPACE)
+        if ok:
+            poller.iracing_ui_hidden = not poller.iracing_ui_hidden
+            msg = f"iracing_ui_hidden={'on' if poller.iracing_ui_hidden else 'off'}"
 
     # --- toggles ---
     elif action == "toggle_auto_follow":
@@ -4216,6 +4228,7 @@ if __name__ == "__main__":
     print()
     print("  Stream Deck  (System: Website action, no plugin needed):")
     print("  Go Live           http://localhost:5000/streamdeck/go_live")
+    print("  Hide/Show UI      http://localhost:5000/streamdeck/hide_ui")
     print("  Replay last       http://localhost:5000/streamdeck/replay_last")
     print("  Replay last spin  http://localhost:5000/streamdeck/replay_last_lost_control")
     print("  Replay collision  http://localhost:5000/streamdeck/replay_last_incident_points")
