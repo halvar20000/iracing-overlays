@@ -176,6 +176,27 @@ an OBS source, so make_obs_loaders.py untouched. Also wrote
     281 binary .cam files live in the project folder but must be copied
     into `Documents\iRacing\cameras\` to take effect — syncing the project
     folder alone does NOT install them.
+  • FOLLOW-UP 2: user added a SECOND FCP pack `custom_cameras_2/` (109
+    tracks / 97 cars). Compared the two: pack 2 is a full SUPERSET of
+    pack 1 — all 90 shared car cams + 175/191 shared track cams are
+    byte-identical; 16 track sets are IMPROVED in pack 2 (Bathurst
+    292KB→542KB, Sebring Intl 235KB→441KB, Homestead roada/roadb, several
+    Nürburgring/Suzuka/Silverstone tweaks); pack 2 adds ~16 tracks +32
+    cars incl. porsche992rgt3/992cup, mercedesamgevogt3, dallaradw12. The
+    2 folders unique to pack 1 (mtwashington, oran) are EMPTY (no .cam) —
+    nothing lost. Repointed `install_fcp_cameras.bat` SRC → `custom_cameras_2`.
+    Same standard group names, so Stream Deck cam_name buttons unchanged.
+    `custom_cameras/` (pack 1) is now redundant/deletable. NOTE: sandbox
+    can't delete on the SMB mount (empty mtwashington/oran folders got
+    copied into pack 2 during an aborted fold-in and must be removed on
+    the Mac). Pack 1 is ALSO undeletable on the Mac right now: it holds
+    187 `.smbdelete*` tombstone files (deleted .cam files the SMB server
+    hasn't purged because a handle is still open elsewhere) → `rm -rf`
+    fails with "Directory not empty". Resolution: added `/custom_cameras/`
+    and `.smbdelete*` to `.gitignore` so pack 1 stays out of the repo
+    without needing to delete it; the push script already rsync-excludes
+    `.smbdelete*`. To physically remove pack 1, eject+remount the "AI"
+    share (closes handles → server purges tombstones), then `rm -rf`.
 
 **July 3, 2026 (dashboard — Stream Deck camera-by-NAME endpoint):**
 User asked how to drive the dashboard's cameras from a Stream Deck.

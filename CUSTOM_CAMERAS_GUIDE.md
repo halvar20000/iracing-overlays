@@ -93,13 +93,23 @@ Notes:
 
 ---
 
-## 4b. The FCP pack you installed (`custom_cameras/`)
+## 4b. The FCP pack (`custom_cameras_2/` — the one that gets installed)
 
-You dropped the **FCP broadcast camera pack** into
-`/Volumes/AI/Projects/iracing-overlays-main/custom_cameras/` — 95 tracks
-and 90 cars, each as an `fcp.cam` set. It uses the **standard iRacing
-camera group names**, just re-tuned for cinematic broadcast angles, so
-your existing `cam_name` buttons work unchanged.
+Two FCP packs are in the project: `custom_cameras/` (older, 95 tracks /
+65 cars) and **`custom_cameras_2/` (newer and more complete: 109 tracks /
+97 cars)**. Pack 2 is a full superset of pack 1 — every shared camera is
+byte-identical except 16 track sets that pack 2 improved (notably
+**Bathurst**, **Sebring International**, and **Homestead** were
+substantially reworked), and pack 2 adds ~16 tracks and ~32 cars,
+including the **Porsche 992 Cup / 992 GT3** and other modern GT3s your
+league runs. The only folders unique to pack 1 (`mtwashington`, `oran`)
+are **empty** — no cameras — so nothing is lost.
+
+**The installer uses `custom_cameras_2/`.** Both packs use the **standard
+iRacing camera group names**, just re-tuned for cinematic broadcast
+angles, so your existing `cam_name` buttons work unchanged either way.
+
+`custom_cameras/` (pack 1) is now redundant and can be deleted.
 
 Track (spectator/broadcast) groups: `TV1`, `TV2`, `TV3`, `Chase`,
 `Far Chase`, `Rear Chase`, `Blimp`, `Chopper`, `Pit Lane`.
@@ -112,8 +122,8 @@ and the suspension cams.
   folder. It backs up your current cameras to a timestamped
   `Documents\iRacing\cameras_backup_<date>` folder, then copies the FCP
   `cars\` and `tracks\` into `Documents\iRacing\cameras\`.
-- **Manual way:** copy the contents of `custom_cameras\cars` and
-  `custom_cameras\tracks` into `Documents\iRacing\cameras\cars` and
+- **Manual way:** copy the contents of `custom_cameras_2\cars` and
+  `custom_cameras_2\tracks` into `Documents\iRacing\cameras\cars` and
   `...\tracks` respectively (merge/overwrite).
 
 To undo: delete the `cameras` folder and rename the backup back to

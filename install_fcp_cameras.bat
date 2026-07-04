@@ -1,19 +1,20 @@
 @echo off
 REM ============================================================================
 REM  install_fcp_cameras.bat
-REM  Installs the FCP broadcast camera pack (custom_cameras\) into iRacing.
+REM  Installs the FCP broadcast camera pack (custom_cameras_2\, the newer
+REM  and more complete pack) into iRacing.
 REM
 REM  Run this ON THE WINDOWS PC that runs iRacing, from inside the project
 REM  folder (double-click, or run in cmd). It:
 REM    1. Backs up your current iRacing cameras to a timestamped folder.
-REM    2. Copies custom_cameras\cars + custom_cameras\tracks into
+REM    2. Copies custom_cameras_2\cars + custom_cameras_2\tracks into
 REM       %USERPROFILE%\Documents\iRacing\cameras (merging/overwriting the
 REM       same-named .cam sets only).
 REM  iRacing must be CLOSED while this runs.
 REM ============================================================================
 setlocal
 
-set "SRC=%~dp0custom_cameras"
+set "SRC=%~dp0custom_cameras_2"
 set "DST=%USERPROFILE%\Documents\iRacing\cameras"
 
 echo.
@@ -25,7 +26,7 @@ echo.
 
 if not exist "%SRC%\tracks" (
   echo  ERROR: %SRC%\tracks not found. Run this from the project folder that
-  echo         contains the custom_cameras folder.
+  echo         contains the custom_cameras_2 folder.
   goto :end
 )
 

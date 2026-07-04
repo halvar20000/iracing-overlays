@@ -32,3 +32,11 @@ Thumbs.db
 # ── Nextcloud sync conflict copies ──────────────────────────────────
 *conflicted copy*
 *(Wiederhergestellt)*
+
+# ── SMB delete-pending tombstones (network share leftovers) ─────────
+.smbdelete*
+
+# ── Old FCP camera pack, superseded by custom_cameras_2 ─────────────
+# Kept on disk locally but NOT pushed to the repo (redundant + full of
+# .smbdelete tombstones). The installer uses custom_cameras_2.
+/custom_cameras/
