@@ -54,6 +54,7 @@ SCRIPTS = [
     ("catch",     "iracing_catchup.py",        5015, "\033[95m"),  # bright magenta
     ("weather",   "iracing_weather.py",        5016, "\033[36m"),  # cyan
     ("driver",    "iracing_drivercard.py",     5017, "\033[93m"),  # bright yellow
+    ("leader",    "iracing_race_leader.py",    5018, "\033[33m"),  # gold (new race leader)
     ("racectrl",  "iracing_racecontrol.py",    8080, "\033[34m"),  # blue (iCASControl steward)
 ]
 RESET = "\033[0m"

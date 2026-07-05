@@ -59,6 +59,7 @@ OVERLAYS = [
     ("catch",     "Catch-Up Battle",          "iracing_catchup.py",        5015, "#f43f8e"),  # battle pink
     ("weather",   "Weather (conditions)",     "iracing_weather.py",        5016, "#61b4ff"),  # sky blue
     ("driver",    "Driver Card",              "iracing_drivercard.py",     5017, "#ffd166"),  # card amber
+    ("leader",    "New Race Leader",          "iracing_race_leader.py",    5018, "#ffd700"),  # gold
     ("racectrl",  "Race Control (iCAS)",      "iracing_racecontrol.py",    8080, "#3b82f6"),  # blue steward
 ]
 

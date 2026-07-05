@@ -28,6 +28,7 @@ All telemetry is read locally from the iRacing SDK via `pyirsdk`. Nothing leaves
 | Catch-Up | `iracing_catchup.py` | 5015 | F1-style catch-up battle: live gap, pace delta and a "catch in N laps" prediction |
 | Weather | `iracing_weather.py` | 5016 | Weather strip: track/air temp, humidity, rain, wind, sky + live trends |
 | Driver Card | `iracing_drivercard.py` | 5017 | Lower-third card for the on-camera driver: name, team, iRating, license, laps, incidents |
+| New Race Leader | `iracing_race_leader.py` | 5018 | Flashes "NEW RACE LEADER" + driver name for 10 s whenever a new car takes the overall lead — Race sessions only |
 
 All overlays run in parallel — each has its own port.
 

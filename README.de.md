@@ -28,6 +28,7 @@ Alle Telemetriedaten werden lokal über `pyirsdk` aus dem iRacing SDK gelesen. E
 | Catch-Up | `iracing_catchup.py` | 5015 | F1-Style Aufhol-Duell: Live-Abstand, Pace-Delta und „Einholen in N Runden"-Prognose |
 | Weather | `iracing_weather.py` | 5016 | Wetterleiste: Strecken-/Lufttemperatur, Luftfeuchte, Regen, Wind, Himmel + Live-Trends |
 | Driver Card | `iracing_drivercard.py` | 5017 | Lower-Third-Karte für den Fahrer im Bild: Name, Team, iRating, Lizenz, Runden, Incidents |
+| New Race Leader | `iracing_race_leader.py` | 5018 | Blendet 10 s lang "NEW RACE LEADER" + Fahrername ein, sobald ein neues Auto die Gesamtführung übernimmt — nur in Rennsessions |
 
 Alle Overlays laufen parallel — jedes auf einem eigenen Port.
 
