@@ -677,7 +677,7 @@ PAGE_HTML = """
     body.debug { background: #15151c; }
 
     .card {
-        display: inline-block; min-width: 430px; user-select: none;
+        display: inline-block; width: 460px; user-select: none;
         border-radius: 6px; overflow: hidden;
         box-shadow: 0 6px 26px rgba(0, 0, 0, 0.6);
     }
@@ -701,6 +701,7 @@ PAGE_HTML = """
         font-weight: 900; font-size: 20px; border-radius: 5px;
     }
     .name {
+        flex: 1 1 auto; min-width: 0;
         font-size: 27px; font-weight: 800; letter-spacing: 1px; color: #fff;
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         text-shadow: 0 2px 8px rgba(0,0,0,0.5);
@@ -724,6 +725,7 @@ PAGE_HTML = """
     .ref-name {
         font-size: 14px; font-weight: 700; letter-spacing: 1px; color: #9aa0b4;
         text-transform: uppercase; white-space: nowrap;
+        max-width: 150px; overflow: hidden; text-overflow: ellipsis;
     }
     .ref-time { font-size: 26px; font-weight: 800; color: #fff; margin-top: 3px; }
 

@@ -213,6 +213,12 @@ session-best lap.
     for every other loader. Since loaders are "load-once" now, redirect ==
     iframe for self-healing. NOTE: after swapping the file, the OBS source
     must have its cache cleared / be re-added to pick up the new loader.
+  • FOLLOW-UP 4 (fixed overlay width): the card used `min-width: 430px` and
+    grew with a long driver name, which shifted its OBS placement. Changed to
+    a FIXED `width: 460px`; `.name` now `flex:1 1 auto; min-width:0` so long
+    names truncate with an ellipsis, and `.ref-name` (pole driver on the
+    right) capped at `max-width:150px` + ellipsis. Overall size is now
+    constant regardless of name length (both reference modes share the page).
 
 **July 4, 2026 (standings — periodic "positions gained/lost" view):**
 User request: the tower normally shows gap/interval; every 5 min it should
