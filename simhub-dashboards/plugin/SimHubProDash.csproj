@@ -1,0 +1,66 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    SimHub Pro Dash plugin.
+    Target framework MUST be .NET Framework 4.8 (SimHub is a .NET Framework 4.8 app).
+    UseWPF is on because IWPFSettingsV2 returns a WPF Control.
+
+    SimHubDir points at the SimHub install folder that ships the reference DLLs.
+    Override on the command line if SimHub is installed elsewhere:
+        msbuild SimHubProDash.csproj /p:SimHubDir="D:\SimHub\"
+    (keep the trailing backslash)
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>User.SimHubProDash</AssemblyName>
+    <RootNamespace>SimHubProDash</RootNamespace>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <Deterministic>true</Deterministic>
+    <SimHubDir Condition="'$(SimHubDir)' == ''">C:\Program Files (x86)\SimHub\</SimHubDir>
+    <!-- Copy the built DLL straight into SimHub after each build. Set to false to skip. -->
+    <InstallToSimHub Condition="'$(InstallToSimHub)' == ''">true</InstallToSimHub>
+  </PropertyGroup>
+
+  <!--
+    SimHub-provided assemblies. Private=false so we DON'T copy SimHub's own DLLs
+    next to our plugin (SimHub loads them itself). We only reference SimHub.Plugins
+    and GameReaderCommon; the raw iRacing sample is read via reflection (see
+    IRacingRaw.cs) so we don't hard-bind to IRacingReader / iRacingSDK types.
+  -->
+  <ItemGroup>
+    <Reference Include="SimHub.Plugins">
+      <HintPath>$(SimHubDir)SimHub.Plugins.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="GameReaderCommon">
+      <HintPath>$(SimHubDir)GameReaderCommon.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(SimHubDir)Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- log4net is used by SimHub.Logging; referencing it keeps the compiler happy. -->
+    <Reference Include="log4net">
+      <HintPath>$(SimHubDir)log4net.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Auto-install the freshly built plugin DLL into SimHub. -->
+  <Target Name="InstallToSimHub" AfterTargets="Build" Condition="'$(InstallToSimHub)' == 'true'">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(SimHubDir)" SkipUnchangedFiles="false" />
+    <Message Importance="high" Text="Installed $(TargetFileName) to $(SimHubDir)" />
+  </Target>
+
+  <!-- Also drop the DLL into install\dist\ so the repo's one-click installer ships it. -->
+  <Target Name="CopyToInstallDist" AfterTargets="Build">
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(MSBuildProjectDirectory)\..\install\dist\" SkipUnchangedFiles="false" />
+    <Message Importance="high" Text="Copied $(TargetFileName) to install\dist\" />
+  </Target>
+
+</Project>

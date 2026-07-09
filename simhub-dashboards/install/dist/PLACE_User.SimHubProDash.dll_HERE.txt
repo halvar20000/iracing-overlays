@@ -1,0 +1,12 @@
+Put the compiled plugin DLL in THIS folder, named exactly:
+
+    User.SimHubProDash.dll
+
+(SimHub only loads plugin DLLs whose file name starts with "User.".)
+
+How to get it:
+  - Open ..\..\plugin\SimHubProDash.sln in Visual Studio 2022, Build (Release).
+    The build copies User.SimHubProDash.dll here automatically AND into SimHub.
+  - The one-click installer (..\Install ProDash.bat) then copies it into SimHub.
+If the DLL is absent, the installer still installs the dashboards and just
+skips the plugin copy.

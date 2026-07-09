@@ -37,8 +37,11 @@ git clone --depth 1 "%REPO%" "%TMP%\repo"
 if errorlevel 1 ( echo Clone failed. & pause & exit /b 1 )
 
 echo ==^> Mirroring working files ...
-robocopy "%SRC%." "%TMP%\repo" /MIR /XD .git __pycache__ logs /XF dotd_history.json *.lnk desktop.ini .DS_Store *conflicted* >nul
-if errorlevel 8 ( echo Robocopy failed. & pause & exit /b 1 )
+set "RCLOG=%TMP%\robocopy.log"
+robocopy "%SRC%." "%TMP%\repo" /MIR /R:1 /W:1 /XD .git __pycache__ logs custom_cameras /XF dotd_history.json *.lnk desktop.ini .DS_Store *conflicted* .smbdelete* *.smbdelete* /NP /LOG:"%RCLOG%" >nul
+set "RC=%errorlevel%"
+if %RC% GEQ 16 ( echo Robocopy FATAL error %RC% - nothing copied. See "%RCLOG%". & pause & exit /b 1 )
+if %RC% GEQ 8 ( echo WARNING: robocopy skipped some unreadable files ^(code %RC%^) - continuing. Details in "%RCLOG%". )
 
 cd /d "%TMP%\repo"
 git add -A
