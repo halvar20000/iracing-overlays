@@ -219,6 +219,26 @@ session-best lap.
     names truncate with an ellipsis, and `.ref-name` (pole driver on the
     right) capped at `max-width:150px` + ellipsis. Overall size is now
     constant regardless of name length (both reference modes share the page).
+  • FOLLOW-UP 5 (spectator delta glitch — huge value like "-1027.164"): a
+    replay rewind / session-time backward jump leaves a car's `_car_lap_start`
+    stale, so `elapsed = t - lap_start` goes hugely negative and the computed
+    spectator delta showed nonsense (−1027s). Added a sanity guard in
+    `_spec_cam_delta`: hide the delta (return None/False → overlay shows "—" +
+    "Waiting for a flying lap…") when `elapsed < -0.5` or `> 3600`, or when
+    `abs(delta) > 120` (a real quali delta is seconds, not minutes). Self-heals
+    at the car's next S/F crossing. Covers both pole and own-best spectator
+    views (shared helper). test_qualidelta.py extended (stale-lap-start guard);
+    27/27 pass.
+  • FOLLOW-UP 6 (OBS browser-source flicker): both delta overlays flickered a
+    bit in OBS via the loader. Two front-end fixes (shared page, so both
+    modes): (a) `.card` promoted to its own compositor layer
+    (`transform: translateZ(0); backface-visibility: hidden`) so OBS repaints
+    only the card, not the whole transparent canvas; (b) all render helpers
+    (`renderHeader/renderDelta/renderRef/renderSectors` + a `setText` helper)
+    now write to the DOM ONLY when a value actually changed (guarded via
+    element `dataset`), so unchanged frames trigger no repaint. JS syntax
+    node-checked. Needs an overlay restart + OBS source cache clear to load
+    the new page.
 
 **July 4, 2026 (standings — periodic "positions gained/lost" view):**
 User request: the tower normally shows gap/interval; every 5 min it should

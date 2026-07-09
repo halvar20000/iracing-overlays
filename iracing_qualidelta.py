@@ -360,10 +360,21 @@ class QualiDeltaPoller(SDKPoller):
         if pct is None or surf <= SURF_OFF_TRACK or on_pit:
             return None, False
         elapsed = t - self._car_lap_start[cam]
+        # Guard against a stale lap-start (replay rewind / session-time jump):
+        # a negative or absurdly large elapsed means there is no valid
+        # in-progress lap for this car — hide the delta instead of showing a
+        # nonsense value like -1027s. It self-heals at the car's next S/F.
+        if elapsed < -0.5 or elapsed > 3600:
+            return None, False
         ref = self._interp(ref_pcts, ref_times, pct)
         if ref is None:
             return None, False
-        return (elapsed - ref), True
+        delta = elapsed - ref
+        # A real qualifying delta is seconds, never minutes; anything wilder is
+        # a measurement glitch (out-lap, teleport, time jump) → hide it.
+        if abs(delta) > 120:
+            return None, False
+        return delta, True
 
     def _spec_cam_sector_times(self, cam, pcts, laps, t):
         """Track the on-camera car's raw sector times (independent of any
@@ -680,6 +691,10 @@ PAGE_HTML = """
         display: inline-block; width: 460px; user-select: none;
         border-radius: 6px; overflow: hidden;
         box-shadow: 0 6px 26px rgba(0, 0, 0, 0.6);
+        /* Own compositor layer so OBS repaints only this card, not the whole
+           transparent canvas — kills the browser-source flicker. */
+        transform: translateZ(0);
+        backface-visibility: hidden;
     }
     body.debug .card { box-shadow: 0 0 0 1px rgba(255,255,255,0.12), 0 6px 26px rgba(0,0,0,0.6); }
 
@@ -790,37 +805,53 @@ function fmtLap(sec) {
     return m + ":" + s;
 }
 
+// All render helpers below only touch the DOM when a value actually changed
+// (guarded via dataset), so an unchanged frame triggers no repaint at all —
+// this is what removes the OBS browser-source flicker.
+function setText(el, v) {
+    if (el.dataset.v !== v) { el.dataset.v = v; el.textContent = v; }
+}
+
 function renderHeader(d) {
     const posEl = document.getElementById("pos");
-    if (d.pos && d.pos > 0) { posEl.textContent = d.pos; posEl.classList.remove("hidden"); }
-    else posEl.classList.add("hidden");
+    const posText = (d.pos && d.pos > 0) ? String(d.pos) : "";
+    if (posEl.dataset.v !== posText) {
+        posEl.dataset.v = posText;
+        if (posText) { posEl.textContent = posText; posEl.classList.remove("hidden"); }
+        else posEl.classList.add("hidden");
+    }
 
-    document.getElementById("surname").textContent =
-        d.surname || d.watching || "—";
+    setText(document.getElementById("surname"), d.surname || d.watching || "—");
 
     const licEl = document.getElementById("lic");
-    if (d.lic) {
-        licEl.textContent = d.lic;
-        licEl.style.background = d.lic_color || "var(--green)";
-        licEl.classList.remove("hidden");
-    } else licEl.classList.add("hidden");
+    const licText = d.lic || "";
+    const licCol = d.lic_color || "var(--green)";
+    if (licEl.dataset.v !== licText || licEl.dataset.c !== licCol) {
+        licEl.dataset.v = licText; licEl.dataset.c = licCol;
+        if (licText) {
+            licEl.textContent = licText;
+            licEl.style.background = licCol;
+            licEl.classList.remove("hidden");
+        } else licEl.classList.add("hidden");
+    }
 }
 
 function renderDelta(d, ok) {
     const el = document.getElementById("delta");
-    el.classList.remove("ahead", "behind");
-    if (!ok || d == null) { el.textContent = "—"; return; }
-    el.textContent = (d >= 0 ? "+" : "") + d.toFixed(3);
-    if (d < -0.005) el.classList.add("ahead");        // ahead of pole → green
-    else if (d > 0.005) el.classList.add("behind");   // behind → amber (broadcast look)
+    const text = (!ok || d == null) ? "—" : ((d >= 0 ? "+" : "") + d.toFixed(3));
+    const cls = (ok && d != null && d < -0.005) ? "ahead"
+        : (ok && d != null && d > 0.005) ? "behind" : "";
+    if (el.dataset.t === text && el.dataset.c === cls) return;   // unchanged → no repaint
+    el.dataset.t = text; el.dataset.c = cls;
+    el.className = "delta-big" + (cls ? " " + cls : "");
+    el.textContent = text;
 }
 
 function renderRef(d) {
     // Right block: who set the reference + their lap. In driving mode there's
     // no named holder, so we show the label ("Best") instead of a name.
-    document.getElementById("ref-driver").textContent =
-        d.ref_driver || d.ref_label || "BEST";
-    document.getElementById("ref-time").textContent = fmtLap(d.ref_lap);
+    setText(document.getElementById("ref-driver"), d.ref_driver || d.ref_label || "BEST");
+    setText(document.getElementById("ref-time"), fmtLap(d.ref_lap));
 }
 
 function renderSectors(secs) {
@@ -841,16 +872,17 @@ function renderSectors(secs) {
     }
     secs.forEach((s, i) => {
         const cell = wrap.children[i];
+        let cls, txt;
         if (i === curIdx) {
-            cell.className = "sector current";
-            cell.textContent = "SECTOR " + s.idx;     // in-progress shows full word
+            cls = "sector current"; txt = "SECTOR " + s.idx;   // in-progress: full word
         } else if (s.state === "pending" || s.time == null) {
-            cell.className = "sector pending";
-            cell.textContent = "S" + s.idx;
+            cls = "sector pending"; txt = "S" + s.idx;
         } else {
-            cell.className = "sector " + (s.state || "neutral");
-            cell.textContent = "S" + s.idx;           // colour encodes faster/slower/best
+            cls = "sector " + (s.state || "neutral"); txt = "S" + s.idx;  // colour encodes state
         }
+        // Only write when changed → no needless repaint (anti-flicker).
+        if (cell.dataset.cls !== cls) { cell.dataset.cls = cls; cell.className = cls; }
+        if (cell.dataset.txt !== txt) { cell.dataset.txt = txt; cell.textContent = txt; }
     });
 }
 

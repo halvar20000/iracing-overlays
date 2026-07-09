@@ -222,6 +222,26 @@ def test_own_no_reference_yet():
 
 
 # =============================================================================
+# 3b) Stale lap-start (replay rewind / session-time jump) is hidden, not shown
+# =============================================================================
+def test_stale_lapstart_guard():
+    print("spectator: stale lap-start delta is hidden (the -1027 bug):")
+    p = iq.QualiDeltaPoller()
+    ref_p = [0.0, 0.5, 1.0]
+    ref_t = [0.0, 25.0, 50.0]
+    # lap-start far in the "future" vs t -> elapsed hugely negative
+    p._car_lap_start = {0: 5000.0}
+    d, ok = p._spec_cam_delta(0, ref_p, ref_t, [0.5, 0.5], [False, False],
+                              [3, 3], 100.0)
+    check("hugely negative elapsed -> hidden", d is None and ok is False)
+    # a normal in-progress lap still reads a sane delta
+    p._car_lap_start = {0: 100.0}
+    d, ok = p._spec_cam_delta(0, ref_p, ref_t, [0.5, 0.5], [False, False],
+                              [3, 3], 124.0)
+    check("normal lap -> delta shown", approx(d, -1.0) and ok is True)
+
+
+# =============================================================================
 # 4) _colorize_sectors faster/slower/pending logic
 # =============================================================================
 def test_colorize():
@@ -238,6 +258,7 @@ if __name__ == "__main__":
     test_driving()
     test_spectator()
     test_own_no_reference_yet()
+    test_stale_lapstart_guard()
     test_colorize()
     print(f"\n{PASS}/{PASS + FAIL} checks passed"
           + ("" if FAIL == 0 else f"  ({FAIL} FAILED)"))
