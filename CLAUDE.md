@@ -147,6 +147,41 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**July 9, 2026 (quali delta — "vs OWN BEST" reference mode added):**
+User wanted a second version of the Quali Delta overlay that compares each
+driver against their OWN fastest lap instead of the session best (pole).
+Chosen delivery (user picked): a MODE TOGGLE on the existing overlay
+(`iracing_qualidelta.py`, port 5014) — NOT a new port — so no launcher /
+make_obs_loaders changes were needed. Reference = the driver's own
+session-best lap.
+  • BOTH references are computed server-side every snapshot and returned
+    under a new `refs` dict: `refs.session` (vs pole, the old behavior) and
+    `refs.own` (vs own best). The front-end picks which to show, so you can
+    even run TWO OBS browser sources at once: `http://localhost:5014`
+    (pole) and `http://localhost:5014/?ref=own` (own best). Live toggle
+    with the **M** key; `?ref=own` sets the default.
+  • DRIVING mode: own view uses iRacing's predictive `LapDeltaToBestLap`
+    (+`_OK`); pole view keeps `LapDeltaToSessionBestLap`. Sector chips were
+    already computed vs the driver's own best lap, so both views share them.
+  • SPECTATOR mode: refactored the single pole-reference builder into a
+    PER-CAR own-best reference (`_car_ref[idx]`, via new `_store_car_ref`);
+    the pole reference is simply the fastest car's curve. Own delta =
+    on-camera car's live elapsed vs its OWN scaled best-lap curve. Sector
+    tracking now records raw times once (`_spec_cam_sector_times`) and
+    `_colorize_sectors` tints them against whichever reference is active.
+    Anchored to official `CarIdxBestLapTime` (deleted laps never become the
+    reference), same guard as pole. Shows "Building this driver's best
+    lap…" until the on-camera car has set a clean lap.
+  • Verified offline (`test_qualidelta.py`, stubbed irsdk/flask, synthetic
+    laps): driving own-vs-pole deltas, spectator own delta (−1.0 under own
+    best) distinct from pole delta (0.0 on pole pace), own-reference absent
+    until a lap is set, sector colorization. 25/25 pass.
+  • NOTE: the cowork SMB mount again served STALE/truncated copies of the
+    edited file for the whole session (byte-compile on the mount failed on
+    an "unterminated string" that wasn't real) — verified via the direct
+    file tools and by running the test from a faithful logic copy in the
+    fresh outputs mount. The real file on disk has all edits.
+
 **July 4, 2026 (standings — periodic "positions gained/lost" view):**
 User request: the tower normally shows gap/interval; every 5 min it should
 flip for 20 s to show how many places each driver has gained/lost, then

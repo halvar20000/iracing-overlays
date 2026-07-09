@@ -20,16 +20,30 @@ modes that it switches between automatically:
       usable but a touch less precise than the driving-yourself delta.)
 
 What it shows either way:
-  * Big centre-zero delta to the SESSION best lap (green = ahead of pole,
-    red = behind) with a bar that fills toward the side you're gaining.
-  * Per-sector split chips (green faster / red slower vs the pole lap's
-    sectors; purple = new personal-best sector in driving mode).
+  * Big centre-zero delta (green = ahead, red/amber = behind) with a bar
+    that fills toward the side you're gaining.
+  * Per-sector split chips (green faster / red slower vs the reference
+    lap's sectors; purple = new personal-best sector in driving mode).
+
+TWO REFERENCE MODES (toggle with the M key, or open ?ref=own):
+  * "vs POLE"      — delta to the SESSION best lap (the fastest car).
+                     This is the default.
+  * "vs OWN BEST"  — delta to the driver's OWN fastest lap this session,
+                     so each driver runs against their own time. In
+                     driving mode this uses iRacing's LapDeltaToBestLap;
+                     while spectating it uses the on-camera car's own
+                     best-lap reference curve.
+  Both modes are computed at once, so you can run TWO OBS browser sources
+  — one at http://localhost:5014 (pole) and one at
+  http://localhost:5014/?ref=own (own best) — side by side.
 
 Requirements:  pip install pyirsdk flask
 Run:           python iracing_qualidelta.py
-Open:          http://localhost:5014
+Open:          http://localhost:5014          (vs pole)
+               http://localhost:5014/?ref=own (vs own best)
 Stream:        transparent background by default (OBS browser source).
                Press H (or add ?debug=1) for a debug background.
+               Press M to toggle pole / own-best reference.
 """
 
 import bisect
@@ -83,6 +97,10 @@ class QualiDeltaPoller(SDKPoller):
         self._car_valid = {}          # idx -> clean-lap flag
         self._car_last_buf = {}       # idx -> last completed CLEAN full-lap buffer
         self._car_last_meas = {}      # idx -> sampled time of that buffer
+        # per-car own-best reference curves (idx -> dict). Every car that has
+        # set a valid lap gets a scaled (pct -> elapsed) curve of its OWN best
+        # lap; the pole reference below is simply the fastest car's curve.
+        self._car_ref = {}
         # session-best (pole) reference curve
         self._ref_pcts = []           # sorted pct samples
         self._ref_times = []          # elapsed time at each pct (scaled to pole)
@@ -91,12 +109,12 @@ class QualiDeltaPoller(SDKPoller):
         self._ref_src = None          # (car_idx, pole_time) the ref curve came from
         self._session_best = None     # official pole time (min CarIdxBestLapTime)
         self._ref_driver_idx = None   # car idx that holds the pole/reference lap
-        # on-camera car sector tracking
+        # on-camera car sector tracking (raw times; colorized per reference)
         self._cam_idx = None
         self._cam_lap = None
         self._cam_sec_idx = 0
         self._cam_sec_enter_t = None
-        self._cam_display = []
+        self._cam_sec_times = []      # raw completed sector times (None = pending)
 
     def _load_sectors(self):
         """Sector boundaries from SplitTimeInfo; fall back to 3 equal
@@ -256,42 +274,62 @@ class QualiDeltaPoller(SDKPoller):
 
         self._update_pole_reference(bestlaps)
 
+    def _store_car_ref(self, idx, best):
+        """Build/refresh car `idx`'s OWN best-lap reference curve from its most
+        recent clean lap, but only when that lap IS its official best (so a
+        later in/out lap can't overwrite the reference). `CarIdxBestLapTime`
+        only holds VALID laps, so a fast-but-deleted (track-limits) lap never
+        becomes the reference. The curve is scaled so its total equals the
+        official best time exactly."""
+        buf = self._car_last_buf.get(idx)
+        meas = self._car_last_meas.get(idx)
+        if not buf or meas is None or meas <= 0:
+            return
+        # The car's most recent clean lap must BE its best lap (not a later
+        # in/out lap) — its sampled time should match the official best.
+        if abs(meas - best) > 0.4:
+            return
+        src = (idx, round(best, 3))
+        existing = self._car_ref.get(idx)
+        if existing and existing.get("src") == src:
+            return   # already using this exact best lap
+        raw_times = [e for _, e in buf]
+        total = raw_times[-1] if raw_times else 0.0
+        factor = (best / total) if total > 0 else 1.0
+        pcts = [p for p, _ in buf]
+        times = [e * factor for e in raw_times]   # scale total -> official best
+        self._car_ref[idx] = {
+            "pcts": pcts,
+            "times": times,
+            "laptime": best,
+            "sectors": self._compute_ref_sectors(pcts, times),
+            "src": src,
+        }
+
     def _update_pole_reference(self, bestlaps):
-        """Pick the pole reference from iRacing's OFFICIAL session best.
-        `CarIdxBestLapTime` only holds VALID laps, so a fast-but-deleted
-        (track-limits) lap never becomes pole. The displayed pole time is
-        this official value; the reference curve is the pole car's matching
-        clean lap, scaled so its total equals the official time exactly."""
+        """Refresh every car's own-best reference curve, then set the POLE
+        reference to the fastest car's curve (min CarIdxBestLapTime)."""
         best = None
         pole_idx = None
         for idx in range(len(bestlaps)):
             b = bestlaps[idx]
-            if b and b > 0 and (best is None or b < best):
-                best = b
-                pole_idx = idx
+            if b and b > 0:
+                self._store_car_ref(idx, b)
+                if best is None or b < best:
+                    best = b
+                    pole_idx = idx
         self._session_best = best
         if best is None or pole_idx is None:
             return
         self._ref_driver_idx = pole_idx   # who's on pole (for the header)
-        buf = self._car_last_buf.get(pole_idx)
-        meas = self._car_last_meas.get(pole_idx)
-        if not buf or meas is None or meas <= 0:
+        r = self._car_ref.get(pole_idx)
+        if not r:
             return
-        # The pole car's most recent clean lap must BE the pole lap (not a
-        # later in/out lap) — its sampled time should match the official best.
-        if abs(meas - best) > 0.4:
-            return
-        src = (pole_idx, round(best, 3))
-        if src == self._ref_src:
-            return   # already using this exact pole lap
-        raw_times = [e for _, e in buf]
-        total = raw_times[-1] if raw_times else 0.0
-        factor = (best / total) if total > 0 else 1.0
-        self._ref_pcts = [p for p, _ in buf]
-        self._ref_times = [e * factor for e in raw_times]   # scale total -> official pole
-        self._ref_laptime = best
-        self._ref_sectors = self._compute_ref_sectors(self._ref_pcts, self._ref_times)
-        self._ref_src = src
+        self._ref_pcts = r["pcts"]
+        self._ref_times = r["times"]
+        self._ref_laptime = r["laptime"]
+        self._ref_sectors = r["sectors"]
+        self._ref_src = r["src"]
 
     def _compute_ref_sectors(self, pcts, times):
         if self._sector_pcts is None:
@@ -306,8 +344,11 @@ class QualiDeltaPoller(SDKPoller):
             secs.append(tb - ta)
         return secs
 
-    def _spec_cam_delta(self, cam, pcts, on_pits, surfaces, t):
-        if cam is None or cam < 0 or not self._ref_pcts:
+    def _spec_cam_delta(self, cam, ref_pcts, ref_times, pcts, on_pits, surfaces, t):
+        """Live delta of the on-camera car against a given reference curve
+        (`ref_pcts`/`ref_times`). Used for both the pole curve and the car's
+        own best-lap curve."""
+        if cam is None or cam < 0 or not ref_pcts:
             return None, False
         if cam not in self._car_lap_start:
             return None, False
@@ -317,12 +358,15 @@ class QualiDeltaPoller(SDKPoller):
         if pct is None or surf <= SURF_OFF_TRACK or on_pit:
             return None, False
         elapsed = t - self._car_lap_start[cam]
-        ref = self._interp(self._ref_pcts, self._ref_times, pct)
+        ref = self._interp(ref_pcts, ref_times, pct)
         if ref is None:
             return None, False
         return (elapsed - ref), True
 
-    def _spec_cam_sectors(self, cam, pcts, laps, t):
+    def _spec_cam_sector_times(self, cam, pcts, laps, t):
+        """Track the on-camera car's raw sector times (independent of any
+        reference). Returns a list of completed sector times (None = pending).
+        Colorize it against a reference with `_colorize_sectors`."""
         if self._sector_pcts is None:
             self._load_sectors()
         n = len(self._sector_pcts)
@@ -332,37 +376,44 @@ class QualiDeltaPoller(SDKPoller):
         pct = pcts[cam] if cam < len(pcts) else None
         lap = laps[cam] if cam < len(laps) else None
         if pct is None or lap is None:
-            return self._cam_display
-        # camera switched OR the watched car started a new lap → reset chips
+            return self._cam_sec_times
+        # camera switched OR the watched car started a new lap → reset times
         if cam != self._cam_idx or lap != self._cam_lap:
             self._cam_idx = cam
             self._cam_lap = lap
             self._cam_sec_idx = 0
             self._cam_sec_enter_t = self._car_lap_start.get(cam, t)
-            self._cam_display = [
-                {"idx": i + 1, "time": None, "delta": None, "state": "pending"}
-                for i in range(n)
-            ]
-            return self._cam_display
+            self._cam_sec_times = [None] * n
+            return self._cam_sec_times
         nxt = self._cam_sec_idx + 1
         if nxt < n and pct >= self._sector_pcts[nxt]:
             sec_time = t - self._cam_sec_enter_t
-            ref = self._ref_sectors[self._cam_sec_idx] if self._cam_sec_idx < len(self._ref_sectors) else None
-            delta = (sec_time - ref) if ref is not None else None
+            if self._cam_sec_idx < len(self._cam_sec_times):
+                self._cam_sec_times[self._cam_sec_idx] = sec_time
+            self._cam_sec_idx = nxt
+            self._cam_sec_enter_t = t
+        return self._cam_sec_times
+
+    @staticmethod
+    def _colorize_sectors(times, ref_sectors):
+        """Turn raw sector times + a reference sector list into display chips
+        (faster / slower / neutral / pending)."""
+        out = []
+        for i, st in enumerate(times or []):
+            if st is None:
+                out.append({"idx": i + 1, "time": None, "delta": None,
+                            "state": "pending"})
+                continue
+            ref = ref_sectors[i] if ref_sectors and i < len(ref_sectors) else None
+            delta = (st - ref) if ref is not None else None
             if delta is not None and delta < 0:
                 state = "faster"
             elif delta is not None:
                 state = "slower"
             else:
                 state = "neutral"
-            if self._cam_sec_idx < len(self._cam_display):
-                self._cam_display[self._cam_sec_idx] = {
-                    "idx": self._cam_sec_idx + 1, "time": sec_time,
-                    "delta": delta, "state": state,
-                }
-            self._cam_sec_idx = nxt
-            self._cam_sec_enter_t = t
-        return self._cam_display
+            out.append({"idx": i + 1, "time": st, "delta": delta, "state": state})
+        return out
 
     def _cam_driver(self, cam):
         if cam is None or cam < 0:
@@ -458,31 +509,51 @@ class QualiDeltaPoller(SDKPoller):
             on_pit = bool(ir["OnPitRoad"])
             if pct is not None and lap is not None and t is not None:
                 self._update_sectors(pct, lap, t, on_pit, on_track)
-            delta = ir["LapDeltaToSessionBestLap"]
-            delta_ok = bool(ir["LapDeltaToSessionBestLap_OK"])
+            # vs POLE (session best) — iRacing's predictive session-best delta
+            s_delta = ir["LapDeltaToSessionBestLap"]
+            s_ok = bool(ir["LapDeltaToSessionBestLap_OK"])
+            # vs OWN BEST — iRacing's predictive own-best delta
+            o_delta = ir["LapDeltaToBestLap"]
+            o_ok = bool(ir["LapDeltaToBestLap_OK"])
+            own_best = ir["LapBestLapTime"] or 0.0
             try:
                 dci = self.ir["DriverInfo"]["DriverCarIdx"] if self.ir["DriverInfo"] else None
             except Exception:
                 dci = None
             info = self._driver_info(dci)
+            # Sector chips in driving mode are already computed vs the driver's
+            # own best lap, so both reference views share them.
             return {
                 "connected": True,
                 "mode": "driving",
                 "watching": "YOU",
                 "session_label": label,
-                "delta": float(delta) if delta is not None else None,
-                "delta_ok": delta_ok,
-                "sectors": self._display_sectors,
-                "have_reference": True,
-                "ref_label": "Best",
-                "ref_lap": ir["LapBestLapTime"] or 0.0,
                 "last_lap": ir["LapLastLapTime"] or 0.0,
                 "pos": int(ir["PlayerCarPosition"] or 0),
                 "number": info["number"],
                 "surname": info["surname"] or "YOU",
                 "lic": info["lic"],
                 "lic_color": info["lic_color"],
-                "ref_driver": "",
+                "refs": {
+                    "session": {
+                        "delta": float(s_delta) if s_delta is not None else None,
+                        "delta_ok": s_ok,
+                        "sectors": self._display_sectors,
+                        "have_reference": True,
+                        "ref_label": "Pole",
+                        "ref_lap": own_best,
+                        "ref_driver": "",
+                    },
+                    "own": {
+                        "delta": float(o_delta) if o_delta is not None else None,
+                        "delta_ok": o_ok,
+                        "sectors": self._display_sectors,
+                        "have_reference": own_best > 0,
+                        "ref_label": "Own Best",
+                        "ref_lap": own_best,
+                        "ref_driver": "",
+                    },
+                },
             }
 
         # ── SPECTATOR MODE ──────────────────────────────────────────────
@@ -497,11 +568,30 @@ class QualiDeltaPoller(SDKPoller):
 
         self._spec_update_refs(pcts, laps, on_pits, surfaces, bestlaps, t)
         cam = ir["CamCarIdx"]
-        delta, ok = self._spec_cam_delta(cam, pcts, on_pits, surfaces, t)
-        sectors = self._spec_cam_sectors(cam, pcts, laps, t)
+
+        # vs POLE — the session-best (fastest car) reference curve
+        s_delta, s_ok = self._spec_cam_delta(
+            cam, self._ref_pcts, self._ref_times, pcts, on_pits, surfaces, t)
+        # vs OWN BEST — the on-camera car's own best-lap reference curve
+        own_ref = self._car_ref.get(cam) if cam is not None else None
+        if own_ref:
+            o_delta, o_ok = self._spec_cam_delta(
+                cam, own_ref["pcts"], own_ref["times"], pcts, on_pits, surfaces, t)
+        else:
+            o_delta, o_ok = None, False
+
+        # raw sector times are reference-independent → colorize per reference
+        sec_times = self._spec_cam_sector_times(cam, pcts, laps, t)
+        s_sectors = self._colorize_sectors(sec_times, self._ref_sectors)
+        o_sectors = self._colorize_sectors(
+            sec_times, own_ref["sectors"] if own_ref else [])
+
         cam_last = 0.0
         if cam is not None and 0 <= cam < len(lastlaps):
             cam_last = lastlaps[cam] if lastlaps[cam] and lastlaps[cam] > 0 else 0.0
+        cam_best = 0.0
+        if cam is not None and 0 <= cam < len(bestlaps):
+            cam_best = bestlaps[cam] if bestlaps[cam] and bestlaps[cam] > 0 else 0.0
 
         info = self._driver_info(cam)
         ref_info = self._driver_info(self._ref_driver_idx)
@@ -514,19 +604,32 @@ class QualiDeltaPoller(SDKPoller):
             "mode": "spectator",
             "watching": self._cam_driver(cam),
             "session_label": label,
-            "delta": float(delta) if delta is not None else None,
-            "delta_ok": ok,
-            "sectors": sectors,
-            "have_reference": bool(self._ref_pcts),
-            "ref_label": "Pole",
-            "ref_lap": self._session_best or 0.0,
             "last_lap": cam_last,
             "pos": int(pos),
             "number": info["number"],
             "surname": info["surname"],
             "lic": info["lic"],
             "lic_color": info["lic_color"],
-            "ref_driver": ref_info["surname"],
+            "refs": {
+                "session": {
+                    "delta": float(s_delta) if s_delta is not None else None,
+                    "delta_ok": s_ok,
+                    "sectors": s_sectors,
+                    "have_reference": bool(self._ref_pcts),
+                    "ref_label": "Pole",
+                    "ref_lap": self._session_best or 0.0,
+                    "ref_driver": ref_info["surname"],
+                },
+                "own": {
+                    "delta": float(o_delta) if o_delta is not None else None,
+                    "delta_ok": o_ok,
+                    "sectors": o_sectors,
+                    "have_reference": bool(own_ref),
+                    "ref_label": "Own Best",
+                    "ref_lap": cam_best,
+                    "ref_driver": "",
+                },
+            },
         }
 
 
@@ -779,17 +882,24 @@ async function tick() {
     document.getElementById("live").classList.remove("hidden");
     document.getElementById("idle").classList.add("hidden");
 
-    renderHeader(d);
-    renderDelta(d.delta, d.delta_ok);
-    renderRef(d);
-    renderSectors(d.sectors);
+    // Pick the active reference view (vs pole / vs own best) and merge it over
+    // the shared header fields. Fall back to a flat payload for safety.
+    const ref = (d.refs && (d.refs[refMode] || d.refs.session)) || d;
+    const view = Object.assign({}, d, ref);
 
-    // "Building reference…" note while spectating before a pole lap exists
+    renderHeader(view);
+    renderDelta(view.delta, view.delta_ok);
+    renderRef(view);
+    renderSectors(view.sectors);
+
+    // Status note while spectating before a reference lap exists
     const note = document.getElementById("note");
-    if (d.mode === "spectator" && !d.have_reference) {
+    if (view.mode === "spectator" && !view.have_reference) {
         note.classList.remove("hidden");
-        note.textContent = "Building reference lap…";
-    } else if (d.mode === "spectator" && !d.delta_ok) {
+        note.textContent = (refMode === "own")
+            ? "Building this driver's best lap…"
+            : "Building reference lap…";
+    } else if (view.mode === "spectator" && !view.delta_ok) {
         note.classList.remove("hidden");
         note.textContent = "Waiting for a flying lap…";
     } else {
@@ -797,10 +907,19 @@ async function tick() {
     }
 }
 
+// Reference mode: "session" (vs pole, default) or "own" (vs own best lap).
+// Set with ?ref=own in the URL, or toggle live with the M key.
+let refMode = (new URLSearchParams(location.search).get("ref") === "own")
+    ? "own" : "session";
+
 // Stream mode: transparent by default; H (or ?debug=1) shows a debug bg.
 function applyDebug(on) { document.body.classList.toggle("debug", on); }
 document.addEventListener("keydown", e => {
     if (e.key === "h" || e.key === "H") applyDebug(!document.body.classList.contains("debug"));
+    if (e.key === "m" || e.key === "M") {
+        refMode = (refMode === "own") ? "session" : "own";
+        tick();
+    }
 });
 if (new URLSearchParams(location.search).get("debug") === "1") applyDebug(true);
 
@@ -831,10 +950,12 @@ if __name__ == "__main__":
 
     print("\n" + "=" * 60)
     print("  iRacing Qualifying Delta Overlay")
-    print(f"  Open in browser:  http://localhost:{PORT}")
+    print(f"  vs POLE:      http://localhost:{PORT}")
+    print(f"  vs OWN BEST:  http://localhost:{PORT}/?ref=own")
     print("  Transparent background — add as an OBS browser source.")
     print("  DRIVING: iRacing predictive delta for your own car.")
-    print("  SPECTATING: computed delta for the on-camera car vs pole.")
+    print("  SPECTATING: computed delta for the on-camera car.")
+    print("  Reference: POLE (session best) or OWN BEST — press M to toggle.")
     print("  Press H (or ?debug=1) for a debug background.")
     print("  Press Ctrl+C to stop")
     print("=" * 60 + "\n")
