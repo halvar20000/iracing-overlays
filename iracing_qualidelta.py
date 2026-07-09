@@ -25,7 +25,7 @@ What it shows either way:
   * Per-sector split chips (green faster / red slower vs the reference
     lap's sectors; purple = new personal-best sector in driving mode).
 
-TWO REFERENCE MODES (toggle with the M key, or open ?ref=own):
+TWO REFERENCE MODES (toggle with the M key, or use the /own path):
   * "vs POLE"      — delta to the SESSION best lap (the fastest car).
                      This is the default.
   * "vs OWN BEST"  — delta to the driver's OWN fastest lap this session,
@@ -35,12 +35,14 @@ TWO REFERENCE MODES (toggle with the M key, or open ?ref=own):
                      best-lap reference curve.
   Both modes are computed at once, so you can run TWO OBS browser sources
   — one at http://localhost:5014 (pole) and one at
-  http://localhost:5014/?ref=own (own best) — side by side.
+  http://localhost:5014/own (own best) — side by side. (The legacy
+  ?ref=own query string still works, but /own is preferred for OBS
+  browser sources, which handle query-string-free iframe URLs better.)
 
 Requirements:  pip install pyirsdk flask
 Run:           python iracing_qualidelta.py
-Open:          http://localhost:5014          (vs pole)
-               http://localhost:5014/?ref=own (vs own best)
+Open:          http://localhost:5014        (vs pole)
+               http://localhost:5014/own    (vs own best)
 Stream:        transparent background by default (OBS browser source).
                Press H (or add ?debug=1) for a debug background.
                Press M to toggle pole / own-best reference.
@@ -908,8 +910,11 @@ async function tick() {
 }
 
 // Reference mode: "session" (vs pole, default) or "own" (vs own best lap).
-// Set with ?ref=own in the URL, or toggle live with the M key.
-let refMode = (new URLSearchParams(location.search).get("ref") === "own")
+// Set with the /own path OR ?ref=own in the URL, or toggle live with the M key.
+// The /own path is preferred for OBS loaders (no query string needed, which
+// OBS browser sources handle more reliably inside an iframe).
+let refMode = (location.pathname.replace(/\/+$/, "") === "/own"
+    || new URLSearchParams(location.search).get("ref") === "own")
     ? "own" : "session";
 
 // Stream mode: transparent by default; H (or ?debug=1) shows a debug bg.
@@ -936,6 +941,13 @@ def index():
     return render_template_string(PAGE_HTML)
 
 
+@app.route("/own")
+def index_own():
+    # Same page, but the front-end reads the /own path and defaults to the
+    # OWN-BEST reference. Lets OBS loaders use a clean query-string-free URL.
+    return render_template_string(PAGE_HTML)
+
+
 @app.route("/status")
 def status():
     return jsonify(poller.get())
@@ -951,7 +963,7 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("  iRacing Qualifying Delta Overlay")
     print(f"  vs POLE:      http://localhost:{PORT}")
-    print(f"  vs OWN BEST:  http://localhost:{PORT}/?ref=own")
+    print(f"  vs OWN BEST:  http://localhost:{PORT}/own")
     print("  Transparent background — add as an OBS browser source.")
     print("  DRIVING: iRacing predictive delta for your own car.")
     print("  SPECTATING: computed delta for the on-camera car.")

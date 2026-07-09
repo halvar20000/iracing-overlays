@@ -40,7 +40,7 @@ OVERLAYS = [
     ("line",          "Corner Cues",      5012),
     ("dotd",          "Driver of the Day", 5013),
     ("delta",         "Quali Delta",      5014),
-    ("delta_own",     "Quali Delta (Own Best)", 5014, "/?ref=own"),
+    ("delta_own",     "Quali Delta (Own Best)", 5014, "/own", "redirect"),
     ("catch",         "Catch-Up Battle",  5015),
     ("weather",       "Weather",          5016),
     ("driver",        "Driver Card",      5017),
@@ -102,16 +102,68 @@ TEMPLATE = """<!doctype html>
 </html>
 """
 
+# Some overlays (e.g. the Quali Delta "own best" view at /own) would not run
+# reliably inside OBS's iframe — the embedded page couldn't reach /status and
+# showed "Waiting for server…". For those, mark the entry with a 5th field
+# "redirect": the loader waits for the server, then navigates straight to the
+# overlay (top-level page, exactly like opening the URL directly), which OBS
+# renders reliably. Since loaders are "load-once", this is equivalent to the
+# iframe version for self-healing.
+REDIRECT_TEMPLATE = """<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{name} — loader</title>
+<style>
+  html, body {{
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0); overflow: hidden;
+  }}
+</style>
+</head>
+<body>
+<script>
+  // SELF-HEALING loader (REDIRECT variant). Waits until the overlay server
+  // first answers, then navigates THIS page straight to the overlay so it runs
+  // as a normal top-level page — identical to opening the URL directly, which
+  // OBS renders reliably. The overlay page then recovers from any later server
+  // hiccup on its own (it keeps polling /status and re-renders), so we never
+  // reload it.
+  var URL_ = "http://localhost:{port}{path}";
+
+  function ping() {{
+    return fetch(URL_, {{ mode: "no-cors", cache: "no-store" }})
+      .then(function () {{ return true; }})
+      .catch(function () {{ return false; }});
+  }}
+
+  function tick() {{
+    ping().then(function (up) {{
+      if (up) {{
+        window.location.replace(URL_);
+      }} else {{
+        setTimeout(tick, 1500);
+      }}
+    }});
+  }}
+  tick();
+</script>
+</body>
+</html>
+"""
+
 def main():
     outdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "obs_loaders")
     os.makedirs(outdir, exist_ok=True)
     for entry in OVERLAYS:
         stem, name, port = entry[0], entry[1], entry[2]
         path = entry[3] if len(entry) > 3 else "/"
+        mode = entry[4] if len(entry) > 4 else "iframe"
+        tmpl = REDIRECT_TEMPLATE if mode == "redirect" else TEMPLATE
         out = os.path.join(outdir, stem + ".html")
         with open(out, "w", encoding="utf-8") as f:
-            f.write(TEMPLATE.format(name=name, port=port, path=path))
-        print(f"  written  {out}  ->  http://localhost:{port}{path}")
+            f.write(tmpl.format(name=name, port=port, path=path))
+        print(f"  written  {out}  ->  http://localhost:{port}{path}  ({mode})")
     print(f"\n{len(OVERLAYS)} loader pages in {outdir}")
     print("In OBS: Browser source -> check 'Local file' -> pick the .html")
 

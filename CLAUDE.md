@@ -181,13 +181,38 @@ session-best lap.
     an "unterminated string" that wasn't real) — verified via the direct
     file tools and by running the test from a faithful logic copy in the
     fresh outputs mount. The real file on disk has all edits.
-  • FOLLOW-UP: added a self-healing OBS loader for the own-best URL —
-    `obs_loaders/delta_own.html` (→ `http://localhost:5014/?ref=own`) and a
-    matching `make_obs_loaders.py` entry `("delta_own", "Quali Delta (Own
-    Best)", 5014, "/?ref=own")`, so the two references can be dropped into
-    OBS as two separate local-file browser sources (delta.html = pole,
-    delta_own.html = own best). Loaders share the same port/server; only
-    the URL param differs. No launcher changes (same overlay/port).
+  • FOLLOW-UP: added a self-healing OBS loader for the own-best view —
+    `obs_loaders/delta_own.html` and a matching `make_obs_loaders.py` entry
+    `("delta_own", "Quali Delta (Own Best)", 5014, "/own")`, so the two
+    references can be dropped into OBS as two separate local-file browser
+    sources (delta.html = pole, delta_own.html = own best). Loaders share
+    the same port/server. No launcher changes (same overlay/port).
+  • FOLLOW-UP 2 (OBS loader "Waiting for server…" bug): the first
+    delta_own loader pointed the iframe at `http://localhost:5014/?ref=own`.
+    In OBS it showed the overlay for a few seconds then fell back to the
+    overlay's "Waiting for server…" idle. Root cause suspected: OBS's
+    Chromium browser source handles a QUERY STRING inside the loaded iframe
+    URL poorly (the working pole loader has none). Fix: added a dedicated
+    **`/own` Flask route** (serves the same page; the front-end now sets
+    own mode from `location.pathname == "/own"` OR the legacy `?ref=own`),
+    and repointed `delta_own.html` + the `make_obs_loaders.py` entry to the
+    clean query-string-free `http://localhost:5014/own`. `?ref=own` still
+    works for opening directly in a browser.
+  • FOLLOW-UP 3 (self-healing loader still "Waiting for server…" in OBS):
+    with the /own route the DIRECT browser source (URL) worked in OBS after
+    an OBS cache clear, but the self-healing LOCAL-FILE loader still stuck on
+    "Waiting for server…". Symptom: the overlay embedded in the loader's
+    iframe couldn't reach /status, even though the same URL worked top-level.
+    Fix: converted `delta_own.html` from the shared IFRAME loader to a
+    REDIRECT loader — it pings until the server answers, then
+    `window.location.replace()`s to `http://localhost:5014/own`, so the
+    overlay runs as a normal top-level page (identical to the working direct
+    source) and self-heals via its own /status polling. Added a
+    `REDIRECT_TEMPLATE` to `make_obs_loaders.py` and a 5th entry field
+    ("redirect") so regeneration keeps it; the iframe template is unchanged
+    for every other loader. Since loaders are "load-once" now, redirect ==
+    iframe for self-healing. NOTE: after swapping the file, the OBS source
+    must have its cache cleared / be re-added to pick up the new loader.
 
 **July 4, 2026 (standings — periodic "positions gained/lost" view):**
 User request: the tower normally shows gap/interval; every 5 min it should
