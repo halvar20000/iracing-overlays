@@ -40,6 +40,7 @@ OVERLAYS = [
     ("line",          "Corner Cues",      5012),
     ("dotd",          "Driver of the Day", 5013),
     ("delta",         "Quali Delta",      5014),
+    ("delta_own",     "Quali Delta (Own Best)", 5014, "/?ref=own"),
     ("catch",         "Catch-Up Battle",  5015),
     ("weather",       "Weather",          5016),
     ("driver",        "Driver Card",      5017),

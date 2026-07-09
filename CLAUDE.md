@@ -181,6 +181,13 @@ session-best lap.
     an "unterminated string" that wasn't real) — verified via the direct
     file tools and by running the test from a faithful logic copy in the
     fresh outputs mount. The real file on disk has all edits.
+  • FOLLOW-UP: added a self-healing OBS loader for the own-best URL —
+    `obs_loaders/delta_own.html` (→ `http://localhost:5014/?ref=own`) and a
+    matching `make_obs_loaders.py` entry `("delta_own", "Quali Delta (Own
+    Best)", 5014, "/?ref=own")`, so the two references can be dropped into
+    OBS as two separate local-file browser sources (delta.html = pole,
+    delta_own.html = own best). Loaders share the same port/server; only
+    the URL param differs. No launcher changes (same overlay/port).
 
 **July 4, 2026 (standings — periodic "positions gained/lost" view):**
 User request: the tower normally shows gap/interval; every 5 min it should
