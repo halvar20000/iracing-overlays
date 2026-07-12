@@ -10,12 +10,17 @@ Requirements:  pip install pyirsdk flask requests
 Run:           python iracing_race_logger.py
 Open:          http://localhost:5009    (status page + download link)
 
-What's captured per race:
+What's captured per session:
   - session_start  — track, session type, drivers list (iRating /
                      license / team / car), weather at the start
   - lap            — every lap completion by every driver: lap
                      number, lap time, position at S/F, gap to
-                     leader, pit flag, best-lap-so-far
+                     leader, pit flag, best-lap-so-far. For the LOCAL
+                     player's car the lap also carries tire_temps and a
+                     `fuel` block (level, level_pct, used_this_lap,
+                     avg_per_lap, laps_remaining_est, use_per_hour).
+                     iRacing only broadcasts tire/fuel telemetry for the
+                     local car, so these are absent for spectated drivers.
   - incident       — fetched from the dashboard's /incidents feed
                      (port 5000); deduped, so the same incident is
                      never written twice
@@ -23,10 +28,13 @@ What's captured per race:
                      checkered (positions, laps completed, best lap,
                      incident count, finished / DNF / DQ)
 
-Output: logs/<YYYYMMDD-HHMMSS>_<track>_race.jsonl
+Output: logs/<YYYYMMDD-HHMMSS>_<track>_<sessiontype>.jsonl
+        (e.g. ..._race.jsonl, ..._practice.jsonl)
 
-Practice / qualifying sessions are intentionally NOT logged. Add a
-toggle here later if that ever changes.
+Race AND Practice sessions are logged (including hosted "Practice Only"
+events, which iRacing reports as SessionType "Practice"). Qualifying and
+Warmup sessions are still skipped. Driver-of-the-Day is computed for race
+sessions only.
 """
 
 from __future__ import annotations
@@ -98,6 +106,15 @@ CAR_PENALTY_BITS = {
 # A lap > average × this is flagged as anomalous (rolling 5-lap window).
 SLOW_LAP_THRESHOLD = 1.10
 SLOW_LAP_HISTORY   = 5
+
+# --- Fuel tracking (LOCAL PLAYER ONLY) ---
+# iRacing broadcasts fuel telemetry (FuelLevel / FuelLevelPct /
+# FuelUsePerHour) ONLY for the local player's car — there is no per-car
+# fuel array, same limitation as tire temps. So fuel data is attached to
+# a lap event only when that lap belongs to the driver running this PC.
+# Rolling window used to average per-lap fuel consumption and to estimate
+# how many laps of fuel remain.
+FUEL_AVG_WINDOW = 5
 
 # --- Live charts ---
 # Stable per-driver palette used by the chart-render endpoint. Indexed
@@ -205,6 +222,14 @@ class RaceLogger(SDKPoller):
         # broadcast-camera hint ("driver just did something weird").
         self._lap_history: dict[int, deque[float]] = {}
 
+        # Fuel tracking (LOCAL PLAYER ONLY — see FUEL_AVG_WINDOW note).
+        # _fuel_lap_start holds the local car's fuel level captured at the
+        # last S/F crossing, so the next crossing can compute fuel burned
+        # on that lap. _fuel_used_history is the rolling window feeding the
+        # average-per-lap and laps-remaining estimates.
+        self._fuel_lap_start: float | None = None
+        self._fuel_used_history: deque[float] = deque(maxlen=FUEL_AVG_WINDOW)
+
         # Live broadcast charts — operator picks drivers in the live
         # monitor; the OBS-source chart endpoint shows whatever's
         # currently selected. State is shared across all browsers.
@@ -232,7 +257,12 @@ class RaceLogger(SDKPoller):
         config = session_meta.get("track_config", "")
         if config:
             track = f"{track}_{_safe_filename(config)}"
-        path = LOGS_DIR / f"{ts}_{track}_race.jsonl"
+        # Suffix the filename with the session type so race and practice
+        # logs are distinguishable at a glance. Keeping "race" logs as
+        # *_race.jsonl matters: driver_of_the_day.py globs *_race.jsonl
+        # first, so a practice log can never be mistaken for a race.
+        stype = _safe_filename(session_meta.get("session_type", "") or "race")
+        path = LOGS_DIR / f"{ts}_{track}_{stype}.jsonl"
         self._log_path = path
         self._log_fp = open(path, "a", encoding="utf-8", buffering=1)  # line-buffered
         self._log_started_at = time.time()
@@ -256,6 +286,8 @@ class RaceLogger(SDKPoller):
         self._prev_session_flags = 0
         self._prev_car_session_flags.clear()
         self._lap_history.clear()
+        self._fuel_lap_start = None
+        self._fuel_used_history.clear()
         self._chart_selected.clear()
         self._chart_type = "laptime"
         self._chart_lap_data.clear()
@@ -564,6 +596,38 @@ class RaceLogger(SDKPoller):
             return None
         return {"local_car_idx": int(local_idx), "lf": lf, "rf": rf, "lr": lr, "rr": rr}
 
+    # ----- fuel reader (LOCAL PLAYER ONLY) -------------------------------
+    def _read_fuel(self) -> dict | None:
+        """Return the live fuel state for the local player's car, or None
+        if not available. iRacing only broadcasts fuel for the local
+        player — there is no per-car array (same limitation as tire
+        temps), so this can only ever describe the car running this PC.
+
+          level        — litres of fuel currently in the tank (FuelLevel)
+          level_pct    — tank fill as a percentage       (FuelLevelPct)
+          use_per_hour — instantaneous burn rate         (FuelUsePerHour)
+
+        Per-lap "used", the rolling average and the laps-remaining
+        estimate are derived in _maybe_emit_laps, which owns the S/F
+        timing needed to bound a lap.
+        """
+        ir = self.ir
+        info = ir["DriverInfo"] or {}
+        local_idx = info.get("DriverCarIdx")
+        if local_idx is None:
+            return None
+        level = ir["FuelLevel"]
+        if level is None:
+            return None
+        pct = ir["FuelLevelPct"]
+        per_hour = ir["FuelUsePerHour"]
+        return {
+            "local_car_idx": int(local_idx),
+            "level":         round(float(level), 3),
+            "level_pct":     round(float(pct) * 100, 1) if pct is not None else None,
+            "use_per_hour":  round(float(per_hour), 3) if per_hour is not None else None,
+        }
+
     # ----- per-second position tick (for post-race replay rendering) -----
     def _maybe_emit_position(self) -> None:
         """Once per second, write a `pos` event capturing every car's
@@ -677,6 +741,47 @@ class RaceLogger(SDKPoller):
                     event["tire_temps"] = {
                         "lf": tire["lf"], "rf": tire["rf"],
                         "lr": tire["lr"], "rr": tire["rr"],
+                    }
+
+                # Fuel — only present when this driver IS the local
+                # player (iRacing broadcasts fuel for the local car only).
+                fuel = self._read_fuel()
+                if fuel and fuel.get("local_car_idx") == idx:
+                    level = fuel["level"]
+                    used = None
+                    if self._fuel_lap_start is not None:
+                        delta = self._fuel_lap_start - level
+                        # A positive delta is normal consumption. A
+                        # non-positive delta means the tank grew — the car
+                        # refuelled in the pits this lap — so there's no
+                        # meaningful "burn" figure; leave used = None and
+                        # keep that lap out of the rolling average.
+                        if delta > 0:
+                            used = round(delta, 3)
+                    # Baseline for the next lap is this crossing's level.
+                    self._fuel_lap_start = level
+
+                    # Rolling average per lap + laps-remaining estimate.
+                    # Skip pit laps and refuel laps so the average reflects
+                    # true green-flag consumption.
+                    if used is not None and not event["on_pit"]:
+                        self._fuel_used_history.append(used)
+                    avg_used = None
+                    laps_remaining = None
+                    if self._fuel_used_history:
+                        avg_used = round(
+                            sum(self._fuel_used_history) / len(self._fuel_used_history), 3
+                        )
+                        if avg_used and avg_used > 0:
+                            laps_remaining = round(level / avg_used, 1)
+
+                    event["fuel"] = {
+                        "level":              level,
+                        "level_pct":          fuel["level_pct"],
+                        "used_this_lap":      used,
+                        "avg_per_lap":        avg_used,
+                        "laps_remaining_est": laps_remaining,
+                        "use_per_hour":       fuel["use_per_hour"],
                     }
 
                 self._emit(event)
@@ -797,8 +902,12 @@ class RaceLogger(SDKPoller):
         # ----- Driver of the Day -----------------------------------------
         # Now that the final classification is on disk, nominate a Driver
         # of the Day from the whole log and append a driver_of_day event.
+        # RACE sessions only — DotD is meaningless for a practice session,
+        # and we must not let a practice run record a "winner" that would
+        # block the next real race under the no-back-to-back rule.
         # Fully defensive: a failure here must never break logging.
-        self._emit_driver_of_day()
+        if "race" in (self._log_session_meta.get("session_type", "") or "").lower():
+            self._emit_driver_of_day()
 
     def _emit_driver_of_day(self) -> None:
         """Compute Driver of the Day from the just-written log and append a
@@ -992,10 +1101,15 @@ class RaceLogger(SDKPoller):
 
         session_key, session_type, meta = self._detect_session_change()
 
-        # Only log RACE sessions. Practice/quali/warmup get skipped.
-        is_race = "race" in session_type.lower()
+        # Log RACE and PRACTICE sessions (incl. hosted "Practice Only" —
+        # iRacing reports its SessionType as "Practice"). Fuel/consumption
+        # runs happen in practice, so we want those logged too. Qualifying
+        # and Warmup are still skipped — substring match is safe because
+        # neither contains "race" or "practice".
+        st = session_type.lower()
+        should_log = ("race" in st) or ("practice" in st)
 
-        if session_key is None or not is_race:
+        if session_key is None or not should_log:
             # Not in a race. If a log was open from the previous session,
             # close it.
             if self._log_fp is not None:
