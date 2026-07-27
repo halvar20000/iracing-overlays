@@ -31,11 +31,6 @@ echo   Championship      http://localhost:5010
 echo   Session info      http://localhost:5011
 echo   Corner cues       http://localhost:5012
 echo   Driver of the Day http://localhost:5013
-echo   Quali delta       http://localhost:5014
-echo   Catch-up battle   http://localhost:5015
-echo   Weather           http://localhost:5016
-echo   Driver card       http://localhost:5017
-echo   New Race Leader   http://localhost:5018
 echo   Race Control      http://localhost:8080
 echo.
 
@@ -53,12 +48,7 @@ start "iRacing Championship"    cmd /k python iracing_championship.py
 start "iRacing Session Info"    cmd /k python iracing_session_info.py
 start "iRacing Corner Cues"     cmd /k python iracing_drivingline.py
 start "iRacing Driver of Day"   cmd /k python iracing_dotd_overlay.py
-start "iRacing Quali Delta"     cmd /k python iracing_qualidelta.py
-start "iRacing Catch-Up Battle" cmd /k python iracing_catchup.py
-start "iRacing Weather"         cmd /k python iracing_weather.py
-start "iRacing Driver Card"     cmd /k python iracing_drivercard.py
-start "iRacing Race Leader"     cmd /k python iracing_race_leader.py
-start "iCASControl Race Ctrl"   cmd /k python iracing_racecontrol.py
+start "iRacing Race Control"    cmd /k python iracing_racecontrol.py
 
-echo All 19 overlays launched. You can close this window.
+echo All 14 overlays + Race Control launched. You can close this window.
 timeout /t 5 >nul

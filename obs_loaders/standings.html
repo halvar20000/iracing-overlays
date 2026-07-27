@@ -17,11 +17,6 @@
 <body>
 <iframe id="ov" allowtransparency="true"></iframe>
 <script>
-  // LOAD-ONCE loader. It waits until the overlay server first responds, loads
-  // the page exactly ONCE, then stops touching it. The overlay page itself now
-  // recovers from any server hiccup (it keeps polling /status and re-renders),
-  // so the loader must NOT reload the iframe — reloading on every multi-second
-  // server flicker was the visible "blinking" the overlays showed mid-stream.
   var URL_ = "http://localhost:5005/";
   var frame = document.getElementById("ov");
   var loaded = false;
@@ -34,14 +29,15 @@
   }
 
   function tick() {
-    if (loaded) return;                 // already loaded — never touch it again
     ping().then(function (up) {
-      if (up) {
+      if (up && !loaded) {
+        // cache-buster forces a real reload after a server restart
         frame.src = URL_ + (URL_.indexOf("?") < 0 ? "?" : "&") + "r=" + Date.now();
-        loaded = true;                  // done: the overlay page self-heals from here
-      } else {
-        setTimeout(tick, 1500);         // keep retrying ONLY until the first load
+        loaded = true;
+      } else if (!up && loaded) {
+        loaded = false;   // server gone — reload as soon as it's back
       }
+      setTimeout(tick, loaded ? 5000 : 1500);
     });
   }
   tick();

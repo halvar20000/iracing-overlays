@@ -9,9 +9,9 @@
 #     keystroke feature and the HUD-hide reassert logic in the dashboard.
 #   - pillow is only used by iracing_livery.py for TGA→PNG conversion of
 #     the on-disk paint cache.
-#   - requests is used by iracing_livery.py and iracing_catchup.py for the
-#     local iRacing car-render server (optional — both overlays still work
-#     without it, with the car images disabled).
+#   - requests is only used by iracing_livery.py for Trading Paints
+#     previews (optional — the overlay still works without it, with the
+#     car-render feature disabled).
 
 flask>=3.0
 pyirsdk>=1.3
@@ -24,15 +24,10 @@ pywin32>=306; sys_platform == "win32"
 # Python wheel so Windows users don't have to install ffmpeg manually.
 imageio-ffmpeg>=0.4.9
 
-# Driving Mode (DRIVE.bat / drive.py) — on-top overlay windows while driving.
-# pywebview hosts the Quali Delta / Track Map HTML overlays as always-on-top
-# windows (driving_overlay_window.py); on Windows it uses the Edge WebView2
-# runtime (preinstalled on Win10/11). pywin32 (above) powers click-through.
-pywebview>=5.0; sys_platform == "win32"
 
-# Race Control (iCASControl) — racecontrol/ subfolder, port 8080. Its FastAPI
-# steward backend. Only needed if you run the "racectrl" overlay. (racecontrol
-# has its own racecontrol/requirements.txt with the same pins.)
+# --- Race Control / Stewarding component (racecontrol/ — iCASControl) ---
+# The merged-in stewarding dashboard is FastAPI-based, started via
+# iracing_racecontrol.py (port 8080). pyirsdk above is shared with it.
 fastapi>=0.110
 uvicorn>=0.29
 websockets>=12.0

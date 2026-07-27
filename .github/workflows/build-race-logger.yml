@@ -1,0 +1,71 @@
+# Builds the standalone RaceLogger.exe on a Windows runner and publishes it as
+# a GitHub release, so league drivers can download one file that needs nothing
+# installed. The league site links to the "latest" asset URLs:
+#
+#   .../releases/latest/download/RaceLogger.exe
+#   .../releases/latest/download/RaceLogger-source.zip
+#
+# Run it from the Actions tab (Run workflow), or push a tag:
+#   git tag race-logger-v1.1.0 && git push origin race-logger-v1.1.0
+name: Build Race Logger
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, e.g. 1.1.0"
+        required: true
+        default: "1.1.0"
+  push:
+    tags: ["race-logger-v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller flask pyirsdk requests
+
+      - name: Build RaceLogger.exe
+        run: python -m PyInstaller --noconfirm --clean RaceLogger.spec
+
+      - name: Pack the Python-source variant
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path pack/RaceLogger | Out-Null
+          Copy-Item iracing_race_logger.py, iracing_sdk_base.py, start_race_logger.bat, `
+                    build_race_logger_exe.bat, RaceLogger.spec, RACE_LOGGER.md pack/RaceLogger/
+          Compress-Archive -Path pack/RaceLogger/* -DestinationPath dist/RaceLogger-source.zip -Force
+
+      - name: Resolve version
+        id: v
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=race-logger-v${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.v.outputs.tag }}" \
+            dist/RaceLogger.exe dist/RaceLogger-source.zip \
+            --title "Race Logger ${{ steps.v.outputs.tag }}" \
+            --notes "Standalone iRacing race logger — records a race to .jsonl and uploads it to the CLS league site. No Python and no OBS needed: download RaceLogger.exe, run it, open http://localhost:5009/league once to paste your key." \
+            || gh release upload "${{ steps.v.outputs.tag }}" \
+                 dist/RaceLogger.exe dist/RaceLogger-source.zip --clobber

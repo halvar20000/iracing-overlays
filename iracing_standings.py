@@ -21,7 +21,6 @@ iRacing independently.
 """
 
 import threading
-import time
 from flask import Flask, jsonify, render_template_string, send_file, abort
 
 from iracing_sdk_base import SDKPoller, setup_utf8_stdout
@@ -101,18 +100,6 @@ def _weather(ir) -> dict:
 # -----------------------------------------------------------------------------
 # Standings poller
 # -----------------------------------------------------------------------------
-# -----------------------------------------------------------------------------
-# Standings tower view cycle (RACE sessions only)
-# -----------------------------------------------------------------------------
-# The tower normally shows the gap/interval column. Every INTERVAL_VIEW_SEC
-# seconds it flips to a "positions gained / lost since the start" column for
-# DELTA_VIEW_SEC seconds, then flips back. Baseline is each car's class
-# position on the starting grid (captured once per race). Change these two
-# numbers to re-tune the cadence.
-INTERVAL_VIEW_SEC = 300   # 5 minutes showing gap / interval
-DELTA_VIEW_SEC    = 20    # 20 seconds showing positions gained / lost
-
-
 class StandingsPoller(SDKPoller):
     tag = "standings"
     poll_interval = 1.0
@@ -127,16 +114,6 @@ class StandingsPoller(SDKPoller):
         self._pit_entry_t:   dict[int, float] = {}  # session time when entered
         self._last_pit_lap:  dict[int, int] = {}  # lap of most recent completed pit
         self._last_pit_time: dict[int, float] = {}  # seconds spent in pit lane on last stop
-
-        # Positions gained/lost feature. Baseline = each car's class position
-        # on the starting grid, captured once per race session. pos_delta =
-        # start_pos - current_class_position (positive = places gained). The
-        # tower periodically flips to this delta view (see the constants
-        # above). _race_session_uid detects session changes so the baseline
-        # and the view cycle both reset cleanly between sessions.
-        self._start_class_pos: dict[int, int] = {}
-        self._race_session_uid = None
-        self._cycle_anchor = time.monotonic()
 
     def _driver_map(self) -> dict:
         info = self.ir["DriverInfo"] or {}
@@ -345,38 +322,6 @@ class StandingsPoller(SDKPoller):
             _cls_counter[cid] = _cls_counter.get(cid, 0) + 1
             r["class_position"] = _cls_counter[cid]
 
-        # ------------------------------------------------------------------
-        # Positions gained / lost vs the starting grid.
-        #
-        # Reset the baseline + view cycle whenever the session changes, then
-        # capture the grid ONCE per race: rank each car within its class by
-        # iRacing's official CarIdxPosition (which is the grid order at the
-        # start and is stable there, unlike the live progress sort in the
-        # opening seconds). pos_delta = start_pos - current class_position,
-        # so positive = places gained, negative = places lost.
-        # ------------------------------------------------------------------
-        cur_uid = (self.ir["SessionUniqueID"], self.ir["SessionNum"])
-        if cur_uid != self._race_session_uid:
-            self._race_session_uid = cur_uid
-            self._start_class_pos = {}
-            self._cycle_anchor = time.monotonic()
-
-        if not self._start_class_pos:
-            valid = [r for r in rows if r.get("iracing_pos", 0) > 0]
-            if len(valid) >= 2:
-                _grid: dict = {}
-                for r in valid:
-                    _grid.setdefault(r.get("class_id", 0), []).append(r)
-                for _cid, grp in _grid.items():
-                    grp.sort(key=lambda r: r["iracing_pos"])
-                    for rank, r in enumerate(grp, start=1):
-                        self._start_class_pos[r["car_idx"]] = rank
-
-        for r in rows:
-            start = self._start_class_pos.get(r["car_idx"])
-            cur = r.get("class_position")
-            r["pos_delta"] = (start - cur) if (start is not None and cur) else None
-
         # Compute lapped cars vs class leader — compare TOTAL TRACK PROGRESS
         # (lap + lap_dist_pct), NOT the raw integer lap count. The raw
         # count would flicker to "+1 LAP" for a full lap of everyone in
@@ -571,21 +516,9 @@ class StandingsPoller(SDKPoller):
         track_temp = ir["TrackTempCrew"]
         air_temp   = ir["AirTemp"]
 
-        # View cycle: race sessions flip between the interval column and the
-        # positions gained/lost column on a timer. _cycle_anchor is (re)set in
-        # _build_race_standings on every session change, so each race starts
-        # fresh in interval mode. Non-race sessions always show "interval".
-        view_mode = "interval"
-        if session_type == "Race":
-            cycle = INTERVAL_VIEW_SEC + DELTA_VIEW_SEC
-            phase = (time.monotonic() - self._cycle_anchor) % cycle
-            if phase >= INTERVAL_VIEW_SEC:
-                view_mode = "delta"
-
         return {
             "connected":    True,
             "session_type": session_type,
-            "view_mode":    view_mode,
             "session_name": sess.get("SessionName", "") if sess else "",
             "track":        weekend.get("TrackDisplayName", ""),
             "track_config": weekend.get("TrackConfigName", ""),
@@ -869,20 +802,6 @@ STANDINGS_HTML = """
        skip the pack-is-close-but-it-doesn't-matter-yet start phase. */
     .interval.battle { color: #facc15; font-weight: 700; }
 
-    /* Positions gained / lost view (periodic 20 s window). Green = places
-       gained vs the grid, red = places lost, grey "=" = unchanged/unknown. */
-    .interval.delta-up   { color: #4ade80; font-weight: 800; }
-    .interval.delta-down { color: #ff5470; font-weight: 800; }
-    .interval.delta-none { color: #7a7a90; font-weight: 700; }
-
-    /* Info-bar pill shown while the tower is in the gained/lost window. */
-    .info-pill.delta-flash {
-        background: #facc15; color: #0a0a0f;
-        font-weight: 800; letter-spacing: 1px;
-        animation: deltaPulse 1s ease-in-out infinite;
-    }
-    @keyframes deltaPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
-
     /* Pit columns — amber, matching iOverlay's colour for mid-race pit data. */
     .pitlap {
         text-align: right; color: #ff9f5a;
@@ -981,11 +900,6 @@ function render(d) {
                   : st === 'Qualifying' ? 'session-qual'
                   : 'session-prac';
 
-    // Race only: when the server is in the periodic "positions gained/lost"
-    // window, the right-hand column shows each driver's net places vs the
-    // grid instead of the gap/interval.
-    const deltaView = (st === 'Race' && (d.view_mode || 'interval') === 'delta');
-
     // Decide whether this race is lap-based or time-based.
     // Preference: if iRacing reports a lap target at all, treat it as a
     // lap race. Many lap-based formats (Porsche Cup, fixed-setup race
@@ -1045,19 +959,6 @@ function render(d) {
                 interval = fmtLap(r.best_lap);
             } else {
                 interval = '<span class="out-flag">no time</span>';
-            }
-        } else if (deltaView) {
-            // Positions gained/lost vs the starting grid (within class).
-            const pd = r.pos_delta;
-            if (pd == null || pd === 0) {
-                interval = '=';
-                intervalCls += ' delta-none';
-            } else if (pd > 0) {
-                interval = '▲ ' + pd;
-                intervalCls += ' delta-up';
-            } else {
-                interval = '▼ ' + Math.abs(pd);
-                intervalCls += ' delta-down';
             }
         } else {
             // Race (or unknown): keep the original gap-to-car-ahead logic.
@@ -1132,7 +1033,6 @@ function render(d) {
         <div class="panel infobar-panel">
             <div class="info-bar compact">
                 <div class="info-pill session ${stClass}">${st.toUpperCase()}</div>
-                ${deltaView ? '<div class="info-pill delta-flash">POSITIONS GAINED / LOST</div>' : ''}
                 <div class="info-item">${ICON_CLOCK}<span>${fmtClock(d.elapsed)}</span></div>
                 <div class="info-item">${ICON_TIMER}<span>${remainText}<span class="muted"> / ${totalText}</span></span></div>
                 <div class="info-item info-item-track">${ICON_TRACK}<span>${team_esc(d.track || '')}${d.track_config ? ' · ' + team_esc(d.track_config) : ''}</span></div>
@@ -1148,7 +1048,7 @@ function render(d) {
                     <div></div>
                     <div>#</div>
                     <div>DRIVER</div>
-                    <div style="text-align:right;" id="col-right-label">${(st === 'Qualifying' || st === 'Practice') ? 'LAP TIME' : (deltaView ? 'GAINED / LOST' : 'INTERVAL')}</div>
+                    <div style="text-align:right;" id="col-right-label">${(st === 'Qualifying' || st === 'Practice') ? 'LAP TIME' : 'INTERVAL'}</div>
                 </div>
                 ${rowsHtml}
             </div>

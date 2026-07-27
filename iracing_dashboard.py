@@ -269,16 +269,6 @@ class TelemetryPoller:
         self._last_session_key = None     # (SessionUniqueID, SessionNum)
         self._last_t_session = 0.0        # detects backwards time jumps
 
-        # Lap-jump (replay seek to the start of a given race lap). Recorded
-        # LIVE: each time the overall leader starts a new lap we stamp the
-        # SessionTime of that boundary. The replay can then seek straight to
-        # "the beginning of lap N". Survives backward SessionTime jumps (so
-        # the operator can keep jumping around the replay) — cleared only on
-        # a genuine session change.
-        self._lap_start_times = {}        # lap_no -> SessionTime (seconds)
-        self._leader_max_lap = 0          # highest leader lap observed live
-        self._cur_is_race = False         # set each tick by _build_driver_list
-
         # Overtake feed (separate panel from incidents)
         self._overtakes = deque(maxlen=30)
         self._ot_prev_rank = {}          # car_idx -> live race rank last tick
@@ -1044,11 +1034,6 @@ class TelemetryPoller:
         elif sess_key != self._last_session_key:
             self._reset_detection_state(
                 f"session {self._last_session_key} -> {sess_key}")
-            # Lap-jump data is intentionally NOT reset on backward time jumps
-            # (the operator scrubbing the replay must keep the lap list); only
-            # a real session change invalidates it.
-            self._lap_start_times = {}
-            self._leader_max_lap = 0
             self._last_session_key = sess_key
         elif t_now + 5.0 < self._last_t_session:
             self._reset_detection_state(
@@ -1564,7 +1549,6 @@ class TelemetryPoller:
                     break
         except Exception:
             pass
-        self._cur_is_race = is_race
         surfaces = ir["CarIdxTrackSurface"] or []
 
         rows = []
@@ -1947,9 +1931,6 @@ class TelemetryPoller:
         self._maybe_focus_leader(driver_list, cam_car_idx)
         self._maybe_recover_lost_cam_target(driver_list, cam_car_idx)
 
-        pb = self._playback_status()
-        self._track_lap_starts(driver_list, pb["is_live"], ir["SessionTime"] or 0.0)
-
         snap = {
             "connected": True,
             "active_driver": active_driver,
@@ -1968,52 +1949,9 @@ class TelemetryPoller:
             "overtakes": list(self._overtakes),   # newest first
             "session_time": ir["SessionTime"] or 0.0,
             "race_progress": self._race_progress(),
-            "playback": pb,
-            "replay_laps": self._lap_jump_options(),
+            "playback": self._playback_status(),
         }
         return snap
-
-    def _track_lap_starts(self, driver_list: list, is_live: bool, t_now: float):
-        """Record the SessionTime at which the overall leader starts each new
-        lap, so the replay can later seek to 'the beginning of lap N'.
-
-        Only records while LIVE and in a race: during replay review the
-        playhead (and therefore SessionTime + CarIdxLap) moves around, and we
-        must not stamp bogus boundaries. The leader is the top in-world car of
-        the live-progress-sorted driver list. `_leader_max_lap` only ever
-        increases, so scrubbing can never add phantom laps."""
-        if not (is_live and self._cur_is_race):
-            return
-        leader = next((r for r in driver_list if r.get("in_world")), None)
-        if leader is None:
-            return
-        lap = int(leader.get("lap") or 0)
-        if lap < 1:
-            return
-        if self._leader_max_lap == 0:
-            # First live observation — seed the current lap as a jump target
-            # (this is "Start" if the dashboard was running at the green).
-            self._lap_start_times[lap] = t_now
-            self._leader_max_lap = lap
-        elif lap > self._leader_max_lap:
-            # Leader crossed into one (or more) new laps; stamp each boundary.
-            for L in range(self._leader_max_lap + 1, lap + 1):
-                self._lap_start_times[L] = t_now
-            self._leader_max_lap = lap
-
-    def _lap_jump_options(self) -> dict:
-        """Snapshot for the 'Jump to round' dropdown. 'Start' = the earliest
-        recorded lap boundary (race start when observed from green); the
-        numbers are every later lap boundary the leader has crossed."""
-        laps = sorted(self._lap_start_times.keys())
-        if not laps:
-            return {"start_available": False, "laps": [], "leader_lap": self._leader_max_lap}
-        first = laps[0]
-        return {
-            "start_available": True,
-            "laps": [L for L in laps if L > first],
-            "leader_lap": self._leader_max_lap,
-        }
 
     def _playback_status(self) -> dict:
         """
@@ -2410,55 +2348,6 @@ class TelemetryPoller:
         except Exception as e:
             return False, str(e)
 
-    def jump_to_replay_time(self, target_time_s: float, session_num: int | None = None):
-        """Seek the replay playhead to an absolute SessionTime and play at 1×.
-
-        Same reliable recipe as the incident replay: pause first (a seek
-        issued while playing is unreliable), seek via
-        `replay_search_session_time`, then resume at 1×. Re-asserts the
-        HUD-hidden state and briefly suspends auto-follow so it doesn't yank
-        the camera right after the jump."""
-        if not self.connected:
-            return False, "not connected"
-        try:
-            sess_num = int(session_num) if session_num is not None \
-                       else int(self.ir["SessionNum"] or 0)
-            target_ms = int(max(0.0, float(target_time_s)) * 1000)
-            # Same proven timing as the incident replay: pause → seek → WAIT
-            # for iRacing to load frames at the new playhead → resume. Too
-            # short a wait here leaves the replay stuck PAUSED on one frame
-            # (the play-speed change isn't honoured yet) — which looks exactly
-            # like "the view froze and nothing happened".
-            self.ir.replay_set_play_speed(0, False)   # pause first for a clean seek
-            time.sleep(0.10)
-            self.ir.replay_search_session_time(sess_num, target_ms)
-            time.sleep(0.30)                          # let iRacing load the new frames
-            self.ir.replay_set_play_speed(1, False)   # resume at 1×
-            self._reassert_ui_hide()
-            self._manual_override_until = time.time() + 5.0
-            print(f"[replay-jump] sess={sess_num} -> t={target_time_s:.1f}s")
-            return True, f"jumped to t={target_time_s:.1f}s"
-        except Exception as e:
-            return False, str(e)
-
-    def jump_to_lap(self, target):
-        """Jump the replay to the start of a race lap. `target` is either the
-        string 'start' (earliest recorded boundary) or an integer lap number
-        whose start was recorded live."""
-        times = dict(self._lap_start_times)   # shallow copy — written by poll thread
-        if not times:
-            return False, "no lap data recorded yet (run the dashboard during the race)"
-        if str(target).strip().lower() == "start":
-            t = min(times.values())
-            return self.jump_to_replay_time(t)
-        try:
-            lap = int(target)
-        except (TypeError, ValueError):
-            return False, f"invalid target: {target!r}"
-        if lap not in times:
-            return False, f"lap {lap} not recorded"
-        return self.jump_to_replay_time(times[lap])
-
     def set_auto_follow(self, enabled: bool):
         self.auto_follow = bool(enabled)
         if self.auto_follow:
@@ -2678,11 +2567,6 @@ DASHBOARD_HTML = """
         border-color: #555;
     }
     .rp-btn:active { transform: translateY(1px); }
-    /* Highlight the rewind / fast-forward button while it's the active mode */
-    .rp-btn.active {
-        background: #1d3a5f; color: #cfe6ff; border-color: #60a5fa;
-    }
-    .rp-btn.active:hover { background: #244a78; color: #fff; }
     .rp-btn-primary {
         background: #2d5d3f; color: #d8f3dc; border-color: #4ade80;
     }
@@ -2692,23 +2576,6 @@ DASHBOARD_HTML = """
         font-weight: 800;
     }
     .rp-btn-live:hover { background: #7a2424; color: #fff; }
-    /* Jump-to-round row */
-    .rp-jump {
-        display: flex; align-items: center; gap: 6px; margin-top: 6px;
-        flex-wrap: wrap;
-    }
-    .rp-jump-label {
-        font-size: 11px; color: #888; text-transform: uppercase;
-        letter-spacing: .04em;
-    }
-    .rp-select {
-        background: #1f1f2a; color: #c0c0d0; border: 1px solid #333;
-        padding: 5px 8px; font-size: 12px; font-weight: 600;
-        font-family: inherit; border-radius: 4px; cursor: pointer;
-        min-width: 90px;
-    }
-    .rp-select:hover { border-color: #555; }
-    .rp-select:disabled { opacity: .5; cursor: default; }
 
     /* Floating controls (top-right, always on top) */
     .floating-controls {
@@ -2969,11 +2836,11 @@ DASHBOARD_HTML = """
         font-family: monospace; font-size: 13px; margin-right: 5px;
     }
     .incident-details { color: #888; font-size: 13px; margin-bottom: 10px; }
-    .incident-buttons { display: flex; gap: 5px; }
+    .incident-buttons { display: flex; gap: 8px; }
     .incident-buttons button {
-        flex: 1; padding: 7px 4px; font-size: 12px; font-weight: 600;
+        flex: 1; padding: 9px 10px; font-size: 14px; font-weight: 600;
         border-radius: 4px; cursor: pointer; border: 1px solid #333;
-        white-space: nowrap;
+        font-weight: 600;
     }
     .btn-jump {
         background: #2a1f4a; color: #d4c5ff; border-color: #9146FF;
@@ -3050,21 +2917,13 @@ DASHBOARD_HTML = """
              broadcast UI doesn't pop up while the user is recording
              video clips of the replay. -->
         <div class="rp-controls">
-            <button class="rp-btn" id="rp-rewind" onclick="rewindStep()"
-                    title="Rewind — click again to double the speed (1× → 2× → 4× → 8× → 16×)">◀◀</button>
+            <button class="rp-btn" onclick="setPlay(-2)"  title="Rewind 2×">◀◀ 2×</button>
+            <button class="rp-btn" onclick="setPlay(-1)"  title="Rewind 1×">◀</button>
             <button class="rp-btn" onclick="setPlay(0)"   title="Pause">❚❚</button>
-            <button class="rp-btn rp-btn-primary" onclick="setPlay(1)" title="Play 1× (resets speed)">▶</button>
-            <button class="rp-btn" id="rp-forward" onclick="forwardStep()"
-                    title="Fast forward — click again to double the speed (2× → 4× → 8× → 16×)">▶▶</button>
+            <button class="rp-btn rp-btn-primary" onclick="setPlay(1)" title="Play 1×">▶</button>
+            <button class="rp-btn" onclick="setPlay(2)"   title="Fast forward 2×">▶▶ 2×</button>
+            <button class="rp-btn" onclick="setPlay(4)"   title="Fast forward 4×">4×</button>
             <button class="rp-btn rp-btn-live" onclick="goLive()" title="Jump to live">LIVE</button>
-        </div>
-        <!-- Jump the replay to the start of a completed lap ("round"). The
-             dropdown is populated live from recorded leader lap boundaries. -->
-        <div class="rp-jump">
-            <span class="rp-jump-label">Jump to round</span>
-            <select id="rp-lap-select" class="rp-select" title="Choose a round to jump to"></select>
-            <button class="rp-btn" id="rp-lap-apply" onclick="jumpToLap()"
-                    title="Jump the replay to the beginning of the selected round">Apply</button>
         </div>
     </div>
 </div>
@@ -3216,83 +3075,6 @@ async function setPlay(speed, slow) {
     } catch (e) { console.error("setPlay:", e); }
 }
 
-// --- progressive rewind / fast-forward -------------------------------------
-// Current iRacing replay speed as last reported by the poller, refreshed in
-// renderPlayback(). Convention matches iRacing: 1 = play, 0 = paused,
-// negative = rewind at |n|×, >1 = fast-forward at n×.
-let pbSpeed = 1;
-const PB_MAX_SPEED = 16;   // cap for the doubling ramp (both directions)
-
-// Rewind button: first press = 1× rewind, each further press DOUBLES the
-// rewind speed up to PB_MAX_SPEED. Pressing Play (setPlay(1)) resets to 1×.
-// We optimistically advance pbSpeed locally so several quick clicks double
-// correctly without waiting for the next telemetry poll.
-function rewindStep() {
-    let next = (pbSpeed <= -1) ? pbSpeed * 2 : -1;   // already rewinding → double
-    if (next < -PB_MAX_SPEED) next = -PB_MAX_SPEED;
-    pbSpeed = next;
-    setPlay(next);
-}
-
-// Fast-forward button: first press = 2× (1× is "Play"), each further press
-// DOUBLES up to PB_MAX_SPEED.
-function forwardStep() {
-    let next = (pbSpeed > 1) ? pbSpeed * 2 : 2;      // already fast-forwarding → double
-    if (next > PB_MAX_SPEED) next = PB_MAX_SPEED;
-    pbSpeed = next;
-    setPlay(next);
-}
-
-// --- jump to round (lap) ---------------------------------------------------
-// Populate the "Jump to round" dropdown from the live snapshot. Rebuilds the
-// option list only when it actually changes, so an open dropdown / the
-// operator's current selection isn't clobbered every poll.
-function renderLapJump(rj) {
-    const sel = document.getElementById("rp-lap-select");
-    if (!sel) return;
-    const opts = [];
-    if (rj && rj.start_available) {
-        opts.push({ v: "start", t: "Start" });
-        (rj.laps || []).forEach(n => opts.push({ v: String(n), t: "Round " + n }));
-    }
-    const sig = opts.map(o => o.v).join(",");
-    if (sel.dataset.sig === sig) return;     // no change → leave as-is
-    const prev = sel.value;
-    sel.innerHTML = "";
-    if (opts.length === 0) {
-        const e = document.createElement("option");
-        e.value = ""; e.textContent = "— no rounds yet —";
-        sel.appendChild(e);
-        sel.disabled = true;
-    } else {
-        opts.forEach(o => {
-            const e = document.createElement("option");
-            e.value = o.v; e.textContent = o.t;
-            sel.appendChild(e);
-        });
-        sel.disabled = false;
-        if (prev && opts.some(o => o.v === prev)) sel.value = prev;
-    }
-    sel.dataset.sig = sig;
-}
-
-async function jumpToLap() {
-    const sel = document.getElementById("rp-lap-select");
-    if (!sel || !sel.value) return;
-    const btn = document.getElementById("rp-lap-apply");
-    if (btn) btn.classList.add("flash");
-    try {
-        const r = await fetch("/replay/jump_lap", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ target: sel.value }),
-        });
-        const d = await r.json();
-        if (!d.ok && btn) btn.title = "Failed: " + (d.message || "unknown");
-    } catch (e) { console.error("jumpToLap:", e); }
-    if (btn) setTimeout(() => btn.classList.remove("flash"), 300);
-}
-
 // --- starred set -----------------------------------------------------------
 function loadStarred() {
     try { const raw = localStorage.getItem(STARRED_KEY); return new Set(raw ? JSON.parse(raw) : []); }
@@ -3375,39 +3157,18 @@ const PLAYBACK_LABELS = {
     "slow_motion":  "▶ SLOW-MO",
 };
 function renderPlayback(pb) {
-    const pill       = document.getElementById("live-pill");
-    const pillTxt    = document.getElementById("live-text");
-    const liveBtn    = document.getElementById("go-live-btn");
-    const rewindBtn  = document.getElementById("rp-rewind");
-    const forwardBtn = document.getElementById("rp-forward");
+    const pill    = document.getElementById("live-pill");
+    const pillTxt = document.getElementById("live-text");
+    const liveBtn = document.getElementById("go-live-btn");
     if (!pb) {
         pill.className = "live-pill";
         pillTxt.textContent = "—";
         liveBtn.classList.remove("needs-attention");
         return;
     }
-    // Keep the client's speed in sync with iRacing so the doubling ramp
-    // always computes from the real current value between clicks.
-    if (typeof pb.speed === "number") pbSpeed = pb.speed;
     const mode = pb.mode || "replay";
-    const mult = Math.abs(pb.speed || 0);
     pill.className = "live-pill " + mode;
-    let label = PLAYBACK_LABELS[mode] || mode.toUpperCase();
-    // Show the current multiplier while scrubbing so the operator can see how
-    // far the progressive rewind / fast-forward has ramped.
-    if ((mode === "rewind" || mode === "fast_forward") && mult > 1) {
-        label += " " + mult + "×";
-    }
-    pillTxt.textContent = label;
-    // Reflect the active multiplier on the buttons themselves.
-    if (rewindBtn) {
-        rewindBtn.textContent = (mode === "rewind") ? "◀◀ " + mult + "×" : "◀◀";
-        rewindBtn.classList.toggle("active", mode === "rewind");
-    }
-    if (forwardBtn) {
-        forwardBtn.textContent = (mode === "fast_forward") ? "▶▶ " + mult + "×" : "▶▶";
-        forwardBtn.classList.toggle("active", mode === "fast_forward");
-    }
+    pillTxt.textContent = PLAYBACK_LABELS[mode] || mode.toUpperCase();
     // Flag the Go Live button as needing attention when we're not live
     liveBtn.classList.toggle("needs-attention", !pb.is_live);
 }
@@ -3483,11 +3244,10 @@ async function dismissFeedItem(hostId, dismissedSet, id, ev) {
 // --- replay (fires immediately, no confirmation) ---------------------------
 // incidentId is used server-side to look up the incident's exact session
 // time and seek there (much more reliable than "rewind N seconds from now").
-async function triggerReplay(carNumber, incidentId, replaySeconds) {
+async function triggerReplay(carNumber, incidentId) {
     try {
         const body = { car_number: carNumber };
         if (incidentId != null) body.incident_id = incidentId;
-        if (replaySeconds != null) body.replay_seconds = replaySeconds;
         await fetch("/replay_5s", { method: "POST", headers: {"Content-Type": "application/json"},
                                     body: JSON.stringify(body) });
     } catch (e) { console.error(e); }
@@ -3697,16 +3457,14 @@ function renderFeed(hostId, items, dismissedSet, emptyHtml) {
             </div>
             <div class="incident-details">${inc.details || ""}</div>
             <div class="incident-buttons">
-                <button class="btn-jump"   data-action="jump">Jump</button>
-                <button class="btn-replay" data-action="replay10">▶ 10s</button>
-                <button class="btn-replay" data-action="replay20">▶ 20s</button>
+                <button class="btn-jump"   data-action="jump">Jump to car</button>
+                <button class="btn-replay" data-action="replay">${inc.replayed ? 'Replay again' : 'Replay 10s'}</button>
             </div>
         `;
         // wire up handlers
         div.querySelector(".incident-dismiss").onclick = (ev) => dismissFeedItem(hostId, dismissedSet, inc.id, ev);
-        div.querySelector("[data-action=jump]").onclick     = () => switchToCarNumber(inc.car_number);
-        div.querySelector("[data-action=replay10]").onclick = () => triggerReplay(inc.car_number, inc.id, 10);
-        div.querySelector("[data-action=replay20]").onclick = () => triggerReplay(inc.car_number, inc.id, 20);
+        div.querySelector("[data-action=jump]").onclick   = () => switchToCarNumber(inc.car_number);
+        div.querySelector("[data-action=replay]").onclick = () => triggerReplay(inc.car_number, inc.id);
         host.appendChild(div);
     }
 }
@@ -3750,7 +3508,6 @@ async function tick() {
         renderOvertakes(d.overtakes || []);
         renderRaceProgress(d.race_progress);
         renderPlayback(d.playback);
-        renderLapJump(d.replay_laps);
     } catch (e) { console.error(e); }
 }
 
@@ -3809,55 +3566,6 @@ def switch_cam_group():
         return jsonify({"ok": False, "error": "group_id required"}), 400
     ok = poller.switch_camera_group(int(group_id))
     return jsonify({"ok": ok, "group_id": group_id})
-
-
-@app.route("/cameras")
-def list_cameras():
-    """List the camera groups available in the CURRENT session.
-
-    Purpose: custom camera sets (TrackCams, Studio DaVeed, self-built,
-    etc.) appear as ordinary named camera groups that vary per track.
-    Group IDs get renumbered between tracks/sessions, but NAMES are
-    stable, so Stream Deck buttons should fire /streamdeck/cam_name/<name>.
-    This endpoint shows exactly which names the loaded set exposes so
-    buttons can be labeled/mapped without guessing.
-
-    JSON by default; add ?format=text for a copy-paste-friendly list
-    (each row already includes the ready-to-use Stream Deck URL).
-    """
-    snap = poller.get()
-    groups = snap.get("camera_groups", []) or []
-    current = snap.get("current_cam_group", 0)
-
-    def sd_url(name):
-        # Camera names are simple ("TV 1", "Drone", "Nose"); %20 the spaces
-        # so the URL is valid as-is in a Stream Deck "Website" key.
-        return "/streamdeck/cam_name/" + (name or "").replace(" ", "%20")
-
-    if request.args.get("format") == "text":
-        lines = [f"Camera groups in this session ({len(groups)}):"]
-        if not groups:
-            lines.append("  (none - start iRacing and load a session first)")
-        for g in groups:
-            marker = "   <-- current" if g["id"] == current else ""
-            lines.append(f"  id {g['id']:>3}  {g['name']:<16}  "
-                         f"http://localhost:5000{sd_url(g['name'])}{marker}")
-        return "\n".join(lines) + "\n", 200, {
-            "Content-Type": "text/plain; charset=utf-8"}
-
-    return jsonify({
-        "count": len(groups),
-        "current_cam_group": current,
-        "cameras": [
-            {
-                "id": g["id"],
-                "name": g["name"],
-                "current": g["id"] == current,
-                "streamdeck_url": sd_url(g["name"]),
-            }
-            for g in groups
-        ],
-    })
 
 
 @app.route("/auto_camera", methods=["POST"])
@@ -3968,20 +3676,11 @@ def replay_5s():
     # a longer buildup so the battle into the corner is visible.
     buildup = {"collision": 7.0, "overtake": 8.0}.get(inc_type, 5.0)
 
-    # How long the replay plays before auto-returning to live. The feed has a
-    # 10s and a 20s button; default 10 for Stream Deck / legacy callers.
-    replay_seconds = payload.get("replay_seconds", 10)
-    try:
-        replay_seconds = float(replay_seconds)
-    except (TypeError, ValueError):
-        replay_seconds = 10.0
-
     ok, msg = poller.replay_5s_of_car(
         str(car_number),
         t_session=t_session,
         session_num=session_num,
         buildup_seconds=buildup,
-        rewind_seconds=replay_seconds,
     )
     if ok and incident_id is not None:
         poller.mark_incident_replayed(incident_id)
@@ -4014,20 +3713,6 @@ def playback():
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "speed must be int"}), 400
     ok, msg = poller.set_play_speed(speed, slow)
-    return jsonify({"ok": ok, "message": msg})
-
-
-@app.route("/replay/jump_lap", methods=["POST"])
-def replay_jump_lap():
-    """Seek the replay to the start of a race lap. Body:
-        {"target": "start" | <lap number int>}
-    Lap-start times are recorded live by the poller (leader boundaries).
-    """
-    payload = request.get_json(silent=True) or {}
-    target = payload.get("target")
-    if target is None:
-        return jsonify({"ok": False, "message": "target required"}), 400
-    ok, msg = poller.jump_to_lap(target)
     return jsonify({"ok": ok, "message": msg})
 
 
@@ -4114,7 +3799,6 @@ def incidents_dismiss():
 # software pointing at one of these URLs (no plugin required):
 #
 #   Go Live:                http://localhost:5000/streamdeck/go_live
-#   Hide/Show iRacing UI:   http://localhost:5000/streamdeck/hide_ui
 #   Toggle Auto-Follow:     http://localhost:5000/streamdeck/toggle_auto_follow
 #   Toggle Auto-Replay:     http://localhost:5000/streamdeck/toggle_auto_replay
 #   Toggle OT Auto-Replay:  http://localhost:5000/streamdeck/toggle_auto_replay_overtakes
@@ -4136,17 +3820,6 @@ def streamdeck(action, param=None):
     # --- playback ---
     if action == "go_live":
         ok, msg = poller.go_live()
-
-    # --- hide / show iRacing's broadcast HUD (toggle) ---
-    # Same logic as the dashboard's Hide-UI button and the POST
-    # /hide_iracing_ui endpoint, exposed here as a GET so a Stream Deck
-    # "Website" key (background) can fire it. Spacebar toggles iRacing's
-    # HUD; we mirror the state so later camera switches keep it hidden.
-    elif action == "hide_ui":
-        ok, msg = send_key_to_iracing(VK_SPACE)
-        if ok:
-            poller.iracing_ui_hidden = not poller.iracing_ui_hidden
-            msg = f"iracing_ui_hidden={'on' if poller.iracing_ui_hidden else 'off'}"
 
     # --- toggles ---
     elif action == "toggle_auto_follow":
@@ -4217,30 +3890,6 @@ def streamdeck(action, param=None):
         except ValueError:
             ok, msg = False, f"invalid group id: {param}"
 
-    # --- camera group by NAME:  /streamdeck/cam_name/TV1 ---
-    # Group IDs can change between tracks/sessions; names are stable, so
-    # Stream Deck buttons should use this. Match is case-insensitive:
-    # exact first, then space-insensitive ("TV 1" == "TV1"), then substring.
-    elif action == "cam_name" and param is not None:
-        groups = snap.get("camera_groups", [])
-        want = param.strip().lower()
-        match = next((g for g in groups
-                      if (g.get("name") or "").strip().lower() == want), None)
-        if match is None:
-            norm = want.replace(" ", "")
-            match = next((g for g in groups
-                          if (g.get("name") or "").strip().lower()
-                          .replace(" ", "") == norm), None)
-        if match is None:
-            match = next((g for g in groups
-                          if want in (g.get("name") or "").strip().lower()),
-                         None)
-        if match:
-            ok = poller.switch_camera_group(match["id"])
-            msg = f"camera -> {match['name']} (group {match['id']})"
-        else:
-            ok, msg = False, f"no camera group matching '{param}'"
-
     # --- driver cycling ---
     elif action == "driver_next":
         drivers = snap.get("drivers", [])
@@ -4277,14 +3926,11 @@ if __name__ == "__main__":
     print()
     print("  Stream Deck  (System: Website action, no plugin needed):")
     print("  Go Live           http://localhost:5000/streamdeck/go_live")
-    print("  Hide/Show UI      http://localhost:5000/streamdeck/hide_ui")
     print("  Replay last       http://localhost:5000/streamdeck/replay_last")
     print("  Replay last spin  http://localhost:5000/streamdeck/replay_last_lost_control")
     print("  Replay collision  http://localhost:5000/streamdeck/replay_last_incident_points")
     print("  Cam next/prev     http://localhost:5000/streamdeck/cam_next")
     print("  Cam by id         http://localhost:5000/streamdeck/cam/4")
-    print("  Cam by name       http://localhost:5000/streamdeck/cam_name/TV1")
-    print("  List cameras      http://localhost:5000/cameras?format=text")
     print("  Driver next/prev  http://localhost:5000/streamdeck/driver_next")
     print("  Toggle follow     http://localhost:5000/streamdeck/toggle_auto_follow")
     print("  Open in browser:  http://localhost:5000")

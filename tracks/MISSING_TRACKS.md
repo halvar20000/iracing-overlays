@@ -99,13 +99,7 @@ atlanta_oval+atlanta (post-2022 reprofile).
   alt-config link roads are unconnected stubs in OSM
 - iRacing Superspeedway, Centripetal Circuit — fictional, no
   real-world geometry anywhere
-- Oran Park GP — DONE (tracks/oran_gp.json). Demolished IRL & gone from
-  OSM, so built from iRacing's OWN active.svg track-map asset (pulled from
-  a logged-in members-ng session via the browser console: /bff/pub/proxy/
-  data/track/{get,assets}). Centerline = midpoint of the ribbon's two
-  edges, rotated to S/F + direction from start-finish.svg, scaled to the
-  official 2.6385 km. This iRacing-SVG method works for ANY demolished/
-  unmapped track you own.
+- Oran Park — demolished (housing estate), gone from OSM
 
 Dirt ovals: mostly unmapped or too small in OSM — case by case.
 

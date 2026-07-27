@@ -406,7 +406,7 @@ def track_svg(track_file: str):
         f'preserveAspectRatio="xMidYMid meet">'
         f'<style>'
         f'.pit {{ fill:none; stroke:#6a6a7a; stroke-width:3; stroke-linecap:round; stroke-linejoin:round; }}'
-        f'.road {{ fill:none; stroke:#e8e8f0; stroke-width:19; stroke-linecap:round; stroke-linejoin:round; }}'
+        f'.road {{ fill:none; stroke:#e8e8f0; stroke-width:6; stroke-linecap:round; stroke-linejoin:round; }}'
         f'.inner {{ fill:none; stroke:#4ade80; stroke-width:1.5; stroke-dasharray:4 6; stroke-linecap:round; }}'
         f'</style>'
         + polyline(track["onpitroad_xy"], "pit")
@@ -415,7 +415,7 @@ def track_svg(track_file: str):
         + '</svg>'
     )
     resp = Response(svg, mimetype="image/svg+xml")
-    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Cache-Control"] = "public, max-age=86400"
     return resp
 
 
@@ -603,6 +603,10 @@ async function loadTrack(trackFile, viewW, viewH) {
 
     const root = document.getElementById('root');
     root.innerHTML = `
+        <div class="header">
+            <div class="title" id="track-title">Loading…</div>
+            <div class="status ok" id="track-status">live</div>
+        </div>
         <div class="svg-host">
             <div id="track-svg-host"></div>
             <svg class="cars-overlay" id="cars-overlay"
@@ -611,7 +615,7 @@ async function loadTrack(trackFile, viewW, viewH) {
         </div>`;
 
     try {
-        const r = await fetch(`/track/${trackFile}.svg?v=${Date.now()}`, { cache: 'no-store' });
+        const r = await fetch(`/track/${trackFile}.svg`);
         if (!r.ok) throw new Error('SVG fetch failed: ' + r.status);
         const svgText = await r.text();
         document.getElementById('track-svg-host').innerHTML = svgText;

@@ -23,12 +23,6 @@ Alle Telemetriedaten werden lokal über `pyirsdk` aus dem iRacing SDK gelesen. E
 | Championship | `iracing_championship.py` | 5010 | Live-Meisterschaftsprojektion (benötigt ein externes League-Manager-Backend) |
 | Session Info | `iracing_session_info.py` | 5011 | Session-Name + Gesamt- / Restzeit oder Runden |
 | Corner Cues | `iracing_drivingline.py` | 5012 | Kurvenhinweise (Richtung, Schwierigkeit, Distanz) für Strecken, auf denen die Racing-Line-Hilfe deaktiviert ist |
-| Driver of the Day | `iracing_dotd_overlay.py` | 5013 | Driver-of-the-Day-Nominierung aus den Rennlogs (kein SDK nötig) |
-| Quali Delta | `iracing_qualidelta.py` | 5014 | Live-Qualifying-Delta zur Session-Bestzeit + Sektor-Splits |
-| Catch-Up | `iracing_catchup.py` | 5015 | F1-Style Aufhol-Duell: Live-Abstand, Pace-Delta und „Einholen in N Runden"-Prognose |
-| Weather | `iracing_weather.py` | 5016 | Wetterleiste: Strecken-/Lufttemperatur, Luftfeuchte, Regen, Wind, Himmel + Live-Trends |
-| Driver Card | `iracing_drivercard.py` | 5017 | Lower-Third-Karte für den Fahrer im Bild: Name, Team, iRating, Lizenz, Runden, Incidents |
-| New Race Leader | `iracing_race_leader.py` | 5018 | Blendet 10 s lang "NEW RACE LEADER" + Fahrername ein, sobald ein neues Auto die Gesamtführung übernimmt — nur in Rennsessions |
 
 Alle Overlays laufen parallel — jedes auf einem eigenen Port.
 
@@ -116,7 +110,6 @@ Das Standings-Overlay zeigt Herstellerlogos aus `brands/*.svg`. Neue Marke hinzu
 - **Skript geändert, aber altes Verhalten** — Overlays behalten den alten Code im Speicher; Overlay neu starten.
 - **Schwarzer Kasten statt Transparenz in OBS** — in der Browser-Quelle (Interagieren) `H` drücken, um den Stream-Modus umzuschalten.
 - **Port bereits belegt** — ein anderes Overlay oder Programm nutzt den Port; der Port jedes Skripts steht unten in `app.run(...)`.
-- **Ein Overlay ruckelt oder verschwindet kurz mitten im Stream (besonders Live-Indicator / Session-Info)** — das liegt an OBS, nicht am Overlay. OBS nutzt ein eingebettetes Chromium, das die Timer einer Browser-Quelle *drosselt*, sobald das OBS-Fenster im Hintergrund ist (z. B. während du mit iRacing im Vordergrund fährst). Dadurch wird die Abfrageschleife des Overlays verlangsamt und kann für ein paar Sekunden pausieren. Die Overlays fangen das bereits ab — sie halten das letzte Bild 30 s lang, bevor sie einen Offline-Zustand zeigen, sollten also nicht unsichtbar werden. Wenn dich das Ruckeln trotzdem stört, helfen zwei Dinge: (1) das OBS-Fenster beim Fahren **nicht minimieren** (minimiert = stärkste Drosselung); (2) die OBS-Quelle **direkt** auf das Overlay zeigen lassen (`http://localhost:<port>`) statt auf die Datei in `obs_loaders/` — der Loader bettet die Seite in einen iframe ein, den OBS etwas stärker drosselt. Der Nachteil der direkten URL: du verlierst die automatische Start-Reihenfolge-Absicherung, also **die Browser-Quelle einmal vor dem Rennstart neu laden**, falls sie leer geblieben ist.
 
 ## Lizenz & Attribution
 
