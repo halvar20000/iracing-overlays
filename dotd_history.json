@@ -1,3 +1,138 @@
 {
-  "seasons": {}
+  "seasons": {
+    "lm:cmp89qaaa0004jr04k51crhn8": {
+      "name": "GT3 WCT 13th Season",
+      "league": "CAS GT3 WCT",
+      "winners": [
+        {
+          "log": "20260709-092706_circuit_de_spa-francorchamps_grand_prix_race.jsonl",
+          "name": "Declan Warde",
+          "car_number": "7",
+          "track": "Circuit de Spa-Francorchamps",
+          "score": 0.925,
+          "t": "2026-07-09T09:51:59"
+        },
+        {
+          "log": "20260709-095453_circuit_de_spa-francorchamps_grand_prix_race.jsonl",
+          "name": "Darren Patrick",
+          "car_number": "1",
+          "track": "Circuit de Spa-Francorchamps",
+          "score": 0.575,
+          "t": "2026-07-09T09:54:53"
+        },
+        {
+          "log": "20260709-130104_circuit_de_spa-francorchamps_grand_prix_race.jsonl",
+          "name": "Daniel Cialfi",
+          "car_number": "23",
+          "track": "Circuit de Spa-Francorchamps",
+          "score": 0.575,
+          "t": "2026-07-09T13:01:04"
+        },
+        {
+          "log": "20260709-134047_circuit_de_spa-francorchamps_grand_prix_race.jsonl",
+          "name": "Max Benecke",
+          "car_number": "3",
+          "track": "Circuit de Spa-Francorchamps",
+          "score": 0.8075,
+          "t": "2026-07-09T13:52:27"
+        },
+        {
+          "log": "20260714-195441_circuit_de_spa-francorchamps_grand_prix_race.jsonl",
+          "name": "Dirk Bolte",
+          "car_number": "334",
+          "track": "Circuit de Spa-Francorchamps",
+          "score": 0.8178,
+          "t": "2026-07-14T21:00:06"
+        },
+        {
+          "log": "20260716-155527_virginia_international_raceway_full_course_race.jsonl",
+          "name": "Philip Egegaard",
+          "car_number": "8",
+          "track": "Virginia International Raceway",
+          "score": 0.575,
+          "t": "2026-07-16T15:55:27"
+        },
+        {
+          "log": "20260716-160615_fuji_speedway_grand_prix_race.jsonl",
+          "name": "Jiaxing Shao",
+          "car_number": "12",
+          "track": "Fuji Speedway",
+          "score": 0.9308,
+          "t": "2026-07-16T16:21:17"
+        },
+        {
+          "log": "20260716-175713_circuit_de_ledenon_race.jsonl",
+          "name": "Viktor Snebjørn Poulsen",
+          "car_number": "2",
+          "track": "Circuit de Ledenon",
+          "score": 0.9143,
+          "t": "2026-07-16T18:12:50"
+        },
+        {
+          "log": "20260716-200110_circuito_de_jerez_-_ngel_nieto_grand_prix_race.jsonl",
+          "name": "Carl Sören Schober",
+          "car_number": "77",
+          "track": "Circuito de Jerez - Ángel Nieto",
+          "score": 0.85,
+          "t": "2026-07-16T20:29:43"
+        },
+        {
+          "log": "20260716-203513_circuito_de_jerez_-_ngel_nieto_grand_prix_race.jsonl",
+          "name": "Antonio Cursio",
+          "car_number": "55",
+          "track": "Circuito de Jerez - Ángel Nieto",
+          "score": 0.9178,
+          "t": "2026-07-16T21:03:36"
+        },
+        {
+          "log": "20260721-175400_virginia_international_raceway_full_course_race.jsonl",
+          "name": "Hubert Diethard",
+          "car_number": "777",
+          "track": "Virginia International Raceway",
+          "score": 0.825,
+          "t": "2026-07-21T19:02:25"
+        },
+        {
+          "log": "20260725-095230_road_america_full_course_race.jsonl",
+          "name": "Maciej Mendyka",
+          "car_number": "40",
+          "track": "Road America",
+          "score": 0.9688,
+          "t": "2026-07-25T15:48:39"
+        },
+        {
+          "log": "20260728-175322_adelaide_street_circuit_street_circuit_race.jsonl",
+          "name": "Björn Krumpschmied",
+          "car_number": "666",
+          "track": "Adelaide Street Circuit",
+          "score": 0.9238,
+          "t": "2026-07-28T18:58:55"
+        },
+        {
+          "log": "20260805-200702_n_rburgring_grand_prix_no_chicane_race.jsonl",
+          "name": "Marcus Rothe",
+          "car_number": "21",
+          "track": "Nürburgring Grand Prix No Chicane",
+          "score": 0.8688,
+          "t": "2026-08-05T20:30:00"
+        },
+        {
+          "log": "20260805-203528_n_rburgring_grand_prix_no_chicane_race.jsonl",
+          "name": "Dominic Waack",
+          "car_number": "16",
+          "track": "Nürburgring Grand Prix No Chicane",
+          "score": 0.9591,
+          "t": "2026-08-05T20:59:19"
+        },
+        {
+          "log": "20260805-211303_hockenheimring_baden-w_rttemberg_grand_prix_race.jsonl",
+          "name": "Maurice Becker",
+          "car_number": "49",
+          "track": "Hockenheimring Baden-Württemberg",
+          "score": 0.9053,
+          "t": "2026-08-05T22:16:02"
+        }
+      ]
+    }
+  }
 }
