@@ -1,0 +1,45 @@
+# ── Python ──────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ── Secrets / credentials (NEVER commit) ────────────────────────────
+iracing_auth.json
+
+# ── Local runtime config (machine-specific, not for the repo) ───────
+championship_config.json
+# Driver-of-the-Day streak state, rebuilt at runtime:
+dotd_history.json
+
+# ── Logs & run output ───────────────────────────────────────────────
+logs/
+*.log
+dashboard_log.txt
+
+# ── Archives / scratch ──────────────────────────────────────────────
+files.zip
+*.zip
+archive/
+
+# ── OS / editor cruft ───────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# ── Nextcloud sync conflict copies ──────────────────────────────────
+*conflicted copy*
+*(Wiederhergestellt)*
+
+# ── SMB delete-pending tombstones (network share leftovers) ─────────
+.smbdelete*
+
+# ── Old FCP camera pack, superseded by custom_cameras_2 ─────────────
+# Kept on disk locally but NOT pushed to the repo (redundant + full of
+# .smbdelete tombstones). The installer uses custom_cameras_2.
+/custom_cameras/
+
+# rsync in-flight temp files (network share sync leftovers)
+.*.??????

@@ -12,7 +12,9 @@ Layout:
   1. Top info bar   — session type, elapsed/remaining/total time,
                       weather (dry/wet), track temperature
   2. Driver-count   — active drivers on track / total entered
-  3. Standings list — position, #, driver, interval (gap to car ahead)
+  3. Standings list — position, #, driver, interval (gap to car ahead),
+                      and in RACE sessions a second column with the
+                      positions gained / lost vs the starting grid
 
 Press H to toggle stream mode (transparent background for OBS).
 
@@ -23,7 +25,7 @@ iRacing independently.
 import threading
 from flask import Flask, jsonify, render_template_string, send_file, abort
 
-from iracing_sdk_base import SDKPoller, setup_utf8_stdout
+from iracing_sdk_base import SDKPoller, GridBaseline, setup_utf8_stdout
 setup_utf8_stdout()
 
 from car_brands import detect_brand, resolve_logo
@@ -100,6 +102,13 @@ def _weather(ir) -> dict:
 # -----------------------------------------------------------------------------
 # Standings poller
 # -----------------------------------------------------------------------------
+# In RACE sessions the tower shows TWO data columns side by side:
+#   INTERVAL  — gap to the car immediately ahead (within the same class)
+#   +/-       — positions gained / lost vs the starting grid
+# Both are always visible; there is no view cycling. Qualifying and practice
+# keep the single LAP TIME column.
+
+
 class StandingsPoller(SDKPoller):
     tag = "standings"
     poll_interval = 1.0
@@ -114,6 +123,15 @@ class StandingsPoller(SDKPoller):
         self._pit_entry_t:   dict[int, float] = {}  # session time when entered
         self._last_pit_lap:  dict[int, int] = {}  # lap of most recent completed pit
         self._last_pit_time: dict[int, float] = {}  # seconds spent in pit lane on last stop
+
+        # Positions gained/lost feature. The baseline is each car's slot on
+        # the STARTING GRID, captured once per race session by GridBaseline
+        # (see iracing_sdk_base.py — it also handles the session-change
+        # reset and refuses to invent a baseline when the overlay attaches
+        # mid-race). pos_delta = grid_slot - current_class_position, i.e. a
+        # NET value vs the start that never accumulates. Rendered as a
+        # permanent second column next to the interval in race sessions.
+        self._grid = GridBaseline()
 
     def _driver_map(self) -> dict:
         info = self.ir["DriverInfo"] or {}
@@ -203,7 +221,7 @@ class StandingsPoller(SDKPoller):
         except Exception:
             return 0.0
 
-    def _build_race_standings(self, drivers, ir) -> list:
+    def _build_race_standings(self, drivers, ir, sess=None) -> list:
         """
         Live race running order.
 
@@ -322,6 +340,36 @@ class StandingsPoller(SDKPoller):
             _cls_counter[cid] = _cls_counter.get(cid, 0) + 1
             r["class_position"] = _cls_counter[cid]
 
+        # ------------------------------------------------------------------
+        # Positions gained / lost vs the STARTING GRID.
+        #
+        #   pos_delta = grid_slot_in_class - current_class_position
+        #
+        # This is a NET comparison against where the driver started, and
+        # nothing about it accumulates. Pole man drops to P2 in turn 1 →
+        # -1. He takes the place straight back → 0. Loses and retakes it
+        # five more times → still 0. Only where he is NOW versus where he
+        # STARTED matters; the churn in between is deliberately invisible
+        # here. (If you want "how many passes did he actually make", that
+        # is the race logger's cumulative overtakes counter, a different
+        # statistic on purpose.)
+        #
+        # GridBaseline (iracing_sdk_base.py) owns the baseline: source
+        # priority qualifying results → race StartingPosition → a green-
+        # flag sample, session-change reset, and a hard refusal to invent
+        # a baseline when we attached mid-race. When it has nothing for a
+        # car, pos_delta stays None and the cell renders empty.
+        # ------------------------------------------------------------------
+        self._grid.update(
+            self.ir,
+            class_of={r["car_idx"]: r.get("class_id", 0) for r in rows},
+        )
+        for r in rows:
+            r["pos_delta"] = self._grid.class_delta(
+                r["car_idx"], r.get("class_position")
+            )
+            r["grid_pos"] = self._grid.class_grid_pos.get(r["car_idx"])
+
         # Compute lapped cars vs class leader — compare TOTAL TRACK PROGRESS
         # (lap + lap_dist_pct), NOT the raw integer lap count. The raw
         # count would flicker to "+1 LAP" for a full lap of everyone in
@@ -393,20 +441,55 @@ class StandingsPoller(SDKPoller):
 
         return rows
 
-    def _build_timed_standings(self, drivers, ir) -> list:
+    def _build_timed_standings(self, drivers, ir, sess=None) -> list:
         """
-        Qualifying / practice standings: sort by best lap time ascending.
-        Interval = gap to P1's best lap.
+        Qualifying / practice standings.
+
+        Ranking source: the OFFICIAL results block for the current session
+        (SessionInfo -> Sessions[cur] -> ResultsPositions), which carries
+        Position + FastestTime and matches the in-sim F3 board and the
+        Race Results overlay (iracing_results.py). This is authoritative:
+        it only counts VALID laps, so a lap iRacing later invalidates
+        (off-track, tow, incomplete) does not pollute the order.
+
+        Telemetry CarIdxBestLapTime is used ONLY as a fallback for a driver
+        who has no results row yet (just set their first lap; the YAML block
+        updates a second or two behind telemetry). Ranking straight off
+        CarIdxBestLapTime was the old behaviour and produced positions/times
+        that disagreed with F3 during practice — that was the bug.
         """
         best_lap = ir["CarIdxBestLapTime"] or []
         last_lap = ir["CarIdxLastLapTime"] or []
         on_pit   = ir["CarIdxOnPitRoad"] or []
         in_world = ir["CarIdxTrackSurface"] or []
 
+        # Official best time per CarIdx from the current session's results.
+        results_best: dict = {}
+        if sess:
+            for r in sess.get("ResultsPositions") or []:
+                try:
+                    cidx = int(r.get("CarIdx"))
+                except (TypeError, ValueError):
+                    continue
+                ft = r.get("FastestTime")
+                try:
+                    ft = float(ft)
+                except (TypeError, ValueError):
+                    ft = 0.0
+                # iRacing uses 0 / negative for "no valid lap".
+                results_best[cidx] = ft if ft > 0 else 0.0
+
+        def best_time_for(cidx):
+            """Official time if present; else telemetry; else 0 (no time)."""
+            bt = results_best.get(cidx, 0.0)
+            if bt > 0:
+                return bt
+            tel = best_lap[cidx] if cidx < len(best_lap) else 0.0
+            return tel if tel and tel > 0 else 0.0
+
         entries = []
         for cidx, drv in drivers.items():
-            bt = best_lap[cidx] if cidx < len(best_lap) else 0.0
-            entries.append((bt, cidx, drv))
+            entries.append((best_time_for(cidx), cidx, drv))
 
         # Rank: valid times first (ascending), no-time drivers after (stable)
         with_time = sorted((e for e in entries if e[0] > 0), key=lambda e: e[0])
@@ -490,9 +573,9 @@ class StandingsPoller(SDKPoller):
 
         drivers = self._driver_map()
         if session_type == "Race":
-            rows = self._build_race_standings(drivers, ir)
+            rows = self._build_race_standings(drivers, ir, sess)
         else:
-            rows = self._build_timed_standings(drivers, ir)
+            rows = self._build_timed_standings(drivers, ir, sess)
 
         # Driver counts
         num_entered = len(drivers)
@@ -694,13 +777,18 @@ STANDINGS_HTML = """
     .standings { padding: 0; }
     .row {
         display: grid;
-        /* pos | brand | # | driver | interval (or laptime in quali) */
+        /* Qualifying / practice: pos | brand | # | driver | lap time */
         grid-template-columns: 72px 48px 84px 1fr 220px;
         align-items: center;
         padding: 6px 18px;
         border-bottom: 1px solid #1d1d27;
         font-variant-numeric: tabular-nums;
         transition: background .15s;
+    }
+    /* Race sessions add a sixth column for positions gained / lost, so
+       INTERVAL and +/- are both permanently visible side by side. */
+    .standings.race .row {
+        grid-template-columns: 72px 48px 84px 1fr 200px 128px;
     }
 
     .brand-cell {
@@ -802,6 +890,19 @@ STANDINGS_HTML = """
        skip the pack-is-close-but-it-doesn't-matter-yet start phase. */
     .interval.battle { color: #facc15; font-weight: 700; }
 
+    /* Positions gained / lost column (race sessions only, always visible).
+       Green = places gained vs the grid, red = places lost, grey "=" =
+       unchanged. Empty when no grid baseline has been captured yet. */
+    .delta {
+        text-align: right;
+        font-size: 26px; font-weight: 800;
+        line-height: 1.1;
+        letter-spacing: .5px;
+    }
+    .delta.up   { color: #4ade80; }
+    .delta.down { color: #ff5470; }
+    .delta.none { color: #7a7a90; font-weight: 700; }
+
     /* Pit columns — amber, matching iOverlay's colour for mid-race pit data. */
     .pitlap {
         text-align: right; color: #ff9f5a;
@@ -900,6 +1001,13 @@ function render(d) {
                   : st === 'Qualifying' ? 'session-qual'
                   : 'session-prac';
 
+    // Qualifying / practice show a single LAP TIME column. Everything else
+    // (race, or an unrecognised session type) is treated as a race and gets
+    // both data columns: INTERVAL and +/- (positions gained/lost), always
+    // visible side by side — no view cycling.
+    const isTimed = (st === 'Qualifying' || st === 'Practice');
+    const isRace  = !isTimed;
+
     // Decide whether this race is lap-based or time-based.
     // Preference: if iRacing reports a lap target at all, treat it as a
     // lap race. Many lap-based formats (Porsche Cup, fixed-setup race
@@ -948,20 +1056,19 @@ function render(d) {
         const posCls = displayPos === 1 ? 'p1'
                      : displayPos === 2 ? 'p2'
                      : displayPos === 3 ? 'p3' : '';
-        // In RACE mode the right-hand column is the gap to the car ahead.
+        // In RACE mode the first data column is the gap to the car ahead.
         // In QUALIFYING / PRACTICE we show each driver's best lap time
         // instead, since "gap" is less meaningful there than the actual
         // pace each driver has put in.
         let interval = '';
         let intervalCls = 'interval';
-        if (st === 'Qualifying' || st === 'Practice') {
+        if (isTimed) {
             if (r.best_lap && r.best_lap > 0) {
                 interval = fmtLap(r.best_lap);
             } else {
                 interval = '<span class="out-flag">no time</span>';
             }
         } else {
-            // Race (or unknown): keep the original gap-to-car-ahead logic.
             if (r.position === 1) {
                 interval = 'LEADER';
                 intervalCls += ' leader';
@@ -979,6 +1086,34 @@ function render(d) {
             } else {
                 interval = '';
             }
+        }
+
+        // Second data column (race only): NET positions gained / lost vs
+        // the starting grid, within class. This is not a running tally —
+        // lose a place and take it back and you are on = again.
+        //   pos_delta > 0  -> ▲ n  (green)
+        //   pos_delta < 0  -> ▼ n  (red)
+        //   pos_delta == 0 -> =    (grey, back on / never left his grid slot)
+        //   pos_delta null -> blank (no grid slot known for this car:
+        //                     late joiner, or we attached mid-race with no
+        //                     qualifying results to fall back on)
+        let deltaHtml = '';
+        if (isRace) {
+            const pd = r.pos_delta;
+            let dTxt = '', dCls = 'none';
+            if (pd == null) {
+                dTxt = '';
+            } else if (pd === 0) {
+                dTxt = '=';
+            } else if (pd > 0) {
+                dTxt = '▲ ' + pd;
+                dCls = 'up';
+            } else {
+                dTxt = '▼ ' + Math.abs(pd);
+                dCls = 'down';
+            }
+            const dTitle = r.grid_pos ? `started P${r.grid_pos} in class` : '';
+            deltaHtml = `<div class="delta ${dCls}" title="${dTitle}">${dTxt}</div>`;
         }
 
         const pit = r.on_pit ? ' <span class="pit-flag">PIT</span>' : '';
@@ -1005,6 +1140,7 @@ function render(d) {
                 <div><span class="num">#${r.car_number || '—'}</span></div>
                 <div class="driver">${team_esc(abbrevName(name))}${pit}${outFlag}${team}</div>
                 <div class="${intervalCls}">${interval}</div>
+                ${deltaHtml}
             </div>`;
     }
 
@@ -1042,13 +1178,14 @@ function render(d) {
         </div>
 
         <div class="panel">
-            <div class="standings">
+            <div class="standings${isRace ? ' race' : ''}">
                 <div class="row head">
                     <div>POS</div>
                     <div></div>
                     <div>#</div>
                     <div>DRIVER</div>
-                    <div style="text-align:right;" id="col-right-label">${(st === 'Qualifying' || st === 'Practice') ? 'LAP TIME' : 'INTERVAL'}</div>
+                    <div style="text-align:right;">${isTimed ? 'LAP TIME' : 'INTERVAL'}</div>
+                    ${isRace ? '<div style="text-align:right;">+/-</div>' : ''}
                 </div>
                 ${rowsHtml}
             </div>

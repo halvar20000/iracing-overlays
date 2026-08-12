@@ -22,8 +22,12 @@ GitHub:   https://github.com/halvar20000/iracing-overlays (primary repo,
 | champ       | `iracing_championship.py`     | 5010 | Live championship overlay (CLS league-manager API) |
 | sess        | `iracing_session_info.py`     | 5011 | Session name + total / remaining time card |
 | line        | `iracing_drivingline.py`      | 5012 | Corner cues (driving-line substitute)      |
-| dotd        | `iracing_dotd_overlay.py`     | 5013 | Driver of the Day card (reads race log)    |
-| racectrl    | `iracing_racecontrol.py`      | 8080 | Race Control / Steward (iCASControl, FastAPI) — NOT an OBS source |
+| dotd        | `iracing_dotd_overlay.py`     | 5013 | Driver of the Day (from race logs, no SDK) |
+| delta       | `iracing_qualidelta.py`       | 5014 | Qualifying live delta + per-sector splits  |
+| catch       | `iracing_catchup.py`          | 5015 | F1-style catch-up battle (gap + catch prediction) |
+| weather     | `iracing_weather.py`          | 5016 | Weather strip (temps, rain, wind, sky + live trends) |
+| driver      | `iracing_drivercard.py`       | 5017 | Driver card (name, team, iRating, license, laps, inc) |
+| racectrl    | `iracing_racecontrol.py`      | 8080 | iCASControl steward dashboard (FastAPI; `racecontrol/`) |
 
 All overlays are Flask apps that read iRacing telemetry via `pyirsdk`,
 designed to be added as browser sources in OBS. They run in parallel on
@@ -59,35 +63,6 @@ overlays:
 
 Keep tags short (single lowercase word). Use distinct colors per overlay
 so log output and status dots stay visually clear.
-
-## Race Control component (`racecontrol/` — iCASControl) — merged June 25, 2026
-
-The `racecontrol/` subfolder is the **iCASControl** stewarding/race-control
-dashboard (FastAPI + WebSocket, single server on **port 8080**), merged in from
-Thomas's separate IRACECONTROL project so the streamer suite can also steward a
-race. It is launched through `iracing_racecontrol.py`, a thin shim in this
-folder that runs `racecontrol/backend/server.py` in-process (auto-detects
-iRacing, falls back to a built-in simulator; can `--replay` a `.jsonl` log).
-
-**Important differences from the overlays — do NOT treat it as an overlay:**
-
-- It is a **full-screen control panel**, not a transparent OBS browser source.
-  Therefore it is wired into `launch_all.bat`, `launch_all.py` and
-  `launch_gui.py` (so the launchers manage it), but it is **deliberately NOT in
-  `make_obs_loaders.py`** and has **no `obs_loaders/` page**. Do not add one.
-- It is FastAPI, not Flask, and reads the field through its own swappable
-  DataSource (`racecontrol/backend/sources/`), not via `iracing_sdk_base.py`.
-- **Shared tracks:** `racecontrol/backend/tracks.py` was patched so `TRACKS_DIR`
-  points at this project's `tracks/` folder (a same-format superset) when present,
-  falling back to its own bundled `racecontrol/assets/tracks/`. Add new circuits
-  to `tracks/` only — the steward picks them up automatically. The bundled copy
-  can be deleted later to save space once confirmed on the Windows rig.
-- Extra deps for this component (`fastapi`, `uvicorn`, `websockets`) are in the
-  top-level `requirements.txt`; `pyirsdk` is shared.
-- Verified June 25, 2026: boots via the shim in simulator mode on macOS and
-  serves the dashboard on :8080 (smoke-tested in a throwaway venv).
-- Source project carried its own `README.md`, `ROADMAP.md`, `run.sh`,
-  `run_windows.bat` and sample `logs/` into `racecontrol/`.
 
 ## Other conventions
 
@@ -172,75 +147,475 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
-**June 22, 2026 (Driver of the Day — analyzer + overlay, port 5013):**
-New post-race "Driver of the Day" (DotD) feature. Core module
-`driver_of_the_day.py` (stdlib only) scores every classified driver from
-a race-logger JSONL on four merits, each min-max normalised across the
-eligible field then weighted: positions gained (start→finish, heaviest
-at 0.40), recovery (worst position reached − finish, 0.20), overtakes
-(the logger's on-track-pass counter, 0.25), clean racing (fewer
-`session_end` incidents, 0.15). Profiles: positions (default), balanced,
-recovery, clean; custom `--weights pos=..,rec=..,ot=..,clean=..`. The
-winner is deliberately NOT the race winner — a clean pole-to-flag win
-scores ~0 on gained/recovery/overtakes, so the best comeback drive wins;
-the race winner stays eligible and takes it only when earned. Start
-position is the earliest valid `position` in the lap stream (rolling-
-start grid proxy). Eligibility: must finish (`reason_out`=="Running",
-override `--dnf-can-win`) and complete ≥50% of leader's laps; ineligible
-drivers are still ranked but can't be crowned. CLI: `python
-driver_of_the_day.py [log] [--json|--emit|--profile|--weights|--top]`,
-defaults to newest `logs/*_race.jsonl`.
-  • Overlay `iracing_dotd_overlay.py` (port 5013, tag "dotd") — does NOT
-    read the SDK; watches `logs/`, recomputes via `analyze()` when the
-    newest log changes (mtime cache), so it lights up the moment the
-    logger writes `session_end` and persists through cool-down/replay.
-    Dark card, transparent BG, H = debug bg. `?profile=` and `?log=`
-    query params. Runner-up list ("Also outstanding").
-  • Race logger hook: `_write_final()` now calls `_emit_driver_of_day()`
-    after the classification is on disk — appends a `driver_of_day`
-    event (winner + weights + top-5 ranking) and prints a console line.
-    Fully defensive (try/except) so it can never break logging.
-  • All four launchers updated per the maintenance rule (port 5013, tag
-    "dotd"): `launch_all.py` SCRIPTS, `launch_all.bat` (now "14
-    overlays"), `launch_gui.py` OVERLAYS, `make_obs_loaders.py` (+ re-run
-    → `obs_loaders/dotd.html`). Scripts table updated.
-  • Validated on all 17 historical logs. Headline case — Watkins Glen
-    Cup 11.06.: race winner Ilhanberk Ilikci won from ~P19 but with 20
-    incidents → he lands 6th in DotD; winner is Kevin Sully (P23→P3, 19
-    overtakes, 0 incidents, score 0.985). Exactly the intended "not the
-    winner" behaviour. Logs without `session_end` (some enduros) return
-    a clean "race may not have finished" message.
-  • Packaged as a reusable Skill `driver-of-the-day` (SKILL.md + bundled
-    `scripts/driver_of_the_day.py`), triggers on "driver of the day /
-    best drive / Fahrer des Tages / pilote du jour / best comeback".
+**August 12, 2026 (+/- everywhere = NET vs the STARTING GRID, never
+cumulative):**
+User report: the standings +/- was not reading as "versus where he
+started". Rule he stated, and the rule the code now enforces everywhere:
+*"If the driver on pole lost one position in the first corner and regains
+his place later, he is at 0. If this happens again several times he still
+is at 0. It is not cumulating."*
+  • NEW shared class `GridBaseline` in `iracing_sdk_base.py` — single
+    owner of "which grid slot did this car start from". Source priority,
+    captured ONCE per race session and then frozen:
+      1. the QUALIFYING session's `ResultsPositions[].Position` (same
+         source `iracing_grid.py` uses, so grid / tower / logger agree,
+         and it is correct even when an overlay is started mid-race),
+      2. the race session's `ResultsPositions[].StartingPosition`,
+      3. a `CarIdxPosition` sample at the green flag — allowed ONLY if we
+         were already watching before the green (tracked via
+         `_saw_pre_green`, plus a max-lap<=1 guard).
+    Values are re-ranked to dense 1-based slots, so the class does not
+    care whether a source counts from 0 or 1. `class_grid_pos` gives the
+    per-class slot for multi-class. Session change resets it.
+  • WHY the old code read wrong: `ResultsPositions[].StartingPosition`
+    is not published in practice, so it always fell through to the
+    green-flag capture — and that capture had no "were we here before the
+    green?" guard. Start the overlay mid-race and it froze the CURRENT
+    running order as if it were the grid, so every +/- for the rest of
+    the race was measured from "wherever everyone happened to be when I
+    hit start". Qualifying results fix that outright.
+  • NO baseline is now NEVER invented. Late joiner, or mid-race attach
+    with no qualifying results → `pos_delta = None` → **blank cell**
+    (user's choice). `=` now means only one thing: he is on his grid slot.
+  • `iracing_standings.py` — delta block replaced by `GridBaseline`;
+    `pos_delta` + new `grid_pos` per row; the +/- cell renders blank on
+    None and carries a "started Pn in class" tooltip.
+  • `iracing_race_logger.py` — the +/- column in the drivers table used to
+    print the two CUMULATIVE counters side by side (`+3 −3` for a driver
+    who is exactly where he started). It now shows `_pos_delta()` =
+    grid − current, with the cumulative pass counts moved into the cell
+    tooltip. Same for the `/share/standings` page (`fmtOvertakes` →
+    `fmtPosDelta`). Lap events now also carry `grid_pos` and `pos_delta`.
+  • `overtakes` / `overtaken` are UNCHANGED and stay cumulative on
+    purpose — they are "how much position churn did he go through", which
+    is a real and different statistic, and it is what
+    `driver_of_the_day.py` scores as its `ot` component (0.25 weight).
+    Do not "fix" them to be net; the +/- is the net one.
+  • `driver_of_the_day.py` — `positions_gained` now measures from
+    `grid_pos` when the log has it, falling back to the old "position at
+    the end of lap 1" for logs recorded before today. So OLD LOGS SCORE
+    EXACTLY AS BEFORE; new races credit the run to turn 1 as well. A
+    driver starting P10 who is P5 after lap 1 and finishes P2 now scores
+    8 gained instead of 3. `recovery` deliberately still measures from
+    the in-race low point, not the grid.
+  • Two copies of `iracing_standings.py` existed (project root, and a
+    stale ZIP-extraction in `iracing-overlays-main/`) with DIFFERENT
+    designs — root cycled the column every 5 min, the nested one had a
+    permanent `+/-` column. Both were overwritten with the same fixed
+    permanent-column version so they cannot diverge again. The nested
+    folder should be deleted; everything else in it is identical to the
+    root except an OLDER `iracing_drivercard.py`.
+  • Verified offline (stubbed irsdk): `test_pos_delta.py` 29/29
+    (lose+regain x7 never accumulates, green-flag path, mid-race attach
+    stays blank, session reset, multi-class, 0-based source),
+    `test_standings_delta.py` (real `_build_race_standings`),
+    `test_dotd_grid.py` (old logs unchanged, new logs grid-based).
 
-FOLLOW-UP same day (no back-to-back winner rule): a driver can't win
-DotD in two consecutive rounds of the SAME season. New companion
-`dotd_streak.py` (stdlib only — urllib/json): the previous round's
-winner is passed to `analyze()` via the new `exclude_names` param —
-they're still RANKED (ranking now sorts purely by score so they appear
-at the rank their drive earned, marked "(prev)" / blocked_repeat=True)
-but can't be CROWNED; the title falls to the next eligible driver, and
-normalisation is over the eligible pool. Season identity comes from the
-CLS league-manager (same `championship_config.json` + season.id from
-`/api/overlay/standings` the championship overlay uses) so the streak
-RESETS AUTOMATICALLY at a new season; offline it falls back to a
-config-derived key. Winner history persisted in `dotd_history.json`
-(gitignore-worthy runtime state, keyed by season id), matched by driver
-display name (case-insensitive — only stable id in the logs).
-`dotd_streak.pick(log, no_repeat=True, record=...)` is the high-level
-entry: resolves season, excludes the previous winner, optionally records.
-The race logger is the AUTHORITATIVE recorder (`record=True` at
-session_end → writes history); the overlay and manual CLI runs read it
-(`record=False`). CLI flags: `--allow-repeat` disables the rule,
-`--record` persists a manual run. Overlay shows an italic note
-"X won the previous round — not eligible for back-to-back" + the season
-name in the footer; cache key now includes `dotd_history.json` mtime so
-it refreshes when the logger records. Verified: excluding Watkins winner
-Kevin Sully passes the crown to #18 Brandon Trexler; cross-race flow
-(record Mike Girenz → next race blocks him → #118 Bernhard Wlach wins)
-works; live overlay confirmed against the real league-manager season
-("GT3 WCT 13th Season"). Skill repackaged with `scripts/dotd_streak.py`.
+**July 9, 2026 (quali delta — "vs OWN BEST" reference mode added):**
+User wanted a second version of the Quali Delta overlay that compares each
+driver against their OWN fastest lap instead of the session best (pole).
+Chosen delivery (user picked): a MODE TOGGLE on the existing overlay
+(`iracing_qualidelta.py`, port 5014) — NOT a new port — so no launcher /
+make_obs_loaders changes were needed. Reference = the driver's own
+session-best lap.
+  • BOTH references are computed server-side every snapshot and returned
+    under a new `refs` dict: `refs.session` (vs pole, the old behavior) and
+    `refs.own` (vs own best). The front-end picks which to show, so you can
+    even run TWO OBS browser sources at once: `http://localhost:5014`
+    (pole) and `http://localhost:5014/?ref=own` (own best). Live toggle
+    with the **M** key; `?ref=own` sets the default.
+  • DRIVING mode: own view uses iRacing's predictive `LapDeltaToBestLap`
+    (+`_OK`); pole view keeps `LapDeltaToSessionBestLap`. Sector chips were
+    already computed vs the driver's own best lap, so both views share them.
+  • SPECTATOR mode: refactored the single pole-reference builder into a
+    PER-CAR own-best reference (`_car_ref[idx]`, via new `_store_car_ref`);
+    the pole reference is simply the fastest car's curve. Own delta =
+    on-camera car's live elapsed vs its OWN scaled best-lap curve. Sector
+    tracking now records raw times once (`_spec_cam_sector_times`) and
+    `_colorize_sectors` tints them against whichever reference is active.
+    Anchored to official `CarIdxBestLapTime` (deleted laps never become the
+    reference), same guard as pole. Shows "Building this driver's best
+    lap…" until the on-camera car has set a clean lap.
+  • Verified offline (`test_qualidelta.py`, stubbed irsdk/flask, synthetic
+    laps): driving own-vs-pole deltas, spectator own delta (−1.0 under own
+    best) distinct from pole delta (0.0 on pole pace), own-reference absent
+    until a lap is set, sector colorization. 25/25 pass.
+  • NOTE: the cowork SMB mount again served STALE/truncated copies of the
+    edited file for the whole session (byte-compile on the mount failed on
+    an "unterminated string" that wasn't real) — verified via the direct
+    file tools and by running the test from a faithful logic copy in the
+    fresh outputs mount. The real file on disk has all edits.
+  • FOLLOW-UP: added a self-healing OBS loader for the own-best view —
+    `obs_loaders/delta_own.html` and a matching `make_obs_loaders.py` entry
+    `("delta_own", "Quali Delta (Own Best)", 5014, "/own")`, so the two
+    references can be dropped into OBS as two separate local-file browser
+    sources (delta.html = pole, delta_own.html = own best). Loaders share
+    the same port/server. No launcher changes (same overlay/port).
+  • FOLLOW-UP 2 (OBS loader "Waiting for server…" bug): the first
+    delta_own loader pointed the iframe at `http://localhost:5014/?ref=own`.
+    In OBS it showed the overlay for a few seconds then fell back to the
+    overlay's "Waiting for server…" idle. Root cause suspected: OBS's
+    Chromium browser source handles a QUERY STRING inside the loaded iframe
+    URL poorly (the working pole loader has none). Fix: added a dedicated
+    **`/own` Flask route** (serves the same page; the front-end now sets
+    own mode from `location.pathname == "/own"` OR the legacy `?ref=own`),
+    and repointed `delta_own.html` + the `make_obs_loaders.py` entry to the
+    clean query-string-free `http://localhost:5014/own`. `?ref=own` still
+    works for opening directly in a browser.
+  • FOLLOW-UP 3 (self-healing loader still "Waiting for server…" in OBS):
+    with the /own route the DIRECT browser source (URL) worked in OBS after
+    an OBS cache clear, but the self-healing LOCAL-FILE loader still stuck on
+    "Waiting for server…". Symptom: the overlay embedded in the loader's
+    iframe couldn't reach /status, even though the same URL worked top-level.
+    Fix: converted `delta_own.html` from the shared IFRAME loader to a
+    REDIRECT loader — it pings until the server answers, then
+    `window.location.replace()`s to `http://localhost:5014/own`, so the
+    overlay runs as a normal top-level page (identical to the working direct
+    source) and self-heals via its own /status polling. Added a
+    `REDIRECT_TEMPLATE` to `make_obs_loaders.py` and a 5th entry field
+    ("redirect") so regeneration keeps it; the iframe template is unchanged
+    for every other loader. Since loaders are "load-once" now, redirect ==
+    iframe for self-healing. NOTE: after swapping the file, the OBS source
+    must have its cache cleared / be re-added to pick up the new loader.
+  • FOLLOW-UP 4 (fixed overlay width): the card used `min-width: 430px` and
+    grew with a long driver name, which shifted its OBS placement. Changed to
+    a FIXED `width: 460px`; `.name` now `flex:1 1 auto; min-width:0` so long
+    names truncate with an ellipsis, and `.ref-name` (pole driver on the
+    right) capped at `max-width:150px` + ellipsis. Overall size is now
+    constant regardless of name length (both reference modes share the page).
+  • FOLLOW-UP 5 (spectator delta glitch — huge value like "-1027.164"): a
+    replay rewind / session-time backward jump leaves a car's `_car_lap_start`
+    stale, so `elapsed = t - lap_start` goes hugely negative and the computed
+    spectator delta showed nonsense (−1027s). Added a sanity guard in
+    `_spec_cam_delta`: hide the delta (return None/False → overlay shows "—" +
+    "Waiting for a flying lap…") when `elapsed < -0.5` or `> 3600`, or when
+    `abs(delta) > 120` (a real quali delta is seconds, not minutes). Self-heals
+    at the car's next S/F crossing. Covers both pole and own-best spectator
+    views (shared helper). test_qualidelta.py extended (stale-lap-start guard);
+    27/27 pass.
+  • FOLLOW-UP 6 (OBS browser-source flicker): both delta overlays flickered a
+    bit in OBS via the loader. Two front-end fixes (shared page, so both
+    modes): (a) `.card` promoted to its own compositor layer
+    (`transform: translateZ(0); backface-visibility: hidden`) so OBS repaints
+    only the card, not the whole transparent canvas; (b) all render helpers
+    (`renderHeader/renderDelta/renderRef/renderSectors` + a `setText` helper)
+    now write to the DOM ONLY when a value actually changed (guarded via
+    element `dataset`), so unchanged frames trigger no repaint. JS syntax
+    node-checked. Needs an overlay restart + OBS source cache clear to load
+    the new page.
+
+**July 4, 2026 (standings — periodic "positions gained/lost" view):**
+User request: the tower normally shows gap/interval; every 5 min it should
+flip for 20 s to show how many places each driver has gained/lost, then
+flip back. Implemented in `iracing_standings.py` (no new overlay/port, so
+launchers untouched). Design (user chose defaults): baseline = each car's
+class position on the STARTING GRID; delta counted WITHIN CLASS; 20 s view
+swaps the interval column for ▲N green / ▼N red / = grey + a pulsing
+"POSITIONS GAINED / LOST" info-bar pill + "GAINED / LOST" column header;
+tower keeps its running order (no re-sort).
+  • Cadence constants at module top: `INTERVAL_VIEW_SEC=300`,
+    `DELTA_VIEW_SEC=20`. View cycle computed server-side in `_read_snapshot`
+    from `time.monotonic()` vs `_cycle_anchor` (phase >= 300 → delta), so
+    all browser sources agree. Race sessions only; quali/practice always
+    show the interval/lap-time column.
+  • Baseline captured ONCE per race in `_build_race_standings`: cars ranked
+    within class by iRacing's official `CarIdxPosition` (grid order, stable
+    at the start — unlike the live-progress sort in the opening seconds).
+    `pos_delta = start_pos - class_position` (+ = gained). Cars with no
+    baseline (late joiners) → `=`.
+  • Session-change reset: `(SessionUniqueID, SessionNum)` change clears the
+    baseline AND re-anchors the cycle, so every race starts fresh in
+    interval mode and re-captures its own grid. If the overlay is started
+    mid-race, baseline = order at first sight (delta = places since we
+    joined) — noted as expected behavior.
+  • Verified offline (stubbed irsdk, fake clock): grid capture, +2/-1
+    deltas after an overtake, view interval→delta→wrap at 305/330 s,
+    session-change reset. 14/14 pass.
+
+**July 4, 2026 (dashboard — `/cameras` endpoint for custom camera sets):**
+Context: colleague uses custom iRacing camera sets ("FPV cams") for
+better broadcast angles. Custom sets are just camera files dropped into
+`Documents\iRacing\cameras\tracks\<track>\` — they appear as ordinary
+named camera GROUPS, so the existing `/streamdeck/cam_name/<name>`
+endpoint already selects them; NO overlay/launcher change needed.
+Added a discovery helper: **`GET /cameras`** on the dashboard (port
+5000) returns the loaded session's camera groups (id, name, current
+flag, ready-to-use `streamdeck_url`). `?format=text` gives a
+copy-paste list with full `http://localhost:5000/streamdeck/cam_name/…`
+URLs (spaces %20-encoded) so Stream Deck buttons can be labeled by the
+actual group names without guessing. Reads from `poller.get()` snapshot
+(camera_groups / current_cam_group already populated). Startup banner +
+byte-compile verified; text/json formatting unit-checked offline. Not
+an OBS source, so make_obs_loaders.py untouched. Also wrote
+`CUSTOM_CAMERAS_GUIDE.md` (pack recommendations + install + wiring).
+  • FOLLOW-UP: user added the **FCP broadcast camera pack** to
+    `custom_cameras/` (95 tracks + 90 cars, all `fcp.cam`). Binary iRacing
+    .cam files; uses STANDARD group names (TV1/TV2/TV3/Chase/Far Chase/
+    Rear Chase/Blimp/Chopper/Pit Lane for tracks; Cockpit/Nose/Gearbox/
+    Gyro/susp for cars) re-tuned for broadcast — so existing
+    `/streamdeck/cam_name/<name>` buttons work unchanged, no code needed.
+    Wrote `install_fcp_cameras.bat` (run on the Windows iRacing PC, sim
+    closed): backs up `Documents\iRacing\cameras` to a timestamped folder,
+    then robocopies `custom_cameras\cars` + `\tracks` in. Guide updated
+    with FCP section + ready-to-paste Stream Deck button list. NOTE: the
+    281 binary .cam files live in the project folder but must be copied
+    into `Documents\iRacing\cameras\` to take effect — syncing the project
+    folder alone does NOT install them.
+  • FOLLOW-UP 2: user added a SECOND FCP pack `custom_cameras_2/` (109
+    tracks / 97 cars). Compared the two: pack 2 is a full SUPERSET of
+    pack 1 — all 90 shared car cams + 175/191 shared track cams are
+    byte-identical; 16 track sets are IMPROVED in pack 2 (Bathurst
+    292KB→542KB, Sebring Intl 235KB→441KB, Homestead roada/roadb, several
+    Nürburgring/Suzuka/Silverstone tweaks); pack 2 adds ~16 tracks +32
+    cars incl. porsche992rgt3/992cup, mercedesamgevogt3, dallaradw12. The
+    2 folders unique to pack 1 (mtwashington, oran) are EMPTY (no .cam) —
+    nothing lost. Repointed `install_fcp_cameras.bat` SRC → `custom_cameras_2`.
+    Same standard group names, so Stream Deck cam_name buttons unchanged.
+    `custom_cameras/` (pack 1) is now redundant/deletable. NOTE: sandbox
+    can't delete on the SMB mount (empty mtwashington/oran folders got
+    copied into pack 2 during an aborted fold-in and must be removed on
+    the Mac). Pack 1 is ALSO undeletable on the Mac right now: it holds
+    187 `.smbdelete*` tombstone files (deleted .cam files the SMB server
+    hasn't purged because a handle is still open elsewhere) → `rm -rf`
+    fails with "Directory not empty". Resolution: added `/custom_cameras/`
+    and `.smbdelete*` to `.gitignore` so pack 1 stays out of the repo
+    without needing to delete it; the push script already rsync-excludes
+    `.smbdelete*`. To physically remove pack 1, eject+remount the "AI"
+    share (closes handles → server purges tombstones), then `rm -rf`.
+
+**July 3, 2026 (dashboard — Stream Deck camera-by-NAME endpoint):**
+User asked how to drive the dashboard's cameras from a Stream Deck.
+Answer: the /streamdeck/<action> GET API already existed (cam_next,
+cam_prev, cam/<id>, driver_next/prev, go_live, replay_last*, toggles) —
+Stream Deck's built-in "System: Website" action with "Access in
+background" checked fires them without opening a browser; no plugin
+needed. NEW: /streamdeck/cam_name/<name> — camera group by NAME
+(case-insensitive; exact → space-insensitive ("TV 1"=="TV1") →
+substring), because group IDs can be renumbered between tracks/sessions
+while names are stable. Buttons should use cam_name. Startup banner
+updated; byte-compile verified.
+
+**July 3, 2026 (NEW overlay `iracing_drivercard.py` — broadcast driver
+card, tag "driver", port 5017):** Lower-third card for the ON-CAMERA
+driver (CamCarIdx): name (abbrev) + team, iRating, license/SR chip
+(LicColor-tinted), car number + class chip, class position, best/last
+lap, incident count. User requested fields incl. incidents.
+  • iRating comes from DriverInfo.Drivers[].IRating — iRacing reports
+    the rating for THIS session's license category, which IS "the
+    iRating of the driven car class" the user asked for. No API needed.
+  • Incidents: CurDriverIncidentCount, fallback TeamIncidentCount
+    (team sessions). DriverInfo re-parsed every 5 s EVEN when cached —
+    unlike other overlays' driver caches, incidents are live data.
+  • Position: CarIdxClassPosition, fallback CarIdxPosition when class
+    position is 0 (single-class sessions report 0 there).
+  • Lap times: CarIdxBestLapTime / CarIdxLastLapTime; 0/negative → None
+    (never show "0.000"). LAST cell turns green when last == best
+    (personal best just set). Team line hidden when TeamName equals
+    UserName (solo sessions report the driver as their own team).
+  • Stateless poller (no session-change bookkeeping needed — everything
+    read fresh per poll). 2 Hz. Transparent lower third, H / ?debug=1.
+  • Four launchers + make_obs_loaders.py updated (19 overlays);
+    obs_loaders/driver.html written directly. test_drivercard.py:
+    20/20 pass (readout, PB flash, no-laps None, solo-team suppression,
+    class-pos fallback, team-incident fallback, hidden states).
+  • NOTE: mid-session the Cowork folder connection dropped and
+    /Volumes/AI/... was briefly unreachable — user re-selected the
+    folder via the picker and all earlier edits were intact.
+
+**July 3, 2026 (NEW overlay `iracing_weather.py` — weather strip, tag
+"weather", port 5016):** Horizontal OBS strip: track temp (orange) +
+air temp (amber) with trend arrows, humidity %, rain cell (precip % +
+TrackWetness label, turns blue when WeatherDeclaredWet or precip ≥1 %),
+wind km/h + compass, sky condition, and a green TREND cell.
+  • "Forecast" decision (user choice): iRacing's REAL forecast is only
+    on the members API (OAuth still paused — trackmap precedent), so
+    the overlay shows LIVE TRENDS instead: one sample per 30 s into
+    deque(maxlen=20) (~10 min window); trend = mean(last third) vs
+    mean(first third) with flat bands (0.15 °C / 0.02 precip); needs
+    ≥4 samples (~2 min). Text like "Track cooling · Rain increasing".
+  • Telemetry: TrackTempCrew (fallback TrackTemp — some sessions
+    report one or the other), AirTemp, RelativeHumidity, Precipitation,
+    TrackWetness (enum 0-7 → DRY…EXTREMELY WET), WeatherDeclaredWet,
+    WindVel (m/s → km/h), WindDir (radians → 8-point compass), Skies
+    (0-3). ALL reads None-safe — pre-rain builds lack the rain vars.
+  • Session-change reset clears trend history (June 4 lesson). 1 Hz
+    poll (weather moves slowly). Shows in EVERY session type incl.
+    practice/quali — conditions matter there too. Transparent strip,
+    H / ?debug=1 per convention.
+  • All four launchers + make_obs_loaders.py updated (18 overlays);
+    obs_loaders/weather.html written directly (stale-mount workaround
+    again). Verified offline (test_weather.py, stubbed irsdk, fake
+    clock): readout/units, TrackTemp fallback, missing rain vars,
+    warming/cooling/rain trends, flat band, declared-wet cell, session
+    reset, compass wrap. 26/26 pass.
+
+**July 3, 2026 (NEW overlay `iracing_catchup.py` — F1-style catch-up
+battle, tag "catch", port 5015):** Shows, for the ON-CAMERA driver
+(CamCarIdx), the battle with the next SAME-CLASS car ahead: live gap,
+pace delta from the last 3 clean laps of both drivers, and the F1-style
+prediction "CATCH IN ~N LAPS (≈M:SS)". Design decisions (user choices):
+camera-follow focus (broadcast use), same-class ahead in multiclass,
+3-lap average window, lower-third banner style.
+  • Gap = CarIdxF2Time diff between the two cars (F2Time is cumulative
+    "behind CLASS leader", so same-class diff = real gap, no S/F lag —
+    same technique as the standings overlay). Lap-1 fallback: progress
+    diff × EstLapTime. Car ahead a full lap+ up → "+N LAP" shown, no
+    prediction (un-lapping isn't a catch battle).
+  • Lap-time capture: per-car lap-increment watcher; CarIdxLastLapTime
+    is trusted only ≥0.3 s after the crossing (settle window, 3 s
+    deadline). Laps touching pit road are EXCLUDED (the pit-road flag
+    taints the current lap; since pit road spans S/F this covers both
+    in- and out-lap). deque(maxlen=3) per car; car needs ≥2 clean laps
+    before a prediction (chip shows GATHERING until then).
+  • States: CATCHING (green, prediction shown), LOSING (red), HOLDING
+    (gray, |delta| < 0.05 s/lap). Catch laps = gap / pace_delta,
+    catch time = catch_laps × focus avg lap.
+  • Session-change reset (SessionUniqueID/SessionNum change or >5 s
+    backwards SessionTime jump) clears ALL per-car trackers — June 4
+    lesson. Renders only in RACE sessions; hides when the camera car
+    leads its class or is out of the world. SessionInfo YAML parsed
+    ONCE per session, DriverInfo every 5 s (YAML-cost lesson from the
+    session-info overlay). 4 Hz poll. Transparent OBS lower-third;
+    H / ?debug=1 debug bg per convention.
+  • All four launchers updated per the maintenance rule (17 overlays);
+    `obs_loaders/catch.html` written directly (copy of the delta loader
+    with port 5015) because the sandbox mount again served STALE
+    truncated copies — `make_obs_loaders.py` list updated too, so a
+    future re-run regenerates it identically.
+  • Verified offline (`test_catchup.py`, stubbed irsdk+flask, fake
+    clock): catching 3.0s/+0.5 → 6 laps & 540 s, losing, holding band,
+    pit-lap exclusion, multiclass picks same-class ahead (LMP in
+    between ignored), class-leader hides, lapped-ahead suppresses
+    prediction, practice hides, session-change reset. 22/22 pass.
+    NOTE: the stale-mount problem forced running the test from a /tmp
+    heredoc copy — the mounted test file showed truncated pages for
+    minutes after writing.
+  • Also this session: confirmed the local folder is AHEAD of GitHub
+    (July 1 Driving Mode files, SIMHUB_PLUGIN_FEASIBILITY.md, youtube/,
+    requirements.txt pywebview addition were never pushed; everything
+    else matches byte-for-byte). Folder is a ZIP download, NOT a git
+    clone — added `push_to_github.sh` (clone → rsync → commit → push,
+    same pattern as SimRacing-News) for Thomas to run in Mac Terminal.
+    LESSON: GitHub deploy keys are REPO-SPECIFIC — ~/.ssh/id_ed25519
+    (SimRacing-News) is REJECTED for this repo ("Permission denied to
+    deploy key"). This repo uses its own key ~/.ssh/id_ed25519_iracing;
+    the push script generates it on first run and prints/copies the
+    public key for GitHub → Settings → Deploy keys (write access!).
+  • FOLLOW-UP same day (car livery images, F1-style): both driver
+    blocks now show the rendered car via iRacing's LOCAL render server
+    (http://127.0.0.1:32034/pk_car.png — the livery-overlay discovery),
+    incl. custom Trading Paints TGAs from the on-disk paint cache. The
+    fetch logic is a compact SELF-CONTAINED copy of iracing_livery.py's
+    (_car_path_variants / find_paint_file / _build_render_params /
+    _fetch_iracing_render — importing the livery overlay would execute
+    its module-level Flask/poller setup; render_race.py precedent).
+    All livery-overlay lessons preserved: %20 not '+' in the query
+    (urlencode quote_via=quote), nested-MX-5 separator variants FIRST
+    (unknown carPath returns a DEFAULT car — wrong path looks like
+    success), requests as SOFT dependency (no requests / render server
+    down → banner works without images). New Flask route
+    /car/<cidx>.png with bounded in-memory cache keyed on
+    (carPath, cust_id, design, paint_path); failures NOT cached and
+    the front-end retries every 20 s, so a render server that comes up
+    later self-heals; route overrides the global no-store with
+    max-age=300. Front-end: .carimg at the outer edge of each driver
+    block, hidden until onload fires (onerror keeps it hidden — no
+    broken-image icons on stream). test_catchup.py extended with
+    render-helper checks: 30/30 pass.
+
+**June 26, 2026 (TWO LINEAGES MERGED — DotD + racecontrol folded into the
+GitHub repo; Quali Delta moved 5013→5014):** The project had diverged into
+two copies that never met: the GitHub `main` lineage (corner-cue overlay +
+this session's Quali Delta, dashboard rewind-doubling / jump-to-round / 20s
+replay, flag timer-expiry fix) and a Mac-only lineage (Driver-of-the-Day
+overlay, June 22, port 5013 + the iCASControl `racecontrol/` merge, June 25,
+port 8080). Nextcloud sync mixed them in the Windows folder — the Mac's
+files OVERWROTE the working-tree dashboard/launchers (our work survived only
+in the GitHub commits). Recovery: `git checkout -- .` restored the GitHub
+(Version A) tracked files while the Mac's UNTRACKED files (DotD trio,
+`racecontrol/`, `iracing_racecontrol.py`, `img/`) were preserved, then both
+were reconciled into one tree:
+  • **Port clash resolved:** DotD and Quali Delta both wanted 5013. DotD
+    KEEPS 5013 (it's referenced throughout its own code/docs); **Quali Delta
+    moved to 5014** (`PORT`, docstring, `obs_loaders/delta.html`, all four
+    launchers, `make_obs_loaders.py`).
+  • **DotD wired in** (tag "dotd", 5013) to all launchers + `make_obs_loaders`
+    (+ debounced `obs_loaders/dotd.html`). It reads the newest race log (no
+    SDK) and nominates a Driver of the Day; deps: flask only.
+  • **racecontrol wired in** (tag "racectrl", 8080) to `launch_all.py/.bat`
+    and `launch_gui.py`. `iracing_racecontrol.py` is a shim that runs
+    `racecontrol/backend/server.py` (FastAPI) in-process. NOT an OBS source
+    (interactive steward web app) — intentionally excluded from
+    `make_obs_loaders.py`. Deps added to root `requirements.txt`: fastapi,
+    uvicorn, websockets. `dotd_history.json` added to `.gitignore` (runtime
+    state). 16 overlays now. LESSON: the Mac and Windows copies were NOT both
+    git clones of the same remote — the Mac was a downloaded ZIP that got the
+    racecontrol merge but never pulled GitHub. Keep BOTH machines as clones
+    of `halvar20000/iracing-overlays` and sync via git, not Nextcloud, to
+    avoid this divergence again.
+
+**June 25, 2026 (dashboard playback UX + new quali-delta overlay, port
+5014 — originally built on 5013, moved 2026-06-26):** Three changes, all from viewer feedback.
+  • **Progressive rewind / fast-forward** on the dashboard playback strip.
+    The two fixed rewind buttons (-1/-2) and two FF buttons (2×/4×) were
+    replaced by ONE `◀◀` and ONE `▶▶` button that DOUBLE on each click:
+    rewind 1→2→4→8→16×, FF 2→4→8→16× (cap 16×, `PB_MAX_SPEED`). Pressing
+    Play resets to 1×. Front-end only — `/playback` already accepted any
+    integer speed. `pbSpeed` (JS) mirrors the poller-reported speed and is
+    advanced optimistically so several quick clicks double correctly
+    between polls; the active button + the live pill show the current ×.
+  • **Jump-to-round** replay control. The poller records the SessionTime
+    of every lap boundary the OVERALL LEADER crosses, LIVE only
+    (`_track_lap_starts`, gated on `is_live` + race; `_leader_max_lap`
+    only increases so scrubbing can't add phantom laps). A dropdown
+    (`Start` + each completed round) + Apply seeks the replay to that
+    boundary via `replay_search_session_time` and plays 1× (new
+    `jump_to_replay_time` / `jump_to_lap` methods, `/replay/jump_lap`
+    endpoint, `replay_laps` snapshot field). CRITICAL: lap data is NOT
+    cleared on backward SessionTime jumps (scrubbing the replay), only on
+    a real session change — otherwise jumping back would wipe the list.
+    Only knows laps observed while running (lap-start times captured
+    live); "Start" = earliest recorded boundary.
+  • **NEW overlay `iracing_qualidelta.py` (tag "delta", port 5013):**
+    qualifying live delta with TWO auto-switching modes. Big centre-zero
+    delta to the SESSION best, green ahead / red behind, bar fills toward
+    the side you're gaining, plus per-sector chips.
+      – DRIVING (IsOnTrack): iRacing's own predictive delta
+        (`LapDeltaToSessionBestLap` + `_OK`) for your car; sectors from
+        `SplitTimeInfo.Sectors[].SectorStartPct` (fallback 3 equal) vs
+        your OWN best-lap sectors (green faster / red slower / purple
+        new personal-best). State machine ARMS only after a clean S/F
+        crossing; an off-track/pit lap can't become the reference.
+      – SPECTATOR (not in car — the broadcaster case): iRacing exposes
+        NO ready-made delta for other cars, so we COMPUTE one. Per-car
+        `CarIdxLapDistPct` is sampled vs `SessionTime` into a (pct→
+        elapsed) buffer; each car's last CLEAN full lap is stashed. The
+        POLE is taken from iRacing's OFFICIAL `CarIdxBestLapTime` (valid
+        laps only — a fast-but-DELETED track-limits lap never wins; this
+        was a real bug — the self-measured "fastest lap" promoted an
+        invalidated lap and showed a pole ~0.3 s too fast). The pole
+        car's matching clean-lap buffer becomes the reference curve,
+        SCALED so its total equals the official best exactly. The
+        on-camera car's (`CamCarIdx`) live elapsed at its current pct is
+        interpolated against that curve → delta; follows the camera
+        automatically, works for ANY driver (leader or not). Sector chips
+        vs the pole lap's sectors. ~15 Hz sampling (vs iRacing's internal
+        60 Hz) so it's broadcast-usable but slightly less precise than
+        the driving delta. Shows "Building reference lap…" until a pole
+        lap exists.
+    Transparent OBS source, `H` / `?debug=1` debug bg, 15 Hz poll.
+    Verified offline (stubbed irsdk): DRIVING — a synthetic 3-sector
+    flying lap sets the reference, faster→best / slower→red chips, the
+    invalid-lap guard holds; SPECTATOR — fastest car promoted to pole,
+    a slower on-camera car reads correctly behind, ahead-case goes
+    negative, sector chips compute vs pole. All four launchers +
+    `make_obs_loaders.py` (+ `obs_loaders/delta.html`) updated per the
+    maintenance rule (14 overlays now). NOTE: the cowork sandbox mount
+    again served STALE/truncated copies of edited files this session —
+    `iracing_dashboard.py` couldn't be byte-compiled in the sandbox
+    (verified via direct file reads + a JS dry-run instead); the brand-new
+    `iracing_qualidelta.py` DID sync fresh and compiled + unit-tested
+    cleanly.
 
 **June 11, 2026 (corner-cue overlay — driving-line substitute, port
 5012):** New `iracing_drivingline.py` (tag "line") + companion

@@ -10,12 +10,17 @@ Requirements:  pip install pyirsdk flask requests
 Run:           python iracing_race_logger.py
 Open:          http://localhost:5009    (status page + download link)
 
-What's captured per race:
+What's captured per session:
   - session_start  — track, session type, drivers list (iRating /
                      license / team / car), weather at the start
   - lap            — every lap completion by every driver: lap
                      number, lap time, position at S/F, gap to
-                     leader, pit flag, best-lap-so-far
+                     leader, pit flag, best-lap-so-far. For the LOCAL
+                     player's car the lap also carries tire_temps and a
+                     `fuel` block (level, level_pct, used_this_lap,
+                     avg_per_lap, laps_remaining_est, use_per_hour).
+                     iRacing only broadcasts tire/fuel telemetry for the
+                     local car, so these are absent for spectated drivers.
   - incident       — fetched from the dashboard's /incidents feed
                      (port 5000); deduped, so the same incident is
                      never written twice
@@ -23,17 +28,19 @@ What's captured per race:
                      checkered (positions, laps completed, best lap,
                      incident count, finished / DNF / DQ)
 
-Output: logs/<YYYYMMDD-HHMMSS>_<track>_race.jsonl
+Output: logs/<YYYYMMDD-HHMMSS>_<track>_<sessiontype>.jsonl
+        (e.g. ..._race.jsonl, ..._practice.jsonl)
 
-Practice / qualifying sessions are intentionally NOT logged. Add a
-toggle here later if that ever changes.
+Race AND Practice sessions are logged (including hosted "Practice Only"
+events, which iRacing reports as SessionType "Practice"). Qualifying and
+Warmup sessions are still skipped. Driver-of-the-Day is computed for race
+sessions only.
 """
 
 from __future__ import annotations
 import json
 import os
 import re
-import sys
 import threading
 import time
 from collections import deque
@@ -48,196 +55,16 @@ except ImportError:
     print("[logger] WARNING: 'requests' not installed — incidents won't be "
           "logged. Run 'pip install requests' to enable.")
 
-from iracing_sdk_base import SDKPoller, setup_utf8_stdout
+from iracing_sdk_base import SDKPoller, GridBaseline, setup_utf8_stdout
 setup_utf8_stdout()
 
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-# Base folder: next to the .py when run from source, next to the .exe when
-# frozen by PyInstaller (sys._MEIPASS would be a temp dir that disappears).
-if getattr(sys, "frozen", False):
-    HERE = Path(sys.executable).resolve().parent
-else:
-    HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent
 LOGS_DIR = HERE / "logs"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
-
-# ---------------------------------------------------------------------------
-# CLS (league.simracing-hub.com) auto-upload
-# ---------------------------------------------------------------------------
-# When a driver has pasted their personal key from
-# https://league.simracing-hub.com/race-logger into the setup page at
-# http://localhost:5009/league, every finished race log is POSTed to the
-# league site automatically. The file is ALWAYS kept locally as well — the
-# upload is a convenience, never the only copy. Failed uploads stay visible
-# on the setup page with a "Send again" button.
-LOGGER_VERSION   = "1.1.0"
-CLS_DEFAULT_URL  = "https://league.simracing-hub.com"
-CLS_CONFIG_PATH  = HERE / "league_manager.json"
-CLS_STATE_PATH   = LOGS_DIR / "upload_state.json"
-CLS_TIMEOUT      = 120          # seconds; a big endurance log takes a while
-CLS_RETRIES      = 3
-CLS_RETRY_SLEEP  = 5.0
-
-_cls_lock = threading.Lock()
-
-
-def cls_load_config() -> dict:
-    """{'url': ..., 'token': ..., 'auto': bool}. Never raises."""
-    cfg = {"url": CLS_DEFAULT_URL, "token": "", "auto": True}
-    try:
-        if CLS_CONFIG_PATH.is_file():
-            raw = json.loads(CLS_CONFIG_PATH.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                cfg["url"]   = str(raw.get("url") or CLS_DEFAULT_URL).strip().rstrip("/")
-                cfg["token"] = str(raw.get("token") or "").strip()
-                cfg["auto"]  = bool(raw.get("auto", True))
-    except Exception as e:
-        print(f"[cls] config unreadable ({e!r}) — using defaults")
-    return cfg
-
-
-def cls_save_config(url: str, token: str, auto: bool) -> dict:
-    cfg = {
-        "url":   (url or CLS_DEFAULT_URL).strip().rstrip("/"),
-        "token": (token or "").strip(),
-        "auto":  bool(auto),
-    }
-    try:
-        CLS_CONFIG_PATH.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-    except Exception as e:
-        print(f"[cls] could not save config: {e!r}")
-    return cfg
-
-
-def cls_load_state() -> dict:
-    try:
-        if CLS_STATE_PATH.is_file():
-            raw = json.loads(CLS_STATE_PATH.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                return raw
-    except Exception:
-        pass
-    return {}
-
-
-def cls_set_state(name: str, status: str, message: str) -> None:
-    """status: 'ok' | 'error' | 'sending'. One entry per log file name."""
-    with _cls_lock:
-        state = cls_load_state()
-        state[name] = {
-            "status":  status,
-            "message": message,
-            "at":      datetime.now().isoformat(timespec="seconds"),
-        }
-        try:
-            CLS_STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
-        except Exception as e:
-            print(f"[cls] could not save upload state: {e!r}")
-
-
-def cls_ping(url: str = "", token: str = "") -> tuple[bool, str]:
-    """Validate the key. Returns (ok, human message)."""
-    cfg   = cls_load_config()
-    url   = (url or cfg["url"]).strip().rstrip("/")
-    token = (token or cfg["token"]).strip()
-    if requests is None:
-        return False, "Python package 'requests' is missing (pip install requests)"
-    if not token:
-        return False, "No key yet — get one at " + url + "/race-logger"
-    try:
-        r = requests.get(
-            f"{url}/api/race-log",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=20,
-        )
-    except Exception as e:
-        return False, f"Could not reach {url}: {e}"
-    if r.status_code == 401:
-        return False, "The league site does not know this key — copy it again from /race-logger"
-    if r.status_code >= 400:
-        return False, f"League site answered {r.status_code}"
-    try:
-        data = r.json()
-    except Exception:
-        return False, "Unexpected answer from the league site"
-    return True, (f"Connected as {data.get('driver', 'driver')} "
-                  f"({data.get('uploads', 0)} logs uploaded so far)")
-
-
-def cls_upload_log(path: Path) -> tuple[bool, str]:
-    """Upload one .jsonl. Blocking, with retries. Safe to call twice — the
-    server recognises an identical file and does not duplicate it."""
-    cfg = cls_load_config()
-    if requests is None:
-        msg = "Python package 'requests' is missing (pip install requests)"
-        cls_set_state(path.name, "error", msg)
-        return False, msg
-    if not cfg["token"]:
-        msg = "No key configured — open http://localhost:5009/league"
-        cls_set_state(path.name, "error", msg)
-        return False, msg
-    if not path.is_file():
-        msg = "Log file is gone"
-        cls_set_state(path.name, "error", msg)
-        return False, msg
-
-    cls_set_state(path.name, "sending", "Sending to the league site…")
-    last = "upload failed"
-    for attempt in range(1, CLS_RETRIES + 1):
-        try:
-            with open(path, "rb") as fh:
-                r = requests.post(
-                    f"{cfg['url']}/api/race-log",
-                    headers={
-                        "Authorization":   f"Bearer {cfg['token']}",
-                        "X-Logger-Version": LOGGER_VERSION,
-                    },
-                    files={"file": (path.name, fh, "application/x-ndjson")},
-                    data={"client_version": LOGGER_VERSION},
-                    timeout=CLS_TIMEOUT,
-                )
-            if r.status_code == 401:
-                last = "The league site rejected the key — copy it again from /race-logger"
-                break                       # retrying will not help
-            try:
-                data = r.json()
-            except Exception:
-                data = {}
-            if r.ok and data.get("ok"):
-                msg = data.get("message") or "Uploaded"
-                cls_set_state(path.name, "ok", msg)
-                print(f"[cls] {path.name}: {msg}")
-                return True, msg
-            last = data.get("error") or f"League site answered {r.status_code}"
-            if 400 <= r.status_code < 500:
-                break                       # our fault — do not hammer the server
-        except Exception as e:
-            last = f"{e}"
-        if attempt < CLS_RETRIES:
-            time.sleep(CLS_RETRY_SLEEP * attempt)
-
-    cls_set_state(path.name, "error", last)
-    print(f"[cls] {path.name}: upload failed — {last}")
-    return False, last
-
-
-def cls_upload_async(path: Path) -> None:
-    """Fire-and-forget upload so the poll loop never blocks on the network."""
-    threading.Thread(target=cls_upload_log, args=(path,), daemon=True).start()
-
-
-def cls_autoupload(path) -> None:
-    """Called when a race log is closed. Honours the 'auto' switch."""
-    if path is None:
-        return
-    cfg = cls_load_config()
-    if not cfg["auto"] or not cfg["token"]:
-        return
-    print(f"[cls] sending {Path(path).name} to {cfg['url']} …")
-    cls_upload_async(Path(path))
 
 # Where to fetch the incident feed from. The dashboard publishes JSON at
 # /incidents on port 5000. If the dashboard isn't running we silently
@@ -279,6 +106,15 @@ CAR_PENALTY_BITS = {
 # A lap > average × this is flagged as anomalous (rolling 5-lap window).
 SLOW_LAP_THRESHOLD = 1.10
 SLOW_LAP_HISTORY   = 5
+
+# --- Fuel tracking (LOCAL PLAYER ONLY) ---
+# iRacing broadcasts fuel telemetry (FuelLevel / FuelLevelPct /
+# FuelUsePerHour) ONLY for the local player's car — there is no per-car
+# fuel array, same limitation as tire temps. So fuel data is attached to
+# a lap event only when that lap belongs to the driver running this PC.
+# Rolling window used to average per-lap fuel consumption and to estimate
+# how many laps of fuel remain.
+FUEL_AVG_WINDOW = 5
 
 # --- Live charts ---
 # Stable per-driver palette used by the chart-render endpoint. Indexed
@@ -344,11 +180,26 @@ class RaceLogger(SDKPoller):
         # iRacing's CarIdxPosition only updates at S/F crossings, so a
         # delta vs. last-seen value tells us when a driver gained or
         # lost positions. Indirect movements (leader retires, everyone
-        # behind moves up by 1) are counted too — that's iRacing's own
-        # "positions gained / lost" definition.
+        # behind moves up by 1) are counted too.
+        #
+        # IMPORTANT — these two are CUMULATIVE and stay that way. They
+        # answer "how much position churn did this driver go through",
+        # which is what driver_of_the_day.py scores as its `overtakes`
+        # component. They are NOT the +/- column: a driver who loses a
+        # place and takes it straight back adds 1 here to each counter,
+        # but his +/- is back to 0. See _pos_delta() / self._grid below
+        # for that number.
         self._prev_position_seen: dict[int, int] = {}   # car_idx -> CarIdxPosition
         self._overtakes_made:     dict[int, int] = {}   # car_idx -> positions gained
         self._overtakes_against:  dict[int, int] = {}   # car_idx -> positions lost
+
+        # Starting-grid baseline for the +/- column. NET vs the grid, never
+        # cumulative: pos_delta = grid_slot - current_position. Owned by
+        # GridBaseline (iracing_sdk_base.py), which captures the grid once
+        # per race, resets on session change, and leaves a car without a
+        # baseline (→ blank cell) rather than inventing one when the logger
+        # was attached mid-race.
+        self._grid = GridBaseline()
 
         # Position-tick emission. Once per second we write a "pos" event
         # capturing every car's CarIdxLapDistPct. This is the granular
@@ -386,6 +237,14 @@ class RaceLogger(SDKPoller):
         # broadcast-camera hint ("driver just did something weird").
         self._lap_history: dict[int, deque[float]] = {}
 
+        # Fuel tracking (LOCAL PLAYER ONLY — see FUEL_AVG_WINDOW note).
+        # _fuel_lap_start holds the local car's fuel level captured at the
+        # last S/F crossing, so the next crossing can compute fuel burned
+        # on that lap. _fuel_used_history is the rolling window feeding the
+        # average-per-lap and laps-remaining estimates.
+        self._fuel_lap_start: float | None = None
+        self._fuel_used_history: deque[float] = deque(maxlen=FUEL_AVG_WINDOW)
+
         # Live broadcast charts — operator picks drivers in the live
         # monitor; the OBS-source chart endpoint shows whatever's
         # currently selected. State is shared across all browsers.
@@ -413,7 +272,12 @@ class RaceLogger(SDKPoller):
         config = session_meta.get("track_config", "")
         if config:
             track = f"{track}_{_safe_filename(config)}"
-        path = LOGS_DIR / f"{ts}_{track}_race.jsonl"
+        # Suffix the filename with the session type so race and practice
+        # logs are distinguishable at a glance. Keeping "race" logs as
+        # *_race.jsonl matters: driver_of_the_day.py globs *_race.jsonl
+        # first, so a practice log can never be mistaken for a race.
+        stype = _safe_filename(session_meta.get("session_type", "") or "race")
+        path = LOGS_DIR / f"{ts}_{track}_{stype}.jsonl"
         self._log_path = path
         self._log_fp = open(path, "a", encoding="utf-8", buffering=1)  # line-buffered
         self._log_started_at = time.time()
@@ -437,6 +301,8 @@ class RaceLogger(SDKPoller):
         self._prev_session_flags = 0
         self._prev_car_session_flags.clear()
         self._lap_history.clear()
+        self._fuel_lap_start = None
+        self._fuel_used_history.clear()
         self._chart_selected.clear()
         self._chart_type = "laptime"
         self._chart_lap_data.clear()
@@ -458,7 +324,6 @@ class RaceLogger(SDKPoller):
         })
 
     def _close_log(self) -> None:
-        closed_path = self._log_path
         if self._log_fp:
             # If we never managed to write the official session_end (e.g.
             # the user shut us down before iRacing locked the result, or
@@ -475,8 +340,6 @@ class RaceLogger(SDKPoller):
         self._log_fp = None
         self._log_path = None
         self._log_session_key = None
-        # Hand the finished race to the league site (no-op when not configured).
-        cls_autoupload(closed_path)
 
     def stop(self) -> None:
         """Override SDKPoller.stop() so we get a chance to write the
@@ -573,6 +436,23 @@ class RaceLogger(SDKPoller):
         }
         return (uid, sess_num), sess_type, meta
 
+    # ----- grid baseline / net +/- ---------------------------------------
+    def _update_grid_baseline(self) -> None:
+        """Keep the starting-grid baseline fresh. Cheap after capture."""
+        self._grid.update(self.ir)
+
+    def _pos_delta(self, car_idx: int, position: int) -> int | None:
+        """NET places gained (+) or lost (-) versus the STARTING GRID.
+
+        grid_slot - current_position, and nothing else. It does not
+        accumulate: a driver who is shuffled back one place at turn 1 and
+        repasses reads 0 again, and reads 0 every subsequent time that
+        same place changes hands. Returns None when this car has no known
+        grid slot (late joiner, or the logger attached mid-race) so the UI
+        can leave the cell blank instead of showing a made-up number.
+        """
+        return self._grid.delta(car_idx, position)
+
     # ----- overtake tracking ---------------------------------------------
     def _update_overtake_counters(self) -> None:
         """Compare each driver's current CarIdxPosition with the last one
@@ -582,6 +462,10 @@ class RaceLogger(SDKPoller):
         Note: counts indirect movement too (someone ahead retires →
         everyone behind picks up a position). That's how iRacing's own
         scoring defines "positions gained" — we match it.
+
+        These counters are CUMULATIVE by design and feed the Driver of
+        the Day "overtakes" score. The +/- column does NOT use them — see
+        _pos_delta().
         """
         if self._log_fp is None:
             return
@@ -748,6 +632,38 @@ class RaceLogger(SDKPoller):
             return None
         return {"local_car_idx": int(local_idx), "lf": lf, "rf": rf, "lr": lr, "rr": rr}
 
+    # ----- fuel reader (LOCAL PLAYER ONLY) -------------------------------
+    def _read_fuel(self) -> dict | None:
+        """Return the live fuel state for the local player's car, or None
+        if not available. iRacing only broadcasts fuel for the local
+        player — there is no per-car array (same limitation as tire
+        temps), so this can only ever describe the car running this PC.
+
+          level        — litres of fuel currently in the tank (FuelLevel)
+          level_pct    — tank fill as a percentage       (FuelLevelPct)
+          use_per_hour — instantaneous burn rate         (FuelUsePerHour)
+
+        Per-lap "used", the rolling average and the laps-remaining
+        estimate are derived in _maybe_emit_laps, which owns the S/F
+        timing needed to bound a lap.
+        """
+        ir = self.ir
+        info = ir["DriverInfo"] or {}
+        local_idx = info.get("DriverCarIdx")
+        if local_idx is None:
+            return None
+        level = ir["FuelLevel"]
+        if level is None:
+            return None
+        pct = ir["FuelLevelPct"]
+        per_hour = ir["FuelUsePerHour"]
+        return {
+            "local_car_idx": int(local_idx),
+            "level":         round(float(level), 3),
+            "level_pct":     round(float(pct) * 100, 1) if pct is not None else None,
+            "use_per_hour":  round(float(per_hour), 3) if per_hour is not None else None,
+        }
+
     # ----- per-second position tick (for post-race replay rendering) -----
     def _maybe_emit_position(self) -> None:
         """Once per second, write a `pos` event capturing every car's
@@ -848,9 +764,17 @@ class RaceLogger(SDKPoller):
                     "gap_to_leader": float(f2_arr[idx]) if (idx < len(f2_arr) and f2_arr[idx] and f2_arr[idx] > 0) else None,
                     "on_pit":      bool(on_pit[idx]) if idx < len(on_pit) else False,
                     # Cumulative-to-this-point overtake counters. Useful
-                    # for plotting "positions gained over time" charts.
+                    # for plotting "positions gained over time" charts,
+                    # and scored by driver_of_the_day.py.
                     "overtakes":   self._overtakes_made.get(idx, 0),
                     "overtaken":   self._overtakes_against.get(idx, 0),
+                    # Starting grid slot + NET places vs it at this lap.
+                    # grid_pos is written on every lap event so post-race
+                    # tools (DotD, render_race) can measure gains against
+                    # the real grid instead of guessing from lap 1.
+                    "grid_pos":    self._grid.grid_pos.get(idx),
+                    "pos_delta":   self._pos_delta(
+                        idx, int(ovr_pos[idx]) if idx < len(ovr_pos) else 0),
                 }
 
                 # Tire temps — only present when this driver IS the local
@@ -861,6 +785,47 @@ class RaceLogger(SDKPoller):
                     event["tire_temps"] = {
                         "lf": tire["lf"], "rf": tire["rf"],
                         "lr": tire["lr"], "rr": tire["rr"],
+                    }
+
+                # Fuel — only present when this driver IS the local
+                # player (iRacing broadcasts fuel for the local car only).
+                fuel = self._read_fuel()
+                if fuel and fuel.get("local_car_idx") == idx:
+                    level = fuel["level"]
+                    used = None
+                    if self._fuel_lap_start is not None:
+                        delta = self._fuel_lap_start - level
+                        # A positive delta is normal consumption. A
+                        # non-positive delta means the tank grew — the car
+                        # refuelled in the pits this lap — so there's no
+                        # meaningful "burn" figure; leave used = None and
+                        # keep that lap out of the rolling average.
+                        if delta > 0:
+                            used = round(delta, 3)
+                    # Baseline for the next lap is this crossing's level.
+                    self._fuel_lap_start = level
+
+                    # Rolling average per lap + laps-remaining estimate.
+                    # Skip pit laps and refuel laps so the average reflects
+                    # true green-flag consumption.
+                    if used is not None and not event["on_pit"]:
+                        self._fuel_used_history.append(used)
+                    avg_used = None
+                    laps_remaining = None
+                    if self._fuel_used_history:
+                        avg_used = round(
+                            sum(self._fuel_used_history) / len(self._fuel_used_history), 3
+                        )
+                        if avg_used and avg_used > 0:
+                            laps_remaining = round(level / avg_used, 1)
+
+                    event["fuel"] = {
+                        "level":              level,
+                        "level_pct":          fuel["level_pct"],
+                        "used_this_lap":      used,
+                        "avg_per_lap":        avg_used,
+                        "laps_remaining_est": laps_remaining,
+                        "use_per_hour":       fuel["use_per_hour"],
                     }
 
                 self._emit(event)
@@ -981,8 +946,12 @@ class RaceLogger(SDKPoller):
         # ----- Driver of the Day -----------------------------------------
         # Now that the final classification is on disk, nominate a Driver
         # of the Day from the whole log and append a driver_of_day event.
+        # RACE sessions only — DotD is meaningless for a practice session,
+        # and we must not let a practice run record a "winner" that would
+        # block the next real race under the no-back-to-back rule.
         # Fully defensive: a failure here must never break logging.
-        self._emit_driver_of_day()
+        if "race" in (self._log_session_meta.get("session_type", "") or "").lower():
+            self._emit_driver_of_day()
 
     def _emit_driver_of_day(self) -> None:
         """Compute Driver of the Day from the just-written log and append a
@@ -1088,8 +1057,12 @@ class RaceLogger(SDKPoller):
                 "on_pit":      bool(on_pit[idx]) if idx < len(on_pit) else False,
                 "in_world":    in_world,
                 "incidents":   self._driver_incident_count.get(idx, 0),
+                # Cumulative churn — feeds Driver of the Day, NOT the +/-.
                 "overtakes":   self._overtakes_made.get(idx, 0),
                 "overtaken":   self._overtakes_against.get(idx, 0),
+                # NET vs the starting grid — this is what the +/- shows.
+                "grid_pos":    self._grid.grid_pos.get(idx),
+                "pos_delta":   self._pos_delta(idx, pos),
                 "pit_stops":   self._pit_count.get(idx, 0),
                 "last_pit_duration": self._last_pit_duration.get(idx),
             })
@@ -1176,10 +1149,21 @@ class RaceLogger(SDKPoller):
 
         session_key, session_type, meta = self._detect_session_change()
 
-        # Only log RACE sessions. Practice/quali/warmup get skipped.
-        is_race = "race" in session_type.lower()
+        # Track the starting grid on EVERY tick, not just while logging.
+        # It has to run before the green flag (so a green-flag sample is
+        # still an option) and in sessions we don't log, so that by the
+        # time the race starts the baseline is already known.
+        self._update_grid_baseline()
 
-        if session_key is None or not is_race:
+        # Log RACE and PRACTICE sessions (incl. hosted "Practice Only" —
+        # iRacing reports its SessionType as "Practice"). Fuel/consumption
+        # runs happen in practice, so we want those logged too. Qualifying
+        # and Warmup are still skipped — substring match is safe because
+        # neither contains "race" or "practice".
+        st = session_type.lower()
+        should_log = ("race" in st) or ("practice" in st)
+
+        if session_key is None or not should_log:
             # Not in a race. If a log was open from the previous session,
             # close it.
             if self._log_fp is not None:
@@ -1409,68 +1393,6 @@ def download_specific(name: str):
                      mimetype="application/x-ndjson")
 
 
-# ----- CLS league-manager upload -------------------------------------------
-# Setup + status page for drivers who only run the logger (no OBS overlays).
-
-@app.route("/league")
-def league_page():
-    return render_template_string(LEAGUE_HTML)
-
-
-@app.route("/league/state")
-def league_state():
-    cfg = cls_load_config()
-    state = cls_load_state()
-    logs = []
-    for p in sorted(LOGS_DIR.glob("*.jsonl"),
-                    key=lambda p: p.stat().st_mtime, reverse=True)[:25]:
-        st = p.stat()
-        info = state.get(p.name, {})
-        logs.append({
-            "name":     p.name,
-            "size":     st.st_size,
-            "modified": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
-            "status":   info.get("status", "new"),
-            "message":  info.get("message", ""),
-            "at":       info.get("at", ""),
-            "active":   bool(poller._log_path and poller._log_path.name == p.name),
-        })
-    return jsonify({"config": cfg, "logs": logs, "version": LOGGER_VERSION})
-
-
-@app.route("/league/save", methods=["POST"])
-def league_save():
-    payload = request.get_json(silent=True) or {}
-    cfg = cls_save_config(
-        payload.get("url", ""),
-        payload.get("token", ""),
-        bool(payload.get("auto", True)),
-    )
-    return jsonify({"ok": True, "config": cfg})
-
-
-@app.route("/league/test", methods=["POST"])
-def league_test():
-    payload = request.get_json(silent=True) or {}
-    ok, msg = cls_ping(payload.get("url", ""), payload.get("token", ""))
-    return jsonify({"ok": ok, "message": msg})
-
-
-@app.route("/league/upload", methods=["POST"])
-def league_upload():
-    payload = request.get_json(silent=True) or {}
-    name = str(payload.get("name", ""))
-    safe = re.sub(r"[^A-Za-z0-9_\-.]+", "", name)
-    if safe != name or not name:
-        abort(400)
-    p = LOGS_DIR / safe
-    if not p.is_file():
-        abort(404)
-    cls_set_state(p.name, "sending", "Sending to the league site…")
-    cls_upload_async(p)
-    return jsonify({"ok": True})
-
-
 # ----- Live chart endpoints ------------------------------------------------
 # Pattern: operator picks drivers + chart type in the live monitor (which
 # POSTs to /chart/select); the OBS browser source loads /chart/render and
@@ -1619,6 +1541,8 @@ def share_standings_data():
             "pit_stops":    r["pit_stops"],
             "overtakes":    r.get("overtakes", 0),
             "overtaken":    r.get("overtaken", 0),
+            "grid_pos":     r.get("grid_pos"),
+            "pos_delta":    r.get("pos_delta"),
             "last_pit_duration": r.get("last_pit_duration"),
         })
     return jsonify({
@@ -1647,186 +1571,6 @@ def share_standings():
 # ---------------------------------------------------------------------------
 # HTML — minimal status page
 # ---------------------------------------------------------------------------
-
-LEAGUE_HTML = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>Race Logger — League upload</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0a0a0f;
-         color: #e8e8ea; padding: 20px; font-variant-numeric: tabular-nums; }
-  .wrap { max-width: 820px; margin: 0 auto; display: flex;
-          flex-direction: column; gap: 14px; }
-  h1 { font-size: 17px; color: #ff6b35; letter-spacing: 1px; }
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px;
-       color: #8a8aa0; margin-bottom: 8px; }
-  .card { background: #14141c; border: 1px solid #26262f; border-radius: 8px;
-          padding: 16px; }
-  label { display: block; font-size: 12px; color: #8a8aa0; margin-bottom: 4px; }
-  input[type=text] { width: 100%; padding: 8px 10px; border-radius: 6px;
-        border: 1px solid #2e2e3d; background: #0a0a0f; color: #e8e8ea;
-        font-family: inherit; font-size: 13px; }
-  .row { margin-bottom: 12px; }
-  .check { display: flex; align-items: center; gap: 8px; font-size: 13px;
-           color: #c8c8d4; }
-  button { padding: 8px 14px; border-radius: 6px; border: 0; cursor: pointer;
-           font-weight: 700; font-size: 12px; font-family: inherit; }
-  button.primary { background: #ff6b35; color: #0a0a0f; }
-  button.ghost { background: #1f1f2b; color: #c8c8d4; border: 1px solid #2e2e3d; }
-  .msg { margin-top: 10px; font-size: 13px; padding: 8px 10px; border-radius: 6px;
-         display: none; }
-  .msg.ok  { display: block; background: #10251c; color: #7fe0b0; border: 1px solid #1c4634; }
-  .msg.err { display: block; background: #2a1216; color: #ff9c9c; border: 1px solid #5c2028; }
-  table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  th { text-align: left; color: #6a6a7a; font-weight: 600; padding: 6px 4px;
-       text-transform: uppercase; font-size: 10px; letter-spacing: 1px; }
-  td { padding: 7px 4px; border-top: 1px solid #1f1f2b; vertical-align: top; }
-  .pill { padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 800;
-          letter-spacing: 0.5px; }
-  .pill.ok      { background: #10251c; color: #7fe0b0; }
-  .pill.error   { background: #2a1216; color: #ff9c9c; }
-  .pill.sending { background: #241d10; color: #e5c07b; }
-  .pill.new     { background: #1f1f2b; color: #8a8aa0; }
-  .hint { font-size: 11px; color: #6a6a7a; line-height: 1.5; }
-  a { color: #ff8a5b; }
-</style>
-</head>
-<body>
-<div class="wrap">
-  <div style="display:flex;justify-content:space-between;align-items:center">
-    <h1>RACE LOGGER — LEAGUE UPLOAD</h1>
-    <a href="/">← live monitor</a>
-  </div>
-
-  <div class="card">
-    <h2>Setup</h2>
-    <div class="row">
-      <label for="url">League site</label>
-      <input type="text" id="url" spellcheck="false">
-    </div>
-    <div class="row">
-      <label for="token">Your personal key</label>
-      <input type="text" id="token" spellcheck="false"
-             placeholder="cls_rl_…  — copy it from the league site">
-    </div>
-    <div class="row check">
-      <input type="checkbox" id="auto" checked>
-      <label for="auto" style="margin:0">Send every finished race log automatically</label>
-    </div>
-    <div style="display:flex;gap:8px">
-      <button class="primary" onclick="save()">Save</button>
-      <button class="ghost" onclick="test()">Test connection</button>
-    </div>
-    <div id="msg" class="msg"></div>
-    <p class="hint" style="margin-top:12px">
-      Get your key on the league site under <strong>Race Logger</strong> (you have to be
-      signed in). It only allows uploading race logs as you — nothing else. Logs are always
-      kept on this PC too, in the <code>logs</code> folder next to the program.
-    </p>
-  </div>
-
-  <div class="card">
-    <h2>Recorded races</h2>
-    <table>
-      <thead>
-        <tr><th>File</th><th>Recorded</th><th>Size</th><th>Upload</th><th></th></tr>
-      </thead>
-      <tbody id="rows"><tr><td colspan="5" class="hint">Loading…</td></tr></tbody>
-    </table>
-    <p class="hint" style="margin-top:10px">
-      Only race sessions are recorded — practice and qualifying are ignored. A race that is
-      still running shows up here as soon as it starts and is sent when it ends.
-    </p>
-  </div>
-</div>
-
-<script>
-let loaded = false;
-
-function show(ok, text) {
-  const m = document.getElementById('msg');
-  m.className = 'msg ' + (ok ? 'ok' : 'err');
-  m.textContent = text;
-}
-
-function fmtSize(b) {
-  if (b < 1024) return b + ' B';
-  if (b < 1024 * 1024) return (b / 1024).toFixed(0) + ' KB';
-  return (b / 1024 / 1024).toFixed(1) + ' MB';
-}
-
-async function refresh() {
-  const r = await fetch('/league/state');
-  const s = await r.json();
-  if (!loaded) {
-    document.getElementById('url').value   = s.config.url || '';
-    document.getElementById('token').value = s.config.token || '';
-    document.getElementById('auto').checked = !!s.config.auto;
-    loaded = true;
-  }
-  const rows = s.logs.map(l => {
-    const status = l.status || 'new';
-    const label  = status === 'ok' ? 'sent'
-                 : status === 'error' ? 'failed'
-                 : status === 'sending' ? 'sending…' : 'not sent';
-    const btn = (status === 'sending')
-      ? ''
-      : `<button class="ghost" onclick="send('${l.name}')">` +
-        (status === 'ok' ? 'Send again' : 'Send now') + `</button>`;
-    return `<tr>
-      <td>${l.name}${l.active ? ' <span class="pill sending">recording</span>' : ''}</td>
-      <td>${(l.modified || '').replace('T', ' ')}</td>
-      <td>${fmtSize(l.size)}</td>
-      <td><span class="pill ${status}">${label}</span>
-          <div class="hint">${l.message || ''}</div></td>
-      <td style="text-align:right">${btn}</td>
-    </tr>`;
-  });
-  document.getElementById('rows').innerHTML =
-    rows.join('') || '<tr><td colspan="5" class="hint">No race recorded yet.</td></tr>';
-}
-
-function body() {
-  return JSON.stringify({
-    url:   document.getElementById('url').value,
-    token: document.getElementById('token').value,
-    auto:  document.getElementById('auto').checked,
-  });
-}
-
-async function save() {
-  const r = await fetch('/league/save', {method: 'POST',
-    headers: {'Content-Type': 'application/json'}, body: body()});
-  const s = await r.json();
-  show(s.ok, s.ok ? 'Saved.' : 'Could not save.');
-}
-
-async function test() {
-  show(true, 'Checking…');
-  const r = await fetch('/league/test', {method: 'POST',
-    headers: {'Content-Type': 'application/json'}, body: body()});
-  const s = await r.json();
-  show(s.ok, s.message);
-}
-
-async function send(name) {
-  await fetch('/league/upload', {method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name: name})});
-  refresh();
-}
-
-refresh();
-setInterval(refresh, 4000);
-</script>
-</body>
-</html>
-"""
-
-
 STATUS_HTML = """
 <!DOCTYPE html>
 <html lang="en">
@@ -2230,7 +1974,6 @@ STATUS_HTML = """
     <h1>iRACING RACE MONITOR</h1>
     <div class="right">
       <span id="rec-pill" class="pill idle">idle</span>
-      <a class="btn" href="/league" style="background:#1f1f2b;color:#c8c8d4">League upload</a>
       <a id="dl-btn" class="btn disabled" href="/log">Download log</a>
     </div>
   </div>
@@ -2331,7 +2074,7 @@ STATUS_HTML = """
           <div style="text-align:right;">LAST LAP</div>
           <div style="text-align:right;">BEST</div>
           <div style="text-align:right;">GAP</div>
-          <div style="text-align:right;" title="Positions gained / lost (+/−)">+/−</div>
+          <div style="text-align:right;" title="Net positions gained / lost vs the starting grid">+/−</div>
           <div style="text-align:right;">INC</div>
         </div>
         <div id="drv-rows"><div class="empty">Waiting for iRacing…</div></div>
@@ -2607,13 +2350,28 @@ function render(d) {
       const subLine = subParts.length
         ? `<span class="sub">${subParts.join(' · ')}</span>` : '';
 
-      // Overtakes / overtaken — green up + red down. Render zeros muted
-      // so the cell stays visually quiet for the field that hasn't moved.
+      // +/- column: NET places gained or lost versus the STARTING GRID.
+      // Not a running tally — a driver who drops a place at turn 1 and
+      // repasses is back on "=", and stays on "=" however often that
+      // place changes hands again. Blank when we have no grid slot for
+      // this car (late joiner, or the logger attached mid-race).
+      // The cumulative pass counts are still there, in the tooltip.
+      const pd = r.pos_delta;
       const ot = r.overtakes || 0;
       const ag = r.overtaken || 0;
-      const otCell =
-        `<span class="${ot > 0 ? 'up' : 'zero'}">+${ot}</span>` +
-        `<span class="${ag > 0 ? 'down' : 'zero'}">−${ag}</span>`;
+      const otTitle = r.grid_pos
+        ? `started P${r.grid_pos} · ${ot} gained / ${ag} lost during the race`
+        : `${ot} gained / ${ag} lost during the race`;
+      let otCell;
+      if (pd == null) {
+        otCell = `<span class="zero" title="${otTitle}">—</span>`;
+      } else if (pd === 0) {
+        otCell = `<span class="zero" title="${otTitle}">=</span>`;
+      } else if (pd > 0) {
+        otCell = `<span class="up" title="${otTitle}">+${pd}</span>`;
+      } else {
+        otCell = `<span class="down" title="${otTitle}">−${Math.abs(pd)}</span>`;
+      }
 
       html += `
         <div class="drv-row ${rowCls}" ${chartedStyle}
@@ -3759,7 +3517,7 @@ SHARE_STANDINGS_HTML = """
       <div style="text-align:right;">BEST</div>
       <div style="text-align:right;">GAP</div>
       <div class="col-inc" style="text-align:right;" title="Incidents">INC</div>
-      <div class="col-ot" style="text-align:right;" title="Positions gained / lost">+/&minus;</div>
+      <div class="col-ot" style="text-align:right;" title="Net positions gained / lost vs the starting grid">+/&minus;</div>
       <div class="col-pit-time" style="text-align:right;" title="Last pit-stop duration">PIT TIME</div>
     </div>
     <div id="rows"><div class="empty">Waiting for race data…</div></div>
@@ -3793,13 +3551,18 @@ function fmtPitDur(t) {
   const m = Math.floor(t/60); const s = t - m*60;
   return `${m}:${s.toFixed(1).padStart(4,'0')}`;
 }
-function fmtOvertakes(up, down) {
-  // Net positions gained/lost — green up arrow, red down arrow,
-  // grey dash if neither.
-  const net = (up || 0) - (down || 0);
-  if (net > 0) return `<span class="ot up">▲${net}</span>`;
-  if (net < 0) return `<span class="ot down">▼${-net}</span>`;
-  return `<span class="ot flat">—</span>`;
+function fmtPosDelta(pd, gridPos) {
+  // NET positions gained/lost versus the STARTING GRID — green up arrow,
+  // red down arrow, "=" when the driver is exactly where he started.
+  // This never accumulates: drop a place and take it back and you are on
+  // "=" again, no matter how many times that repeats. A grey dash means
+  // we have no grid slot for this car (late joiner / attached mid-race),
+  // which is deliberately different from "held position".
+  const t = gridPos ? ` title="started P${gridPos}"` : '';
+  if (pd == null)  return `<span class="ot flat">—</span>`;
+  if (pd > 0) return `<span class="ot up"${t}>▲${pd}</span>`;
+  if (pd < 0) return `<span class="ot down"${t}>▼${-pd}</span>`;
+  return `<span class="ot flat"${t}>=</span>`;
 }
 
 async function refresh() {
@@ -3834,7 +3597,7 @@ async function refresh() {
             <div class="best">${fmtLap(r.best_lap)}</div>
             <div class="gap">${fmtGap(r.gap_to_leader)}</div>
             <div class="inc col-inc">${inc}</div>
-            <div class="col-ot">${fmtOvertakes(r.overtakes, r.overtaken)}</div>
+            <div class="col-ot">${fmtPosDelta(r.pos_delta, r.grid_pos)}</div>
             <div class="pit-time col-pit-time">${fmtPitDur(r.last_pit_duration)}</div>
           </div>`;
       }
@@ -3858,12 +3621,6 @@ def main():
     print("iRacing Race Logger")
     print(f"Logs folder: {LOGS_DIR}")
     print(f"Open:        http://localhost:5009")
-    _cfg = cls_load_config()
-    if _cfg["token"]:
-        print(f"League:      {_cfg['url']} — auto-upload "
-              f"{'ON' if _cfg['auto'] else 'OFF'}")
-    else:
-        print("League:      not set up yet — open http://localhost:5009/league")
     print("Press Ctrl+C to stop")
     print("=" * 60)
 

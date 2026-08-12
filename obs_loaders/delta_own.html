@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Quali Delta (Own Best) — loader</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0); overflow: hidden;
+  }
+</style>
+</head>
+<body>
+<script>
+  // SELF-HEALING loader (REDIRECT variant). Waits until the overlay server
+  // first answers, then navigates THIS page straight to the overlay so it runs
+  // as a normal top-level page — identical to opening the URL directly, which
+  // OBS renders reliably. The overlay page then recovers from any later server
+  // hiccup on its own (it keeps polling /status and re-renders), so we never
+  // reload it.
+  //
+  // Why redirect instead of an iframe (like the other loaders): OBS's browser
+  // source was leaving the iframe'd overlay unable to reach /status — it showed
+  // "Waiting for server…" forever even though the server was up. Running the
+  // overlay top-level fixes that. Since the loaders are "load-once" now, the
+  // redirect is functionally equivalent to the iframe approach.
+  var URL_ = "http://localhost:5014/own";
+
+  function ping() {
+    // no-cors: we only care whether the server answers at all.
+    return fetch(URL_, { mode: "no-cors", cache: "no-store" })
+      .then(function () { return true; })
+      .catch(function () { return false; });
+  }
+
+  function tick() {
+    ping().then(function (up) {
+      if (up) {
+        window.location.replace(URL_);  // become the overlay; it self-heals from here
+      } else {
+        setTimeout(tick, 1500);         // keep retrying until the server is up
+      }
+    });
+  }
+  tick();
+</script>
+</body>
+</html>

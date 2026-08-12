@@ -168,7 +168,24 @@ def analyze(events, profile=DEFAULT_PROFILE, weights=None,
         # --- positions over the race from lap events ---
         valid_positions = [l["position"] for l in laps.get(ci, [])
                            if isinstance(l.get("position"), int) and l["position"] > 0]
-        start_pos = valid_positions[0] if valid_positions else fin.get("position")
+        # Starting position = the STARTING GRID slot when the logger
+        # recorded one (`grid_pos`, written on every lap event since the
+        # grid-baseline change). Older logs don't have it, so we keep the
+        # previous behaviour there: position at the end of lap 1. That old
+        # fallback silently ignores everything that happened on the run to
+        # turn 1, which is exactly the kind of movement this award is
+        # supposed to reward — hence the preference for the real grid.
+        grid_positions = [l["grid_pos"] for l in laps.get(ci, [])
+                          if isinstance(l.get("grid_pos"), int) and l["grid_pos"] > 0]
+        if grid_positions:
+            start_pos = grid_positions[0]
+        elif valid_positions:
+            start_pos = valid_positions[0]
+        else:
+            start_pos = fin.get("position")
+        # worst_pos stays a LAP-EVENT low point on purpose: "recovery" is
+        # meant to reward climbing back after losing ground during the
+        # race, so the grid slot deliberately does not feed into it.
         worst_pos = max(valid_positions) if valid_positions else fin.get("position")
         finish_pos = fin.get("position")
 

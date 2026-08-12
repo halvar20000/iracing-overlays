@@ -1,0 +1,11 @@
+# Build artifacts
+plugin/bin/
+plugin/obj/
+*.user
+*.suo
+.vs/
+
+# stray files / local backups
+.writetest
+*.bak_*
+release/*.bak_*

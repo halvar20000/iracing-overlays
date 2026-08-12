@@ -54,8 +54,13 @@ OVERLAYS = [
     ("champ",     "Championship Overlay",     "iracing_championship.py",   5010, "#22c9e0"),  # cyan
     ("sess",      "Session Info (time left)", "iracing_session_info.py",   5011, "#e0e0e8"),  # white/grey
     ("line",      "Corner Cues (drive line)", "iracing_drivingline.py",    5012, "#7bd964"),  # leaf green
-    ("dotd",      "Driver of the Day",        "iracing_dotd_overlay.py",   5013, "#c792ea"),  # violet
-    ("racectrl",  "Race Control / Steward",   "iracing_racecontrol.py",    8080, "#3498db"),  # iCASControl (stewarding dashboard)
+    ("dotd",      "Driver of the Day",        "iracing_dotd_overlay.py",   5013, "#a371f7"),  # violet
+    ("delta",     "Quali Delta",              "iracing_qualidelta.py",     5014, "#19d36b"),  # delta green
+    ("catch",     "Catch-Up Battle",          "iracing_catchup.py",        5015, "#f43f8e"),  # battle pink
+    ("weather",   "Weather (conditions)",     "iracing_weather.py",        5016, "#61b4ff"),  # sky blue
+    ("driver",    "Driver Card",              "iracing_drivercard.py",     5017, "#ffd166"),  # card amber
+    ("leader",    "New Race Leader",          "iracing_race_leader.py",    5018, "#ffd700"),  # gold
+    ("racectrl",  "Race Control (iCAS)",      "iracing_racecontrol.py",    8080, "#3b82f6"),  # blue steward
 ]
 
 HERE = Path(__file__).resolve().parent
@@ -171,8 +176,7 @@ class LauncherApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("iRacing Overlay Launcher")
-        self.geometry("780x520")
-        self.minsize(720, 420)
+        self.minsize(760, 520)
         self.configure(bg=COLOR_BG)
 
         self.log_queue = queue.Queue()
@@ -182,10 +186,23 @@ class LauncherApp(tk.Tk):
         }
 
         self._build_ui()
+        self._size_to_contents()
         self._poll_status()
         self._poll_log_queue()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _size_to_contents(self):
+        """Open tall enough to show every overlay row without manual resizing.
+        Sizes to the requested height of all widgets (so all 19+ overlays fit),
+        capped to the screen height so the window never opens off-screen. Grows
+        automatically as new overlays are added to OVERLAYS."""
+        self.update_idletasks()
+        req_h = self.winfo_reqheight()
+        req_w = max(780, self.winfo_reqwidth())
+        screen_h = self.winfo_screenheight()
+        h = min(req_h, screen_h - 80)
+        self.geometry(f"{req_w}x{h}")
 
     # ----- UI construction -------------------------------------------------
     def _build_ui(self):
