@@ -95,6 +95,25 @@ WEATHER_SAMPLE_INTERVAL = 30.0  # seconds of session time between samples
 # written down as its own event.
 DRIVER_REFRESH_INTERVAL = 5.0  # seconds of session time between refreshes
 
+# --- Incidents without the dashboard ---
+# The incident feed above comes from the dashboard on port 5000. A driver
+# running the standalone RaceLogger at home has no dashboard, so that poll
+# never answers and the log gets NO incidents at all -- silently. Verified on
+# three real CLS uploads: 0 incident events against 589 / 790 / 505 laps,
+# while a log taken with the dashboard running carries 58.
+#
+# iRacing publishes its OWN scored incident count per driver inside
+# DriverInfo.Drivers[] as CurDriverIncidentCount (TeamIncidentCount in team
+# races). It ticks up exactly the way iRacing scores: +1 minor off, +2 four
+# wheels off, +4 loss of control, +6 car-to-car contact. Watching it for
+# jumps gives the same incidents without any dashboard.
+#
+# CAVEAT: in SPECTATOR mode iRacing sets the field to -1 for every car, so
+# this is a no-op on a broadcast machine -- which is fine, because that is
+# the machine that HAS the dashboard. It is used only when the dashboard
+# feed is not answering, so the two can never double-count.
+SDK_INCIDENT_INTERVAL = 1.0  # seconds of session time between checks
+
 # --- Pit detection ---
 # Below this duration in seconds we treat the pit-road event as edge-of-
 # pit-lane noise rather than a real stop or drive-through.
@@ -237,6 +256,17 @@ class RaceLogger(SDKPoller):
         # Team driver swaps -- see DRIVER_REFRESH_INTERVAL.
         self._last_driver_refresh_t: float = -1e9
 
+        # SDK-derived incidents -- see SDK_INCIDENT_INTERVAL.
+        self._last_sdk_inc_t: float = -1e9
+        self._sdk_inc_prev: dict[int, int] = {}
+        # True once the dashboard feed has actually answered. While it has,
+        # the SDK path stays out of the way so nothing is counted twice.
+        self._dashboard_incidents_live: bool = False
+        # Which source the OPEN log recorded its incidents from, written
+        # once as an incident_source event so a post-race tool can tell
+        # "no incidents happened" from "incidents were never measured".
+        self._incident_source_written: str | None = None
+
         # Pit-stop tracking — entry/exit, duration, running count per car.
         # Detected via CarIdxOnPitRoad transitions (broader than the
         # InPitStall-only signal, so drive-throughs are caught too).
@@ -324,6 +354,9 @@ class RaceLogger(SDKPoller):
         self._last_pos_emit_t = -1e9
         self._last_weather_emit_t = -1e9
         self._last_driver_refresh_t = -1e9
+        self._last_sdk_inc_t = -1e9
+        self._sdk_inc_prev.clear()
+        self._incident_source_written = None
         self._pit_in_pit.clear()
         self._pit_entry_t.clear()
         self._pit_entry_lap.clear()
@@ -599,6 +632,92 @@ class RaceLogger(SDKPoller):
                     "flag":      name,
                     "raw_bit":   bit,
                 })
+
+    # ----- incidents straight from the SDK --------------------------------
+    def _note_incident_source(self, source: str, cars: int) -> None:
+        """Write down, once per log, where the incidents came from.
+
+        Without this a reader cannot tell a genuinely clean race from a race
+        nobody measured -- both are zero incident events.
+        """
+        if self._log_fp is None or self._incident_source_written == source:
+            return
+        self._incident_source_written = source
+        self._emit({
+            "type":   "incident_source",
+            "source": source,
+            "cars":   cars,
+        })
+
+    def _maybe_emit_sdk_incidents(self) -> None:
+        """Turn jumps in iRacing's own incident counter into events.
+
+        Only runs while the dashboard feed is silent -- see
+        SDK_INCIDENT_INTERVAL for why, and for the spectator-mode caveat.
+        The first pass only takes baselines: a driver who already carries
+        incidents when we start watching did not commit them just now.
+        """
+        if self._log_fp is None or self._dashboard_incidents_live:
+            return
+        t_session = float(self.ir["SessionTime"] or 0.0)
+        if t_session - self._last_sdk_inc_t < SDK_INCIDENT_INTERVAL:
+            return
+        self._last_sdk_inc_t = t_session
+
+        info = self.ir["DriverInfo"] or {}
+        counts: dict[int, int] = {}
+        for d in info.get("Drivers", []) or []:
+            cidx = d.get("CarIdx")
+            if cidx is None or d.get("CarIsPaceCar") == 1:
+                continue
+            raw = d.get("CurDriverIncidentCount")
+            if raw is None:
+                raw = d.get("TeamIncidentCount")
+            try:
+                val = int(raw)
+            except (TypeError, ValueError):
+                continue
+            # -1 is iRacing's 'not available' sentinel (spectator mode).
+            # Treating it as a count would fabricate a huge jump the moment
+            # it flipped to a real 0.
+            if val < 0:
+                continue
+            counts[int(cidx)] = val
+
+        if not counts:
+            self._note_incident_source("none", 0)
+            return
+        self._note_incident_source("sdk", len(counts))
+
+        by_idx = {d["car_idx"]: d for d in self._log_session_meta.get("drivers", [])}
+        for cidx, val in counts.items():
+            prev = self._sdk_inc_prev.get(cidx)
+            self._sdk_inc_prev[cidx] = val
+            if prev is None or val <= prev:
+                continue
+            delta = val - prev
+            # iRacing's own severities, the same buckets the dashboard uses.
+            if delta <= 1:
+                kind = "off_track"
+            elif delta <= 3:
+                kind = "lost_control"
+            else:
+                kind = "collision"
+            d = by_idx.get(cidx, {})
+            self._driver_incident_count[cidx] = (
+                self._driver_incident_count.get(cidx, 0) + 1
+            )
+            self._emit({
+                "type":          "incident",
+                "t_session":     round(t_session, 2),
+                "car_idx":       cidx,
+                "car_number":    d.get("car_number", ""),
+                "driver":        d.get("name", ""),
+                "incident_type": kind,
+                "details":       "+%d" % delta,
+                "source":        "sdk",
+            })
+            self._incidents_logged += 1
 
     # ----- team driver swaps ---------------------------------------------
     def _refresh_driver_names(self) -> None:
@@ -1221,6 +1340,11 @@ class RaceLogger(SDKPoller):
                 payload = r.json()
             except Exception:
                 continue
+            # A 200 means the dashboard is there. From here on it owns the
+            # incidents and the SDK path stands down, so nothing is counted
+            # twice -- even in a race where nobody has an incident yet.
+            self._dashboard_incidents_live = True
+            self._note_incident_source("dashboard", 0)
             # Dashboard /incidents shape: {"incidents": [{"t_session":..., "car_idx":..., "type":..., ...}, ...]}
             items = payload.get("incidents") if isinstance(payload, dict) else payload
             if not items:
@@ -1317,6 +1441,7 @@ class RaceLogger(SDKPoller):
         self._maybe_emit_flag_events()
         self._maybe_emit_weather()
         self._refresh_driver_names()
+        self._maybe_emit_sdk_incidents()
         self._maybe_emit_penalty_events()
         self._maybe_emit_laps()
         self._maybe_emit_final()
