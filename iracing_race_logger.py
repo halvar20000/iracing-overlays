@@ -84,6 +84,17 @@ INCIDENT_POLL_INTERVAL  = 5.0   # seconds between fetches (laps poll faster)
 # beside the position stream.
 WEATHER_SAMPLE_INTERVAL = 30.0  # seconds of session time between samples
 
+# --- Team driver swaps ---
+# In a team race the car keeps its CarIdx and the person in it changes.
+# iRacing re-sends the session info on a swap, so DriverInfo's UserName for
+# that CarIdx follows the driver actually sitting in the car. The logger used
+# to read that list ONCE, when it opened the log, and every lap event for the
+# rest of the race therefore carried whoever was in the car at the green flag
+# -- three drivers over 7,848 laps of a 6 h race, one name. Re-reading it
+# closes that: a lap is stamped with whoever is driving, and a swap is
+# written down as its own event.
+DRIVER_REFRESH_INTERVAL = 5.0  # seconds of session time between refreshes
+
 # --- Pit detection ---
 # Below this duration in seconds we treat the pit-road event as edge-of-
 # pit-lane noise rather than a real stop or drive-through.
@@ -223,6 +234,9 @@ class RaceLogger(SDKPoller):
         # Track/air temperature sampling -- see WEATHER_SAMPLE_INTERVAL.
         self._last_weather_emit_t: float = -1e9
 
+        # Team driver swaps -- see DRIVER_REFRESH_INTERVAL.
+        self._last_driver_refresh_t: float = -1e9
+
         # Pit-stop tracking — entry/exit, duration, running count per car.
         # Detected via CarIdxOnPitRoad transitions (broader than the
         # InPitStall-only signal, so drive-throughs are caught too).
@@ -309,6 +323,7 @@ class RaceLogger(SDKPoller):
         self._overtakes_against.clear()
         self._last_pos_emit_t = -1e9
         self._last_weather_emit_t = -1e9
+        self._last_driver_refresh_t = -1e9
         self._pit_in_pit.clear()
         self._pit_entry_t.clear()
         self._pit_entry_lap.clear()
@@ -384,7 +399,7 @@ class RaceLogger(SDKPoller):
         # Skip the verbose session_start/end blocks — those are big and
         # the monitor renders them from a different code path.
         if event.get("type") in ("lap", "incident", "pit", "flag",
-                                 "penalty", "slow_lap"):
+                                 "penalty", "slow_lap", "driver_change"):
             self._recent_events.appendleft(event)
 
     # ----- iRacing read helpers ------------------------------------------
@@ -584,6 +599,59 @@ class RaceLogger(SDKPoller):
                     "flag":      name,
                     "raw_bit":   bit,
                 })
+
+    # ----- team driver swaps ---------------------------------------------
+    def _refresh_driver_names(self) -> None:
+        """Follow the person actually sitting in each car.
+
+        Updates the session driver list in place, so every event emitted
+        afterwards (lap, pit, penalty) carries the CURRENT driver's name
+        instead of whoever was in the car when the log was opened. A change
+        is also written down as its own driver_change event, so a post-race
+        tool can split the stints on facts rather than on the plan someone
+        typed before the race.
+
+        Entries are merged, never replaced: a car that drops out of
+        DriverInfo mid-race keeps its entry, because losing it would stop
+        lap detection for that car entirely.
+        """
+        if self._log_fp is None:
+            return
+        t_session = float(self.ir["SessionTime"] or 0.0)
+        if t_session - self._last_driver_refresh_t < DRIVER_REFRESH_INTERVAL:
+            return
+        self._last_driver_refresh_t = t_session
+
+        current = self._build_drivers_list()
+        if not current:
+            return
+        known = self._log_session_meta.setdefault("drivers", [])
+        by_idx = {d["car_idx"]: d for d in known}
+
+        for fresh in current:
+            idx = fresh["car_idx"]
+            old = by_idx.get(idx)
+            if old is None:
+                known.append(fresh)
+                by_idx[idx] = fresh
+                continue
+            new_name = fresh.get("name") or ""
+            old_name = old.get("name") or ""
+            if not new_name or new_name == old_name:
+                continue
+            # A real swap. Update in place so the lap emitter -- which
+            # iterates this very list -- picks it up on the next tick.
+            old["name"] = new_name
+            old["irating"] = fresh.get("irating", old.get("irating"))
+            old["license"] = fresh.get("license", old.get("license"))
+            self._emit({
+                "type":       "driver_change",
+                "t_session":  round(t_session, 2),
+                "car_idx":    idx,
+                "car_number": old.get("car_number", ""),
+                "driver":     new_name,
+                "previous":   old_name,
+            })
 
     # ----- weather sampling ----------------------------------------------
     def _maybe_emit_weather(self) -> None:
@@ -1248,6 +1316,7 @@ class RaceLogger(SDKPoller):
         self._maybe_emit_pit_events()
         self._maybe_emit_flag_events()
         self._maybe_emit_weather()
+        self._refresh_driver_names()
         self._maybe_emit_penalty_events()
         self._maybe_emit_laps()
         self._maybe_emit_final()
