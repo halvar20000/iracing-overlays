@@ -72,6 +72,18 @@ LOGS_DIR.mkdir(parents=True, exist_ok=True)
 DASHBOARD_INCIDENTS_URL = "http://127.0.0.1:5000/incidents"
 INCIDENT_POLL_INTERVAL  = 5.0   # seconds between fetches (laps poll faster)
 
+# --- Weather sampling ---
+# Track temperature is the one condition that moves through a long race, and
+# it moves lap times with it: an evening enduro can shed 15 C between the
+# green flag and the finish, which is worth more than a driver change. The
+# session_start block records it once -- enough to label a race, useless for
+# comparing a stint at 40 C with one at 25 C. So sample it periodically: one
+# small event every WEATHER_SAMPLE_INTERVAL seconds lets the post-race tools
+# put a temperature on every lap by its session clock.
+# 30 s over a 24 h race is ~2900 events -- a few hundred KB, next to nothing
+# beside the position stream.
+WEATHER_SAMPLE_INTERVAL = 30.0  # seconds of session time between samples
+
 # --- Pit detection ---
 # Below this duration in seconds we treat the pit-road event as edge-of-
 # pit-lane noise rather than a real stop or drive-through.
@@ -208,6 +220,9 @@ class RaceLogger(SDKPoller):
         # for a smooth replay. ~360 KB per 30-min race; trivial.
         self._last_pos_emit_t: float = -1e9   # session_time of last emit
 
+        # Track/air temperature sampling -- see WEATHER_SAMPLE_INTERVAL.
+        self._last_weather_emit_t: float = -1e9
+
         # Pit-stop tracking — entry/exit, duration, running count per car.
         # Detected via CarIdxOnPitRoad transitions (broader than the
         # InPitStall-only signal, so drive-throughs are caught too).
@@ -293,6 +308,7 @@ class RaceLogger(SDKPoller):
         self._overtakes_made.clear()
         self._overtakes_against.clear()
         self._last_pos_emit_t = -1e9
+        self._last_weather_emit_t = -1e9
         self._pit_in_pit.clear()
         self._pit_entry_t.clear()
         self._pit_entry_lap.clear()
@@ -568,6 +584,50 @@ class RaceLogger(SDKPoller):
                     "flag":      name,
                     "raw_bit":   bit,
                 })
+
+    # ----- weather sampling ----------------------------------------------
+    def _maybe_emit_weather(self) -> None:
+        """Sample track + air temperature every WEATHER_SAMPLE_INTERVAL.
+
+        The values are already read every tick for the live monitor; this
+        only writes them down. Post-race tools match a sample to a lap by
+        't_session' (a lap event carries the session clock at its END), so
+        the sampling interval is the resolution of that match -- 30 s is far
+        finer than the couple of degrees an hour a track actually moves.
+
+        Emitted even when nothing changed: a flat line is a measurement too,
+        and a consumer that has to guess whether a gap means 'unchanged' or
+        'not sampled' cannot correct anything.
+        """
+        if self._log_fp is None:
+            return
+        t_session = float(self.ir["SessionTime"] or 0.0)
+        if t_session - self._last_weather_emit_t < WEATHER_SAMPLE_INTERVAL:
+            return
+        self._last_weather_emit_t = t_session
+
+        track = self.ir["TrackTempCrew"]
+        air = self.ir["AirTemp"]
+        # Before the sim has real data these read 0.0 or None; writing those
+        # would drag any later correction towards freezing point.
+        if track is None or air is None:
+            return
+        try:
+            track_f = float(track)
+            air_f = float(air)
+        except (TypeError, ValueError):
+            return
+        if track_f <= 0.0:
+            return
+
+        self._emit({
+            "type":         "weather",
+            "t_session":    round(t_session, 2),
+            "track_temp_c": round(track_f, 2),
+            "air_temp_c":   round(air_f, 2),
+            "wetness":      self.ir["TrackWetness"],
+            "skies":        self.ir["Skies"],
+        })
 
     # ----- per-car penalty detection -------------------------------------
     def _maybe_emit_penalty_events(self) -> None:
@@ -1187,6 +1247,7 @@ class RaceLogger(SDKPoller):
         self._maybe_emit_position()
         self._maybe_emit_pit_events()
         self._maybe_emit_flag_events()
+        self._maybe_emit_weather()
         self._maybe_emit_penalty_events()
         self._maybe_emit_laps()
         self._maybe_emit_final()
