@@ -118,6 +118,23 @@ Das Standings-Overlay zeigt Herstellerlogos aus `brands/*.svg`. Neue Marke hinzu
 - **Port bereits belegt** — ein anderes Overlay oder Programm nutzt den Port; der Port jedes Skripts steht unten in `app.run(...)`.
 - **Ein Overlay ruckelt oder verschwindet kurz mitten im Stream (besonders Live-Indicator / Session-Info)** — das liegt an OBS, nicht am Overlay. OBS nutzt ein eingebettetes Chromium, das die Timer einer Browser-Quelle *drosselt*, sobald das OBS-Fenster im Hintergrund ist (z. B. während du mit iRacing im Vordergrund fährst). Dadurch wird die Abfrageschleife des Overlays verlangsamt und kann für ein paar Sekunden pausieren. Die Overlays fangen das bereits ab — sie halten das letzte Bild 30 s lang, bevor sie einen Offline-Zustand zeigen, sollten also nicht unsichtbar werden. Wenn dich das Ruckeln trotzdem stört, helfen zwei Dinge: (1) das OBS-Fenster beim Fahren **nicht minimieren** (minimiert = stärkste Drosselung); (2) die OBS-Quelle **direkt** auf das Overlay zeigen lassen (`http://localhost:<port>`) statt auf die Datei in `obs_loaders/` — der Loader bettet die Seite in einen iframe ein, den OBS etwas stärker drosselt. Der Nachteil der direkten URL: du verlierst die automatische Start-Reihenfolge-Absicherung, also **die Browser-Quelle einmal vor dem Rennstart neu laden**, falls sie leer geblieben ist.
 
+## Feedback und Ideen
+
+Diese Overlays sind für die Übertragungen einer Liga entstanden und kennen deren
+Gewohnheiten. Wenn deine Serie, deine Fahrzeugklasse oder dein OBS-Setup etwas
+anderes braucht, sag es — ein Wunsch aus einer echten Übertragung zählt.
+
+* **Overlay kaputt, falsche Zahl, stirbt in OBS?**
+  [Bug melden](https://github.com/halvar20000/iracing-overlays/issues/new?template=bug_report.yml)
+  — welches Overlay, welche Session, und die Konsolenausgabe. Das Formular ist auf
+  Englisch, Deutsch im Text ist völlig in Ordnung.
+* **Neues Overlay oder ein Feld in einem bestehenden?** Ab in
+  [Discussions → Ideas](https://github.com/halvar20000/iracing-overlays/discussions/categories/ideas),
+  oder 👍 auf eine Idee, die schon da ist. Der [**Roadmap**-Thread](https://github.com/halvar20000/iracing-overlays/discussions/1)
+  listet, was in Frage kommt — die Stimmen entscheiden die Reihenfolge.
+* **Setup-Frage?** [Discussions → Q&A](https://github.com/halvar20000/iracing-overlays/discussions/categories/q-a).
+* **Im Einsatz auf deinem Stream?** Link in Show and tell — so sieht man am besten, was funktioniert.
+
 ## Lizenz & Attribution
 
 Streckengeometrie: SIMRacingApps-Projekt von Jeffrey Gilliam (Apache 2.0) und OpenStreetMap-Mitwirkende (ODbL) — siehe `tracks/NOTICE.txt`.

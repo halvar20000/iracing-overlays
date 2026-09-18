@@ -1,0 +1,73 @@
+name: Bug report
+description: An overlay that does not start, shows wrong data, or misbehaves in OBS.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please check [Troubleshooting](https://github.com/halvar20000/iracing-overlays#troubleshooting) first — "waiting for iRacing", black box in OBS and stutter while minimised are covered there.
+  - type: dropdown
+    id: overlay
+    attributes:
+      label: Which overlay?
+      options:
+        - Dashboard (5000)
+        - Grid (5001)
+        - Results / Results Lite (5002 / 5003)
+        - Live Indicator (5004)
+        - Standings (5005)
+        - Livery (5006)
+        - Track Map (5007)
+        - Flag (5008)
+        - Race Logger (5009)
+        - Championship (5010)
+        - Session Info (5011)
+        - Corner Cues (5012)
+        - Driver of the Day (5013)
+        - Quali Delta (5014)
+        - Catch-Up (5015)
+        - Weather (5016)
+        - Driver Card (5017)
+        - New Race Leader (5018)
+        - Race Control (iCASControl)
+        - GUI launcher / batch launcher
+        - Several / not sure
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Version
+      description: Output of `git log -1 --format=%h` in the overlays folder, or the date you last pulled.
+      placeholder: "a1b2c3d / pulled 2026-09-18"
+  - type: input
+    id: session
+    attributes:
+      label: Session type and where it happened
+      description: Practice, qualifying, race; league or official; live or replay; which track/car if it matters.
+      placeholder: "League race, Spa, GT3, live"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      placeholder: |
+        Standings showed the leader's gap as +0.000 for the whole second stint. Expected the real gap; the dashboard on 5000 had it right.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console output of that overlay
+      description: Copy from the overlay's console window (or the launcher's log pane) around the time it happened. Pasted text is formatted as code.
+      render: text
+  - type: input
+    id: env
+    attributes:
+      label: Python and OBS versions
+      placeholder: "Python 3.12, OBS 31.0"
+  - type: textarea
+    id: shot
+    attributes:
+      label: Screenshot or clip
+      description: A screenshot of the overlay, or a link to the VOD with a timestamp.

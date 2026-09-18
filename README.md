@@ -147,6 +147,22 @@ Auto Steward, PDF/CSV exports, multi-operator networking, StreamDeck).
 - **Port already in use** — another overlay or app owns that port; each script's port is set at the bottom in `app.run(...)`.
 - **An overlay stutters or briefly disappears mid-stream (especially Live Indicator / Session Info)** — this is OBS, not the overlay. OBS uses an embedded Chromium that *throttles* a browser source's timers when the OBS window is in the background (e.g. while you race with iRacing in the foreground), so the overlay's poll loop is slowed and can be paused for a few seconds. The overlays already tolerate this — they hold the last frame for 30 s before showing an offline state, so they shouldn't go invisible. If you still see stutter you don't like, two things help: (1) keep the OBS window **not minimized** while racing (minimized = hardest throttling); (2) point the OBS source at the overlay **directly** (`http://localhost:<port>`) instead of the `obs_loaders/` file — the loader wraps the page in an iframe, which OBS throttles a little harder. The trade-off of the direct URL is that you lose the auto-start-order safety net, so **reload that browser source once before the race starts** if it came up blank.
 
+## Feedback and ideas
+
+These overlays are built for one league's broadcasts, so they know that league's
+habits. If your series, your car class or your OBS setup needs something else,
+say so — a request from a real broadcast carries weight.
+
+* **Overlay broken, wrong number, dies in OBS?**
+  [Open a bug report](https://github.com/halvar20000/iracing-overlays/issues/new?template=bug_report.yml)
+  — which overlay, what session, and the console output.
+* **Want a new overlay or a field on an existing one?** Say so in
+  [Discussions → Ideas](https://github.com/halvar20000/iracing-overlays/discussions/categories/ideas),
+  or 👍 an idea already there. The [**roadmap** thread](https://github.com/halvar20000/iracing-overlays/discussions/1)
+  lists what is being considered, and the votes decide the order.
+* **Setup question?** [Discussions → Q&A](https://github.com/halvar20000/iracing-overlays/discussions/categories/q-a).
+* **Using them on a stream?** Drop a link in Show and tell — it is the best way to see what works.
+
 ## License & attribution
 
 Track geometry: SIMRacingApps project by Jeffrey Gilliam (Apache 2.0) and OpenStreetMap contributors (ODbL) — see `tracks/NOTICE.txt`.
