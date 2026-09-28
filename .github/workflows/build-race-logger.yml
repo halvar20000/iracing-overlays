@@ -44,7 +44,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path pack/RaceLogger | Out-Null
-          Copy-Item iracing_race_logger.py, iracing_sdk_base.py, start_race_logger.bat, `
+          Copy-Item iracing_race_logger.py, iracing_sdk_base.py, driver_of_the_day.py, dotd_streak.py, start_race_logger.bat, `
                     build_race_logger_exe.bat, RaceLogger.spec, RACE_LOGGER.md pack/RaceLogger/
           Compress-Archive -Path pack/RaceLogger/* -DestinationPath dist/RaceLogger-source.zip -Force
 
