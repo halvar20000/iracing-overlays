@@ -49,6 +49,12 @@ WEIGHT_PROFILES = {
 }
 DEFAULT_PROFILE = "positions"
 
+# Pit-cycle adjustment of the recovery metric — kept IDENTICAL to CLS
+# (league-manager src/lib/race-log-field.ts `pitCycleWindows`, v2.35.0), so the
+# logger console, the DotD overlay and the official CLS award agree.
+PIT_STOP_MIN_SEC = 20.0        # shorter pit-road visits = drive-throughs / penalty serves
+DEFAULT_SETTLE_SEC = 120.0     # fallback "one lap" when no timed laps exist
+
 # Eligibility defaults
 MIN_LAPS_FRACTION = 0.5        # must complete >= this share of the leader's laps
 FINISHED_REASONS = {"running"} # reason_out values that count as "finished the race"
@@ -89,6 +95,69 @@ def newest_race_log(logs_dir="logs"):
     if not cands:
         return None
     return max(cands, key=os.path.getmtime)
+
+
+# ---------------------------------------------------------------------------
+# Pit-cycle windows
+# ---------------------------------------------------------------------------
+def _num(v):
+    return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
+def real_stop_spans(pit_events):
+    """Real stops (>= PIT_STOP_MIN_SEC) of one car as (entry, exit) session
+    times. The logger writes `pit` at pit EXIT: t_session = exit time,
+    duration = time on pit road, so entry = t_session - duration."""
+    spans = []
+    for p in pit_events:
+        t, d = _num(p.get("t_session")), _num(p.get("duration"))
+        if t is None or d is None or d < PIT_STOP_MIN_SEC:
+            continue
+        spans.append((t - d, t))
+    spans.sort()
+    return spans
+
+
+def pit_cycle_windows(stops_by_car, settle_sec):
+    """Stretches of the race in which the field is NOT on the same number of
+    stops. Cycle k runs from the first car entering pit road for its k-th
+    stop to the last car leaving it, plus `settle_sec` (about one lap).
+    Overlapping windows merge. Returns a list of dicts
+    {cycle, from, to, cars}. Positions inside a window say who has pitted,
+    not who is faster — the recovery metric ignores them."""
+    max_stops = max((len(s) for s in stops_by_car), default=0)
+    raw = []
+    for k in range(max_stops):
+        spans = [s[k] for s in stops_by_car if len(s) > k]
+        if not spans:
+            continue
+        raw.append({"cycle": k + 1,
+                    "from": min(a for a, _ in spans),
+                    "to": max(b for _, b in spans) + max(0.0, settle_sec),
+                    "cars": len(spans)})
+    raw.sort(key=lambda w: w["from"])
+    merged = []
+    for w in raw:
+        if merged and w["from"] <= merged[-1]["to"]:
+            m = merged[-1]
+            m["to"] = max(m["to"], w["to"])
+            m["cars"] = max(m["cars"], w["cars"])
+            m["cycle"] = min(m["cycle"], w["cycle"])
+        else:
+            merged.append(dict(w))
+    return merged
+
+
+def _in_windows(t, windows):
+    return any(w["from"] <= t <= w["to"] for w in windows)
+
+
+def _median(xs):
+    if not xs:
+        return None
+    s = sorted(xs)
+    m = len(s) // 2
+    return s[m] if len(s) % 2 else (s[m - 1] + s[m]) / 2.0
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +208,7 @@ def analyze(events, profile=DEFAULT_PROFILE, weights=None,
     start = None
     end = None
     laps = {}   # car_idx -> list of lap events in order
+    pits = {}   # car_idx -> list of pit events
     for e in events:
         t = e.get("type")
         if t == "session_start" and start is None:
@@ -147,6 +217,8 @@ def analyze(events, profile=DEFAULT_PROFILE, weights=None,
             end = e          # keep the last one (most final)
         elif t == "lap":
             laps.setdefault(e["car_idx"], []).append(e)
+        elif t == "pit" and isinstance(e.get("car_idx"), int):
+            pits.setdefault(e["car_idx"], []).append(e)
 
     if start is None:
         return {"ok": False, "error": "no session_start in log", "drivers": []}
@@ -157,6 +229,23 @@ def analyze(events, profile=DEFAULT_PROFILE, weights=None,
     final_by_idx = {f["car_idx"]: f for f in end["final"]}
     leader_laps = max((f.get("laps_completed", 0) for f in end["final"]), default=0)
     min_laps = leader_laps * min_laps_fraction
+
+    # --- pit-cycle adjustment (same rules as CLS v2.35.0) ---
+    def _is_real_stop(p):
+        d = _num(p.get("duration"))
+        return d is not None and d >= PIT_STOP_MIN_SEC
+    any_stops = any(_is_real_stop(p) for ps in pits.values() for p in ps)
+    timed = (all(_num(l.get("t_session")) is not None
+                 for ls in laps.values() for l in ls
+                 if isinstance(l.get("position"), int) and l["position"] > 0)
+             and all(_num(p.get("t_session")) is not None
+                     for ps in pits.values() for p in ps if _is_real_stop(p)))
+    pit_adjust = "none" if not any_stops else ("field" if timed else "own-laps")
+    lap_times = [l["lap_time"] for ls in laps.values() for l in ls
+                 if _num(l.get("lap_time")) and l["lap_time"] > 0 and l.get("on_pit") is not True]
+    settle = _median(lap_times) or DEFAULT_SETTLE_SEC
+    pit_windows = (pit_cycle_windows([real_stop_spans(ps) for ps in pits.values()], settle)
+                   if pit_adjust == "field" else [])
 
     drivers = []
     for d in start.get("drivers", []):
@@ -186,7 +275,26 @@ def analyze(events, profile=DEFAULT_PROFILE, weights=None,
         # worst_pos stays a LAP-EVENT low point on purpose: "recovery" is
         # meant to reward climbing back after losing ground during the
         # race, so the grid slot deliberately does not feed into it.
-        worst_pos = max(valid_positions) if valid_positions else fin.get("position")
+        # Pit-cycle adjusted: laps sampled while the field is on different
+        # numbers of stops (and a car's own pit laps) are ignored, so an
+        # early stop is neither a loss nor a comeback. Same as CLS.
+        pos_laps = [l for l in laps.get(ci, [])
+                    if isinstance(l.get("position"), int) and l["position"] > 0]
+        if pit_adjust == "field":
+            kept = [l["position"] for l in pos_laps
+                    if l.get("on_pit") is not True
+                    and not _in_windows(l["t_session"], pit_windows)]
+        elif pit_adjust == "own-laps":
+            skip = set()
+            for p in pits.get(ci, []):
+                if _is_real_stop(p) and isinstance(p.get("entry_lap"), int):
+                    skip.update((p["entry_lap"], p["entry_lap"] + 1))
+            kept = [l["position"] for l in pos_laps
+                    if l.get("on_pit") is not True and l.get("lap") not in skip]
+        else:
+            kept = valid_positions
+        worst_pos_raw = max(valid_positions) if valid_positions else fin.get("position")
+        worst_pos = max(kept) if kept else fin.get("position")
         finish_pos = fin.get("position")
 
         positions_gained = (start_pos - finish_pos) if (start_pos and finish_pos) else 0
@@ -229,6 +337,7 @@ def analyze(events, profile=DEFAULT_PROFILE, weights=None,
             "irating": d.get("irating"),
             "start_pos": start_pos,
             "worst_pos": worst_pos,
+            "worst_pos_raw": worst_pos_raw,
             "finish_pos": finish_pos,
             "positions_gained": positions_gained,
             "recovery": recovery,
@@ -316,6 +425,9 @@ def analyze(events, profile=DEFAULT_PROFILE, weights=None,
             "n_drivers": len(drivers),
             "leader_laps": leader_laps,
             "official": end.get("official"),
+            # how recovery was cleaned of pit stops: "field" | "own-laps" | "none"
+            "pit_adjust": pit_adjust,
+            "pit_windows": pit_windows,
         },
     }
 
@@ -418,6 +530,7 @@ def to_log_event(result):
         },
         "profile": result.get("profile"),
         "weights": result.get("weights"),
+        "pit_adjust": (result.get("meta") or {}).get("pit_adjust"),
         # no-back-to-back rule context (present when the streak rule ran)
         "season": season.get("name"),
         "season_key": season.get("key"),

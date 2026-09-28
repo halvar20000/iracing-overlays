@@ -81,7 +81,7 @@ LOGS_DIR.mkdir(parents=True, exist_ok=True)
 # league site automatically. The file is ALWAYS kept locally as well — the
 # upload is a convenience, never the only copy. Failed uploads stay visible
 # on the setup page with a "Send again" button.
-LOGGER_VERSION   = "1.1.0"
+LOGGER_VERSION   = "1.3.0"
 CLS_DEFAULT_URL  = "https://league.simracing-hub.com"
 CLS_CONFIG_PATH  = HERE / "league_manager.json"
 CLS_STATE_PATH   = LOGS_DIR / "upload_state.json"
