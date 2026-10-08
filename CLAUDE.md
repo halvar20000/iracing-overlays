@@ -147,6 +147,45 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 8, 2026 — evening (PCCD Algarve post-mortem: wrong numbers in
+race 2 for championship / title fight, wrong provisional DotD):**
+  • CHAMPIONSHIP ROOT CAUSE: RoundMemory keyed races by the TELEMETRY
+    `SessionUniqueID` — that is a counter that goes up with every session
+    part (3 → 4 → 5 during the event), not the hosted session's id. Race 1
+    was re-read from SessionInfo after each change and stored under 3:2,
+    4:2 and 5:2 → counted THREE times in race 2 (overlay showed Maurice
+    482 / Remo 472; CLS final 400 / 402). Fix: key =
+    `WeekendInfo.SessionID-SubSessionID:SessionNum` (stable for the whole
+    hosted session — the race logger already used SessionID), and
+    `earlier_races()` de-duplicates by (session name, finishing order),
+    keeping the most complete copy (one copy was saved while P8 was still
+    on his last lap: 14 vs 15 laps). Replaying tonight's real cache with
+    this morning's CLS standings now gives EXACTLY the CLS final table.
+    test_championship_rounds.py 18/18 (new 10/11 fail on the old file).
+  • DOTD ROOT CAUSES: (1) CLS crowns ONE DotD per ROUND — two-race rounds
+    are combined (league-manager src/lib/driver-of-the-day.ts
+    combineRaceCandidates: positions gained / recovery / overtakes /
+    incidents summed, crownable only if classified in EVERY race); the
+    overlay scored the race on screen only. (2) The no-back-to-back block
+    came from dotd_history.json, which records a winner per RACE (and
+    test races, filed under whatever season championship_config pins) →
+    during race 2 it blocked the race-1 winner instead of the previous
+    ROUND's (Andre Brechmann).
+    Fix: `driver_of_the_day.analyze_round()` (same method as CLS; scoring
+    extracted into `_score()`, single-race results unchanged — Zandvoort /
+    Road Atlanta / Zolder winners identical). Overlay 5013:
+    `round_logs()` finds earlier FINISHED race logs of the same hosted
+    session (session_start.session_unique_id, lower session_num) and
+    scores the round; `cls_previous_winner()` takes the blocked driver
+    from CLS /api/overlay/round-info (previous round's official DotD; if
+    CLS already published today's round, its previousWinnerName), local
+    history only as a fallback. Card tag "PROVISIONAL · RACE 2, LAP n" /
+    "ROUND · 2 RACES". Tonight's logs → Maurice Becker 0.7841 (gained 6,
+    rec 1, 7 OT, 20 inc) = CLS 0.784 exactly. test_dotd_round.py 10/10
+    (skips when the gitignored logs are absent).
+  • Known leftover: the race logger still records a DotD per RACE into
+    dotd_history.json at session_end; nothing reads it first any more.
+
 **October 8, 2026 (YouTube live picture-in-picture on 5005):** User wants
 to show a live YouTube stream in the broadcast. KEY FINDING: YouTube now
 refuses embeds on LOCAL-FILE pages ("Error 153 — video player

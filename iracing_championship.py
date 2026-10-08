@@ -256,7 +256,13 @@ class RacePoller(SDKPoller):
         session_info = ir["SessionInfo"] or {}
         sessions = (session_info.get("Sessions") or []) if session_info else []
         sess_num = ir["SessionNum"] if ir["SessionNum"] is not None else 0
-        sess_uid = ir["SessionUniqueID"] or 0
+        # Stable id of the HOSTED session (constant from practice to the last
+        # race). NOT the telemetry SessionUniqueID: that is a counter which
+        # goes up with every session part, and keying race 1 by it stored the
+        # same race again after each change - race 1 was counted THREE times
+        # during race 2 at Algarve (2026-10-08).
+        _wk = ir["WeekendInfo"] or {}
+        sess_uid = "%s-%s" % (_wk.get("SessionID") or 0, _wk.get("SubSessionID") or 0)
         sess_state = int(ir["SessionState"] or 0)
 
         current = None
@@ -453,7 +459,20 @@ class RoundMemory:
                    and e.get("season_id") == season.get("id")
                    and e.get("completed_rounds") == season.get("completedRounds")
                    and now - e.get("saved_at", 0) <= ROUND_CACHE_MAX_AGE_S]
-        return sorted(out, key=lambda e: e["saved_at"])
+        # A race must never count twice, whatever key it was stored under
+        # (old caches keyed by the telemetry counter hold the same race several
+        # times, one of them saved while the last car was still on its final
+        # lap). Same session name + same finishing order = the same race; keep
+        # the most complete copy (most laps), in the order the races happened.
+        best: dict = {}
+        for e in sorted(out, key=lambda e: e["saved_at"]):
+            fp = (e.get("name"), tuple(r.get("cust_id") for r in e.get("results") or []))
+            laps = sum(r.get("laps") or 0 for r in e.get("results") or [])
+            if fp not in best:
+                best[fp] = (e["saved_at"], laps, e)
+            elif laps > best[fp][1]:
+                best[fp] = (best[fp][0], laps, e)
+        return [e for _t, _l, e in sorted(best.values(), key=lambda v: v[0])]
 
 
 # -----------------------------------------------------------------------------

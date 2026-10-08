@@ -231,6 +231,64 @@ def provisional_final(events, stale_laps=3.0):
             "final": final, "leader_laps": order[0][1][0]}
 
 
+def _score(drivers, weights):
+    """Normalise the raw metrics over the ELIGIBLE pool, weight, score and sort
+    `drivers` in place (best first). Returns the crowned (best eligible) row.
+    Shared by a single race (analyze) and a whole round (analyze_round)."""
+    # --- normalise across the ELIGIBLE field only (so a parked car can't
+    #     stretch the scale), then score everyone on that scale ---
+    pool = [d for d in drivers if d["eligible"]] or drivers
+
+    def norm_map(key, invert=False):
+        vals = [d[key] for d in pool]
+        normed = _minmax_norm(vals)
+        m = {id(d): n for d, n in zip(pool, normed)}
+        out = {}
+        lo, hi = (min(vals), max(vals)) if vals else (0, 0)
+        for d in drivers:
+            if id(d) in m:
+                n = m[id(d)]
+            else:  # ineligible driver scored on the same scale, clamped
+                if hi - lo < 1e-9:
+                    n = 0.5
+                else:
+                    n = (d[key] - lo) / (hi - lo)
+                    n = max(0.0, min(1.0, n))
+            out[id(d)] = (1.0 - n) if invert else n
+        return out
+
+    n_pos = norm_map("positions_gained")
+    n_rec = norm_map("recovery")
+    n_ot = norm_map("overtakes")
+    n_clean = norm_map("incidents", invert=True)  # fewer incidents -> higher
+
+    for d in drivers:
+        c_pos = weights["pos"] * n_pos[id(d)]
+        c_rec = weights["rec"] * n_rec[id(d)]
+        c_ot = weights["ot"] * n_ot[id(d)]
+        c_clean = weights["clean"] * n_clean[id(d)]
+        d["components"] = {
+            "positions_gained": round(c_pos, 4),
+            "recovery": round(c_rec, 4),
+            "overtakes": round(c_ot, 4),
+            "clean": round(c_clean, 4),
+        }
+        d["norm"] = {
+            "positions_gained": round(n_pos[id(d)], 3),
+            "recovery": round(n_rec[id(d)], 3),
+            "overtakes": round(n_ot[id(d)], 3),
+            "clean": round(n_clean[id(d)], 3),
+        }
+        d["score"] = round(c_pos + c_rec + c_ot + c_clean, 4)
+        d["why"] = _why(d)
+
+    # Rank purely by score so a blocked/ineligible driver still appears at the
+    # rank their drive earned (marked), while the crown goes to the best
+    # *eligible* driver below them.
+    drivers.sort(key=lambda d: d["score"], reverse=True)
+    return next((d for d in drivers if d["eligible"]), None)
+
+
 def analyze(events, profile=DEFAULT_PROFILE, weights=None,
             min_laps_fraction=MIN_LAPS_FRACTION,
             dnf_can_win=False, exclude_names=None, provisional=False):
@@ -422,59 +480,7 @@ def analyze(events, profile=DEFAULT_PROFILE, weights=None,
     if not drivers:
         return {"ok": False, "error": "no classified drivers found", "drivers": []}
 
-    # --- normalise across the ELIGIBLE field only (so a parked car can't
-    #     stretch the scale), then score everyone on that scale ---
-    pool = [d for d in drivers if d["eligible"]] or drivers
-
-    def norm_map(key, invert=False):
-        vals = [d[key] for d in pool]
-        normed = _minmax_norm(vals)
-        m = {id(d): n for d, n in zip(pool, normed)}
-        out = {}
-        lo, hi = (min(vals), max(vals)) if vals else (0, 0)
-        for d in drivers:
-            if id(d) in m:
-                n = m[id(d)]
-            else:  # ineligible driver scored on the same scale, clamped
-                if hi - lo < 1e-9:
-                    n = 0.5
-                else:
-                    n = (d[key] - lo) / (hi - lo)
-                    n = max(0.0, min(1.0, n))
-            out[id(d)] = (1.0 - n) if invert else n
-        return out
-
-    n_pos = norm_map("positions_gained")
-    n_rec = norm_map("recovery")
-    n_ot = norm_map("overtakes")
-    n_clean = norm_map("incidents", invert=True)  # fewer incidents -> higher
-
-    for d in drivers:
-        c_pos = weights["pos"] * n_pos[id(d)]
-        c_rec = weights["rec"] * n_rec[id(d)]
-        c_ot = weights["ot"] * n_ot[id(d)]
-        c_clean = weights["clean"] * n_clean[id(d)]
-        d["components"] = {
-            "positions_gained": round(c_pos, 4),
-            "recovery": round(c_rec, 4),
-            "overtakes": round(c_ot, 4),
-            "clean": round(c_clean, 4),
-        }
-        d["norm"] = {
-            "positions_gained": round(n_pos[id(d)], 3),
-            "recovery": round(n_rec[id(d)], 3),
-            "overtakes": round(n_ot[id(d)], 3),
-            "clean": round(n_clean[id(d)], 3),
-        }
-        d["score"] = round(c_pos + c_rec + c_ot + c_clean, 4)
-        d["why"] = _why(d)
-
-    # Rank purely by score so a blocked/ineligible driver still appears at the
-    # rank their drive earned (marked), while the crown goes to the best
-    # *eligible* driver below them.
-    drivers.sort(key=lambda d: d["score"], reverse=True)
-
-    winner = next((d for d in drivers if d["eligible"]), None)
+    winner = _score(drivers, weights)
 
     return {
         "ok": True,
@@ -516,6 +522,118 @@ def _why(d):
         bits.append("%d overtake%s" % (d["overtakes"], "" if d["overtakes"] == 1 else "s"))
     bits.append("%d incident%s" % (d["incidents"], "" if d["incidents"] == 1 else "s"))
     return ", ".join(bits)
+
+
+def analyze_round(event_lists, profile=DEFAULT_PROFILE, weights=None,
+                  min_laps_fraction=MIN_LAPS_FRACTION, exclude_names=None,
+                  provisional=False):
+    """Driver of the Day for a multi-race round (PCCD / SFL / Combined Cup:
+    two races per round) — the same method as CLS combineRaceCandidates:
+
+      * every race is analysed on its own (raw metrics + per-race
+        eligibility: finished and >= min_laps_fraction of that race's
+        leader distance),
+      * positions gained, recovery, overtakes, incidents and laps are SUMMED
+        per driver over the races,
+      * a driver can only be crowned if he was classified in EVERY race,
+      * the sums are then normalised and scored like a single race.
+
+    `event_lists` = one event list per race, in race order. With
+    `provisional=True` the LAST race may still be running (scored as far as
+    it got — see provisional_final). Drivers are matched by name, then car
+    number (the logs carry no iRacing customer id).
+    """
+    if weights is None:
+        weights = dict(WEIGHT_PROFILES.get(profile, WEIGHT_PROFILES[DEFAULT_PROFILE]))
+    wsum = sum(weights.values()) or 1.0
+    weights = {k: v / wsum for k, v in weights.items()}
+    blocked = {(n or "").strip().lower() for n in (exclude_names or []) if n}
+
+    races = []
+    for i, ev in enumerate(event_lists):
+        last = i == len(event_lists) - 1
+        r = analyze(ev, profile=profile, weights=weights,
+                    min_laps_fraction=min_laps_fraction,
+                    provisional=provisional and last)
+        if not r.get("ok"):
+            if last and provisional and races:
+                # race 2 has not completed a lap yet — the round so far is race 1
+                break
+            return {**r, "races": i}
+        races.append(r)
+    if not races:
+        return {"ok": False, "error": "no race in this round", "drivers": [], "races": 0}
+
+    n = len(races)
+    slots, order = {}, []
+    for ri, r in enumerate(races):
+        for d in r["drivers"]:
+            key = (d.get("name") or "").strip().lower() or "#" + str(d.get("car_number"))
+            if key not in slots:
+                slots[key] = {"first": d, "per": [None] * n}
+                order.append(key)
+            slots[key]["per"][ri] = d
+
+    drivers = []
+    for key in order:
+        first, per = slots[key]["first"], slots[key]["per"]
+        tot = {"positions_gained": 0, "recovery": 0, "overtakes": 0, "overtaken": 0,
+               "incidents": 0, "laps_completed": 0}
+        reasons, classified_all = [], True
+        for ri, d in enumerate(per):
+            if d is None:
+                classified_all = False
+                reasons.append("did not race in race %d" % (ri + 1))
+                continue
+            for k in tot:
+                tot[k] += d.get(k) or 0
+            # per-race eligibility from analyze() (distance + finished);
+            # the back-to-back block is applied once, below.
+            race_reasons = [x for x in d.get("ineligible_reasons", [])
+                            if "previous round" not in x]
+            if race_reasons:
+                classified_all = False
+                reasons.append("race %d: %s" % (ri + 1, "; ".join(race_reasons)))
+        eligible = classified_all
+        blocked_repeat = (first.get("name") or "").strip().lower() in blocked
+        if blocked_repeat:
+            eligible = False
+            reasons.append("won the previous round (no back-to-back)")
+        drivers.append({
+            "car_idx": first.get("car_idx"),
+            "car_number": first.get("car_number"),
+            "name": first.get("name"),
+            "car": first.get("car"),
+            "car_class": first.get("car_class"),
+            "irating": first.get("irating"),
+            # combined metrics span several races -> no single start/finish
+            "start_pos": None, "worst_pos": None, "worst_pos_raw": None, "finish_pos": None,
+            **tot,
+            "net_passes": tot["overtakes"] - tot["overtaken"],
+            "reason_out": "Running" if classified_all else "DNF",
+            "finished": classified_all,
+            "eligible": eligible,
+            "blocked_repeat": blocked_repeat,
+            "ineligible_reasons": reasons,
+            "races": sum(1 for d in per if d is not None),
+        })
+
+    winner = _score(drivers, weights)
+    lastr = races[-1]
+    return {
+        "ok": True, "error": None,
+        "track": lastr.get("track"), "track_config": lastr.get("track_config"),
+        "session": " + ".join(r.get("session") or "" for r in races),
+        "weights": weights, "profile": profile,
+        "provisional": bool(lastr.get("provisional")) or len(races) < len(event_lists),
+        "winner": winner, "drivers": drivers,
+        "excluded_names": sorted({d["name"] for d in drivers if d["blocked_repeat"]}),
+        "races": len(races),
+        "meta": {"n_drivers": len(drivers),
+                 "leader_laps": lastr.get("meta", {}).get("leader_laps"),
+                 "provisional": bool(lastr.get("provisional")),
+                 "races": len(races)},
+    }
 
 
 def analyze_file(path, **kw):

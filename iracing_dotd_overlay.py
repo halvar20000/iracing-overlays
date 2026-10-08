@@ -30,9 +30,13 @@ no-back-to-back rule are untouched.
 Stream:        transparent background by default; press H for a debug panel.
 """
 
+import glob
+import json
 import os
 import threading
 import time
+import urllib.parse
+import urllib.request
 
 from flask import Flask, jsonify, render_template_string, request
 
@@ -58,6 +62,119 @@ def _no_cache(resp):
     resp.headers["Pragma"] = "no-cache"
     resp.headers["Expires"] = "0"
     return resp
+
+
+# ---------------------------------------------------------------------------
+# Multi-race rounds + the back-to-back rule, the CLS way (2026-10-08, Algarve)
+# ---------------------------------------------------------------------------
+# CLS crowns ONE Driver of the Day per ROUND: on two-race rounds (PCCD, SFL,
+# Combined Cup) both races are combined (driver_of_the_day.analyze_round).
+# The overlay used to score only the race on screen, and blocked the local
+# history's previous winner — which records a winner per RACE (and test
+# races) — so during race 2 it blocked the race-1 winner instead of the
+# previous ROUND's. Both now follow CLS.
+
+def _log_head(path):
+    """session_start of a log (first line), or {}."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    e = json.loads(line)
+                    return e if e.get("type") == "session_start" else {}
+    except Exception:
+        pass
+    return {}
+
+
+def _has_end(path):
+    try:
+        with open(path, "rb") as f:
+            f.seek(max(0, os.path.getsize(path) - 200000))
+            return b'"session_end"' in f.read()
+    except Exception:
+        return False
+
+
+def round_logs(path):
+    """All race logs of the round `path` belongs to, in race order: earlier
+    FINISHED races of the same hosted session (same session_unique_id, lower
+    session_num) + `path` itself."""
+    head = _log_head(path)
+    uid, num = head.get("session_unique_id"), head.get("session_num")
+    if uid is None or num is None:
+        return [path]
+    sib = []
+    for p in glob.glob(os.path.join(os.path.dirname(path) or ".", "*_race.jsonl")):
+        if os.path.abspath(p) == os.path.abspath(path):
+            continue
+        h = _log_head(p)
+        if (h.get("session_unique_id") == uid and isinstance(h.get("session_num"), int)
+                and h["session_num"] < num and _has_end(p)):
+            sib.append((h["session_num"], p))
+    # one log per earlier session (a re-started logger can write two)
+    seen, out = set(), []
+    for n_, p in sorted(sib):
+        if n_ not in seen:
+            seen.add(n_)
+            out.append(p)
+    return out + [path]
+
+
+_cls_cache = {"t": 0.0, "data": None}
+
+
+def cls_previous_winner(log_date):
+    """The previous ROUND's official Driver of the Day from CLS (the overlay
+    feed /api/overlay/round-info). If CLS has already published the round
+    raced on `log_date`, it is that round's previous winner. None when CLS
+    is unreachable (then the local history is used)."""
+    now = time.time()
+    if now - _cls_cache["t"] > 300 or _cls_cache["data"] is None:
+        try:
+            cfg = dotd_streak._read_champ_config()
+            base = (cfg.get("api_base") or dotd_streak.DEFAULT_API).rstrip("/")
+            params = {"league": cfg.get("league_slug") or dotd_streak.DEFAULT_LEAGUE_SLUG}
+            if cfg.get("season_id"):
+                params["season"] = cfg["season_id"]
+            url = base + "/api/overlay/round-info?" + urllib.parse.urlencode(params)
+            req = urllib.request.Request(url, headers={"User-Agent": "dotd-overlay/1.0"})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                _cls_cache["data"] = json.load(r)
+            _cls_cache["t"] = now
+        except Exception as e:
+            print(f"[dotd] CLS round-info failed: {e}")
+            _cls_cache["t"] = now - 240       # retry in ~1 min
+            return None
+    lr = (_cls_cache["data"] or {}).get("lastRound") or {}
+    dd = lr.get("driverOfTheDay")
+    if not dd:
+        return None
+    same_round = (lr.get("startsAt") or "")[:10] == (log_date or "")[:10]
+    return dd.get("previousWinnerName") if same_round else dd.get("winnerName")
+
+
+def _compute_round(paths, profile, provisional):
+    head = _log_head(paths[-1])
+    prev = cls_previous_winner(head.get("t_wall"))
+    source = "cls"
+    if prev is None:
+        hist = dotd_streak.load_history(dotd_streak.HISTORY_PATH)
+        season = dotd_streak.resolve_season()
+        prev = dotd_streak.previous_winner_name(hist, season["key"], current_log=os.path.basename(paths[-1]))
+        source = "history"
+    events = [dotd.load_events(p) for p in paths]
+    if len(paths) > 1:
+        result = dotd.analyze_round(events, profile=profile, exclude_names=[prev] if prev else [],
+                                    provisional=provisional)
+    else:
+        result = dotd.analyze(events[0], profile=profile, exclude_names=[prev] if prev else [],
+                              provisional=provisional)
+    result["season"] = dotd_streak.resolve_season()
+    result["previous_winner"] = prev
+    result["previous_winner_source"] = source
+    result["round_logs"] = [os.path.basename(p) for p in paths]
+    return result
 
 
 def _compute(profile, log=None, provisional=True):
@@ -91,8 +208,7 @@ def _compute(profile, log=None, provisional=True):
             return res
         # read-only: the overlay applies the no-back-to-back rule but never
         # records (the race logger is the authoritative recorder).
-        result = dotd_streak.pick(path, profile=profile, no_repeat=True, record=False,
-                                  provisional=provisional)
+        result = _compute_round(round_logs(path), profile, provisional)
         result["log_file"] = os.path.basename(path)
         _cache.update(key=key, result=result, t=time.time())
         return result
@@ -220,9 +336,10 @@ function render(d) {
   const seasonName = (d.season && d.season.name) ? d.season.name : '';
   const footerLeft = [trackline, seasonName].filter(Boolean).join('  ·  ');
   const prov = !!d.provisional;
+  const nRaces = (d.round_logs || []).length;
   const provTag = prov
-    ? `<span class="prov-tag">PROVISIONAL · AFTER LAP ${(d.meta && d.meta.leader_laps) || '–'}</span>`
-    : '';
+    ? `<span class="prov-tag">PROVISIONAL · ${nRaces > 1 ? `RACE ${nRaces}, ` : ''}LAP ${(d.meta && d.meta.leader_laps) || '–'}</span>`
+    : (nRaces > 1 ? `<span class="prov-tag" style="background:#4ade80">ROUND · ${nRaces} RACES</span>` : '');
 
   root.innerHTML = `<div class="card${prov ? ' prov' : ''}">
     <div class="eyebrow"><span class="trophy">🏆</span> Driver of the Day <span class="spacer"></span>${provTag}</div>

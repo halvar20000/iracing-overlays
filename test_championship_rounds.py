@@ -51,6 +51,9 @@ class FakeIR:
         return self.d.get(k)
 
 
+counter = [1]
+
+
 def ir(uid, num, sessions, state, order, laps_done=None, surface=None):
     """order = cust ids in track order (leader first); car_idx = cust - 1."""
     n = len(CHAMP)
@@ -58,8 +61,10 @@ def ir(uid, num, sessions, state, order, laps_done=None, surface=None):
     for rank, cust in enumerate(order):
         pct[cust - 1] = 0.9 - rank * 0.1
     return FakeIR({
-        "SessionUniqueID": uid, "SessionNum": num, "SessionState": state,
-        "WeekendInfo": {"TrackDisplayName": "Algarve"},
+        "SessionUniqueID": counter[0], "SessionNum": num, "SessionState": state,
+        # the hosted session's stable id; SessionUniqueID below is iRacing's
+        # per-session-part COUNTER and must not be used as a key
+        "WeekendInfo": {"TrackDisplayName": "Algarve", "SessionID": uid, "SubSessionID": uid * 10},
         "SessionInfo": {"Sessions": sessions},
         "DriverInfo": {"Drivers": [
             {"CarIdx": c - 1, "UserID": c, "UserName": nm, "CarNumber": str(c)}
@@ -167,6 +172,39 @@ fake.d["CarIdxLap"] = [-1] * 4
 proj = project(p, fake, champ())
 check("9 pace lap follows the grid", [r["name"] for r in proj["race_rows"]],
       ["Remo", "Maurice", "Andre", "Alex"])
+
+# 10. Algarve 2026-10-08 regression: iRacing's SessionUniqueID counter went
+#     up during the event (warmup, race 2). Race 1 must still be ONE entry
+#     and count ONCE during race 2.
+mem = C.RoundMemory(Path(tempfile.mkdtemp()) / "a.json")
+p = C.RacePoller()
+r1 = dict(RACE1, ResultsPositions=results([1, 2, 3, 4]))
+counter[0] = 3
+project(p, ir(500, 2, [r1], 5, [1, 2, 3, 4]), champ())                   # race 1 finished
+counter[0] = 4
+project(p, ir(500, 3, [r1, WARMUP], 4, [1, 2, 3, 4]), champ())           # warmup
+counter[0] = 5
+RACE2b = {"SessionNum": 4, "SessionType": "Race", "SessionName": "RACE 2"}
+proj = project(p, ir(500, 4, [r1, WARMUP, RACE2b], 4, [2, 1, 3, 4]), champ())
+check("10 race 1 stored once despite the counter changing", len(mem._entries), 1)
+check("10 race 1 counted once in race 2", proj["earlier_races"], ["RACE 1"])
+check("10 race 2 totals", pts(proj)["Remo"], 326 + 41 + 35)
+
+# 11. Old caches that DO hold the same race several times (one copy saved
+#     while the last car was still on his final lap) count it once.
+mem = C.RoundMemory(Path(tempfile.mkdtemp()) / "b.json")
+season = champ()["season"]
+base = {"season_id": season["id"], "completed_rounds": season["completedRounds"],
+        "track": "Algarve", "name": "HEAT 1"}
+res15 = [{"cust_id": c, "pos": i + 1, "laps": 15, "out": 0} for i, c in enumerate([1, 2, 3, 4])]
+res14 = [dict(r, laps=14 if r["cust_id"] == 4 else 15) for r in res15]
+now = __import__("time").time()
+mem._entries = {"3:2": {**base, "saved_at": now - 900, "results": res14},
+                "4:2": {**base, "saved_at": now - 600, "results": res15},
+                "5:2": {**base, "saved_at": now - 300, "results": res15}}
+e = mem.earlier_races(champ(), "5:4")
+check("11 legacy duplicates count once", len(e), 1)
+check("11 most complete copy kept", sum(r["laps"] for r in e[0]["results"]), 60)
 
 print(f"{passes} passed, {len(fails)} failed")
 for f in fails:
