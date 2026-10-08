@@ -45,6 +45,12 @@ OVERLAYS = [
     ("weather",       "Weather",          5016),
     ("driver",        "Driver Card",      5017),
     ("leader",        "New Race Leader",  5018),
+    # Extra pages on existing servers (2026-10-08) — no new ports.
+    ("duel",          "Title Fight",      5010, "/duel"),
+    ("fastest",       "Fastest Lap",      5005, "/fastest"),
+    ("movers",        "Biggest Movers",   5005, "/movers"),
+    ("gapbar",        "Gap Bar",          5005, "/gapbar"),
+    ("ticker",        "Overtake Ticker",  5000, "/ticker"),
     # Note: racecontrol (iCASControl, port 8080) is an interactive steward
     # web app, opened directly in a browser — NOT an OBS browser source — so
     # it intentionally has no loader page here.

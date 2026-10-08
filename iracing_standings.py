@@ -23,13 +23,14 @@ iRacing independently.
 """
 
 import threading
-from flask import Flask, jsonify, render_template_string, send_file, abort
+from flask import Flask, Response, jsonify, render_template_string, request, send_file, abort
 
 from iracing_sdk_base import SDKPoller, GridBaseline, SESSION_STATE_RACING, setup_utf8_stdout
 setup_utf8_stdout()
 
 from car_brands import detect_brand, resolve_logo
 from cls_proam import ProAmRoster
+import country_flags
 
 
 # -----------------------------------------------------------------------------
@@ -110,6 +111,39 @@ def _weather(ir) -> dict:
 # keep the single LAP TIME column.
 
 
+def _fill_class_labels(drivers: dict) -> None:
+    """Give every class a readable label when iRacing sends none.
+
+    Single-class hosted sessions often report an EMPTY CarClassShortName
+    (Zandvoort GT3, 07.10.: '' for all 22 cars), which made the tower's
+    class tab read "Class". Derive one from the cars instead:
+      * one car model in the class   -> its short name ("911 GT3 Cup")
+      * several models               -> the words ALL of them share, e.g.
+        "Porsche 911 GT3 R (992)" / "McLaren 720S GT3 EVO" /
+        "Corvette GT3.R" -> "GT3"
+      * nothing in common            -> left empty (tab falls back to "Class")
+    """
+    import re
+    by_class: dict = {}
+    for d in drivers.values():
+        if not d.get("class_name"):
+            by_class.setdefault(d.get("class_id", 0), []).append(d)
+    for members in by_class.values():
+        models = {(m.get("car_screen") or m.get("car_name") or "").strip() for m in members}
+        models.discard("")
+        label = ""
+        if len(models) == 1:
+            label = members[0].get("car_name") or next(iter(models))
+        elif models:
+            token_sets = [re.findall(r"[A-Za-z0-9]+", m) for m in models]
+            common = set(token_sets[0]).intersection(*map(set, token_sets[1:]))
+            # keep the order of the first name ("GT3 Cup", not "Cup GT3")
+            label = " ".join(t for t in token_sets[0] if t in common)
+        for m in members:
+            m["class_name"] = label
+            m["car_class"] = m.get("car_class") or label
+
+
 class StandingsPoller(SDKPoller):
     tag = "standings"
     poll_interval = 1.0
@@ -141,6 +175,15 @@ class StandingsPoller(SDKPoller):
         # Times are kept until the session changes (see _quali_memory_for).
         self._quali_key = None
         self._quali_mem: dict = {}   # key -> {"drv": {...}, "best": float}
+
+        # Fastest-lap banner (/fastest): best lap per class this session.
+        # Seeded silently on the first tick of a session, so starting the
+        # overlay mid-race never pops an old lap; afterwards every
+        # improvement becomes an event with a running sequence number.
+        self._fl_key = None
+        self._fl_best: dict = {}     # class_id -> (time, row snapshot)
+        self._fl_seq = 0
+        self._fl_event: dict | None = None
 
     def _driver_map(self) -> dict:
         info = self.ir["DriverInfo"] or {}
@@ -186,7 +229,12 @@ class StandingsPoller(SDKPoller):
                 "irating":    d.get("IRating", 0) or 0,
                 "license":    d.get("LicString", "") or "",
                 "team_name":  d.get("TeamName", "") or "",
+                # Flag: the driver's iRacing flair first, CLS registration
+                # country as the fallback (see country_flags.py).
+                "flair":      (d.get("FlairName") or "").strip(),
+                "car_screen": car_screen,
             }
+        _fill_class_labels(out)
         return out
 
     def _update_pit_tracking(self, ir):
@@ -474,6 +522,44 @@ class StandingsPoller(SDKPoller):
 
         return rows
 
+    def _track_fastest(self, ir, rows, session_type) -> dict:
+        key = (ir["SessionUniqueID"], ir["SessionNum"])
+        seed = key != self._fl_key
+        if seed:
+            self._fl_key, self._fl_best, self._fl_event = key, {}, None
+        lapnums = ir["CarIdxBestLapNum"] or []
+        multi = len({r.get("class_id", 0) for r in rows}) > 1
+        best_now: dict = {}
+        for r in rows:
+            bl = r.get("best_lap") or 0
+            cid = r.get("class_id", 0)
+            if bl > 0 and r.get("car_idx", -1) >= 0 and (cid not in best_now or bl < best_now[cid][0]):
+                best_now[cid] = (bl, r)
+        for cid, (bl, r) in best_now.items():
+            prev = self._fl_best.get(cid)
+            if prev and bl >= prev[0] - 1e-4:
+                continue
+            self._fl_best[cid] = (bl, {"name": r.get("name"), "car_number": r.get("car_number")})
+            if seed:
+                continue
+            ci = r.get("car_idx", -1)
+            lap = lapnums[ci] if 0 <= ci < len(lapnums) else None
+            self._fl_seq += 1
+            self._fl_event = {
+                "seq": self._fl_seq,
+                "time": bl,
+                "prev_time": prev[0] if prev else None,
+                "delta": (bl - prev[0]) if prev else None,
+                "prev_name": prev[1]["name"] if prev else None,
+                "name": r.get("name"), "car_number": r.get("car_number"),
+                "lap": int(lap) if lap and lap > 0 else None,
+                "class_name": r.get("class_name") if multi else "",
+                "brand": r.get("brand"), "brand_logo": r.get("brand_logo"),
+                "country": r.get("country"), "proam": r.get("proam"),
+                "session_type": session_type,
+            }
+        return {"seq": self._fl_seq, "event": self._fl_event}
+
     def _quali_memory_for(self, ir) -> dict:
         """The qualifying-time memory for THIS session, cleared whenever
         (SessionUniqueID, SessionNum) changes — i.e. when the quali session
@@ -669,6 +755,33 @@ class StandingsPoller(SDKPoller):
         for r in rows:
             r["proam"] = proam.lookup(r.get("user_id")) if proam_on else None
 
+        # Flag, camera focus, session-best / personal-best marks and the
+        # per-class driver count — all for the tower design.
+        focus = ir["CamCarIdx"]
+        class_count: dict = {}
+        best_by_class: dict = {}
+        for r in rows:
+            cid = r.get("class_id", 0)
+            class_count[cid] = class_count.get(cid, 0) + 1
+            bl = r.get("best_lap") or 0
+            if bl > 0 and (cid not in best_by_class or bl < best_by_class[cid]):
+                best_by_class[cid] = bl
+        for r in rows:
+            cid = r.get("class_id", 0)
+            code = country_flags.code_from_name(r.get("flair"))
+            src = "flair" if code else None
+            if not code:
+                code = country_flags.code_from_iso(proam.country(r.get("user_id")))
+                src = "cls" if code else None
+            r["country"], r["country_src"] = code, src
+            r["focus"] = (focus is not None and r.get("car_idx") == focus)
+            r["class_count"] = class_count.get(cid, 0)
+            bl, ll = r.get("best_lap") or 0, r.get("last_lap") or 0
+            r["session_best"] = bl > 0 and abs(bl - best_by_class.get(cid, -1)) < 1e-4
+            r["last_is_pb"] = bl > 0 and ll > 0 and abs(bl - ll) < 1e-4
+
+        fastest_lap = self._track_fastest(ir, rows, session_type)
+
         # Driver counts
         num_entered = len(drivers)
         num_on_track = sum(1 for r in rows if r.get("in_world"))
@@ -709,6 +822,7 @@ class StandingsPoller(SDKPoller):
             "num_on_track": num_on_track,
             "standings":    rows,
             "proam_active": proam_on,
+            "fastest_lap":  fastest_lap,
         }
 
 
@@ -1336,14 +1450,715 @@ poll();
 """
 
 
+# Compact broadcast tower — the default since 2026-10-08. Served as a plain
+# string (no Jinja), so the JS template literals need no escaping.
+TOWER_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>iRacing Standings Tower</title>
+<style>
+    /* Compact broadcast tower (2026-10-08) — modelled on the commercial
+       tower Andreas uses: slim info bar, class tab with driver count,
+       dense rows with position box, Pro/Am bar, name, flag, brand, times.
+       Native size ~440 px wide; scale the whole thing with ?zoom=1.5.
+       The previous big-panel design is still at /?style=classic. */
+    :root {
+        --bar:      rgba(58, 58, 62, 0.92);
+        --head:     rgba(84, 84, 90, 0.92);
+        --row:      rgba(52, 52, 57, 0.86);
+        --row-alt:  rgba(62, 62, 68, 0.86);
+        --line:     rgba(0, 0, 0, 0.35);
+        --posbox:   rgba(28, 28, 32, 0.95);
+        --text:     #f2f2f4;
+        --muted:    #b9b9c2;
+        --accent:   #2f7ff0;   /* class tab, focused position box */
+        --focus:    #ff9a3c;   /* on-camera driver's name / time */
+        --sb:       #d86bff;   /* session best */
+        --pb:       #45f063;   /* personal best */
+        --pro:      #e63946;
+        --am:       #2ecc71;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: rgba(0,0,0,0); }
+    body {
+        font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+        color: var(--text);
+        padding: 8px;
+        font-variant-numeric: tabular-nums;
+    }
+    body.debug-mode { background: #23262b; }
+    .tower { width: 440px; }
+
+    /* --- info bar ------------------------------------------------------ */
+    .info {
+        display: flex; align-items: center; gap: 18px;
+        height: 26px; padding: 0 9px;
+        background: var(--bar);
+        font-size: 15px; font-weight: 600; white-space: nowrap;
+    }
+    .info .sess { font-weight: 800; letter-spacing: .4px; margin-right: 6px; }
+    .info .it { display: inline-flex; align-items: center; gap: 6px; }
+    .info svg { width: 17px; height: 17px; flex-shrink: 0; }
+
+    /* --- class tab ----------------------------------------------------- */
+    .tabs { display: flex; align-items: flex-end; margin-top: 12px; height: 22px; }
+    .tab {
+        height: 22px; display: inline-flex; align-items: center; gap: 5px;
+        padding: 0 8px; font-size: 14px; font-weight: 800;
+        border-radius: 3px 3px 0 0;
+    }
+    .tab.cls { background: var(--tabc, var(--accent)); color: var(--tabt, #fff); }
+    .tab.cnt { background: #e9e9ec; color: #1d1d22; margin-left: 2px; }
+    .tab.cnt svg { width: 15px; height: 15px; }
+    .class-gap { height: 10px; }
+
+    /* --- table ------------------------------------------------------------ */
+    .grid {
+        display: grid; align-items: center;
+        grid-template-columns: 28px 14px minmax(0, 1fr) 26px 28px 82px 82px;
+        column-gap: 0;
+    }
+    .race .grid { grid-template-columns: 28px 14px minmax(0, 1fr) 26px 28px 76px 76px 40px; }
+    .head {
+        height: 24px; background: var(--head);
+        font-size: 14px; font-weight: 500; color: var(--text);
+    }
+    .head .c-name { padding-left: 4px; }
+    .head .r { text-align: right; padding-right: 7px; }
+    .row {
+        height: 24.5px; background: var(--row);
+        border-top: 1px solid var(--line);
+        font-size: 15px; font-weight: 600;
+    }
+    /* child 1 of each class block is the header, so odd = every 2nd driver */
+    .row:nth-child(odd) { background: var(--row-alt); }
+    .pos {
+        height: 100%; display: flex; align-items: center; justify-content: center;
+        background: var(--posbox); font-size: 14px; font-weight: 700;
+    }
+    .row.focus .pos { background: var(--accent); }
+    .pa { width: 5px; height: 15px; border-radius: 2px; justify-self: center; }
+    .pa.pro { background: var(--pro); }
+    .pa.am  { background: var(--am); }
+    .name {
+        padding-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .row.focus .name, .row.focus .best { color: var(--focus); }
+    .tag {
+        font-size: 10px; font-weight: 800; letter-spacing: .4px;
+        padding: 0 4px; border-radius: 2px; margin-left: 5px;
+        vertical-align: 2px;
+    }
+    .tag.pit { background: #b9852a; color: #111; }
+    .tag.out { background: rgba(255,255,255,0.14); color: var(--muted); }
+    .flag { width: 19px; height: 13px; object-fit: cover; justify-self: center;
+            box-shadow: 0 0 0 1px rgba(0,0,0,0.35); }
+    .brand { width: 20px; height: 18px; object-fit: contain; justify-self: center;
+             filter: drop-shadow(0 0 1px rgba(0,0,0,0.8)); }
+    .t { text-align: right; padding-right: 7px; white-space: nowrap; }
+    .t.sb { color: var(--sb); }
+    .t.pb { color: var(--pb); }
+    .t.muted { color: var(--muted); font-weight: 500; }
+    .t.leader { color: #ffd166; }
+    .t.laps { color: #ff8a3c; }
+    .t.battle { color: #ffd84d; }
+    .d { text-align: center; font-size: 13px; font-weight: 800; }
+    .d.up { color: var(--pb); }
+    .d.down { color: #ff5a6a; }
+    .d.same { color: var(--muted); }
+
+    .msg { padding: 14px 10px; background: var(--row); color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="tower" id="tower"><div class="msg">Waiting for iRacing…</div></div>
+<script>
+const qs = new URLSearchParams(location.search);
+if (qs.get('debug') === '1') document.body.classList.add('debug-mode');
+const zoom = parseFloat(qs.get('zoom') || '1');
+if (zoom > 0 && zoom !== 1) document.body.style.zoom = zoom;
+document.addEventListener('keydown', e => {
+    if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('debug-mode');
+});
+
+const ICON = {
+    timer: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 2h6M12 2v3"/><circle cx="12" cy="14" r="8"/><path d="M12 14l3.5-3.5"/></svg>',
+    temp:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M10 4a2 2 0 0 1 4 0v10.5a4 4 0 1 1-4 0z"/><path d="M12 9v7"/><path d="M17 6h3M17 10h3"/></svg>',
+    track: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M7 21L10 3M17 21L14 3M12 6v2M12 11v2M12 16v2"/></svg>',
+    helmet:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3C6.5 3 2.5 7.2 2.5 12.4V17a2 2 0 0 0 2 2h9.2l1.6-3H21a.5.5 0 0 0 .5-.5v-2.4C21.5 7.5 17.3 3 12 3zm-1 6h9.3a8.6 8.6 0 0 1 .7 3H11z"/></svg>',
+};
+
+function esc(s) {
+    return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+function fmtClock(secs) {
+    if (secs == null || secs < 0 || !isFinite(secs) || secs > 86400) return '--:--';
+    secs = Math.floor(secs);
+    const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), s = secs % 60;
+    return h ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+             : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+function fmtLap(t) {
+    if (!t || t <= 0) return '';
+    const m = Math.floor(t / 60), s = t - m * 60;
+    return m ? `${m}:${s.toFixed(3).padStart(6,'0')}` : s.toFixed(3);
+}
+function fmtGap(g) {
+    if (g == null || g <= 0) return '';
+    if (g < 60) return '+' + g.toFixed(3);
+    const m = Math.floor(g / 60), s = g - m * 60;
+    return `+${m}:${s.toFixed(2).padStart(5,'0')}`;
+}
+function abbrev(full) {
+    const p = String(full || '').trim().split(/\s+/);
+    return p.length < 2 ? (full || '') : `${p[0][0]}. ${p.slice(1).join(' ')}`;
+}
+function textOn(hex) {   // dark or light text on a class colour
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+    if (!m) return '#fff';
+    const n = parseInt(m[1], 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+    return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#111' : '#fff';
+}
+
+function infoBar(d) {
+    const st = (d.session_type || 'Session').toUpperCase();
+    let clock;
+    if (d.laps_remain != null && d.laps_remain >= 0 && d.laps_remain < 9000
+            && !(d.remaining > 0 && d.remaining < 86400)) {
+        clock = `${d.laps_remain} laps`;
+    } else {
+        clock = fmtClock(d.remaining);
+    }
+    const temp = d.air_temp != null ? `${d.air_temp.toFixed(1)}°C` : '—';
+    const wx = d.weather?.label || '—';
+    return `<div class="info">
+        <span class="sess">${esc(st)}</span>
+        <span class="it">${ICON.timer}${clock}</span>
+        <span class="it">${ICON.temp}${temp}</span>
+        <span class="it">${ICON.track}${esc(wx[0].toUpperCase() + wx.slice(1).toLowerCase())}</span>
+    </div>`;
+}
+
+function headRow(isRace) {
+    return `<div class="grid head">
+        <div></div><div></div><div class="c-name">driver name</div><div></div><div></div>
+        ${isRace
+            ? '<div class="r">interval</div><div class="r">last</div><div class="r" style="text-align:center;padding:0">+/-</div>'
+            : '<div class="r">fastest</div><div class="r">last</div>'}
+    </div>`;
+}
+
+function rowHtml(r, isRace) {
+    const pos = r.class_position || r.position;
+    const pa = r.proam === 'PRO' ? '<div class="pa pro"></div>'
+             : r.proam === 'AM'  ? '<div class="pa am"></div>' : '<div></div>';
+    let tags = '';
+    if (r.on_pit) tags += '<span class="tag pit">PIT</span>';
+    else if (!r.in_world) tags += `<span class="tag out">${r.left ? 'LEFT' : 'OUT'}</span>`;
+    const flag = r.country ? `<img class="flag" src="/flag/${encodeURIComponent(r.country)}.svg" alt="">` : '<div></div>';
+    const brand = (r.brand && r.brand_logo) ? `<img class="brand" src="/brand/${encodeURIComponent(r.brand)}" alt="">` : '<div></div>';
+    const lastCls = r.last_is_pb ? 'pb' : '';
+    const last = `<div class="t ${lastCls}">${fmtLap(r.last_lap)}</div>`;
+    let cells;
+    if (isRace) {
+        let iv = '', ivCls = '';
+        if (r.position === 1) { iv = 'LEADER'; ivCls = 'leader'; }
+        else if (r.laps_behind > 0) { iv = `+${r.laps_behind} LAP${r.laps_behind > 1 ? 'S' : ''}`; ivCls = 'laps'; }
+        else if (r.interval != null) {
+            iv = fmtGap(r.interval);
+            if (r.interval > 0 && r.interval < 1.0 && (r.lap || 0) >= 2) ivCls = 'battle';
+        }
+        const pd = r.pos_delta;
+        const dHtml = pd == null ? '<div class="d"></div>'
+            : pd > 0 ? `<div class="d up">▲${pd}</div>`
+            : pd < 0 ? `<div class="d down">▼${-pd}</div>`
+            : '<div class="d same">=</div>';
+        cells = `<div class="t ${ivCls}">${iv}</div>${last}${dHtml}`;
+    } else {
+        const best = r.best_lap > 0
+            ? `<div class="t best ${r.session_best ? 'sb' : ''}">${fmtLap(r.best_lap)}</div>`
+            : '<div class="t muted">no time</div>';
+        cells = best + last;
+    }
+    return `<div class="grid row${r.focus ? ' focus' : ''}">
+        <div class="pos">${pos}</div>${pa}
+        <div class="name">${esc(abbrev(r.name || 'Unknown'))}${tags}</div>
+        ${flag}${brand}${cells}
+    </div>`;
+}
+
+function render(d) {
+    const el = document.getElementById('tower');
+    if (!d || !d.connected) {
+        el.innerHTML = '<div class="msg">Waiting for iRacing…</div>';
+        return;
+    }
+    const isRace = d.session_type === 'Race';
+    const rows = d.standings || [];
+    const multi = new Set(rows.map(r => r.class_id)).size > 1;
+    let html = infoBar(d);
+    let cur = null, open = false;
+    for (const r of rows) {
+        if (r.class_id !== cur) {
+            if (open) html += '</div><div class="class-gap"></div>';
+            cur = r.class_id;
+            const cc = multi ? (r.class_color || '') : '';
+            const style = cc ? ` style="--tabc:${cc};--tabt:${textOn(cc)}"` : '';
+            html += `<div class="tabs">
+                <span class="tab cls"${style}>${esc(r.class_name || 'Class')}</span>
+                <span class="tab cnt">${ICON.helmet}${r.class_count || ''}</span>
+            </div><div class="${isRace ? 'race' : ''}">${headRow(isRace)}`;
+            open = true;
+        }
+        html += rowHtml(r, isRace);
+    }
+    if (open) html += '</div>';
+    if (!rows.length) html += '<div class="msg">No drivers yet.</div>';
+    el.innerHTML = html;
+}
+
+async function poll() {
+    try {
+        const r = await fetch('/standings', { cache: 'no-store' });
+        render(await r.json());
+    } catch (e) { /* keep last view */ }
+    setTimeout(poll, 1000);
+}
+poll();
+</script>
+</body>
+</html>
+"""
+
+
 @app.route("/")
 def index():
-    return render_template_string(STANDINGS_HTML)
+    # ?style=classic keeps the previous big-panel design available.
+    if request.args.get("style") == "classic":
+        return render_template_string(STANDINGS_HTML)
+    return Response(TOWER_HTML, mimetype="text/html")
+
+
+# -----------------------------------------------------------------------------
+# Extra broadcast pages on the same server (2026-10-08) — all read /standings,
+# so they agree with the tower to the number. Each takes ?zoom=, ?debug=1
+# and ?demo=1 (fake data, for styling in OBS without iRacing).
+#   /fastest — fastest-lap banner (race only; ?all=1 also quali/practice)
+#   /movers  — biggest movers vs the starting grid (race only; ?n=3)
+#   /gapbar  — every car as a dot by gap to its class leader (race only)
+# -----------------------------------------------------------------------------
+FASTEST_HTML = r"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Fastest Lap</title>
+<style>
+    :root { --bg: rgba(52,52,57,0.92); --bg2: rgba(28,28,32,0.95); --head: rgba(84,84,90,0.92);
+            --text: #f2f2f4; --muted: #b9b9c2; --accent: #2f7ff0; --sb: #d86bff;
+            --up: #45f063; --down: #ff5a6a; --gold: #ffd166; --pro: #e63946; --am: #2ecc71; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: rgba(0,0,0,0); }
+    body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; color: var(--text);
+           padding: 8px; font-variant-numeric: tabular-nums; }
+    body.debug-mode { background: #23262b; }
+    .flag { width: 19px; height: 13px; object-fit: cover; box-shadow: 0 0 0 1px rgba(0,0,0,0.35); }
+    .brand { width: 20px; height: 18px; object-fit: contain; filter: drop-shadow(0 0 1px rgba(0,0,0,0.8)); }
+    .pa { display: inline-block; width: 5px; height: 15px; border-radius: 2px; }
+    .pa.pro { background: var(--pro); } .pa.am { background: var(--am); }
+
+    /* Fastest-lap banner: pops for SHOW_S seconds whenever the session's
+       (class) fastest lap improves. Race only unless ?all=1. */
+    .banner { display: inline-flex; align-items: stretch; height: 44px;
+              opacity: 0; transform: translateX(-30px);
+              transition: opacity .3s ease, transform .4s cubic-bezier(.2,.9,.3,1.2); }
+    .banner.show { opacity: 1; transform: none; }
+    .tag { background: var(--sb); color: #fff; font-weight: 800; letter-spacing: 1.5px;
+           font-size: 14px; display: flex; align-items: center; padding: 0 12px; }
+    .tag svg { width: 18px; height: 18px; margin-right: 7px; }
+    .who { background: var(--bg); display: flex; align-items: center; gap: 9px; padding: 0 12px; }
+    .num { background: var(--bg2); padding: 1px 7px; border-radius: 3px; font-weight: 700; font-size: 14px; }
+    .nm { font-size: 19px; font-weight: 700; white-space: nowrap; }
+    .cls { font-size: 12px; color: var(--muted); font-weight: 700; letter-spacing: 1px; }
+    .time { background: var(--bg2); display: flex; flex-direction: column; justify-content: center;
+            align-items: flex-end; padding: 0 12px; min-width: 120px; }
+    .t { font-size: 20px; font-weight: 800; color: var(--sb); line-height: 1.05; }
+    .d { font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+</style></head>
+<body>
+<div class="banner" id="b">
+    <div class="tag"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M9 2h6M12 2v3"/><circle cx="12" cy="14" r="8"/><path d="M12 14l3.5-3.5"/></svg>FASTEST LAP</div>
+    <div class="who" id="who"></div>
+    <div class="time"><div class="t" id="t"></div><div class="d" id="d"></div></div>
+</div>
+<script>
+const qs = new URLSearchParams(location.search);
+if (qs.get('debug') === '1') document.body.classList.add('debug-mode');
+const zoom = parseFloat(qs.get('zoom') || '1');
+if (zoom > 0 && zoom !== 1) document.body.style.zoom = zoom;
+document.addEventListener('keydown', e => {
+    if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('debug-mode');
+});
+const DEMO = qs.has('demo');
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function abbrev(full) {
+    const p = String(full || '').trim().split(/\s+/);
+    return p.length < 2 ? (full || '') : `${p[0][0]}. ${p.slice(1).join(' ')}`;
+}
+function fmtLap(t) {
+    if (!t || t <= 0) return '';
+    const m = Math.floor(t / 60), s = t - m * 60;
+    return m ? `${m}:${s.toFixed(3).padStart(6,'0')}` : s.toFixed(3);
+}
+function flagImg(c) { return c ? `<img class="flag" src="/flag/${encodeURIComponent(c)}.svg" alt="">` : ''; }
+function brandImg(r) { return (r.brand && r.brand_logo) ? `<img class="brand" src="/brand/${encodeURIComponent(r.brand)}" alt="">` : ''; }
+function paBar(p) { return p === 'PRO' ? '<span class="pa pro"></span>' : p === 'AM' ? '<span class="pa am"></span>' : ''; }
+async function getStandings() {
+    try { const r = await fetch('/standings', { cache: 'no-store' }); return await r.json(); }
+    catch (e) { return null; }
+}
+
+const SHOW_S = parseFloat(qs.get('secs') || '8');
+const ALL = qs.get('all') === '1';
+const b = document.getElementById('b');
+let lastSeq = null, hideT = null;
+function show(e) {
+    document.getElementById('who').innerHTML =
+        `${paBar(e.proam)}<span class="num">#${esc(e.car_number)}</span>
+         <span class="nm">${esc(abbrev(e.name))}</span>${flagImg(e.country)}${brandImg(e)}
+         ${e.class_name ? `<span class="cls">${esc(e.class_name)}</span>` : ''}`;
+    document.getElementById('t').textContent = fmtLap(e.time);
+    const bits = [];
+    if (e.lap) bits.push(`Lap ${e.lap}`);
+    if (e.delta != null) bits.push(`${e.delta.toFixed(3)} s`);
+    document.getElementById('d').textContent = bits.join(' · ');
+    b.classList.remove('show'); void b.offsetWidth; b.classList.add('show');
+    clearTimeout(hideT); hideT = setTimeout(() => b.classList.remove('show'), SHOW_S * 1000);
+}
+async function tick() {
+    if (DEMO) return;
+    const d = await getStandings();
+    const fl = d && d.fastest_lap;
+    if (!fl) return;
+    if (lastSeq === null) { lastSeq = fl.seq; return; }   // never replay an old lap on load
+    if (fl.seq !== lastSeq && fl.event) {
+        lastSeq = fl.seq;
+        if (ALL || fl.event.session_type === 'Race') show(fl.event);
+    }
+}
+if (DEMO) {
+    const demo = () => show({ name: 'Maurice Becker', car_number: '49', time: 91.310, delta: -0.214, lap: 12,
+        country: 'de', brand: 'porsche', brand_logo: true, proam: 'PRO', class_name: '' });
+    demo(); setInterval(demo, 11000);
+}
+setInterval(tick, 1000); tick();
+</script></body></html>
+"""
+
+MOVERS_HTML = r"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Biggest Movers</title>
+<style>
+    :root { --bg: rgba(52,52,57,0.92); --bg2: rgba(28,28,32,0.95); --head: rgba(84,84,90,0.92);
+            --text: #f2f2f4; --muted: #b9b9c2; --accent: #2f7ff0; --sb: #d86bff;
+            --up: #45f063; --down: #ff5a6a; --gold: #ffd166; --pro: #e63946; --am: #2ecc71; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: rgba(0,0,0,0); }
+    body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; color: var(--text);
+           padding: 8px; font-variant-numeric: tabular-nums; }
+    body.debug-mode { background: #23262b; }
+    .flag { width: 19px; height: 13px; object-fit: cover; box-shadow: 0 0 0 1px rgba(0,0,0,0.35); }
+    .brand { width: 20px; height: 18px; object-fit: contain; filter: drop-shadow(0 0 1px rgba(0,0,0,0.8)); }
+    .pa { display: inline-block; width: 5px; height: 15px; border-radius: 2px; }
+    .pa.pro { background: var(--pro); } .pa.am { background: var(--am); }
+
+    /* Biggest movers: top N places gained / lost vs the starting grid
+       (the tower's +/-), race sessions only. ?n=3 (default). */
+    .card { width: 520px; display: none; }
+    .card.on { display: block; }
+    .top { height: 26px; background: var(--accent); display: flex; align-items: center;
+           padding: 0 10px; font-size: 14px; font-weight: 800; letter-spacing: 2px; }
+    .top .sub { margin-left: auto; font-size: 13px; font-weight: 600; letter-spacing: .5px; opacity: .9; }
+    .cols { display: grid; grid-template-columns: 1fr 1fr; background: var(--bg); }
+    .col + .col { border-left: 1px solid rgba(0,0,0,0.35); }
+    .h { height: 22px; display: flex; align-items: center; padding: 0 9px; font-size: 13px;
+         font-weight: 700; background: var(--head); }
+    .h.up { color: var(--up); } .h.down { color: var(--down); }
+    .r { height: 26px; display: grid; grid-template-columns: 38px 8px minmax(0,1fr) 24px 58px;
+         align-items: center; border-top: 1px solid rgba(0,0,0,0.35); font-size: 15px; font-weight: 600; }
+    .dv { text-align: center; font-weight: 800; font-size: 14px; }
+    .dv.up { color: var(--up); } .dv.down { color: var(--down); }
+    .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-left: 5px; }
+    .pp { text-align: right; padding-right: 8px; color: var(--muted); font-size: 13px; white-space: nowrap; }
+    .empty { padding: 6px 9px; color: var(--muted); font-size: 13px; border-top: 1px solid rgba(0,0,0,0.35); }
+</style></head>
+<body>
+<div class="card" id="card">
+    <div class="top"><span>BIGGEST MOVERS</span><span class="sub" id="sub"></span></div>
+    <div class="cols"><div class="col" id="up"></div><div class="col" id="down"></div></div>
+</div>
+<script>
+const qs = new URLSearchParams(location.search);
+if (qs.get('debug') === '1') document.body.classList.add('debug-mode');
+const zoom = parseFloat(qs.get('zoom') || '1');
+if (zoom > 0 && zoom !== 1) document.body.style.zoom = zoom;
+document.addEventListener('keydown', e => {
+    if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('debug-mode');
+});
+const DEMO = qs.has('demo');
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function abbrev(full) {
+    const p = String(full || '').trim().split(/\s+/);
+    return p.length < 2 ? (full || '') : `${p[0][0]}. ${p.slice(1).join(' ')}`;
+}
+function fmtLap(t) {
+    if (!t || t <= 0) return '';
+    const m = Math.floor(t / 60), s = t - m * 60;
+    return m ? `${m}:${s.toFixed(3).padStart(6,'0')}` : s.toFixed(3);
+}
+function flagImg(c) { return c ? `<img class="flag" src="/flag/${encodeURIComponent(c)}.svg" alt="">` : ''; }
+function brandImg(r) { return (r.brand && r.brand_logo) ? `<img class="brand" src="/brand/${encodeURIComponent(r.brand)}" alt="">` : ''; }
+function paBar(p) { return p === 'PRO' ? '<span class="pa pro"></span>' : p === 'AM' ? '<span class="pa am"></span>' : ''; }
+async function getStandings() {
+    try { const r = await fetch('/standings', { cache: 'no-store' }); return await r.json(); }
+    catch (e) { return null; }
+}
+
+const N = parseInt(qs.get('n') || '3', 10);
+function line(r, up) {
+    const pd = r.pos_delta;
+    return `<div class="r"><div class="dv ${up ? 'up' : 'down'}">${up ? '▲' : '▼'}${Math.abs(pd)}</div>
+        ${paBar(r.proam) || '<span></span>'}<div class="n">${esc(abbrev(r.name))}</div>
+        <div>${flagImg(r.country)}</div>
+        <div class="pp">P${r.grid_pos}→P${r.class_position || r.position}</div></div>`;
+}
+function render(d) {
+    const card = document.getElementById('card');
+    if (!d || !d.connected || d.session_type !== 'Race') { card.classList.remove('on'); return; }
+    const rows = (d.standings || []).filter(r => r.pos_delta != null && r.in_world);
+    const gain = rows.filter(r => r.pos_delta > 0).sort((a, b) => b.pos_delta - a.pos_delta).slice(0, N);
+    const lose = rows.filter(r => r.pos_delta < 0).sort((a, b) => a.pos_delta - b.pos_delta).slice(0, N);
+    if (!rows.length) { card.classList.remove('on'); return; }
+    card.classList.add('on');
+    document.getElementById('up').innerHTML = '<div class="h up">▲ GAINED</div>' +
+        (gain.length ? gain.map(r => line(r, true)).join('') : '<div class="empty">—</div>');
+    document.getElementById('down').innerHTML = '<div class="h down">▼ LOST</div>' +
+        (lose.length ? lose.map(r => line(r, false)).join('') : '<div class="empty">—</div>');
+    const lead = (d.standings || []).find(r => r.position === 1);
+    document.getElementById('sub').textContent = lead && lead.lap ? `vs starting grid · lap ${lead.lap}` : 'vs starting grid';
+}
+async function tick() {
+    if (DEMO) {
+        const mk = (name, g, now, cc) => ({ name, grid_pos: g, class_position: now, pos_delta: g - now, in_world: true, country: cc, proam: g % 2 ? 'PRO' : 'AM' });
+        render({ connected: true, session_type: 'Race', standings: [
+            mk('Leon Klein', 14, 6, 'de'), mk('Michael Gessner', 19, 13, 'de'), mk('Alex Turek', 21, 16, 'de'),
+            mk('Benjamin Warnow', 8, 17, 'ch'), mk('Dennis Richter', 2, 9, 'de'), mk('Florian Roessler', 10, 15, 'de'),
+            { name: 'Maurice Becker', grid_pos: 1, class_position: 1, pos_delta: 0, in_world: true, position: 1, lap: 14 }] });
+        return;
+    }
+    render(await getStandings());
+}
+setInterval(tick, 1000); tick();
+</script></body></html>
+"""
+
+GAPBAR_HTML = r"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Gap Bar</title>
+<style>
+    :root { --bg: rgba(52,52,57,0.92); --bg2: rgba(28,28,32,0.95); --head: rgba(84,84,90,0.92);
+            --text: #f2f2f4; --muted: #b9b9c2; --accent: #2f7ff0; --sb: #d86bff;
+            --up: #45f063; --down: #ff5a6a; --gold: #ffd166; --pro: #e63946; --am: #2ecc71; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: rgba(0,0,0,0); }
+    body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; color: var(--text);
+           padding: 8px; font-variant-numeric: tabular-nums; }
+    body.debug-mode { background: #23262b; }
+    .flag { width: 19px; height: 13px; object-fit: cover; box-shadow: 0 0 0 1px rgba(0,0,0,0.35); }
+    .brand { width: 20px; height: 18px; object-fit: contain; filter: drop-shadow(0 0 1px rgba(0,0,0,0.8)); }
+    .pa { display: inline-block; width: 5px; height: 15px; border-radius: 2px; }
+    .pa.pro { background: var(--pro); } .pa.am { background: var(--am); }
+
+    /* Gap bar: every car as a dot by its gap to the class leader, so trains
+       and battles are visible at a glance. Race sessions only. Gaps are the
+       tower's own intervals summed down the class (same numbers as the
+       tower, lap-1 fallback included); lapped cars sit in a "+LAP" box at
+       the end. Fills the OBS source width (no scrollbars); ?w=900 forces
+       a width, ?max=60 fixes the scale (s), ?panel=1 adds a dark strip,
+       ?label=1 always shows the class name (default: multiclass only). */
+    html, body { overflow: hidden; }
+    .wrap { display: none; } .wrap.on { display: block; }
+    .cls { margin-bottom: 8px; }
+    .lbl { display: inline-flex; align-items: center; gap: 8px; height: 20px; padding: 0 8px;
+           background: var(--accent); font-size: 12px; font-weight: 800; letter-spacing: 1px; }
+    .lbl .sc { font-weight: 600; opacity: .85; letter-spacing: .3px; }
+    .bar { position: relative; height: 112px; }
+    .bar.panel { background: var(--bg); }
+    .tick, .dot, .flabel { text-shadow: 0 1px 2px rgba(0,0,0,0.9); }
+    .dot { box-shadow: 0 1px 4px rgba(0,0,0,0.6); }
+    .axis { position: absolute; left: 30px; right: 70px; top: 57px; height: 2px;
+            background: rgba(255,255,255,0.45); box-shadow: 0 1px 2px rgba(0,0,0,0.6); }
+    .tick { position: absolute; top: 92px; font-size: 12px; font-weight: 700; color: #e6e6ea; transform: translateX(-50%); white-space: nowrap; }
+    .tick::before { content: ''; position: absolute; left: 50%; top: -6px; width: 1px; height: 5px; background: rgba(255,255,255,0.25); }
+    .dot { position: absolute; width: 24px; height: 24px; margin-left: -12px; border-radius: 50%;
+           background: #3b3b42; border: 2px solid #8a8a94; display: flex; align-items: center;
+           justify-content: center; font-size: 11px; font-weight: 800; }
+    .dot.lead { background: var(--gold); border-color: var(--gold); color: #111; }
+    .dot.focus { background: var(--accent); border-color: #fff; z-index: 3; }
+    .dot.pit { opacity: .45; }
+    .flabel { position: absolute; top: 2px; font-size: 12px; font-weight: 700; color: #fff;
+              transform: translateX(-50%); white-space: nowrap; background: var(--accent);
+              padding: 0 5px; border-radius: 2px; z-index: 4; }
+    .lapped { position: absolute; right: 6px; top: 8px; bottom: 8px; width: 58px; border-left: 1px dashed rgba(255,255,255,0.25);
+              display: flex; flex-wrap: wrap; align-content: center; justify-content: center; gap: 2px; }
+    .lapped .dot { position: static; margin: 0; width: 18px; height: 18px; font-size: 9px; }
+    .lapped .t { width: 100%; text-align: center; font-size: 10px; color: var(--muted); }
+</style></head>
+<body>
+<div class="wrap" id="wrap"></div>
+<script>
+const qs = new URLSearchParams(location.search);
+if (qs.get('debug') === '1') document.body.classList.add('debug-mode');
+const zoom = parseFloat(qs.get('zoom') || '1');
+if (zoom > 0 && zoom !== 1) document.body.style.zoom = zoom;
+document.addEventListener('keydown', e => {
+    if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('debug-mode');
+});
+const DEMO = qs.has('demo');
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function abbrev(full) {
+    const p = String(full || '').trim().split(/\s+/);
+    return p.length < 2 ? (full || '') : `${p[0][0]}. ${p.slice(1).join(' ')}`;
+}
+function fmtLap(t) {
+    if (!t || t <= 0) return '';
+    const m = Math.floor(t / 60), s = t - m * 60;
+    return m ? `${m}:${s.toFixed(3).padStart(6,'0')}` : s.toFixed(3);
+}
+function flagImg(c) { return c ? `<img class="flag" src="/flag/${encodeURIComponent(c)}.svg" alt="">` : ''; }
+function brandImg(r) { return (r.brand && r.brand_logo) ? `<img class="brand" src="/brand/${encodeURIComponent(r.brand)}" alt="">` : ''; }
+function paBar(p) { return p === 'PRO' ? '<span class="pa pro"></span>' : p === 'AM' ? '<span class="pa am"></span>' : ''; }
+async function getStandings() {
+    try { const r = await fetch('/standings', { cache: 'no-store' }); return await r.json(); }
+    catch (e) { return null; }
+}
+
+const W_FIXED = parseInt(qs.get('w') || '0', 10);
+const PANEL = qs.get('panel') === '1';
+const LABEL = qs.get('label') === '1';
+const FIXED_MAX = parseFloat(qs.get('max') || '0');
+function niceMax(g) {
+    for (const m of [5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300]) if (g <= m) return m;
+    return Math.ceil(g / 60) * 60;
+}
+function stepFor(m) { return m <= 10 ? 1 : m <= 30 ? 5 : m <= 60 ? 10 : m <= 120 ? 20 : 60; }
+function render(d) {
+    const wrap = document.getElementById('wrap');
+    if (!d || !d.connected || d.session_type !== 'Race') { wrap.classList.remove('on'); return; }
+    const rows = (d.standings || []).filter(r => r.in_world || r.on_pit);
+    const classes = [];
+    for (const r of rows) {
+        let c = classes.find(x => x.id === r.class_id);
+        if (!c) { c = { id: r.class_id, name: r.class_name, cars: [], lapped: [] }; classes.push(c); }
+        if (r.laps_behind > 0) { c.lapped.push(r); continue; }
+        const gap = c.cars.length ? c.cars[c.cars.length - 1].gap + (r.interval || 0) : 0;
+        c.cars.push({ ...r, gap });
+    }
+    if (!classes.length) { wrap.classList.remove('on'); return; }
+    wrap.classList.add('on');
+    // Fill the OBS source: page width minus the body padding.
+    const W = W_FIXED > 0 ? W_FIXED : Math.max(300, document.documentElement.clientWidth - 16);
+    const inner = W - 100;  // axis length in px
+    wrap.innerHTML = classes.map(c => {
+        const maxGap = Math.max(0, ...c.cars.map(x => x.gap));
+        const M = FIXED_MAX > 0 ? FIXED_MAX : niceMax(Math.max(maxGap, 5));
+        const xOf = g => 30 + Math.min(g, M) / M * inner;
+        let ticks = '';
+        const st = stepFor(M);
+        for (let t = 0; t <= M + 1e-6; t += st) ticks += `<div class="tick" style="left:${xOf(t)}px">${t ? '+' + t + 's' : ''}</div>`;
+        // Three lanes (y = 34 / 58 / 82). A dot takes the first lane where it
+        // doesn't touch the previous dot; when all three are busy (a tight
+        // train) it is nudged just right of the freest lane, so the train
+        // reads as a chain instead of a pile. Leader first, in race order.
+        const LANES = [34, 58, 82], D = 26;
+        const last = [-1e9, -1e9, -1e9];
+        const dots = c.cars.map(r => {
+            let x = xOf(r.gap);
+            let lane = [1, 0, 2].find(i => x - last[i] >= D);   // middle lane first
+            if (lane === undefined) {
+                lane = last.indexOf(Math.min(...last));
+                x = last[lane] + D;
+            }
+            last[lane] = x;
+            const cls = ['dot'];
+            if (r.position === 1 || r.class_position === 1) cls.push('lead');
+            if (r.focus) cls.push('focus');
+            if (r.on_pit) cls.push('pit');
+            const pos = r.class_position || r.position;
+            const lab = r.focus ? `<div class="flabel" style="left:${x}px">${esc(abbrev(r.name))}</div>` : '';
+            return `${lab}<div class="${cls.join(' ')}" style="left:${x}px;top:${LANES[lane] - 12}px" title="${esc(r.name)}">${pos}</div>`;
+        }).join('');
+        const lapped = c.lapped.length ? `<div class="lapped"><div class="t">+LAP</div>${c.lapped.map(r =>
+            `<div class="dot${r.focus ? ' focus' : ''}">${r.class_position || r.position}</div>`).join('')}</div>` : '';
+        return `<div class="cls" style="width:${W}px">
+            ${(LABEL || classes.length > 1) ? `<div class="lbl">${esc(c.name || 'Class')}</div>` : ''}
+            <div class="bar${PANEL ? ' panel' : ''}"><div class="axis"></div>${ticks}${dots}${lapped}</div></div>`;
+    }).join('');
+}
+async function tick() {
+    if (DEMO) {
+        const gaps = [0, .4, .9, 1.2, 5.5, 5.8, 6.1, 6.3, 12.0, 14.5, 14.8, 21, 25, 25.4, 33, 38];
+        const st = gaps.map((g, i) => ({ name: 'Driver ' + (i + 1), position: i + 1, class_position: i + 1, class_id: 1,
+            class_name: 'GT3', in_world: true, interval: i ? g - gaps[i - 1] : null, laps_behind: 0, focus: i === 5, on_pit: i === 12 }));
+        st.push({ name: 'Lapped Car', position: 17, class_position: 17, class_id: 1, in_world: true, laps_behind: 1 });
+        st[5].name = 'Andreas Bastian';
+        render({ connected: true, session_type: 'Race', standings: st });
+        return;
+    }
+    render(await getStandings());
+}
+setInterval(tick, 1000); tick();
+</script></body></html>
+"""
+
+
+@app.route("/fastest")
+def fastest_page():
+    return Response(FASTEST_HTML, mimetype="text/html")
+
+
+@app.route("/movers")
+def movers_page():
+    return Response(MOVERS_HTML, mimetype="text/html")
+
+
+@app.route("/gapbar")
+def gapbar_page():
+    return Response(GAPBAR_HTML, mimetype="text/html")
 
 
 @app.route("/standings")
 def standings():
     return jsonify(poller.get())
+
+
+# Bump on every change: http://localhost:5005/version shows which code the
+# running process actually loaded (the stream PC gets this folder through
+# Nextcloud, so a restart can still pick up the previous file).
+CODE_VERSION = "2026-10-08 gapbar-clean"
+
+
+@app.route("/version")
+def version():
+    snap = poller.get()
+    return jsonify({
+        "version": CODE_VERSION,
+        "file": __file__,
+        "classes": sorted({r.get("class_name") or "" for r in snap.get("standings") or []}),
+    })
+
+
+@app.route("/flag/<code>.svg")
+def flag(code: str):
+    path = country_flags.flag_path(code)
+    if not path:
+        abort(404)
+    return send_file(str(path), mimetype="image/svg+xml", max_age=86400)
 
 
 @app.route("/proam")
@@ -1369,7 +2184,7 @@ def main():
     t.start()
     try:
         print("=" * 60)
-        print("iRacing Live Standings")
+        print(f"iRacing Live Standings  (code {CODE_VERSION})")
         print("Open: http://localhost:5005")
         print("Press Ctrl+C to stop")
         print("=" * 60)

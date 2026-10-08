@@ -165,7 +165,8 @@ def record_winner(history, season_key, season_name, league, winner, log_name, tr
 # High-level convenience used by the CLI / overlay / logger
 # ---------------------------------------------------------------------------
 def pick(log_path, profile=dotd.DEFAULT_PROFILE, weights=None, dnf_can_win=False,
-         no_repeat=True, record=False, history_path=HISTORY_PATH, timeout=10.0):
+         no_repeat=True, record=False, history_path=HISTORY_PATH, timeout=10.0,
+         provisional=False):
     """
     Compute DotD for one race with the no-back-to-back rule applied.
 
@@ -182,11 +183,15 @@ def pick(log_path, profile=dotd.DEFAULT_PROFILE, weights=None, dnf_can_win=False
     exclude = [prev] if prev else []
 
     result = dotd.analyze_file(log_path, profile=profile, weights=weights,
-                               dnf_can_win=dnf_can_win, exclude_names=exclude)
+                               dnf_can_win=dnf_can_win, exclude_names=exclude,
+                               provisional=provisional)
     result["season"] = season
     result["previous_winner"] = prev
 
-    if record and result.get("ok") and result.get("winner") and season["key"]:
+    # A provisional (mid-race) result is NEVER recorded — it would poison the
+    # season history and the no-back-to-back rule.
+    if (record and result.get("ok") and result.get("winner") and season["key"]
+            and not result.get("provisional")):
         record_winner(history, season["key"], season["name"], season["league"],
                       result["winner"], log_name, result.get("track"))
         save_history(history, history_path)

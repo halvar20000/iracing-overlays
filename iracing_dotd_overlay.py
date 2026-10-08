@@ -19,6 +19,14 @@ Run:           python iracing_dotd_overlay.py
 Open:          http://localhost:5013
 Options:       ?profile=positions|balanced|recovery|clean   (default positions)
                ?log=<path>        pin to a specific log instead of the newest
+               ?provisional=0     hide the mid-race ranking (show only finals)
+
+PROVISIONAL (2026-10-08): while the newest race is still running, the card
+shows a provisional Driver of the Day — the race so far scored as if it
+ended at the last lap crossing (driver_of_the_day.provisional_final). It is
+labelled "Provisional · after lap N", computed in memory only and never
+written to dotd_history.json, so the official award at session_end and the
+no-back-to-back rule are untouched.
 Stream:        transparent background by default; press H for a debug panel.
 """
 
@@ -34,6 +42,7 @@ import dotd_streak
 dotd.setup_utf8_stdout()
 
 LOGS_DIR = "logs"
+LIVE_TTL = 5.0   # s — max age of a cached in-progress (provisional) result
 DEFAULT_PROFILE = dotd.DEFAULT_PROFILE
 
 app = Flask(__name__)
@@ -51,14 +60,15 @@ def _no_cache(resp):
     return resp
 
 
-def _compute(profile, log=None):
+def _compute(profile, log=None, provisional=True):
     path = log or dotd.newest_race_log(LOGS_DIR)
     if not path or not os.path.exists(path):
         return {"ok": False, "error": "no race log found yet", "drivers": []}
     try:
-        mtime = os.path.getmtime(path)
+        st = os.stat(path)
+        mtime, size = st.st_mtime, st.st_size
     except OSError:
-        mtime = 0
+        mtime, size = 0, 0
     # the streak rule depends on the winner-history file too, so the cache
     # key includes its mtime — when the logger records a new winner the
     # overlay picks it up.
@@ -66,15 +76,25 @@ def _compute(profile, log=None):
         hist_mtime = os.path.getmtime(dotd_streak.HISTORY_PATH)
     except OSError:
         hist_mtime = 0
-    key = (path, mtime, hist_mtime, profile)
+    key = (path, mtime, size, hist_mtime, profile, provisional)
     with _lock:
-        if _cache.get("key") == key and _cache.get("result"):
-            return _cache["result"]
+        # A race still in progress is recomputed at least every LIVE_TTL s
+        # even when the key looks unchanged: on Windows, a log the logger
+        # still holds open — read over SMB from the Unraid share — can keep
+        # reporting its OLD mtime, which froze the card on "no lap completed
+        # yet" for a whole race (2026-10-08, Oulton Park). Size is in the
+        # key for the same reason.
+        res = _cache.get("result")
+        live = bool(res) and (res.get("provisional") or not res.get("ok"))
+        fresh = time.time() - _cache.get("t", 0) < LIVE_TTL
+        if _cache.get("key") == key and res and (not live or fresh):
+            return res
         # read-only: the overlay applies the no-back-to-back rule but never
         # records (the race logger is the authoritative recorder).
-        result = dotd_streak.pick(path, profile=profile, no_repeat=True, record=False)
+        result = dotd_streak.pick(path, profile=profile, no_repeat=True, record=False,
+                                  provisional=provisional)
         result["log_file"] = os.path.basename(path)
-        _cache.update(key=key, result=result)
+        _cache.update(key=key, result=result, t=time.time())
         return result
 
 
@@ -84,7 +104,8 @@ def data():
     if profile not in dotd.WEIGHT_PROFILES:
         profile = DEFAULT_PROFILE
     log = request.args.get("log")
-    return jsonify(_compute(profile, log))
+    provisional = request.args.get("provisional", "1") != "0"
+    return jsonify(_compute(profile, log, provisional))
 
 
 PAGE_HTML = """
@@ -153,6 +174,9 @@ PAGE_HTML = """
   .footer { margin-top: 12px; font-size: 11px; letter-spacing: 1px; color: #6a6a7a;
             display: flex; justify-content: space-between; }
 
+  .card.prov { border-color: rgba(255,209,102,0.55); }
+  .prov-tag { font-size: 12px; letter-spacing: 2px; color: #0a0a0f; background: #ffd166;
+              border-radius: 4px; padding: 1px 7px; }
   .empty-msg { font-size: 22px; font-weight: 700; color: #6a6a7a; text-align: center; padding: 18px 6px; }
 
   .note { margin-top: 10px; font-size: 13px; color: #9a9aaa; font-style: italic;
@@ -165,6 +189,7 @@ PAGE_HTML = """
 const params = new URLSearchParams(location.search);
 const profile = params.get('profile') || 'positions';
 const logParam = params.get('log');
+const provParam = params.get('provisional');
 
 function metricCard(cls, val, label) {
   return `<div class="metric ${cls}"><div class="v">${val}</div><div class="l">${label}</div></div>`;
@@ -194,9 +219,13 @@ function render(d) {
     : '';
   const seasonName = (d.season && d.season.name) ? d.season.name : '';
   const footerLeft = [trackline, seasonName].filter(Boolean).join('  ·  ');
+  const prov = !!d.provisional;
+  const provTag = prov
+    ? `<span class="prov-tag">PROVISIONAL · AFTER LAP ${(d.meta && d.meta.leader_laps) || '–'}</span>`
+    : '';
 
-  root.innerHTML = `<div class="card">
-    <div class="eyebrow"><span class="trophy">🏆</span> Driver of the Day <span class="spacer"></span></div>
+  root.innerHTML = `<div class="card${prov ? ' prov' : ''}">
+    <div class="eyebrow"><span class="trophy">🏆</span> Driver of the Day <span class="spacer"></span>${provTag}</div>
     <div class="name-row"><span class="car-no">#${w.car_number}</span><span class="name">${w.name}</span></div>
     <div class="car-name">${w.car || ''}</div>
     <div class="why">${w.why}</div>
@@ -216,6 +245,7 @@ async function tick() {
   try {
     let url = '/data?profile=' + encodeURIComponent(profile);
     if (logParam) url += '&log=' + encodeURIComponent(logParam);
+    if (provParam) url += '&provisional=' + encodeURIComponent(provParam);
     const r = await fetch(url);
     render(await r.json());
   } catch (e) { /* keep last render */ }
@@ -243,7 +273,8 @@ if __name__ == "__main__":
     print("  iRacing Driver of the Day Overlay")
     print("  Open in browser:  http://localhost:5013")
     print("  Reads the newest logs/*_race.jsonl (no SDK needed).")
-    print("  Shows once the race has a final classification.")
+    print("  Mid-race: provisional ranking (?provisional=0 to hide);")
+    print("  the official winner once the race has a final classification.")
     print("  Profiles: ?profile=positions|balanced|recovery|clean")
     print("  Press H in the browser for a debug background.")
     print("  Press Ctrl+C to stop")

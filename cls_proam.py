@@ -25,6 +25,11 @@ turning up in a PCCD or IEC race therefore gets no bar. Override with
 The last good roster is cached to proam_cache.json, so the bars still work
 if the stream PC has no internet at race start. Fetch uses urllib (stdlib)
 so neither overlay gains a dependency.
+
+Side job: the registration COUNTRY of every driver in every CLS league's
+current season (`country(user_id)`), the fallback source for the flag
+column when a driver has no iRacing flair set (see country_flags.py).
+Cached in proam_countries.json.
 """
 
 import json
@@ -37,6 +42,7 @@ from pathlib import Path
 SCRIPT_DIR  = Path(__file__).resolve().parent
 CONFIG_PATH = SCRIPT_DIR / "proam_config.json"
 CACHE_PATH  = SCRIPT_DIR / "proam_cache.json"
+COUNTRY_CACHE_PATH = SCRIPT_DIR / "proam_countries.json"
 
 DEFAULT_CONFIG = {
     "api_base":        "https://league.simracing-hub.com",
@@ -71,14 +77,31 @@ class ProAmRoster:
         self._season = ""
         self._last_ok = 0.0
         self._error: str | None = None
+        self._countries: dict[int, str] = {}
         self._load_cache()
+        try:
+            if COUNTRY_CACHE_PATH.exists():
+                raw = json.loads(COUNTRY_CACHE_PATH.read_text(encoding="utf-8"))
+                self._countries = {int(k): v for k, v in raw.items()}
+        except Exception as e:
+            print(f"[proam] Could not read {COUNTRY_CACHE_PATH.name}: {e}")
 
     # -- public -----------------------------------------------------------
     def start(self) -> None:
+        # Always runs: even with the Pro/Am bars off, the country lookup
+        # for the flag column still needs the CLS rosters.
         if (self._cfg.get("mode") or "auto").lower() == "off":
             print("[proam] mode=off — Pro/Am bars disabled")
-            return
         threading.Thread(target=self._run, daemon=True).start()
+
+    def country(self, user_id) -> "str | None":
+        """ISO alpha-2 code ('DE') of the driver's CLS registration."""
+        try:
+            uid = int(user_id)
+        except (TypeError, ValueError):
+            return None
+        with self._lock:
+            return self._countries.get(uid)
 
     def lookup(self, user_id) -> "str | None":
         try:
@@ -124,6 +147,10 @@ class ProAmRoster:
     def _run(self) -> None:
         while True:
             try:
+                self._fetch_countries()
+            except Exception as e:
+                print(f"[proam] Country fetch failed: {type(e).__name__}: {e}")
+            try:
                 self._fetch()
                 wait = float(self._cfg.get("refresh_seconds") or 300)
             except Exception as e:
@@ -132,6 +159,42 @@ class ProAmRoster:
                 print(f"[proam] Fetch failed: {self._error}")
                 wait = RETRY_SECONDS
             time.sleep(wait)
+
+    def _get_json(self, path: str, params: dict | None = None) -> dict:
+        base = (self._cfg.get("api_base") or DEFAULT_CONFIG["api_base"]).rstrip("/")
+        url = f"{base}{path}" + (f"?{urllib.parse.urlencode(params)}" if params else "")
+        req = urllib.request.Request(url, headers={"User-Agent": "iracing-overlays"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read().decode("utf-8"))
+
+    def _fetch_countries(self) -> None:
+        """Registration country of every driver in every league's current
+        season(s) — the fallback for drivers without an iRacing flair."""
+        leagues = self._get_json("/api/overlay/leagues").get("leagues") or []
+        found: dict[int, str] = {}
+        for lg in leagues:
+            for season in lg.get("seasons") or []:
+                body = self._get_json("/api/overlay/standings",
+                                      {"league": lg.get("slug"), "season": season.get("id")})
+                for row in body.get("standings") or []:
+                    cc = (row.get("countryCode") or "").strip()
+                    try:
+                        uid = int(row.get("iracingMemberId"))
+                    except (TypeError, ValueError):
+                        continue
+                    if cc and uid not in found:
+                        found[uid] = cc
+        if not found:
+            return
+        with self._lock:
+            changed = found != self._countries
+            self._countries = found
+        if changed:
+            print(f"[proam] Countries for {len(found)} CLS drivers")
+            try:
+                COUNTRY_CACHE_PATH.write_text(json.dumps(found), encoding="utf-8")
+            except Exception as e:
+                print(f"[proam] Could not write {COUNTRY_CACHE_PATH.name}: {e}")
 
     def _fetch(self) -> None:
         cfg = self._cfg

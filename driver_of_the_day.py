@@ -173,9 +173,67 @@ def _minmax_norm(values):
     return [(v - lo) / (hi - lo) for v in values]
 
 
+def provisional_final(events, stale_laps=3.0):
+    """A provisional `session_end` built from a log that is still being
+    written — the race so far, as if it ended at the last lap crossing.
+
+    Used ONLY for the mid-race ranking on the DotD overlay; never recorded.
+      * running order: laps completed (desc), then who crossed the line
+        first on that lap — the same rule iRacing classifies by
+      * incidents: the latest official total per car (`inc` /
+        `inc_snapshot`, same source as the final classification), falling
+        back to the count of detected `incident` events
+      * a car that hasn't crossed the line for `stale_laps` typical laps
+        while the field kept going is treated as out ("Disconnected"), so
+        it can't be crowned from a stale position
+    Returns None when no car has completed a lap yet.
+    """
+    last = {}          # car_idx -> (laps, t_session) of its latest crossing
+    lap_times = []
+    inc_total, inc_count = {}, {}
+    t_now = 0.0
+    for e in events:
+        t = e.get("type")
+        ts = _num(e.get("t_session")) or _num(e.get("t"))
+        if ts is not None:
+            t_now = max(t_now, ts)
+        if t == "lap":
+            ci, lap = e.get("car_idx"), e.get("lap")
+            if not isinstance(ci, int) or not isinstance(lap, int) or lap < 1 or ts is None:
+                continue
+            if ci not in last or lap >= last[ci][0]:
+                last[ci] = (lap, ts)
+            if _num(e.get("lap_time")) and e["lap_time"] > 0 and e.get("on_pit") is not True:
+                lap_times.append(e["lap_time"])
+        elif t == "inc" and isinstance(e.get("car_idx"), int):
+            inc_total[e["car_idx"]] = e.get("total", 0) or 0
+        elif t == "inc_snapshot":
+            for k, v in (e.get("totals") or {}).items():
+                try:
+                    inc_total[int(k)] = v or 0
+                except (TypeError, ValueError):
+                    pass
+        elif t == "incident" and isinstance(e.get("car_idx"), int):
+            inc_count[e["car_idx"]] = inc_count.get(e["car_idx"], 0) + 1
+    if not last:
+        return None
+    typical = _median(lap_times) or DEFAULT_SETTLE_SEC
+    order = sorted(last.items(), key=lambda kv: (-kv[1][0], kv[1][1]))
+    final = []
+    for pos, (ci, (laps_done, ts)) in enumerate(order, start=1):
+        stale = (t_now - ts) > stale_laps * typical
+        final.append({
+            "car_idx": ci, "position": pos, "laps_completed": laps_done,
+            "incidents": inc_total.get(ci, inc_count.get(ci, 0)),
+            "reason_out": "Disconnected" if stale else "Running",
+        })
+    return {"type": "session_end", "official": False, "provisional": True,
+            "final": final, "leader_laps": order[0][1][0]}
+
+
 def analyze(events, profile=DEFAULT_PROFILE, weights=None,
             min_laps_fraction=MIN_LAPS_FRACTION,
-            dnf_can_win=False, exclude_names=None):
+            dnf_can_win=False, exclude_names=None, provisional=False):
     """
     Compute Driver of the Day from a list of log events.
 
@@ -222,6 +280,14 @@ def analyze(events, profile=DEFAULT_PROFILE, weights=None,
 
     if start is None:
         return {"ok": False, "error": "no session_start in log", "drivers": []}
+    # Mid-race ranking: no final classification yet, so score the race so
+    # far. Only when explicitly asked for — the logger's real award at
+    # session_end never takes this path.
+    if (end is None or not end.get("final")) and provisional:
+        end = provisional_final(events)
+        if end is None:
+            return {"ok": False, "error": "race in progress — no lap completed yet",
+                    "drivers": [], "provisional": True}
     if end is None or not end.get("final"):
         return {"ok": False, "error": "no final classification (session_end) in log — "
                                       "race may not have finished", "drivers": []}
@@ -418,6 +484,7 @@ def analyze(events, profile=DEFAULT_PROFILE, weights=None,
         "session": start.get("session_name") or start.get("session_type"),
         "weights": weights,
         "profile": profile,
+        "provisional": bool(end.get("provisional")),
         "winner": winner,
         "drivers": drivers,
         "excluded_names": sorted({d["name"] for d in drivers if d["blocked_repeat"]}),
@@ -425,6 +492,7 @@ def analyze(events, profile=DEFAULT_PROFILE, weights=None,
             "n_drivers": len(drivers),
             "leader_laps": leader_laps,
             "official": end.get("official"),
+            "provisional": bool(end.get("provisional")),
             # how recovery was cleaned of pit stops: "field" | "own-laps" | "none"
             "pit_adjust": pit_adjust,
             "pit_windows": pit_windows,

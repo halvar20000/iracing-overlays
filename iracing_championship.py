@@ -43,7 +43,7 @@ import threading
 import time
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template_string, request
+from flask import Flask, Response, jsonify, render_template_string, request
 
 from iracing_sdk_base import SDKPoller, GridBaseline, SESSION_STATE_RACING, setup_utf8_stdout
 setup_utf8_stdout()
@@ -714,9 +714,8 @@ ui_state = {
 app = Flask(__name__)
 
 
-@app.route("/api/state")
-def api_state():
-    """JSON state polled by the overlay page (~1 Hz)."""
+def _state() -> dict:
+    """The full projection — shared by /api/state and /api/duel."""
     race = poller.get()
     fetch = fetcher.get()
     champ = fetch.get("data")
@@ -728,7 +727,44 @@ def api_state():
                                 if fetch.get("last_fetch_at") else None
     payload["ui"]            = dict(ui_state)
     payload["config"]        = fetch.get("config")
-    return jsonify(payload)
+    return payload
+
+
+@app.route("/api/state")
+def api_state():
+    """JSON state polled by the overlay page (~1 Hz)."""
+    return jsonify(_state())
+
+
+@app.route("/api/duel")
+def api_duel():
+    """Two championship rows side by side for the title-fight card.
+    ?a= / ?b= = iRacing customer IDs; default = CLS P1 vs P2 (pre-round)."""
+    st = _state()
+    if not st.get("ok"):
+        return jsonify({"ok": False, "error": st.get("error")})
+    rows = st.get("champ_rows") or []
+    by_id = {r["iracing_member"]: r for r in rows if r.get("iracing_member")}
+    by_rank = sorted(rows, key=lambda r: r["rank"])
+
+    def pick(param, fallback_idx):
+        try:
+            r = by_id.get(int(request.args.get(param) or 0))
+        except ValueError:
+            r = None
+        return r or (by_rank[fallback_idx] if len(by_rank) > fallback_idx else None)
+
+    a, b = pick("a", 0), pick("b", 1)
+    if not a or not b:
+        return jsonify({"ok": False, "error": "need two championship drivers"})
+    cars = {r.get("cust_id"): r.get("car_number") for r in st.get("race_rows") or []}
+    for r in (a, b):
+        r["car_number"] = cars.get(r["iracing_member"]) or r.get("start_number")
+    return jsonify({"ok": True, "a": a, "b": b,
+                    "live_race": st.get("live_race"),
+                    "race_finished": st.get("race_finished"),
+                    "earlier_races": st.get("earlier_races"),
+                    "season": st.get("season")})
 
 
 @app.route("/api/leagues")
@@ -1277,6 +1313,154 @@ def index():
 @app.route("/overlay")
 def overlay():
     return render_template_string(OVERLAY_HTML)
+
+
+# Title-fight duel card (served as a plain string — no Jinja).
+DUEL_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Title Fight</title>
+<style>
+    /* Title-fight duel card (2026-10-08). Same visual language as the
+       standings tower. ?a=<custid>&b=<custid> picks the pair (default:
+       championship P1 vs P2), ?zoom=1.5 scales, ?debug=1 / H = dark bg,
+       ?demo=1 = fake data for styling. */
+    :root { --bg: rgba(40,40,45,0.92); --bg2: rgba(28,28,32,0.95);
+            --text: #f2f2f4; --muted: #b9b9c2; --accent: #2f7ff0;
+            --gold: #ffd166; --up: #45f063; --down: #ff5a6a; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: rgba(0,0,0,0); }
+    body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; color: var(--text);
+           padding: 8px; font-variant-numeric: tabular-nums; }
+    body.debug-mode { background: #23262b; }
+    .card { width: 660px; display: none; }
+    .card.on { display: block; }
+    .top { display: flex; align-items: center; height: 26px; background: var(--accent);
+           padding: 0 10px; font-size: 14px; font-weight: 800; letter-spacing: 2px; }
+    .top .sub { margin-left: auto; font-weight: 600; letter-spacing: .5px; font-size: 13px; opacity: .9; }
+    .body { display: grid; grid-template-columns: 1fr 150px 1fr; background: var(--bg); }
+    .side { padding: 10px 12px; min-width: 0; }
+    .side.b { text-align: right; }
+    .side.lead { box-shadow: inset 0 -3px 0 var(--gold); }
+    .nm { font-size: 22px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .side.lead .nm { color: var(--gold); }
+    .meta { font-size: 13px; color: var(--muted); margin-top: 2px; white-space: nowrap; }
+    .num { display: inline-block; background: var(--bg2); padding: 0 6px; border-radius: 3px;
+           color: var(--text); font-weight: 700; margin: 0 4px; }
+    .race { display: flex; gap: 8px; margin-top: 8px; font-size: 15px; font-weight: 700; }
+    .side.b .race { justify-content: flex-end; }
+    .chip { background: var(--bg2); padding: 2px 8px; border-radius: 3px; white-space: nowrap; }
+    .chip .l { color: var(--muted); font-weight: 600; margin-right: 4px; font-size: 12px; }
+    .chip.pts { color: var(--up); }
+    .mid { background: var(--bg2); display: flex; flex-direction: column; align-items: center;
+           justify-content: center; padding: 6px 4px; }
+    .score { font-size: 30px; font-weight: 800; letter-spacing: 1px; white-space: nowrap; }
+    .score .sep { color: var(--muted); margin: 0 6px; font-weight: 600; }
+    .gap { font-size: 13px; font-weight: 700; color: var(--gold); margin-top: 2px; white-space: nowrap; }
+    .pre { font-size: 11px; color: var(--muted); margin-top: 3px; white-space: nowrap; }
+    .msg { background: var(--bg); padding: 12px; color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="card" id="card">
+    <div class="top"><span>TITLE FIGHT</span><span class="sub" id="sub"></span></div>
+    <div class="body">
+        <div class="side a" id="sa"></div>
+        <div class="mid" id="mid"></div>
+        <div class="side b" id="sb"></div>
+    </div>
+</div>
+<div class="msg" id="msg" style="display:none"></div>
+<script>
+const qs = new URLSearchParams(location.search);
+if (qs.get('debug') === '1') document.body.classList.add('debug-mode');
+const zoom = parseFloat(qs.get('zoom') || '1');
+if (zoom > 0 && zoom !== 1) document.body.style.zoom = zoom;
+document.addEventListener('keydown', e => {
+    if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('debug-mode');
+});
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function abbrev(full) {
+    const p = String(full || '').trim().split(/\s+/);
+    return p.length < 2 ? (full || '') : `${p[0][0]}. ${p.slice(1).join(' ')}`;
+}
+
+function side(d, lead) {
+    const bits = [];
+    (d.earlier || []).forEach((e, i) => { if (e) bits.push(`<span class="chip"><span class="l">R${i+1}</span>P${e.pos} +${e.pts}</span>`); });
+    if (d.race_pos) {
+        const lbl = (d.earlier || []).length ? `R${(d.earlier || []).length + 1}` : 'NOW';
+        bits.push(`<span class="chip"><span class="l">${lbl}</span>P${d.race_pos}${d.in_pit ? ' PIT' : ''}</span>`);
+        bits.push(`<span class="chip pts">+${d.race_pts}</span>`);
+    } else if (d.live_race) {
+        bits.push('<span class="chip"><span class="l">NOW</span>not in race</span>');
+    }
+    const num = d.car_number ? `<span class="num">#${esc(d.car_number)}</span>` : '';
+    return { html: `<div class="nm">${esc(abbrev(d.name))}</div>
+        <div class="meta">${d.side === 'b' ? '' : num}Champ. P${d.proj_rank}${d.side === 'b' ? num : ''}</div>
+        <div class="race">${bits.join('')}</div>`, lead };
+}
+
+function render(d) {
+    const card = document.getElementById('card'), msg = document.getElementById('msg');
+    if (!d || !d.ok || !d.a || !d.b) {
+        card.classList.remove('on');
+        msg.style.display = 'block';
+        msg.textContent = (d && d.error) || 'Waiting for championship data…';
+        return;
+    }
+    msg.style.display = 'none';
+    card.classList.add('on');
+    const a = d.a, b = d.b;
+    const diff = a.proj_points - b.proj_points;
+    const sa = side({...a, side: 'a', live_race: d.live_race}, diff > 0);
+    const sb = side({...b, side: 'b', live_race: d.live_race}, diff < 0);
+    const ea = document.getElementById('sa'), eb = document.getElementById('sb');
+    ea.innerHTML = sa.html; eb.innerHTML = sb.html;
+    ea.classList.toggle('lead', diff > 0); eb.classList.toggle('lead', diff < 0);
+    const leader = diff > 0 ? a : b;
+    const gapTxt = diff === 0 ? 'LEVEL ON POINTS'
+        : `${esc((leader.last_name || leader.name).toUpperCase())} +${Math.abs(diff)}`;
+    const preDiff = a.pre_points - b.pre_points;
+    document.getElementById('mid').innerHTML = `
+        <div class="score">${a.proj_points}<span class="sep">–</span>${b.proj_points}</div>
+        <div class="gap">${gapTxt}</div>
+        <div class="pre">before round: ${a.pre_points} – ${b.pre_points}</div>`;
+    document.getElementById('sub').textContent =
+        d.live_race && !d.race_finished ? 'IF THE RACE ENDED NOW'
+        : (d.race_finished || (d.earlier_races || []).length ? 'PROVISIONAL' : 'CHAMPIONSHIP');
+}
+
+const DEMO = qs.has('demo');
+async function tick() {
+    if (DEMO) {
+        render({ ok: true, live_race: true, race_finished: false, earlier_races: ['RACE 1'],
+            a: { name: 'Remo Grossenbacher', last_name: 'Grossenbacher', car_number: '11', pre_points: 326,
+                 proj_points: 326 + 35 + 30, proj_rank: 2, earlier: [{pos: 2, pts: 35}], race_pos: 3, race_pts: 30 },
+            b: { name: 'Maurice Becker', last_name: 'Becker', car_number: '49', pre_points: 324,
+                 proj_points: 324 + 41 + 35, proj_rank: 1, earlier: [{pos: 1, pts: 41}], race_pos: 2, race_pts: 35 } });
+        return;
+    }
+    try {
+        const p = new URLSearchParams();
+        if (qs.get('a')) p.set('a', qs.get('a'));
+        if (qs.get('b')) p.set('b', qs.get('b'));
+        const r = await fetch('/api/duel?' + p.toString(), { cache: 'no-store' });
+        render(await r.json());
+    } catch (e) { /* keep last view */ }
+}
+tick();
+setInterval(tick, 1000);
+</script>
+</body>
+</html>
+"""
+
+
+@app.route("/duel")
+def duel():
+    return Response(DUEL_HTML, mimetype="text/html")
 
 
 # -----------------------------------------------------------------------------

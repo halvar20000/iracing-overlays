@@ -1,0 +1,5 @@
+Country flag SVGs in this folder come from the flag-icons project
+(https://github.com/lipis/flag-icons), version 7.2.3, MIT licence —
+see LICENSE.flag-icons. country.json is reduced from the same package
+(code + name only). Used by the standings tower to show each driver's
+country (iRacing flair, or the CLS registration country as fallback).

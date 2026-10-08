@@ -988,6 +988,10 @@ class TelemetryPoller:
             "type": "overtake",
             "details": f"passed #{yi['car_number']} {yi['name']} for P{position}",
             "position": position,
+            # structured copy of the passed car, for the /ticker overlay
+            "passed_idx": y_idx,
+            "passed_name": yi["name"],
+            "passed_number": yi["car_number"],
             "replayed": False,
         })
         print(f"[overtake] #{xi['car_number']} {xi['name']} passed "
@@ -3789,6 +3793,101 @@ def incidents_feed():
     key, just smaller payload for tools that only need this slice.
     """
     return jsonify({"incidents": list(poller._incidents)})
+
+
+@app.route("/overtakes")
+def overtakes_feed():
+    """Overtake feed (newest first) for the /ticker overlay."""
+    return jsonify({"overtakes": list(poller._overtakes)})
+
+
+# Overtake ticker — OBS lower third (served as a plain string, no Jinja).
+TICKER_HTML = r"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Overtake Ticker</title>
+<style>
+    /* Overtake ticker (2026-10-08): lower third for every confirmed
+       overtake from the dashboard's detector (pit cycles, blue flags,
+       side-by-side flicker and passes on spun cars are already filtered).
+       Same look as the standings tower. Events are queued and shown one
+       after the other for ?secs=6 each; on load existing overtakes are
+       skipped. ?zoom=, ?debug=1, ?demo=1. */
+    :root { --bg: rgba(52,52,57,0.92); --bg2: rgba(28,28,32,0.95);
+            --text: #f2f2f4; --muted: #b9b9c2; --up: #45f063; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: rgba(0,0,0,0); }
+    body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; color: var(--text);
+           padding: 8px; font-variant-numeric: tabular-nums; }
+    body.debug-mode { background: #23262b; }
+    .t { display: inline-flex; align-items: stretch; height: 40px; opacity: 0; transform: translateY(16px);
+         transition: opacity .3s ease, transform .35s cubic-bezier(.2,.9,.3,1.2); }
+    .t.show { opacity: 1; transform: none; }
+    .tag { background: var(--up); color: #0d1a10; font-weight: 800; letter-spacing: 1.5px; font-size: 13px;
+           display: flex; align-items: center; padding: 0 11px; }
+    .body { background: var(--bg); display: flex; align-items: center; gap: 9px; padding: 0 12px; white-space: nowrap; }
+    .num { background: var(--bg2); padding: 1px 7px; border-radius: 3px; font-weight: 700; font-size: 13px; }
+    .nm { font-size: 18px; font-weight: 700; }
+    .vs { color: var(--muted); font-size: 14px; font-weight: 600; }
+    .pos { background: var(--bg2); display: flex; align-items: center; padding: 0 12px;
+           font-size: 18px; font-weight: 800; color: var(--up); }
+</style></head>
+<body>
+<div class="t" id="t">
+    <div class="tag">OVERTAKE</div>
+    <div class="body" id="b"></div>
+    <div class="pos" id="p"></div>
+</div>
+<script>
+const qs = new URLSearchParams(location.search);
+if (qs.get('debug') === '1') document.body.classList.add('debug-mode');
+const zoom = parseFloat(qs.get('zoom') || '1');
+if (zoom > 0 && zoom !== 1) document.body.style.zoom = zoom;
+document.addEventListener('keydown', e => { if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('debug-mode'); });
+const SECS = parseFloat(qs.get('secs') || '6');
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function abbrev(full) { const p = String(full || '').trim().split(/\s+/); return p.length < 2 ? (full || '') : `${p[0][0]}. ${p.slice(1).join(' ')}`; }
+
+const t = document.getElementById('t');
+const queue = [];
+let seen = null, busy = false;
+function show(o) {
+    busy = true;
+    document.getElementById('b').innerHTML =
+        `<span class="num">#${esc(o.car_number)}</span><span class="nm">${esc(abbrev(o.name))}</span>
+         <span class="vs">passes</span>
+         ${o.passed_number ? `<span class="num">#${esc(o.passed_number)}</span>` : ''}<span class="nm">${esc(abbrev(o.passed_name || ''))}</span>`;
+    document.getElementById('p').textContent = o.position ? `P${o.position}` : '';
+    t.classList.remove('show'); void t.offsetWidth; t.classList.add('show');
+    setTimeout(() => { t.classList.remove('show'); setTimeout(next, 450); }, SECS * 1000);
+}
+function next() { busy = false; if (queue.length) show(queue.shift()); }
+async function tick() {
+    let d;
+    try { d = await (await fetch('/overtakes', { cache: 'no-store' })).json(); } catch (e) { return; }
+    const list = (d.overtakes || []).slice().reverse();   // oldest first
+    if (seen === null) { seen = new Set(list.map(o => o.id)); return; }   // skip history on load
+    for (const o of list) {
+        if (seen.has(o.id)) continue;
+        seen.add(o.id);
+        if (queue.length < 5) queue.push(o);   // a start-chaos burst never builds a minute of backlog
+    }
+    if (!busy) next();
+}
+if (qs.has('demo')) {
+    const demo = [{ car_number: '13', name: 'Alvin Frauenknecht', passed_number: '63', passed_name: 'Dennis Richter', position: 3 },
+                  { car_number: '16', name: 'Leon Klein', passed_number: '05', passed_name: 'Andy Weber', position: 9 }];
+    let i = 0; const go = () => { queue.push(demo[i++ % demo.length]); if (!busy) next(); };
+    go(); setInterval(go, (SECS + 1) * 1000);
+} else {
+    setInterval(tick, 1000); tick();
+}
+</script></body></html>
+"""
+
+
+@app.route("/ticker")
+def ticker():
+    from flask import Response
+    return Response(TICKER_HTML, mimetype="text/html")
 
 
 @app.route("/switch_car", methods=["POST"])

@@ -147,6 +147,102 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 8, 2026 (trackmap — Oulton Park Fosters added):** A test race
+logged TrackName "oulton fosters" → `tracks/oulton_fosters.json` was
+missing (only international/island). Built from OSM: Overpass is
+reachable DIRECTLY from the Unraid box with curl (use GET; the POST got an
+HTML error page) — no browser detour needed here. Oulton is mapped as
+named oneway corner ways in driving order; Fosters = Cascades cut at the
+Foster's junction + Foster's + Hislop's… back to Old Hall. 18 ways joined
+with 0 m gaps, 2681 m vs 2656-2670 official, S/F + pit reused from
+oulton_international. Preview rendered via the trackmap's own
+_load_track(). NOTICE.txt updated.
+
+**October 8, 2026 (five new broadcast views — no new ports):**
+All are extra PAGES on existing servers (tower style, `?zoom=`,
+`?debug=1`/H, `?demo=1` fake data), each with an OBS loader in
+`obs_loaders/` (make_obs_loaders.py entries added, 26 loaders):
+  • `5010/duel` — title-fight card: two championship rows side by side
+    (default CLS P1 vs P2, `?a=`/`?b=` custids), live projected points
+    incl. RoundMemory (R1 + R2), gap, "before round" score. `/api/duel`;
+    `_state()` now shared by /api/state and /api/duel.
+  • `5005/fastest` — purple fastest-lap banner, 8 s (`?secs=`), race only
+    (`?all=1` = every session). `StandingsPoller._track_fastest()`: per
+    class, seeded silently per session (no old lap on a mid-race start),
+    departed quali rows ignored, lap number from CarIdxBestLapNum;
+    `fastest_lap {seq,event}` in /standings. test_fastest_lap.py 10/10.
+  • `5005/movers` — top N gained / lost vs the grid (the tower's
+    pos_delta; out-of-world cars excluded), race only.
+  • `5005/gapbar` — dots by gap to class leader (tower intervals summed
+    per class), 3 lanes + nudge for trains, +LAP box, focus car labelled.
+  • `5000/ticker` — overtake lower third from the dashboard detector
+    (`/overtakes` feed; overtake records now also carry passed_idx /
+    passed_name / passed_number). Skips history on load, queue ≤5, 6 s
+    each. test_overtakes.py still ALL PASS; queue logic node-tested.
+  • Standings CODE_VERSION → "2026-10-08 fastest-movers-gapbar".
+
+**October 8, 2026 (Driver of the Day — provisional mid-race ranking):**
+User wants to show an intermediate DotD during a race (e.g. race 2)
+without touching the official award.
+  • `driver_of_the_day.provisional_final(events)` builds a provisional
+    session_end from the log so far: order = laps completed desc, then
+    who crossed first on that lap; incidents = latest official `inc` /
+    `inc_snapshot` total (fallback: count of detector `incident` events);
+    a car silent for 3 typical laps → "Disconnected" (not crownable).
+  • `analyze(..., provisional=True)` uses it ONLY when the log has no
+    session_end; with a session_end the result is byte-for-byte the old
+    one. Result carries `provisional: True`.
+  • `dotd_streak.pick(..., provisional=)` passes it through and NEVER
+    records a provisional result (history / no-back-to-back untouched).
+    The logger's award at session_end doesn't pass the flag at all.
+  • FOLLOW-UP (Oulton Park test race): card froze on "no lap completed
+    yet" all race. The log was fine (laps 1-7; analyze gave Finn Zhou) —
+    the overlay's cache keyed on the log's mtime, and a file the logger
+    still holds open, read from Windows over SMB, keeps reporting the OLD
+    mtime. Cache key now includes size, and in-progress / not-ok results
+    are recomputed at least every LIVE_TTL (5 s) regardless. Tested with
+    a frozen os.stat: picks up the new laps after 5 s.
+  • Overlay (5013): provisional on by default (`?provisional=0` hides it);
+    yellow "PROVISIONAL · AFTER LAP N" tag + yellow border.
+  • Verified on Zandvoort 07.10., WCT Road Atlanta 29.09., PCCD Zolder
+    24.09. cut at 30/60/90 %: provisional winner converges on the official
+    one (Zandvoort/Zolder from 30 % on); final unchanged; record=True on a
+    provisional result writes nothing. Card rendered in headless Chromium.
+
+**October 8, 2026 (standings — new compact tower design, flags):**
+User asked for the look of the commercial tower Andreas uses. New default
+page `TOWER_HTML` in `iracing_standings.py` (~440 px wide; `?zoom=1.5`
+scales, `?debug=1` / H = dark bg): slim info bar (session · remaining ·
+air temp · Dry/Wet), class tab (class colour in multiclass) + driver
+count, lowercase header, dense rows: position box (blue = on-camera
+car via CamCarIdx, name/time orange), Pro/Am bar, abbreviated name,
+country flag, brand logo, fastest (purple = class session best) + last
+(green = PB); race: interval · last · +/-. The old design is kept at
+`/?style=classic`. Served as a plain Response (no Jinja).
+  • Flags: `flags/` = flag-icons 7.2.3 SVGs (MIT, flags/NOTICE.txt);
+    `country_flags.py` maps iRacing `DriverInfo.Drivers[].FlairName`
+    (country name) → ISO code, fallback = CLS registration country, now
+    collected by `cls_proam.py` from ALL leagues' current seasons
+    (`proam_countries.json`, gitignored). `/standings` rows carry
+    `country` + `country_src` ("flair"/"cls") — FlairName is UNVERIFIED
+    against a live SDK session; if every row says "cls", the field name
+    differs. Flag route `/flag/<code>.svg` only accepts [a-z-].
+  • Class tab read "Class": single-class hosted sessions send an EMPTY
+    CarClassShortName. `_fill_class_labels()` now derives one — single car
+    model → its short name ("Porsche 911 GT3 Cup"), mixed models → the
+    words all names share ("GT3"); a real iRacing class name always wins.
+  • "Restarted but still old code": the stream PC runs the files straight
+    from the Unraid share (SMB, not Nextcloud). Suspected cause: an orphaned
+    old overlay process keeps answering on the port — on Windows a second
+    werkzeug server binds the same port WITHOUT an error. `launch_gui.py`
+    now refuses to Start an overlay whose port already answers
+    (`_port_in_use`) and logs how to kill the old one. Standings got a
+    `/version` endpoint + `CODE_VERSION` in its banner to prove which code
+    is running — bump it on every change.
+  • Verified by rendering the page in headless Chromium with the 21
+    drivers from Andreas's screenshot. Brands without a logo file (e.g.
+    Corvette) show an empty cell; the McLaren SVG is dark on the grey rows.
+
 **October 8, 2026 (championship overlay — two-race rounds, PCCD Algarve):**
 User wants the provisional championship after race 1 and again during /
 after race 2. CLS only publishes a round once COMPLETED (both races), so

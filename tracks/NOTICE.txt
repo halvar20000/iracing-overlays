@@ -74,3 +74,12 @@ lagunaseca_2026*.json / lagunaseca2026.json are renamed copies of the
 SRA-derived lagunaseca_full file (same physical circuit, new iRacing
 TrackName after the 2026 rescan; slug unconfirmed — delete the losing
 variants once the console prints the wanted filename).
+
+oulton_fosters.json (2026-10-08): centreline stitched from the named
+OpenStreetMap raceway ways of Oulton Park (© OpenStreetMap contributors,
+ODbL 1.0) — Old Hall → Avenue → Denton's → Cascades (to the Foster's
+junction) → Foster's → Hislop's → Knickerbrook → Clay Hill → Water Tower →
+Druids → Warwick Bridge → Lodge → Deer Leap. 2681 m vs 2656-2670 m
+official. Start/finish point and pit lane reused from
+oulton_international.json (same pit straight). Filename confirmed by an
+iRacing race log (TrackName "oulton fosters").

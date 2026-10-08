@@ -28,6 +28,7 @@ Place this next to your iracing_*.py scripts and run it.
 import os
 import queue
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -102,10 +103,26 @@ COLOR_IDLE      = "#3a3a4a"
 # ---------------------------------------------------------------------------
 # OverlayController — wraps one subprocess and exposes start/stop/status
 # ---------------------------------------------------------------------------
+def _port_in_use(port, host="127.0.0.1", timeout=0.4):
+    """True when something already ANSWERS on the port.
+
+    Needed because on Windows a second Flask/werkzeug server can bind a port
+    that an old one still holds (SO_REUSEADDR semantics) without any error —
+    the browser then keeps talking to the OLD process, so "restart" seems to
+    do nothing (2026-10-08: tower kept the old code after every restart).
+    """
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
 class OverlayController:
-    def __init__(self, tag, script, log_queue):
+    def __init__(self, tag, script, log_queue, port=None):
         self.tag = tag
         self.script = script
+        self.port = port
         self.log_queue = log_queue
         self.proc = None
         self._reader_thread = None
@@ -124,6 +141,13 @@ class OverlayController:
         script_path = HERE / self.script
         if not script_path.exists():
             self.log_queue.put((self.tag, f"ERROR: {self.script} not found next to launcher."))
+            return
+        if self.port and _port_in_use(self.port):
+            self.log_queue.put((self.tag,
+                f"ERROR: port {self.port} is already in use — an old copy of "
+                f"{self.script} is probably still running and would keep serving "
+                f"the OLD code. Close it first (Task Manager -> python.exe, or "
+                f"'netstat -ano | findstr :{self.port}' then 'taskkill /PID <pid> /F')."))
             return
 
         popen_kwargs = dict(
@@ -201,7 +225,7 @@ class LauncherApp(tk.Tk):
 
         self.log_queue = queue.Queue()
         self.controllers = {
-            o[0]: OverlayController(o[0], o[2], self.log_queue)
+            o[0]: OverlayController(o[0], o[2], self.log_queue, port=o[3])
             for o in OVERLAYS
         }
 
