@@ -25,10 +25,11 @@ iRacing independently.
 import threading
 from flask import Flask, jsonify, render_template_string, send_file, abort
 
-from iracing_sdk_base import SDKPoller, GridBaseline, setup_utf8_stdout
+from iracing_sdk_base import SDKPoller, GridBaseline, SESSION_STATE_RACING, setup_utf8_stdout
 setup_utf8_stdout()
 
 from car_brands import detect_brand, resolve_logo
+from cls_proam import ProAmRoster
 
 
 # -----------------------------------------------------------------------------
@@ -133,6 +134,14 @@ class StandingsPoller(SDKPoller):
         # permanent second column next to the interval in race sessions.
         self._grid = GridBaseline()
 
+        # Qualifying memory: every driver's best OFFICIAL time this quali
+        # session, keyed by iRacing customer ID. A driver who quits the
+        # session drops out of DriverInfo / ResultsPositions, and his time
+        # used to vanish with him — so whoever was P2 suddenly read as pole.
+        # Times are kept until the session changes (see _quali_memory_for).
+        self._quali_key = None
+        self._quali_mem: dict = {}   # key -> {"drv": {...}, "best": float}
+
     def _driver_map(self) -> dict:
         info = self.ir["DriverInfo"] or {}
         out = {}
@@ -163,6 +172,7 @@ class StandingsPoller(SDKPoller):
             out[cidx] = {
                 "car_idx":    cidx,
                 "name":       d.get("UserName", "") or "",
+                "user_id":    d.get("UserID"),
                 "abbrev":     d.get("AbbrevName", "") or "",
                 "car_number": d.get("CarNumber", "") or "",
                 "car_path":   car_path,
@@ -306,16 +316,42 @@ class StandingsPoller(SDKPoller):
         # cars (DNF / disconnected / retired to garage) at the bottom,
         # both groups by descending progress.
         # ------------------------------------------------------------------
+        #
+        # BEFORE THE GREEN this is meaningless (2026-10-08, Zandvoort replay):
+        # iRacing freezes every car's lap counter from gridding through the
+        # pace lap, and the timing line can run THROUGH the grid — at
+        # Zandvoort the front ten sit at 0.00-0.01 of a lap, the back twelve
+        # at 0.98-0.999. Sorted by lap+pct the back half of the grid "led"
+        # the race and every +/- read ±10..12. So until SessionState reaches
+        # Racing the tower shows the STARTING GRID order instead (GridBaseline,
+        # then iRacing's own CarIdxPosition), and no intervals / lap-downs.
+        # ------------------------------------------------------------------
+        state = int(ir["SessionState"] or 0)
+        pre_green = 0 < state < SESSION_STATE_RACING
+        self._grid.update(
+            self.ir,
+            class_of={r["car_idx"]: r.get("class_id", 0) for r in rows},
+        )
+        grid_slot = self._grid.class_grid_pos
+
+        def _order_key(r):
+            if pre_green:
+                return (
+                    0 if r.get("in_world") else 1,
+                    grid_slot.get(r["car_idx"], 9999),
+                    r.get("iracing_pos") or 9999,
+                    -(float(r["lap"]) + float(r["lap_pct"])),
+                )
+            return (
+                0 if r.get("in_world") else 1,      # in-world first
+                -(float(r["lap"]) + float(r["lap_pct"])),  # progress desc
+            )
+
         by_class: dict = {}
         for r in rows:
             by_class.setdefault(r.get("class_id", 0), []).append(r)
         for cid, grp in by_class.items():
-            grp.sort(
-                key=lambda r: (
-                    0 if r.get("in_world") else 1,      # in-world first
-                    -(float(r["lap"]) + float(r["lap_pct"])),  # progress desc
-                ),
-            )
+            grp.sort(key=_order_key)
             for i, r in enumerate(grp, start=1):
                 r["position"] = i
 
@@ -360,10 +396,6 @@ class StandingsPoller(SDKPoller):
         # a baseline when we attached mid-race. When it has nothing for a
         # car, pos_delta stays None and the cell renders empty.
         # ------------------------------------------------------------------
-        self._grid.update(
-            self.ir,
-            class_of={r["car_idx"]: r.get("class_id", 0) for r in rows},
-        )
         for r in rows:
             r["pos_delta"] = self._grid.class_delta(
                 r["car_idx"], r.get("class_position")
@@ -390,7 +422,7 @@ class StandingsPoller(SDKPoller):
                 continue
             my_progress = float(r.get("lap", 0) or 0) + float(r.get("lap_pct", 0.0) or 0.0)
             diff = leader_progress - my_progress
-            if diff >= 1.0:
+            if diff >= 1.0 and not pre_green:
                 r["laps_behind"] = int(diff)  # 1.x -> 1, 2.x -> 2, etc.
 
         # Estimated lap time for the track+car combination. Used as a
@@ -411,8 +443,9 @@ class StandingsPoller(SDKPoller):
             cid = r.get("class_id", 0)
             my_total = r.get("_gap_to_leader")
             prev = prev_by_class.get(cid)
-            if prev is None:
-                # Class leader — no car ahead within the class.
+            if prev is None or pre_green:
+                # Class leader — no car ahead within the class. (Before the
+                # green there is no gap to show at all.)
                 r["interval"] = None
             elif r.get("laps_behind", 0) >= 1:
                 # Lapped: the "+N LAP" label replaces the interval.
@@ -441,7 +474,31 @@ class StandingsPoller(SDKPoller):
 
         return rows
 
-    def _build_timed_standings(self, drivers, ir, sess=None) -> list:
+    def _quali_memory_for(self, ir) -> dict:
+        """The qualifying-time memory for THIS session, cleared whenever
+        (SessionUniqueID, SessionNum) changes — i.e. when the quali session
+        is over and the next one starts."""
+        key = (ir["SessionUniqueID"], ir["SessionNum"])
+        if key != self._quali_key:
+            self._quali_key = key
+            self._quali_mem = {}
+        return self._quali_mem
+
+    @staticmethod
+    def _driver_key(drv: dict):
+        """Stable identity for a driver across a leave / rejoin: customer
+        ID, falling back to the name (AI / offline sessions)."""
+        uid = drv.get("user_id")
+        try:
+            uid = int(uid)
+        except (TypeError, ValueError):
+            uid = None
+        if uid and uid > 0:
+            return ("uid", uid)
+        return ("name", drv.get("name") or "")
+
+    def _build_timed_standings(self, drivers, ir, sess=None,
+                               memory: dict | None = None) -> list:
         """
         Qualifying / practice standings.
 
@@ -491,6 +548,31 @@ class StandingsPoller(SDKPoller):
         for cidx, drv in drivers.items():
             entries.append((best_time_for(cidx), cidx, drv))
 
+        # Qualifying: remember each driver's best OFFICIAL time and keep it
+        # for the rest of the session, also after he leaves. Only official
+        # ResultsPositions times are stored — a telemetry-only time can
+        # still be invalidated, and must not live on in the memory.
+        departed = []
+        if memory is not None:
+            present = set()
+            for i, (bt, cidx, drv) in enumerate(entries):
+                key = self._driver_key(drv)
+                present.add(key)
+                official = results_best.get(cidx, 0.0)
+                mem = memory.get(key)
+                if official > 0:
+                    memory[key] = {"drv": dict(drv), "best": official}
+                elif mem:
+                    # Still here (or rejoined on a new CarIdx) but the sim no
+                    # longer reports his time: the remembered one stands,
+                    # unless he has just gone quicker.
+                    keep = mem["best"] if not bt > 0 else min(bt, mem["best"])
+                    entries[i] = (keep, cidx, drv)
+            for key, mem in memory.items():
+                if key not in present:
+                    departed.append((mem["best"], -1, {**mem["drv"], "car_idx": -1}))
+        entries.extend(departed)
+
         # Rank: valid times first (ascending), no-time drivers after (stable)
         with_time = sorted((e for e in entries if e[0] > 0), key=lambda e: e[0])
         no_time   = [e for e in entries if not (e[0] > 0)]
@@ -508,14 +590,16 @@ class StandingsPoller(SDKPoller):
         pos = 0
         for bt, cidx, drv in with_time:
             pos += 1
+            gone = cidx < 0   # left the session; time kept from the memory
             rows.append({
                 **drv,
                 "position":    pos,
                 "interval":    (bt - leader_time) if pos > 1 else None,
                 "best_lap":    bt,
-                "last_lap":    last_lap[cidx] if cidx < len(last_lap) else 0.0,
-                "on_pit":      bool(on_pit[cidx]) if cidx < len(on_pit) else False,
-                "in_world":    (in_world[cidx] != -1) if cidx < len(in_world) else True,
+                "last_lap":    0.0 if gone else (last_lap[cidx] if cidx < len(last_lap) else 0.0),
+                "on_pit":      False if gone else (bool(on_pit[cidx]) if cidx < len(on_pit) else False),
+                "in_world":    False if gone else ((in_world[cidx] != -1) if cidx < len(in_world) else True),
+                "left":        gone,
                 "lap":         0,
                 "laps_behind": 0,
                 "last_pit_lap":  self._last_pit_lap.get(cidx),
@@ -575,7 +659,15 @@ class StandingsPoller(SDKPoller):
         if session_type == "Race":
             rows = self._build_race_standings(drivers, ir, sess)
         else:
-            rows = self._build_timed_standings(drivers, ir, sess)
+            memory = (self._quali_memory_for(ir)
+                      if session_type == "Qualifying" else None)
+            rows = self._build_timed_standings(drivers, ir, sess, memory)
+
+        # WCT GT3 Pro/Am bar (red PRO / green AM in front of the name).
+        # Only switched on when the field is a WCT field — see cls_proam.py.
+        proam_on = proam.active_for(d.get("user_id") for d in drivers.values())
+        for r in rows:
+            r["proam"] = proam.lookup(r.get("user_id")) if proam_on else None
 
         # Driver counts
         num_entered = len(drivers)
@@ -616,6 +708,7 @@ class StandingsPoller(SDKPoller):
             "num_entered":  num_entered,
             "num_on_track": num_on_track,
             "standings":    rows,
+            "proam_active": proam_on,
         }
 
 
@@ -638,6 +731,7 @@ def _no_cache(resp):
         resp.headers["Expires"] = "0"
     return resp
 poller = StandingsPoller()
+proam = ProAmRoster()
 
 
 STANDINGS_HTML = """
@@ -875,6 +969,13 @@ STANDINGS_HTML = """
         padding-right: 4px;
         line-height: 1.1;
     }
+    /* WCT GT3 Pro/Am marker in front of the name: red PRO, green AM. */
+    .driver .pa {
+        display: inline-block; width: 7px; height: 0.8em;
+        border-radius: 2px; margin-right: 12px; vertical-align: -0.04em;
+    }
+    .driver .pa.pro { background: #e63946; }
+    .driver .pa.am  { background: #2ecc71; }
     .driver .team { font-size: 16px; color: #7a7a90; font-weight: 500; display: block; margin-top: 3px; }
 
     .interval {
@@ -1117,9 +1218,12 @@ function render(d) {
         }
 
         const pit = r.on_pit ? ' <span class="pit-flag">PIT</span>' : '';
-        const outFlag = (!r.in_world && !r.on_pit) ? ' <span class="out-flag">out</span>' : '';
+        // 'left' = quit the qualifying session; his time is kept until the session ends.
+        const outFlag = (!r.in_world && !r.on_pit) ? ` <span class="out-flag">${r.left ? 'left' : 'out'}</span>` : '';
 
         const name = r.name || 'Unknown';
+        const paBar = r.proam === 'PRO' ? '<span class="pa pro" title="PRO"></span>'
+                    : r.proam === 'AM'  ? '<span class="pa am" title="AM"></span>' : '';
         const team = r.team_name && r.team_name !== name ? `<span class="team">${team_esc(r.team_name)}</span>` : '';
 
         // Brand logo — if iRacing gave us a CarPath we can resolve to a
@@ -1138,7 +1242,7 @@ function render(d) {
                 <div class="pos ${posCls}">${displayPos}</div>
                 <div class="brand-cell">${brandHtml}</div>
                 <div><span class="num">#${r.car_number || '—'}</span></div>
-                <div class="driver">${team_esc(abbrevName(name))}${pit}${outFlag}${team}</div>
+                <div class="driver">${paBar}${team_esc(abbrevName(name))}${pit}${outFlag}${team}</div>
                 <div class="${intervalCls}">${interval}</div>
                 ${deltaHtml}
             </div>`;
@@ -1242,6 +1346,11 @@ def standings():
     return jsonify(poller.get())
 
 
+@app.route("/proam")
+def proam_status():
+    return jsonify(proam.status())
+
+
 @app.route("/brand/<slug>")
 def brand_logo(slug: str):
     path = resolve_logo(slug)
@@ -1255,6 +1364,7 @@ def brand_logo(slug: str):
 # Main
 # -----------------------------------------------------------------------------
 def main():
+    proam.start()
     t = threading.Thread(target=poller.run, daemon=True)
     t.start()
     try:

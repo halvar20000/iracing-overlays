@@ -75,6 +75,29 @@ class FlagWatcher:
     # the same tick or two).
     MIN_FINAL_LAP_S = 15.0
 
+    # iRacing's "no time limit" sentinel for SessionTimeRemain is 604800
+    # (7 days). The old guard was `time_rem < 1e6`, which that sentinel
+    # slips straight through — so pure lap races with no clock were being
+    # treated as timed races. Anything at or above a day is the sentinel.
+    # (Compare SessionLapsRemain, whose sentinel is 32767 and is guarded
+    # with `> 9000` elsewhere in the project.)
+    UNLIMITED_TIME_S = 86400.0
+
+    # SessionTimeRemain also reports -1.0 while the clock is not yet valid
+    # — during gridding and the rolling start, and briefly at other
+    # moments. It is NOT "the race is over"; treating it as a small number
+    # is what raised the white flag on lap 1 in three logged races
+    # (2026-07-09 09:59, 2026-07-14 19:57, 2026-08-13 20:01 Oran Park R1),
+    # burning the checkered a lap later with up to 57 minutes still to run
+    # and leaving the overlay dead for the rest of the race.
+
+    # When the checkered would come from a plain S/F crossing, refuse it
+    # while a VALID FINITE clock still shows more than this many laps of
+    # racing left. At a real finish time_rem is <= 0 (or SessionState is
+    # already Checkered), so this never blocks a genuine ending — it only
+    # stops a bad white flag from dragging the finish with it.
+    CHECK_MAX_LAPS_LEFT = 2.0
+
     def __init__(self):
         self.ir = irsdk.IRSDK()
         self.connected = False
@@ -95,6 +118,11 @@ class FlagWatcher:
         # tick that followed — the exact failure mode in yesterday's CAS
         # Community stream.
         self._last_session_num: int | None = None
+
+        # Flags are only shown in QUALIFYING and RACE sessions — never in
+        # practice or warmup (user rule, 2026-10-08). Cached per SessionNum
+        # because parsing SessionInfo at 10 Hz is expensive.
+        self._session_flaggable: bool | None = None
 
         # Internal tracking — lap-based races
         self._total_laps   = None   # race length in laps (None = timed race)
@@ -203,6 +231,17 @@ class FlagWatcher:
                       f"resetting state machine")
                 self._reset_session_state()
             self._last_session_num = cur_session_num
+            self._session_flaggable = None
+
+        if self._session_flaggable is None:
+            self._session_flaggable = self._is_flaggable_session(cur_session_num)
+            if self._session_flaggable is not None:
+                print(f"[flag] Session {cur_session_num}: flags "
+                      f"{'ON' if self._session_flaggable else 'OFF (practice / warmup)'}")
+        if self._session_flaggable is False:
+            with self._lock:
+                self.state = "idle"
+            return
 
         # Auto-return from checkered after duration
         with self._lock:
@@ -277,10 +316,16 @@ class FlagWatcher:
         racing          = sess_state is not None and int(sess_state) >= 4
         state_checkered = sess_state is not None and int(sess_state) >= 5
 
-        # Is there a finite race clock? ("unlimited" shows up as a huge
-        # sentinel value, typically 604800.)
-        timed_clock = time_rem is not None and 0 <= time_rem < 1e6
-        if timed_clock:
+        # Is `time_rem` a VALID, FINITE clock reading right now?
+        #   * None            -> not reported
+        #   * -1.0            -> clock not yet valid (gridding / rolling start)
+        #   * >= 604800 (7 d) -> iRacing's "unlimited" sentinel
+        # Only a reading that passes all three is allowed to influence any
+        # decision below. `_timed_seen` latches on the first valid reading
+        # and means "this session has a real race clock".
+        time_rem_valid = (time_rem is not None
+                          and 0.0 <= time_rem < self.UNLIMITED_TIME_S)
+        if time_rem_valid:
             self._timed_seen = True
 
         avg_lap = (sum(self._lap_times) / len(self._lap_times)
@@ -289,7 +334,13 @@ class FlagWatcher:
         # Leader lap-time estimate for the timed-race white-flag rule.
         # MEDIAN of the rolling window — robust against one pit-stop or
         # incident lap inflating the estimate and firing white too early.
-        # Fallbacks: iRacing's EstLapTime, then a 120 s default.
+        # Fallback: iRacing's EstLapTime. Last resort: a 120 s default —
+        # which is a GUESS and is therefore NOT allowed to raise the white
+        # flag (see `lap_estimate_real` below). On a 50-90 s circuit that
+        # invented 120 s is longer than a real lap, so the very first
+        # crossing of a short race satisfied `time_rem <= lap_estimate`
+        # and the white flew on lap 1. Every false fire in the debug log
+        # carried estimate_src="default_120s".
         if self._lap_times:
             srt = sorted(self._lap_times)
             median = srt[len(srt) // 2]
@@ -307,6 +358,13 @@ class FlagWatcher:
             else:
                 lap_estimate = 120.0
                 estimate_src = "default_120s"
+
+        # True when `lap_estimate` is a MEASURED or sim-supplied lap length
+        # rather than the invented 120 s. Only a real estimate may raise
+        # the white flag; the timer-expiry safety net (trigger 4) still
+        # catches the end of any race where we never got one, so nothing
+        # is ever missed — at worst the white comes one crossing later.
+        lap_estimate_real = estimate_src != "default_120s"
 
         # ── LATE-JOIN DETECTION (first ~5 s of watching this session ONLY) ──
         # If we start observing a session that is ALREADY in its checkered
@@ -333,6 +391,7 @@ class FlagWatcher:
                       total_laps=self._total_laps,
                       time_rem=(round(time_rem, 1) if time_rem is not None else None),
                       laps_rem=self.ir["SessionLapsRemain"],
+                      time_rem_valid=time_rem_valid,
                       timed_seen=self._timed_seen,
                       avg_lap=(round(avg_lap, 1) if avg_lap else None),
                       lap_est=round(lap_estimate, 1), estimate_src=estimate_src,
@@ -375,8 +434,20 @@ class FlagWatcher:
             #     real finish. The Miami 40-min race exposed it. The
             #     `time_rem <= lap_estimate` form also covers a missed
             #     earlier crossing (negative time_rem still matches).
+            #     GUARDS ADDED 2026-08-18 after three logged false fires
+            #     (see UNLIMITED_TIME_S / lap_estimate_real above):
+            #       * `time_rem_valid` — the -1.0 "clock not started yet"
+            #         reading used to satisfy `time_rem <= lap_estimate`
+            #         and raise the white on the leader's FIRST crossing;
+            #       * `lap_estimate_real` — never fire off the invented
+            #         120 s default.
+            #     A NEGATIVE time_rem no longer matches. That was
+            #     deliberate once (to cover a crossing missed after
+            #     expiry) but trigger (4) covers that case properly, and
+            #     the sentinel made it far more harmful than useful.
             elif (self._timed_seen and crossed_sf
-                    and time_rem is not None and time_rem <= lap_estimate):
+                    and time_rem_valid and lap_estimate_real
+                    and time_rem <= lap_estimate):
                 white_via = (f"timed_last_crossing time_rem={time_rem:.1f}s "
                              f"< {lap_estimate:.1f}s ({estimate_src})")
 
@@ -393,6 +464,21 @@ class FlagWatcher:
             elif (self._timed_seen and state_checkered
                     and self._ticks_in_session >= 50):
                 white_via = f"timer_expiry sess_state={sess_state}"
+
+            # Nothing fired, but this crossing LOOKED like a white-flag
+            # candidate to the old (unguarded) rule — record WHY it was
+            # rejected, so the next odd race can be diagnosed straight
+            # from the log instead of by inference. Deliberately outside
+            # the elif chain above: it must never pre-empt a real trigger.
+            if (white_via is None and crossed_sf and self._timed_seen
+                    and time_rem is not None and time_rem <= lap_estimate):
+                self._dbg("white_blocked",
+                          reason=("invalid time_rem" if not time_rem_valid
+                                  else "guessed lap estimate"),
+                          leader=leader_num, cur_lap=cur_lap,
+                          t=round(sess_t, 1), time_rem=time_rem,
+                          lap_est=round(lap_estimate, 1),
+                          estimate_src=estimate_src)
 
             if white_via:
                 with self._lock:
@@ -417,7 +503,17 @@ class FlagWatcher:
             if session_flags & self.FLAG_BIT_CHECKERED:
                 check_via = "SessionFlags checkered bit"
 
-            # (2) Leader crosses S/F again after the white flag — that IS
+            # (2) Lap counter ticked past the final lap (lap races). This
+            #     is DEFINITIVE for a lap-limited race, so it is tested
+            #     before the generic crossing rule below — whose new
+            #     end-of-race guard would otherwise (correctly, on its own
+            #     terms) refuse a short lap race that still has plenty of
+            #     clock left, e.g. a 3-lap heat inside a 10-minute slot.
+            elif (self._total_laps is not None
+                    and cur_lap > self._total_laps):
+                check_via = f"lap_count {cur_lap}>{self._total_laps}"
+
+            # (3) Leader crosses S/F again after the white flag — that IS
             #     the finish, fire the checkered immediately (user rule:
             #     "checkered as soon as the leader crosses the line").
             #     The old extra requirement `time_rem <= 0.5` was meant to
@@ -427,15 +523,29 @@ class FlagWatcher:
             #     firing on the same crossing that raised the white flag
             #     (bit + crossing arrive within a tick of each other).
             #     _white_fired_at is 0 on late-join, so late joins pass.
+            #     END-OF-RACE SANITY CHECK (added 2026-08-18): refuse this
+            #     when a VALID FINITE clock still shows more than
+            #     CHECK_MAX_LAPS_LEFT laps of racing. At a real finish
+            #     time_rem is <= 0 or SessionState is already Checkered,
+            #     so a genuine ending is never blocked — but the three
+            #     logged false whites, which dragged the checkered with
+            #     them at 1082 s / 3457 s / 1429 s remaining, all are.
+            #     Skipped entirely when the clock is the "unlimited"
+            #     sentinel, so pure lap races are unaffected.
             elif (crossed_sf
                     and (self._white_fired_at == 0.0
                          or white_age > self.MIN_FINAL_LAP_S)):
-                check_via = f"crossed_sf time_rem={time_rem}"
-
-            # (3) Lap counter ticked past the final lap (lap races).
-            elif (self._total_laps is not None
-                    and cur_lap > self._total_laps):
-                check_via = f"lap_count {cur_lap}>{self._total_laps}"
+                too_much_left = (time_rem_valid and not state_checkered
+                                 and time_rem > self.CHECK_MAX_LAPS_LEFT * lap_estimate)
+                if too_much_left:
+                    self._dbg("checkered_blocked",
+                              reason="race still running",
+                              leader=leader_num, cur_lap=cur_lap,
+                              t=round(sess_t, 1), time_rem=time_rem,
+                              lap_est=round(lap_estimate, 1),
+                              sess_state=sess_state)
+                else:
+                    check_via = f"crossed_sf time_rem={time_rem}"
 
             # (4) Safety net: state says checkered AND 1.5 lap-lengths have
             #     passed since the white flag — the leader's final lap is
@@ -470,6 +580,30 @@ class FlagWatcher:
             self.connected = True
             print("[flag] Connected to iRacing")
         return self.connected
+
+    def _is_flaggable_session(self, session_num):
+        """True for qualifying / race, False for practice / warmup / testing,
+        None while SessionInfo doesn't list the session yet (retry next tick).
+
+        Decided by SessionType ("Race", "Open Qualify", "Lone Qualify",
+        "Practice", "Open Practice", "Warmup", "Offline Testing"). A league
+        warmup is typed as practice even when it is NAMED "WARMUP", so the
+        type is the reliable signal; the name is only checked for warmup as
+        a belt-and-braces guard.
+        """
+        try:
+            sessions = (self.ir["SessionInfo"] or {}).get("Sessions") or []
+        except Exception:
+            return None
+        for s in sessions:
+            if s.get("SessionNum") != session_num:
+                continue
+            stype = (s.get("SessionType") or "").lower()
+            sname = (s.get("SessionName") or "").lower()
+            if "warmup" in stype or "warmup" in sname or "warm up" in sname:
+                return False
+            return "race" in stype or "qualif" in stype
+        return None
 
     def _reset_session_state(self):
         """Zero state that is scoped to one iRacing session.

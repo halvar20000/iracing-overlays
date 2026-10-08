@@ -45,7 +45,7 @@ from pathlib import Path
 
 from flask import Flask, jsonify, render_template_string, request
 
-from iracing_sdk_base import SDKPoller, setup_utf8_stdout
+from iracing_sdk_base import SDKPoller, GridBaseline, SESSION_STATE_RACING, setup_utf8_stdout
 setup_utf8_stdout()
 
 try:
@@ -67,7 +67,23 @@ DEFAULT_CONFIG = {
     "league_slug":     "cas-gt3-wct",
     "season_id":       None,           # None → API picks the ACTIVE season
     "refresh_seconds": 60,             # how often to re-fetch championship
+    # Scoring rules the overlay API doesn't publish (yet). Defaults match
+    # CLS: a driver needs 50 % of the leader's distance for position points,
+    # and race 2 of a multi-race round uses the race-1 table unless the
+    # league has its own (CLS ScoringSystem.pointsTableRace2 — PCCD sets it
+    # equal to pointsTable). Override per league in championship_config.json.
+    "race_points_min_distance_pct": 50,
+    "points_table_race2":           None,   # {"1": 41, "2": 35, ...} or None
 }
+
+# Earlier races of the CURRENT round (race 1 while race 2 runs) are kept in
+# this file, so they still count when race 2 is a separate hosted session or
+# the overlay was restarted in between. See RoundMemory.
+ROUND_CACHE_PATH = SCRIPT_DIR / "championship_round_cache.json"
+ROUND_CACHE_MAX_AGE_S = 12 * 3600
+
+# iRacing SessionState: ... Racing=4, Checkered=5, CoolDown=6
+SESSION_STATE_CHECKERED = 5
 
 
 def load_config() -> dict:
@@ -178,6 +194,11 @@ class RacePoller(SDKPoller):
     tag = "championship"
     poll_interval = 1.0
 
+    def __init__(self):
+        super().__init__()
+        # Starting grid, for the order BEFORE the green (see _read_snapshot).
+        self._grid = GridBaseline()
+
     def _driver_map(self) -> dict[int, dict]:
         info = self.ir["DriverInfo"] or {}
         out: dict[int, dict] = {}
@@ -206,13 +227,37 @@ class RacePoller(SDKPoller):
             }
         return out
 
+    @staticmethod
+    def _parse_results(sess: dict, drivers: dict) -> list[dict]:
+        """A session's ResultsPositions as [{cust_id, pos, laps, out}] in
+        finishing order. `pos` is iRacing's 1-based overall Position."""
+        out = []
+        for r in sess.get("ResultsPositions") or []:
+            try:
+                cidx = int(r.get("CarIdx"))
+                pos = int(r.get("Position") or 0)
+            except (TypeError, ValueError):
+                continue
+            d = drivers.get(cidx)
+            if not d or not d.get("cust_id") or pos <= 0:
+                continue
+            try:
+                laps = int(r.get("LapsComplete") or 0)
+            except (TypeError, ValueError):
+                laps = 0
+            out.append({"cust_id": d["cust_id"], "pos": pos, "laps": max(laps, 0),
+                        "out": int(r.get("ReasonOutId") or 0)})
+        out.sort(key=lambda x: x["pos"])
+        return out
+
     def _read_snapshot(self) -> dict:
         ir = self.ir
-        info = ir["DriverInfo"] or {}
         weekend = ir["WeekendInfo"] or {}
         session_info = ir["SessionInfo"] or {}
         sessions = (session_info.get("Sessions") or []) if session_info else []
         sess_num = ir["SessionNum"] if ir["SessionNum"] is not None else 0
+        sess_uid = ir["SessionUniqueID"] or 0
+        sess_state = int(ir["SessionState"] or 0)
 
         current = None
         for s in sessions:
@@ -221,10 +266,12 @@ class RacePoller(SDKPoller):
                 break
         sess_type = (current or {}).get("SessionType", "") or ""
         sess_name = (current or {}).get("SessionName", "") or ""
+        is_race = "race" in sess_type.lower()
 
         drivers   = self._driver_map()
         positions = ir["CarIdxPosition"] or []
         laps      = ir["CarIdxLap"] or []
+        laps_done = ir["CarIdxLapCompleted"] or []
         lap_pcts  = ir["CarIdxLapDistPct"] or []
         on_pit    = ir["CarIdxOnPitRoad"] or []
         f2        = ir["CarIdxF2Time"] or []  # gap to class leader, seconds
@@ -234,6 +281,7 @@ class RacePoller(SDKPoller):
         for cidx, d in drivers.items():
             pos = positions[cidx] if cidx < len(positions) else 0
             lap = laps[cidx] if cidx < len(laps) else 0
+            done = laps_done[cidx] if cidx < len(laps_done) else 0
             pct = lap_pcts[cidx] if cidx < len(lap_pcts) else 0.0
             in_pit = bool(on_pit[cidx]) if cidx < len(on_pit) else False
             gap = float(f2[cidx]) if cidx < len(f2) else 0.0
@@ -243,6 +291,7 @@ class RacePoller(SDKPoller):
                 **d,
                 "iracing_pos": int(pos or 0),
                 "lap":         int(lap or 0),
+                "laps_done":   max(int(done or 0), 0),
                 "lap_pct":     float(pct or 0.0),
                 "progress":    float((lap or 0) + (pct or 0.0)),
                 "in_pit":      in_pit,
@@ -253,14 +302,68 @@ class RacePoller(SDKPoller):
         # Live ordering — iRacing's CarIdxPosition only updates at the S/F
         # line, so use track progress for in-world cars. Out-of-world cars
         # (DNF / in garage) drop to the bottom.
+        #
+        # Before the green lap counters are frozen and the timing line can
+        # cut through the grid (Zandvoort: front of the grid at 0.00-0.01,
+        # back at 0.98-0.999), so lap+pct puts the back of the grid in the
+        # lead. Until SessionState reaches Racing, use the starting grid.
+        pre_green = is_race and 0 < sess_state < SESSION_STATE_RACING
+        if is_race:
+            self._grid.update(ir)
+        grid = self._grid.grid_pos
         in_field = [r for r in rows if r["in_world"]]
         out_field = [r for r in rows if not r["in_world"]]
-        in_field.sort(key=lambda r: -r["progress"])
+        if pre_green:
+            in_field.sort(key=lambda r: (grid.get(r["car_idx"], 9999),
+                                         r["iracing_pos"] or 9999, -r["progress"]))
+        else:
+            in_field.sort(key=lambda r: -r["progress"])
         out_field.sort(key=lambda r: r["iracing_pos"] or 999)
         ordered = in_field + out_field
 
+        # Once the checkered is out, live track progress is meaningless —
+        # finished cars drive into the pits / garage while the rest are
+        # still on their last lap. From then on the order is iRacing's own
+        # classification (ResultsPositions), which settles as each car
+        # takes the flag. This is the provisional race result.
+        cur_results = self._parse_results(current, drivers) if (current and is_race) else []
+        finished = is_race and sess_state >= SESSION_STATE_CHECKERED and bool(cur_results)
+        if finished:
+            res_pos = {r["cust_id"]: r for r in cur_results}
+            classified = sorted((r for r in ordered if r["cust_id"] in res_pos),
+                                key=lambda r: res_pos[r["cust_id"]]["pos"])
+            rest = [r for r in ordered if r["cust_id"] not in res_pos]
+            for r in classified:
+                r["laps_done"] = res_pos[r["cust_id"]]["laps"]
+            ordered = classified + rest
+
         for i, r in enumerate(ordered, start=1):
             r["race_pos"] = i
+
+        # Every race of this hosted session that is already over (earlier
+        # SessionNum), plus the current one once it is finished. RoundMemory
+        # stores them so race 1 still counts while race 2 is running.
+        done_races = []
+        for s in sessions:
+            if "race" not in (s.get("SessionType") or "").lower():
+                continue
+            num = s.get("SessionNum")
+            if num == sess_num:
+                if not finished:
+                    continue
+                res = [{"cust_id": r["cust_id"], "pos": r["race_pos"],
+                        "laps": r["laps_done"], "out": 0}
+                       for r in ordered if r["cust_id"]]
+            elif num is not None and num < sess_num:
+                res = self._parse_results(s, drivers)
+            else:
+                continue
+            if res:
+                done_races.append({
+                    "key":     f"{sess_uid}:{num}",
+                    "name":    s.get("SessionName") or f"Race (session {num})",
+                    "results": res,
+                })
 
         return {
             "connected":      True,
@@ -269,9 +372,88 @@ class RacePoller(SDKPoller):
             "session_type":   sess_type,
             "session_name":   sess_name,
             "session_num":    sess_num,
+            "session_key":    f"{sess_uid}:{sess_num}",
+            "session_state":  sess_state,
+            "is_race":        is_race,
+            "race_finished":  finished,
             "drivers_count":  len(ordered),
             "rows":           ordered,
+            "done_races":     done_races,
         }
+
+
+class RoundMemory:
+    """Races of the CURRENT round that are over but not yet in CLS.
+
+    CLS only publishes a round once it is COMPLETED, i.e. after both races.
+    So during race 2 (and between the races) the championship must be the
+    CLS total PLUS race 1, which only the overlay knows. Every finished race
+    the poller reports is stored here — and in ROUND_CACHE_PATH, so it
+    survives an overlay restart and a race 2 run as a separate hosted
+    session (where race 1 is no longer in SessionInfo).
+
+    An entry only counts while it can't be in CLS yet: same season, same
+    CLS completedRounds as when it was recorded, and younger than
+    ROUND_CACHE_MAX_AGE_S. The moment CLS publishes the round,
+    completedRounds goes up and the entries drop out by themselves.
+    """
+
+    def __init__(self, path: Path = ROUND_CACHE_PATH):
+        self._path = path
+        self._lock = threading.Lock()
+        self._entries: dict[str, dict] = {}
+        try:
+            if path.exists():
+                self._entries = json.loads(path.read_text(encoding="utf-8")) or {}
+        except Exception as e:
+            print(f"[championship] Could not read {path.name}: {e}")
+
+    def update(self, race_state: dict | None, champ: dict | None) -> None:
+        if not race_state or not champ:
+            return
+        season = champ.get("season") or {}
+        changed = False
+        with self._lock:
+            for race in race_state.get("done_races") or []:
+                old = self._entries.get(race["key"])
+                if old and old["results"] == race["results"]:
+                    continue
+                self._entries[race["key"]] = {
+                    "season_id":        season.get("id"),
+                    "completed_rounds": season.get("completedRounds"),
+                    "track":            race_state.get("track_name"),
+                    "name":             race["name"],
+                    "saved_at":         old["saved_at"] if old else time.time(),
+                    "results":          race["results"],
+                }
+                changed = True
+            # Housekeeping: forget anything that can no longer count.
+            now = time.time()
+            for k in [k for k, e in self._entries.items()
+                      if now - e.get("saved_at", 0) > ROUND_CACHE_MAX_AGE_S]:
+                del self._entries[k]
+                changed = True
+            snapshot = dict(self._entries)
+        if changed:
+            try:
+                self._path.write_text(json.dumps(snapshot, indent=1), encoding="utf-8")
+            except Exception as e:
+                print(f"[championship] Could not write {self._path.name}: {e}")
+
+    def earlier_races(self, champ: dict | None, current_key: str | None) -> list[dict]:
+        """Finished races of this round other than the one running now,
+        oldest first."""
+        if not champ:
+            return []
+        season = champ.get("season") or {}
+        now = time.time()
+        with self._lock:
+            out = [e for k, e in self._entries.items()
+                   if k != current_key
+                   and e.get("season_id") == season.get("id")
+                   and e.get("completed_rounds") == season.get("completedRounds")
+                   and now - e.get("saved_at", 0) <= ROUND_CACHE_MAX_AGE_S]
+        return sorted(out, key=lambda e: e["saved_at"])
 
 
 # -----------------------------------------------------------------------------
@@ -289,9 +471,54 @@ def _points_for_position(points_table: dict, pos: int) -> int:
         return 0
 
 
-def build_projection(race_state: dict, champ_payload: dict | None) -> dict:
+def _distance_ok(laps: int, leader_laps: int, min_pct: float) -> bool:
+    """CLS rule: position points need `min_pct` % of the leader's laps
+    (floored, like the CLS importer). Before the leader has completed a lap
+    everyone is still eligible."""
+    if leader_laps <= 0:
+        return True
+    return int(laps * 100 // leader_laps) >= min_pct
+
+
+def _score_race(order: list[dict], by_custid: dict, pro_am: bool,
+                table: dict, class_table: dict, min_pct: float) -> dict:
+    """Points for one race. `order` = [{cust_id, pos, laps, out}] in
+    finishing order. Returns {cust_id: {"pos", "pts", "class_pts"}}."""
+    leader_laps = max((o.get("laps") or 0 for o in order), default=0)
+    seen = {"PRO": 0, "AM": 0}
+    out: dict[int, dict] = {}
+    for o in order:
+        cid = o.get("cust_id")
+        if not cid:
+            continue
+        ok = _distance_ok(o.get("laps") or 0, leader_laps, min_pct)
+        pts = _points_for_position(table, o["pos"]) if ok else 0
+        class_pts = pts
+        if pro_am:
+            ch = by_custid.get(cid)
+            cls = (ch or {}).get("proAmClass")
+            class_pts = 0
+            if cls in seen:
+                seen[cls] += 1
+                class_pts = _points_for_position(class_table, seen[cls]) if ok else 0
+        out[cid] = {"pos": o["pos"], "pts": pts, "class_pts": class_pts}
+    return out
+
+
+def build_projection(race_state: dict, champ_payload: dict | None,
+                     earlier_races: list[dict] | None = None,
+                     cfg: dict | None = None) -> dict:
     """Combine the live race snapshot and the cached championship payload
     into a single overlay state. This is the heart of the overlay.
+
+    Projected total = CLS points (completed rounds only)
+                    + every EARLIER race of this round (race 1 while race 2
+                      runs — RoundMemory; CLS doesn't have those yet)
+                    + the CURRENT race, if a race session is running
+                      (live order, or iRacing's classification once the
+                      checkered is out).
+    Practice / qualifying / warmup add nothing live, so between the races
+    the overlay shows the provisional standings after race 1.
 
     Returns:
       {
@@ -310,8 +537,11 @@ def build_projection(race_state: dict, champ_payload: dict | None) -> dict:
                      None when the driver isn't in the championship)
       - proj_points (pre-race points + projected race points)
     """
+    cfg = cfg or {}
+    earlier_races = earlier_races or []
     rows = race_state.get("rows") or [] if race_state else []
     race_connected = bool(race_state and race_state.get("connected"))
+    live_race = race_connected and bool(race_state.get("is_race"))
 
     if not champ_payload:
         return {
@@ -326,6 +556,9 @@ def build_projection(race_state: dict, champ_payload: dict | None) -> dict:
     standings = champ_payload.get("standings") or []
     points_table = (scoring.get("pointsTable") or {})
     class_points_table = (scoring.get("classPointsTable") or points_table)
+    table_r2 = cfg.get("points_table_race2") or points_table
+    min_pct = float(cfg.get("race_points_min_distance_pct") or 0)
+    pro_am = bool(season.get("proAmEnabled"))
 
     # Index championship rows by iRacing customer ID for O(1) lookup.
     by_custid: dict[int, dict] = {}
@@ -338,31 +571,22 @@ def build_projection(race_state: dict, champ_payload: dict | None) -> dict:
         except (TypeError, ValueError):
             continue
 
-    # ---- Project post-race points for everyone in the championship ----
-    # 1) Start from each championship row's current points
-    # 2) If the driver is in the live race AND we have an overall race
-    #    position for them, add the overall position points
-    # 3) For Pro/Am seasons, also add class-position points (their
-    #    position within their Pro/Am class) to the class projection
-    pro_am = bool(season.get("proAmEnabled"))
+    # ---- Earlier races of this round (race 1 during race 2) ----
+    earlier_scores = []
+    for i, e in enumerate(earlier_races):
+        table = points_table if i == 0 else table_r2
+        earlier_scores.append(_score_race(e["results"], by_custid, pro_am,
+                                          table, class_points_table, min_pct))
 
-    # Build per-class live position maps for Pro/Am projection.
-    class_pos: dict[str, dict[int, int]] = {"PRO": {}, "AM": {}}
-    if pro_am and race_connected:
-        # Walk live rows in race order. For each row whose championship
-        # row has a proAmClass, assign sequential positions within that
-        # class (1, 2, 3, ...). Only counts drivers in the championship
-        # so non-registered drivers don't shift class points.
-        seen_per_class = {"PRO": 0, "AM": 0}
-        for r in rows:
-            ch = by_custid.get(r.get("cust_id") or 0)
-            if not ch:
-                continue
-            cls = ch.get("proAmClass")
-            if cls not in ("PRO", "AM"):
-                continue
-            seen_per_class[cls] += 1
-            class_pos[cls][r["cust_id"]] = seen_per_class[cls]
+    # ---- The race running now ----
+    live_scores: dict[int, dict] = {}
+    if live_race:
+        table = points_table if not earlier_races else table_r2
+        order = [{"cust_id": r.get("cust_id"), "pos": r["race_pos"],
+                  "laps": r.get("laps_done") or 0, "out": 0} for r in rows]
+        live_scores = _score_race(order, by_custid, pro_am, table,
+                                  class_points_table, min_pct)
+    live_by_cust = {r.get("cust_id"): r for r in rows if r.get("cust_id")}
 
     # Build the projected championship rows.
     champ_rows: list[dict] = []
@@ -373,32 +597,17 @@ def build_projection(race_state: dict, champ_payload: dict | None) -> dict:
         except (TypeError, ValueError):
             mid_int = None
 
-        live = None
-        race_pts = 0
-        class_race_pts = 0
-        if mid_int is not None and race_connected:
-            for r in rows:
-                if r.get("cust_id") == mid_int:
-                    live = r
-                    break
-            if live and live.get("in_world"):
-                race_pts = _points_for_position(points_table, live["race_pos"])
-                if pro_am:
-                    cls = s.get("proAmClass")
-                    cls_pos = class_pos.get(cls or "", {}).get(mid_int, 0)
-                    class_race_pts = _points_for_position(
-                        class_points_table, cls_pos
-                    )
-                else:
-                    class_race_pts = race_pts  # mirror overall
+        key = "class_pts" if pro_am else "pts"
+        earlier = [sc.get(mid_int) for sc in earlier_scores]
+        earlier_pts = sum((e or {}).get(key, 0) for e in earlier)
+        live = live_by_cust.get(mid_int) if (mid_int and race_connected) else None
+        cur = live_scores.get(mid_int) if mid_int else None
+        race_pts = (cur or {}).get("pts", 0)
+        class_race_pts = (cur or {}).get("class_pts", 0)
 
         # `points` from the API is `classTotal` — the primary sort key.
-        # For Pro/Am we add class projection; otherwise overall projection.
         base_points = int(s.get("points") or 0)
-        if pro_am:
-            proj_total = base_points + class_race_pts
-        else:
-            proj_total = base_points + race_pts
+        proj_total = base_points + earlier_pts + (cur or {}).get(key, 0)
 
         champ_rows.append({
             "rank":            int(s.get("rank") or 0),
@@ -412,11 +621,14 @@ def build_projection(race_state: dict, champ_payload: dict | None) -> dict:
             "pro_am":          s.get("proAmClass"),
             "iracing_member":  mid_int,
             "pre_points":      base_points,
+            "earlier":         [{"pos": e["pos"], "pts": e[key]} if e else None
+                                for e in earlier],
+            "earlier_pts":     earlier_pts,
             "race_pts":        race_pts,
             "class_race_pts":  class_race_pts,
             "proj_points":     proj_total,
-            "in_race":         bool(live),
-            "race_pos":        live["race_pos"] if live else None,
+            "in_race":         bool(live) and live_race,
+            "race_pos":        live["race_pos"] if (live and live_race) else None,
             "in_pit":          bool(live and live.get("in_pit")),
             "in_world":        bool(live and live.get("in_world")),
         })
@@ -477,6 +689,9 @@ def build_projection(race_state: dict, champ_payload: dict | None) -> dict:
         "track":          race_state.get("track_name") if race_state else "",
         "session_type":   race_state.get("session_type") if race_state else "",
         "session_name":   race_state.get("session_name") if race_state else "",
+        "live_race":      live_race,
+        "race_finished":  bool(race_state and race_state.get("race_finished")),
+        "earlier_races":  [e.get("name") for e in earlier_races],
         "race_rows":      sorted(race_rows, key=lambda x: x["race_pos"] or 999),
         "champ_rows":     sorted(champ_rows, key=lambda x: x["proj_rank"]),
     }
@@ -488,6 +703,7 @@ def build_projection(race_state: dict, champ_payload: dict | None) -> dict:
 config = load_config()
 poller = RacePoller()
 fetcher = ChampionshipFetcher(config)
+round_memory = RoundMemory()
 
 # UI state shared between the overlay page and the control endpoints
 ui_state = {
@@ -503,7 +719,10 @@ def api_state():
     """JSON state polled by the overlay page (~1 Hz)."""
     race = poller.get()
     fetch = fetcher.get()
-    payload = build_projection(race, fetch.get("data"))
+    champ = fetch.get("data")
+    round_memory.update(race, champ)
+    earlier = round_memory.earlier_races(champ, (race or {}).get("session_key"))
+    payload = build_projection(race, champ, earlier, fetch.get("config"))
     payload["fetch_error"]   = fetch.get("error")
     payload["fetch_age"]     = (time.time() - fetch["last_fetch_at"]) \
                                 if fetch.get("last_fetch_at") else None
@@ -957,9 +1176,18 @@ function renderChampView(d) {
   </tr></thead>`;
   const body = rows.map(r => {
     const team = r.team_name ? `<span class="team">${esc(r.team_name)}</span>` : '';
-    const liveBit = r.in_race && r.race_pos
-      ? `<small>Race P${r.race_pos} → +${r.race_pts}</small>`
-      : (r.in_race ? '<small>in race</small>' : '<small>—</small>');
+    // Earlier races of this round (race 1 while race 2 runs) + the live one.
+    const nPrev = (d.earlier_races || []).length;
+    const bits = [];
+    (r.earlier || []).forEach((e, i) => {
+      if (e) bits.push(`R${i + 1} P${e.pos} +${e.pts}`);
+    });
+    if (r.in_race && r.race_pos) {
+      const pts = d.season?.proAmEnabled ? r.class_race_pts : r.race_pts;
+      const lbl = nPrev ? `R${nPrev + 1} ` : 'Race ';
+      bits.push(`${lbl}P${r.race_pos} → +${pts}`);
+    }
+    const liveBit = `<small>${bits.length ? esc(bits.join(' · ')) : '—'}</small>`;
     return `<tr class="${r.in_race && !r.in_world ? 'dnf' : ''}">
       <td class="pos">${r.proj_rank}</td>
       <td>${fmtDelta(r.delta)}</td>
@@ -991,7 +1219,10 @@ async function tick() {
         : 'View B — Championship projection';
 
     document.getElementById('title').textContent =
-      ui.view === 'A' ? (d.session_type || 'Race') : 'Championship';
+      ui.view === 'A' ? (d.session_type || 'Race')
+      : (d.live_race && !d.race_finished ? 'Championship · live'
+         : ((d.race_finished || (d.earlier_races || []).length) ? 'Championship · provisional'
+            : 'Championship'));
 
     document.getElementById('sub').textContent =
       (d.season?.name || '—') +

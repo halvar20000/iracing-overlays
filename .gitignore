@@ -43,3 +43,6 @@ Thumbs.db
 
 # rsync in-flight temp files (network share sync leftovers)
 .*.??????
+proam_cache.json
+proam_config.json
+championship_round_cache.json

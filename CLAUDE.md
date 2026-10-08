@@ -147,6 +147,181 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 8, 2026 (championship overlay — two-race rounds, PCCD Algarve):**
+User wants the provisional championship after race 1 and again during /
+after race 2. CLS only publishes a round once COMPLETED (both races), so
+race 1 must come from the overlay itself. Changes in
+`iracing_championship.py`:
+  • Live race points ONLY in race sessions (before: added in practice /
+    quali / warmup too, by track order).
+  • After the checkered (SessionState >= 5) the order comes from
+    ResultsPositions — finished cars driving to the garage no longer drop
+    to the bottom with 0 points.
+  • NEW `RoundMemory` + `championship_round_cache.json` (gitignored):
+    finished races of the current round (past race sessions from
+    SessionInfo, plus the current race once finished), keyed
+    `SessionUniqueID:SessionNum`. Projection = CLS points + earlier races
+    + live race. Works when race 2 is a SEPARATE hosted session and across
+    overlay restarts. Entries only count while season id AND CLS
+    completedRounds match what they were recorded with (and < 12 h old) —
+    when CLS publishes the round they retire themselves, no double count.
+  • CLS rules the API doesn't publish, as config keys:
+    `race_points_min_distance_pct` (50, CLS default — below 50 % of the
+    leader's laps = 0 points) and `points_table_race2` (None → race-1
+    table; PCCD's pointsTableRace2 == pointsTable per
+    league-manager/scripts/fix-pccd-r2.ts). PCCD 5th season: no bonuses,
+    participation 0, drop-worst-1 can't bite before round 8.
+  • View B sub-line now "R1 P3 +30 · R2 P5 → +23"; title shows
+    "Championship · live / provisional".
+  • GOTCHA: without `season_id` the API now resolves cas-pccd to the 6th
+    season (0 rounds). `championship_config.json` pinned to the 5th season
+    (cmoefqawn0001l104qb7429mq) — repoint it when season 6 starts.
+  • test_championship_rounds.py 12/12; smoke-tested the Flask app against
+    the live CLS payload; overlay JS node-checked.
+
+**October 8, 2026 (flags only in quali/race; quali times survive a driver
+leaving; +/- investigation):**
+  • `flag_overlay.py`: new `_is_flaggable_session()` — flags only in
+    QUALIFYING and RACE sessions, never practice / warmup / testing
+    (decided by SessionType; a league "WARMUP" is typed Open Practice, the
+    name is checked too). Cached per SessionNum, re-evaluated on session
+    change. test_flag_overlay.py 37/37 (9 new checks).
+  • `iracing_standings.py`: qualifying memory (`_quali_mem`, keyed by
+    customer ID, name fallback) of every driver's best OFFICIAL
+    ResultsPositions time. A driver who quits keeps his row and time
+    (tagged "left") until (SessionUniqueID, SessionNum) changes; a rejoin
+    on a new CarIdx doesn't duplicate him and only a quicker lap replaces
+    the remembered one. Telemetry-only times are never memorised (they can
+    still be invalidated). Qualifying only — practice unchanged.
+    test_quali_memory.py 12/12.
+  • +/- ("still wrong"): GridBaseline verified CORRECT against the official
+    iRacing results JSONs (Zandvoort 07.10., Silverstone 22.09.) — logged
+    grid_pos == official starting grid for every car, and the logger's
+    +/- matches the official finish. The tower's CURRENT position is its
+    own live-progress sort (not CarIdxPosition like the logger); replaying
+    Road Atlanta 29.09. through it found no clear defect (iRacing's own
+    CarIdxPosition was itself odd at times — #26 P11 with a 10.9 s gap).
+    Awaiting a concrete example from the user before changing anything.
+  • ROOT CAUSE FOUND (user screenshot, Zandvoort replay at race 00:45):
+    BEFORE THE GREEN iRacing freezes every car's lap counter (-1 from
+    gridding through the pace lap, all set together at the green), and the
+    timing line runs THROUGH the grid — front ten at pct 0.00-0.01, back
+    twelve at 0.98-0.999. Live lap+pct sort put the back of the grid in the
+    lead → every +/- ±10..12 and "+2 LAPS". Fix: while 0 < SessionState <
+    Racing the tower orders by GridBaseline slot (then CarIdxPosition) and
+    blanks interval / lap-down; GridBaseline.update() moved before the sort.
+    Same guard added to `iracing_championship.py` (its live projection
+    would have scored the pace-lap order). test_standings_delta.py +11
+    pre-green checks, test_championship_rounds.py 13/13. Verified the old
+    path reproduces the bug (back of grid leading).
+
+**October 8, 2026 (standings + driver card — WCT GT3 Pro/Am bars):**
+User request: in WCT GT3 only, a small RED bar in front of PRO drivers'
+names and a GREEN bar for AM, on the standings tower AND the driver card.
+  • NEW shared module `cls_proam.py` (`ProAmRoster`): background thread
+    pulls `/api/overlay/standings?league=cas-gt3-wct` from the CLS
+    league-manager every 5 min (urllib — no new dependency), maps
+    `iracingMemberId` → `proAmClass`, joined to `DriverInfo.UserID`. No
+    `season` param → API returns the current season (14th: 16 PRO / 20 AM).
+    Last good body cached in `proam_cache.json` (gitignored) for offline
+    starts.
+  • "Only WCT": mode `auto` (default) shows bars only when ≥50 % of the
+    session's drivers AND ≥3 are on the WCT roster, so a WCT driver in a
+    PCCD/IEC race gets no bar. Override via optional `proam_config.json`
+    (`"mode": "on"|"off"`, also `league_slug` / `season_id`).
+  • Standings: `user_id` in `_driver_map`, `proam` per row +
+    `proam_active`; `.pa` bar inside `.driver` before the name. Driver card:
+    `.pa` bar between number chip and name. Both expose `/proam` (roster
+    status) for debugging. No new port → launchers untouched.
+  • `test_proam.py` 11/11 (incl. `--live` fetch); test_drivercard 19/19,
+    test_standings_delta pass; both pages' JS node-checked. Overlays must
+    be restarted to pick it up.
+
+**September 10, 2026 (trackmap — unclosed lap loops, Donington pit
+straight missing):** User reported Donington drew no start/finish
+straight — only the pit lane ran along that side of the map. Cause: the
+bundled SIMRacingApps GPX routes are OPEN polylines, and several of them
+stop well short of the S/F line. `iracing_trackmap.py` drew `ontrack` as
+a plain `<polyline>`, so that last stretch was simply never drawn — at
+Donington a **253 m** hole exactly where the pit straight is, leaving the
+orange pit lane alone in the picture.
+  • Second, quieter bug from the same gap: `arc_norm` normalised over the
+    OPEN length, so a lap's worth of `CarIdxLapDistPct` was squeezed into
+    3740 m of a 3993 m lap — every car dot drifted by up to the gap size
+    (~6 % of a lap at Donington) and jumped at the S/F line.
+  • Fix in `_load_track()`: after projection, if the route's open end is
+    within `LOOP_CLOSE_MAX_FRAC` (0.20) of its own run length, append the
+    first point to close it — before the bbox, the SVG scaling AND the
+    arc-length table, so drawing and dot placement are both fixed. The
+    front-end reads its points back out of `polyline.road`, so it inherits
+    the closure with no JS change.
+  • Survey of all 331 bundled JSONs: 87 had a real gap >20 m — worst
+    Road America 603 m, The Bend 412 m, Montreal 366 m, Sebring 361 m,
+    plus most ovals (Martinsville 98 m, Milwaukee 184 m, Homestead 265 m,
+    Bristol 84 m) and Interlagos / Zolder / Motegi / Mid-Ohio / Coronado /
+    Portland / Mexico City / Road Atlanta / Oulton / Barber / Adelaide /
+    Laguna. All now close along the S/F straight (verified by rendering
+    ten of them — the closing chord lands parallel to the pit lane every
+    time, which is what a pit straight looks like).
+  • The threshold is what keeps POINT-TO-POINT routes open: the two Mt
+    Washington hillclimbs sit at 53 % and are correctly left unclosed.
+    294 files gain a closing segment, 37 were already closed, 2 stay open.
+  • Not a data fix — no track JSON was touched, so future bundled tracks
+    with the same upstream quirk are covered automatically.
+  • REMINDER (June 4 lesson): the running trackmap process keeps the old
+    code in memory — restart the overlay to see it.
+
+**September 5, 2026 (race logger — OFFICIAL incident points, `inc` /
+`inc_snapshot`):** The IEC Sebring race control PC crashed mid-race; on
+restart every driver's incident count was DOUBLED, which triggered
+drive-throughs that were not owed (and hid some that were). Reconstructing
+that needs a per-car incident TIMELINE — and the log did not have one.
+  • The existing `incident` events are the DASHBOARD's spin/contact
+    DETECTION, pulled from `http://127.0.0.1:5000/incidents`. If the
+    dashboard isn't running (the usual case for a driver-side logger, and
+    for a replay re-log) the log contains **zero** incident data. Verified
+    on the 05.09. Sebring log: 3876 events, not one incident.
+  • NEW `_maybe_emit_incident_points()` reads
+    `SessionInfo.Sessions[].ResultsPositions[].Incidents` — the ONLY per-car
+    incident source in the SDK (telemetry has counts for the local car only:
+    `PlayerCarMyIncidentCount` & co., no CarIdx array). In a team event that
+    value is the CAR's count, which is what a DT threshold is judged on.
+  • Emits `inc` on every change (`delta`, `total`, `lap`, `car_idx`,
+    `car_number`, `driver`, `team`, `t_session`, `t_wall`) and
+    `inc_snapshot` once a minute with every car's total, so the timeline
+    survives a mid-race attach or a logger restart. First sighting of a car
+    NEVER emits — otherwise attaching mid-race reports everyone's running
+    total as one huge incident; the snapshot records that baseline instead.
+    A backwards jump (session reset) is adopted silently.
+  • Throttled to `INC_POLL_INTERVAL` (2 s): every read parses the whole
+    SessionInfo YAML. `_detect_session_change` already does one such parse
+    per 0.5 s tick, so this roughly holds the existing cost.
+  • Verified offline: `test_inc_points.py` 29/29 (baseline silence, delta +
+    total, throttle, multi-car, late joiner, session reset, snapshot cadence,
+    a raising SessionInfo, no-log-open, JSON round-trip).
+  • OPEN QUESTION for the replay re-log: whether iRacing rebuilds
+    ResultsPositions incident counts while scrubbing a REPLAY, or only shows
+    the final tally. Test with a 2-minute replay over a known incident and
+    grep the log for `"type":"inc"` before committing to a full 3 h re-log.
+  • REPLAY ANSWER (tested the same evening, 40 min of replay): iRacing does
+    NOT rebuild incident counts while scrubbing a replay. The very first
+    snapshot already carried the FINAL tallies and they never moved, so zero
+    `inc` events. An incident timeline cannot be recovered from a replay —
+    only live. Whether live works is still unproven (race control shows
+    rising INCs from the same source, so it should); test it with a practice
+    session and two deliberate wall taps.
+  • `launch_gui.py`: new `START_TOGETHER` map — starting the logger also
+    starts the dashboard and vice versa (recursion-safe, skips a partner that
+    is already running, start-only: stopping stays uncoupled because other
+    overlays share the dashboard). Reason: the logger's `incident` feed comes
+    from the dashboard on 127.0.0.1:5000, and a survey of all 84 logs showed
+    incidents in every race up to 27.08. and NONE after — including the
+    Sebring race day. Verified by 12/12 offline checks against a fake
+    controller set (tkinter is stubbed; this Mac's python has no _tkinter).
+  • Anyone running the packaged `RaceLogger.exe` must REBUILD it
+    (`build_race_logger_exe.bat` / the GitHub *Build Race Logger* action) —
+    the .exe bundles `iracing_race_logger.py` at build time.
+
 **August 12, 2026 (+/- everywhere = NET vs the STARTING GRID, never
 cumulative):**
 User report: the standings +/- was not reading as "versus where he

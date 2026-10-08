@@ -41,6 +41,7 @@ import time
 from flask import Flask, jsonify, render_template_string
 
 from iracing_sdk_base import SDKPoller, setup_utf8_stdout
+from cls_proam import ProAmRoster
 setup_utf8_stdout()
 
 PORT = 5017
@@ -96,6 +97,7 @@ class DriverCardPoller(SDKPoller):
                 irating = None
             out[cidx] = {
                 "name":        name,
+                "user_id":     d.get("UserID"),
                 "short":       _abbrev(name),
                 "team":        team if team and team != name else "",
                 "num":         str(d.get("CarNumber") or "").strip("\""),
@@ -113,6 +115,13 @@ class DriverCardPoller(SDKPoller):
         ir = self.ir
         t_now = time.monotonic()
         self._refresh_drivers(ir, t_now)
+
+        # WCT GT3 Pro/Am bar — only when the field is a WCT field
+        # (see cls_proam.py); None hides the bar.
+        proam_cls = None
+        if proam.active_for(x["user_id"] for x in self._drivers.values()):
+            focus_d = self._drivers.get(ir["CamCarIdx"])
+            proam_cls = proam.lookup(focus_d["user_id"]) if focus_d else None
 
         base = {"connected": True, "show": False, "reason": ""}
         focus = ir["CamCarIdx"]
@@ -147,6 +156,7 @@ class DriverCardPoller(SDKPoller):
             "lic": d["lic"], "lic_color": d["lic_color"],
             "class_name": d["class_name"], "class_color": d["class_color"],
             "position": pos,
+            "proam": proam_cls,
             "best_lap": best,
             "last_lap": last,
             # Personal best just set? (near-equality — both values come
@@ -161,6 +171,7 @@ class DriverCardPoller(SDKPoller):
 # -----------------------------------------------------------------------------
 app = Flask(__name__)
 poller = DriverCardPoller()
+proam = ProAmRoster()
 
 
 @app.after_request
@@ -220,6 +231,10 @@ PAGE_HTML = r"""
     .numchip .num { font-size: 20px; font-weight: 800; }
     .numchip .cls { font-size: 10px; font-weight: 700; letter-spacing: 1px;
                     color: #b0b0c0; text-transform: uppercase; }
+    /* WCT GT3 Pro/Am marker in front of the name: red PRO, green AM. */
+    .pa { width: 6px; align-self: stretch; border-radius: 2px; display: none; }
+    .pa.pro { display: block; background: #e63946; }
+    .pa.am  { display: block; background: #2ecc71; }
     .who { display: flex; flex-direction: column; gap: 1px; }
     .who .name { font-size: 23px; font-weight: 800; letter-spacing: 0.4px;
                  white-space: nowrap; color: #ffb38a; }
@@ -262,6 +277,7 @@ PAGE_HTML = r"""
             <span class="num" id="num">#–</span>
             <span class="cls" id="cls"></span>
         </div>
+        <div class="pa" id="pa"></div>
         <div class="who">
             <span class="name" id="name">—</span>
             <span class="team" id="team"></span>
@@ -337,6 +353,8 @@ async function tick() {
     document.getElementById('num').textContent = '#' + (d.num || '–');
     document.getElementById('cls').textContent = d.class_name || '';
     document.getElementById('numchip').style.setProperty('--cls', d.class_color || '#888');
+    document.getElementById('pa').className =
+        'pa' + (d.proam === 'PRO' ? ' pro' : d.proam === 'AM' ? ' am' : '');
     document.getElementById('name').textContent = d.name || '—';
     const team = document.getElementById('team');
     team.textContent = d.team || '';
@@ -371,7 +389,13 @@ def status():
     return jsonify(poller.get())
 
 
+@app.route("/proam")
+def proam_status():
+    return jsonify(proam.status())
+
+
 if __name__ == "__main__":
+    proam.start()
     t = threading.Thread(target=poller.run, daemon=True)
     t.start()
 

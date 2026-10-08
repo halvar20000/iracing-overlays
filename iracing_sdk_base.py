@@ -72,23 +72,34 @@ class GridBaseline:
     Baseline source priority. The first one that yields at least two cars
     wins, is captured ONCE per race session, and is never recomputed:
 
-      1. The QUALIFYING session's ResultsPositions[].Position — iRacing's
-         official grid order. Stable for the whole race and, crucially,
-         identical whether the overlay was started before the green or
-         attached halfway through. This is the same source iracing_grid.py
-         uses, so the grid overlay, the tower and the logger all agree.
-      2. The RACE session's ResultsPositions[].StartingPosition, when the
-         sim publishes it (0-based there; -1 means unknown).
+      1. THIS race session's ResultsPositions[].StartingPosition (0-based
+         there; -1 means unknown). Session-specific and therefore always
+         right, including for the second race of a two-race round.
+      2. The QUALIFYING session's ResultsPositions[].Position — iRacing's
+         official grid order — but ONLY when the current race is the FIRST
+         race of the weekend. See the multi-race note below.
       3. Live CarIdxPosition sampled the moment SessionState first reaches
          Racing — but ONLY if we were already watching before the green.
          Sampling later would freeze "the running order at the moment the
          overlay happened to start" and then present it as if it were the
          grid. That is exactly the wrong number, so we refuse to do it.
 
+    MULTI-RACE WEEKENDS (this ordering exists because of a real bug).
+    SessionInfo carries EVERY session of the weekend for the whole
+    weekend, so the qualifying block is still sitting there during race 2.
+    Qualifying used to be source #1, which meant race 2's +/- column was
+    silently measured against race 1's grid — on a reverse grid that put
+    a bogus ±N on every car from lap 1. Qualifying only describes the
+    grid of the FIRST race; every later race is gridded from the previous
+    race's result (reversed or not) and the sim reports that in the race
+    session's own StartingPosition. Hence: race results first, and
+    qualifying gated on _is_first_race().
+
     When none of the three is available (overlay attached mid-race in a
-    session with no qualifying results, or a driver who joined after the
-    grid was set) the car simply has no baseline. Callers render an empty
-    cell for those: no number is better than a wrong one.
+    session with no qualifying results, a second race whose grid the sim
+    has not published yet, or a driver who joined after the grid was set)
+    the car simply has no baseline. Callers render an empty cell for
+    those: no number is better than a wrong one.
 
     Usage — call update() once per poll tick, then read grid_pos /
     class_grid_pos:
@@ -141,9 +152,14 @@ class GridBaseline:
         info = ir["SessionInfo"] or {}
         sessions = info.get("Sessions") or []
 
-        raw, source = self._from_qualifying(sessions), "qualifying"
-        if not raw:
-            raw, source = self._from_race_results(sessions, ir), "race_results"
+        # 1. This race session's own grid. Always correct, including race 2
+        #    of a two-race round.
+        raw, source = self._from_race_results(sessions, ir), "race_results"
+        # 2. Qualifying — only ever describes the FIRST race's grid, so it
+        #    is off limits for any later race in the same weekend.
+        if not raw and self._is_first_race(sessions, ir):
+            raw, source = self._from_qualifying(sessions), "qualifying"
+        # 3. Green-flag sample, if we were watching before the green.
         if not raw and self._saw_pre_green and state >= SESSION_STATE_RACING:
             raw, source = self._from_green_flag(ir), "green_flag"
 
@@ -151,6 +167,39 @@ class GridBaseline:
             self._store(raw, source, class_of)
 
     # -- sources -----------------------------------------------------------
+    @staticmethod
+    def _is_first_race(sessions: list, ir) -> bool:
+        """True when the current session is the weekend's FIRST race.
+
+        Qualifying is only a legitimate grid source for that first race.
+        A second race is gridded from race 1's classification (reverse
+        grid, reverse top-N, or straight finishing order), so reusing the
+        qualifying block there produces a +/- column measured against the
+        wrong start — the exact bug this guard exists to prevent.
+
+        Fails OPEN (returns True) when the session list is missing or
+        unparseable, so a broken/absent SessionInfo degrades to the old
+        behaviour instead of silently blanking the column.
+        """
+        race_nums = []
+        for s in sessions:
+            stype = (s.get("SessionType") or "").lower()
+            # "Open Qualify" / "Lone Qualify" / "Practice" / "Warmup" all
+            # miss this test; heat-race sessions are typed "Race" too and
+            # are correctly treated as separate races.
+            if "race" not in stype:
+                continue
+            try:
+                race_nums.append(int(s.get("SessionNum")))
+            except (TypeError, ValueError):
+                continue
+        if not race_nums:
+            return True
+        try:
+            return int(ir["SessionNum"]) == min(race_nums)
+        except (TypeError, ValueError):
+            return True
+
     @staticmethod
     def _from_qualifying(sessions: list) -> dict:
         """{car_idx: qualifying position} from the last qualifying session

@@ -60,13 +60,97 @@ class GridPoller(SDKPoller):
                     qual_session = s
         return qual_session
 
-    def _find_race_session(self, sessions: list) -> dict:
-        race = None
+    @staticmethod
+    def _race_sessions(sessions: list) -> list:
+        """All race sessions, ascending by SessionNum. Heats count too."""
+        out = []
         for s in sessions:
-            stype = (s.get("SessionType") or "").lower()
-            if "race" in stype:
-                race = s
-        return race
+            if "race" not in (s.get("SessionType") or "").lower():
+                continue
+            try:
+                out.append((int(s.get("SessionNum")), s))
+            except (TypeError, ValueError):
+                continue
+        out.sort(key=lambda t: t[0])
+        return out
+
+    def _find_race_session(self, sessions: list) -> dict:
+        """The race whose grid we should be showing.
+
+        Priority: the CURRENT session when it is a race (that is the one
+        on track), else the NEXT race after the current session number
+        (we are sitting in practice or qualifying ahead of it), else the
+        last race of the weekend.
+
+        The old version simply took the last race session in the list,
+        which in a two-race round meant the overlay was describing race 2
+        while race 1 was running.
+        """
+        races = self._race_sessions(sessions)
+        if not races:
+            return None
+        try:
+            cur = int(self.ir["SessionNum"])
+        except (TypeError, ValueError):
+            return races[-1][1]
+        for num, s in races:
+            if num == cur:
+                return s
+        for num, s in races:
+            if num > cur:
+                return s
+        return races[-1][1]
+
+    def _is_first_race(self, sessions: list, race: dict) -> bool:
+        """True when `race` is the weekend's first race.
+
+        Qualifying only ever describes the grid of the FIRST race. Race 2
+        is gridded from race 1's classification (reverse grid, reverse
+        top-N, or straight finishing order), so showing the qualifying
+        order there is showing the wrong grid.
+        """
+        races = self._race_sessions(sessions)
+        if not races or not race:
+            return True
+        try:
+            return int(race.get("SessionNum")) == races[0][0]
+        except (TypeError, ValueError):
+            return True
+
+    @staticmethod
+    def _rows_from_race_grid(race: dict, drivers: dict) -> list:
+        """Grid rows from the race session's own StartingPosition block.
+
+        StartingPosition is 0-based and -1 when unknown. We deliberately
+        do NOT use Position here: once the race is green, Position is the
+        live running order, and rendering that as "the grid" is wrong.
+        """
+        rows = []
+        for r in (race or {}).get("ResultsPositions") or []:
+            drv = drivers.get(r.get("CarIdx"))
+            if not drv:
+                continue
+            try:
+                sp = int(r.get("StartingPosition"))
+            except (TypeError, ValueError):
+                continue
+            if sp < 0:
+                continue
+            rows.append({
+                **drv,
+                "_start":         sp,
+                "class_position": 0,
+                "best_time":      r.get("FastestTime", 0.0) or 0.0,
+                "lap_count":      0,
+                "interval":       0.0,
+            })
+        if len(rows) < 2:
+            return []
+        rows.sort(key=lambda d: d["_start"])
+        for i, d in enumerate(rows, start=1):
+            d["position"] = i
+            d.pop("_start", None)
+        return rows
 
     def _read_snapshot(self) -> dict:
         ir = self.ir
@@ -81,10 +165,21 @@ class GridPoller(SDKPoller):
         source = None
         rows = []
 
-        if qual and qual.get("ResultsPositions"):
+        # Source priority mirrors GridBaseline in iracing_sdk_base.py:
+        #   1. the target race's OWN StartingPosition block — session
+        #      specific, so it is right for race 2 of a two-race round;
+        #   2. qualifying, but ONLY when the target race is the weekend's
+        #      first race. SessionInfo keeps the qualifying block for the
+        #      whole weekend, and using it for race 2 showed race 1's grid.
+        # Nothing else: an empty board beats a confidently wrong one.
+        race_rows = self._rows_from_race_grid(race, drivers)
+        if race_rows:
+            source = "race_grid"
+            rows = race_rows
+        elif (qual and qual.get("ResultsPositions")
+                and self._is_first_race(sessions, race)):
             source = "qualifying"
-            results = qual["ResultsPositions"]
-            for r in results:
+            for r in qual["ResultsPositions"]:
                 cidx = r.get("CarIdx")
                 drv = drivers.get(cidx)
                 if not drv:
@@ -96,22 +191,6 @@ class GridPoller(SDKPoller):
                     "best_time":    r.get("FastestTime", 0.0) or 0.0,
                     "lap_count":    r.get("LapsComplete", 0) or 0,
                     "interval":     r.get("Time", 0.0) or 0.0,
-                })
-        elif race and race.get("ResultsPositions"):
-            source = "race_grid"
-            results = race["ResultsPositions"]
-            for r in results:
-                cidx = r.get("CarIdx")
-                drv = drivers.get(cidx)
-                if not drv:
-                    continue
-                rows.append({
-                    **drv,
-                    "position":     r.get("Position", 0) or 0,
-                    "class_position": r.get("ClassPosition", 0) or 0,
-                    "best_time":    r.get("FastestTime", 0.0) or 0.0,
-                    "lap_count":    0,
-                    "interval":     0.0,
                 })
 
         rows.sort(key=lambda d: (d["position"] == 0, d["position"]))

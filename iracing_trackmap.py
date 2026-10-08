@@ -50,6 +50,10 @@ SVG_VIEW_W = 1000
 SVG_VIEW_H = 600
 SVG_MARGIN = 40
 
+# An ontrack route whose open end is within this fraction of its own length is
+# treated as a closed circuit and gets its final segment drawn in.
+LOOP_CLOSE_MAX_FRAC = 0.20
+
 # iRacing "track surface" enum values for in-world detection.
 SURFACE_NOT_IN_WORLD = -1
 SURFACE_OFF_TRACK    = 0
@@ -118,6 +122,22 @@ def _load_track(track_name: str) -> dict | None:
 
     ontrack_m   = [rotate(latlon_to_xy(lat, lon)) for lat, lon in ontrack]
     onpitroad_m = [rotate(latlon_to_xy(lat, lon)) for lat, lon in onpitroad]
+
+    # --- close the lap ------------------------------------------------------
+    # Several bundled GPX routes stop short of the start/finish line, leaving
+    # the S/F straight undrawn (Donington was missing its whole pit straight,
+    # so only the pit lane showed there). Anything whose open end sits within
+    # LOOP_CLOSE_MAX_FRAC of the route length is a circuit, so we append the
+    # first point to close it. That also makes the arc length below match a
+    # real lap, otherwise every car dot drifts by the size of the gap.
+    # Point-to-point routes (the Mt Washington hillclimbs) are far above the
+    # threshold and stay open.
+    if len(ontrack_m) > 3:
+        run = sum(math.dist(ontrack_m[i - 1], ontrack_m[i])
+                  for i in range(1, len(ontrack_m)))
+        gap = math.dist(ontrack_m[-1], ontrack_m[0])
+        if run > 0 and gap / run <= LOOP_CLOSE_MAX_FRAC and gap > 1e-6:
+            ontrack_m.append(ontrack_m[0])
 
     # Compute bounding box across both layers so nothing gets clipped.
     xs = [p[0] for p in ontrack_m] + [p[0] for p in onpitroad_m]

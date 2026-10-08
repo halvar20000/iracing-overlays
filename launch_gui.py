@@ -65,6 +65,26 @@ OVERLAYS = [
 
 HERE = Path(__file__).resolve().parent
 
+# ---------------------------------------------------------------------------
+# Overlays that belong together — starting one starts the other.
+#
+# The race logger reads its incident feed from the dashboard's /incidents
+# endpoint on 127.0.0.1:5000. Without the dashboard the log still gets laps,
+# pit stops, flags and penalties, but NOT A SINGLE incident — which is exactly
+# what happened at IEC Sebring on 2026-09-05, where the incident timeline was
+# the one thing needed to review the drive-through penalties afterwards.
+# (The `inc` events added the same evening read incident POINTS straight from
+# iRacing and do not need the dashboard; the dashboard's detected spins and
+# contacts remain the second, independent trace.)
+#
+# Deliberately start-only: several overlays share the dashboard, so stopping
+# the logger must never pull it out from under them.
+# ---------------------------------------------------------------------------
+START_TOGETHER = {
+    "logger":    ("dashboard",),
+    "dashboard": ("logger",),
+}
+
 # Theme
 COLOR_BG        = "#0a0a0f"
 COLOR_PANEL     = "#14141c"
@@ -375,9 +395,25 @@ class LauncherApp(tk.Tk):
                         arrowcolor=COLOR_MUTED)
 
     # ----- actions ---------------------------------------------------------
-    def _start_one(self, tag):
+    def _start_one(self, tag, _seen=None):
+        """Start one overlay — plus anything paired with it in
+        START_TOGETHER that isn't already running."""
+        seen = _seen if _seen is not None else set()
+        if tag in seen:
+            return
+        seen.add(tag)
         self.controllers[tag].start()
         self._update_row_state(tag)
+        for partner in START_TOGETHER.get(tag, ()):
+            ctl = self.controllers.get(partner)
+            if ctl is None or ctl.is_running or partner in seen:
+                continue
+            self.log_queue.put(
+                (tag, f"also starting '{partner}' — the two belong together")
+            )
+            # Same stagger as Start All, so they don't race for iRacing.
+            time.sleep(0.15)
+            self._start_one(partner, seen)
 
     def _stop_one(self, tag):
         threading.Thread(target=self.controllers[tag].stop, daemon=True).start()

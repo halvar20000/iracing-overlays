@@ -188,6 +188,127 @@ check("7a 0-based source re-ranked to 1", grid7.grid_pos.get(5), 1)
 check("7b source label", grid7.source, "race_results")
 check("7c delta from 0-based source", grid7.delta(7, 1), 2)
 
+# =========================================================================
+# 8. TWO-RACE ROUND — the regression that started this.
+#
+#    SessionInfo carries the whole weekend, so the qualifying block is
+#    still present during race 2. Qualifying only describes race 1's
+#    grid; race 2 is gridded from race 1's result (here: reversed). The
+#    baseline must come from race 2's OWN StartingPosition, not from
+#    qualifying — otherwise every car shows a bogus ±N from lap 1.
+# =========================================================================
+def race_with_grid(sess_num, order):
+    """order = list of car_idx, pole first. StartingPosition is 0-based."""
+    return {
+        "SessionNum": sess_num,
+        "SessionType": "Race",
+        "ResultsPositions": [
+            {"CarIdx": ci, "StartingPosition": i}
+            for i, ci in enumerate(order, start=0)
+        ],
+    }
+
+
+PRACTICE = {"SessionNum": 0, "SessionType": "Practice", "ResultsPositions": []}
+QUALI    = dict(quali_session([0, 1, 2, 3, 4]), SessionNum=1)
+RACE1    = race_with_grid(2, [0, 1, 2, 3, 4])          # grid = quali order
+RACE2    = race_with_grid(3, [4, 3, 2, 1, 0])          # reverse grid
+WEEKEND  = [PRACTICE, QUALI, RACE1, RACE2]
+
+# -- race 1 -------------------------------------------------------------
+grid8 = GridBaseline()
+ir8 = FakeIR(uid=41, sess_num=2, state=3, sessions=WEEKEND,
+             laps=[0] * 5, positions=[1, 2, 3, 4, 5])
+grid8.update(ir8)
+check("8a race 1 pole is car 0", grid8.grid_pos.get(0), 1)
+check("8b race 1 last is car 4", grid8.grid_pos.get(4), 5)
+
+# -- race 2, same weekend, reversed grid --------------------------------
+grid8b = GridBaseline()
+ir8b = FakeIR(uid=41, sess_num=3, state=3, sessions=WEEKEND,
+              laps=[0] * 5, positions=[5, 4, 3, 2, 1])
+grid8b.update(ir8b)
+check("8c race 2 uses its own grid", grid8b.source, "race_results")
+check("8d race 2 pole is car 4", grid8b.grid_pos.get(4), 1)
+check("8e race 2 last is car 0", grid8b.grid_pos.get(0), 5)
+# Car 0 starts race 2 from P5 and is still P5 -> 0, NOT -4.
+check("8f no phantom loss for the race-1 polesitter", grid8b.delta(0, 5), 0)
+# Car 4 starts race 2 from pole and leads -> 0, NOT +4.
+check("8g no phantom gain for the reverse-grid polesitter", grid8b.delta(4, 1), 0)
+# A real move in race 2 still reads correctly: car 0 climbs P5 -> P1.
+check("8h real race-2 gain", grid8b.delta(0, 1), 4)
+
+# -- the same session sequence walked through by ONE baseline object,
+#    which is what actually happens with a poller left running.
+grid8c = GridBaseline()
+ir8c = FakeIR(uid=41, sess_num=2, state=3, sessions=WEEKEND,
+              laps=[0] * 5, positions=[1, 2, 3, 4, 5])
+grid8c.update(ir8c)
+check("8i live poller: race 1 pole", grid8c.grid_pos.get(0), 1)
+ir8c.set(SessionNum=3, SessionState=3, CarIdxLap=[0] * 5,
+         CarIdxPosition=[5, 4, 3, 2, 1])
+grid8c.update(ir8c)
+check("8j live poller: re-captured for race 2", grid8c.grid_pos.get(4), 1)
+check("8k live poller: race-1 pole man now starts last", grid8c.grid_pos.get(0), 5)
+
+# -- race 2 before the sim publishes its grid: blank, never qualifying --
+grid8d = GridBaseline()
+weekend_no_r2_grid = [PRACTICE, QUALI, RACE1,
+                      {"SessionNum": 3, "SessionType": "Race",
+                       "ResultsPositions": []}]
+ir8d = FakeIR(uid=42, sess_num=3, state=4, sessions=weekend_no_r2_grid,
+              laps=[9, 9, 8, 8, 8], positions=[1, 2, 3, 4, 5])
+for _ in range(3):
+    grid8d.update(ir8d)
+check("8l race 2 without a published grid stays blank", grid8d.captured, False)
+check("8m ... and the cell is empty, not wrong", grid8d.delta(0, 1), None)
+
+# -- single-race weekend still falls back to qualifying -----------------
+grid8e = GridBaseline()
+ir8e = FakeIR(uid=43, sess_num=2, state=3,
+              sessions=[PRACTICE, QUALI,
+                        {"SessionNum": 2, "SessionType": "Race",
+                         "ResultsPositions": []}],
+              laps=[0] * 5, positions=[1, 2, 3, 4, 5])
+grid8e.update(ir8e)
+check("8n single race still uses qualifying", grid8e.source, "qualifying")
+check("8o ... with the right pole man", grid8e.grid_pos.get(0), 1)
+
+# =========================================================================
+# 9. The GRID overlay (iracing_grid.py) had the same weekend-wide
+#    qualifying assumption. Guarded — skipped if flask isn't installed.
+# =========================================================================
+try:
+    from iracing_grid import GridPoller  # noqa: E402
+except Exception as _e:                                    # pragma: no cover
+    PASS.append(f"9 skipped (iracing_grid import failed: {_e})")
+else:
+    def _drivers(n):
+        return {i: {"car_idx": i, "name": f"D{i}", "car_number": str(i)}
+                for i in range(n)}
+
+    gp = GridPoller()
+
+    # During race 1 the board shows race 1's grid...
+    gp.ir = FakeIR(uid=51, sess_num=2, state=4, sessions=WEEKEND)
+    r1 = gp._rows_from_race_grid(gp._find_race_session(WEEKEND), _drivers(5))
+    check("9a grid overlay: race 1 pole", r1[0]["car_idx"], 0)
+
+    # ...and during race 2 it shows race 2's, not qualifying's.
+    gp.ir = FakeIR(uid=51, sess_num=3, state=4, sessions=WEEKEND)
+    target = gp._find_race_session(WEEKEND)
+    check("9b grid overlay: targets race 2", target.get("SessionNum"), 3)
+    check("9c grid overlay: quali is off limits for race 2",
+          gp._is_first_race(WEEKEND, target), False)
+    r2 = gp._rows_from_race_grid(target, _drivers(5))
+    check("9d grid overlay: race 2 pole is car 4", r2[0]["car_idx"], 4)
+    check("9e grid overlay: race 2 last is car 0", r2[-1]["car_idx"], 0)
+
+    # Sitting in qualifying, the board looks ahead to race 1.
+    gp.ir = FakeIR(uid=51, sess_num=1, state=4, sessions=WEEKEND)
+    check("9f grid overlay: quali looks ahead to race 1",
+          gp._find_race_session(WEEKEND).get("SessionNum"), 2)
+
 # -------------------------------------------------------------------------
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 for f in FAIL:
