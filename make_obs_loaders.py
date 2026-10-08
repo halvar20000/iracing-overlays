@@ -51,6 +51,11 @@ OVERLAYS = [
     ("movers",        "Biggest Movers",   5005, "/movers"),
     ("gapbar",        "Gap Bar",          5005, "/gapbar"),
     ("ticker",        "Overtake Ticker",  5000, "/ticker"),
+    ("lastrace",      "Last Round Results", 5010, "/lastrace"),
+    ("table",         "Standings Before Round", 5010, "/table"),
+    ("rsvp",          "RSVP Overview",    5010, "/rsvp"),
+    ("stats",         "Season Statistics", 5010, "/stats"),
+    ("lastdotd",      "Last Round Driver of the Day", 5010, "/lastdotd"),
     # Note: racecontrol (iCASControl, port 8080) is an interactive steward
     # web app, opened directly in a browser — NOT an OBS browser source — so
     # it intentionally has no loader page here.

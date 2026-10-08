@@ -679,6 +679,9 @@ def build_projection(race_state: dict, champ_payload: dict | None,
             "champ_rank":   pre_rank_by_mid.get(mid),
             "proj_rank":    proj_rank_by_mid2.get(mid),
             "champ_delta":  delta_by_mid.get(mid),
+            # points this car scores for its current position (live race only)
+            "race_pts":     ((live_scores.get(mid) or {}).get("class_pts" if pro_am else "pts")
+                             if live_race else None),
         })
 
     return {
@@ -703,11 +706,54 @@ def build_projection(race_state: dict, champ_payload: dict | None,
 config = load_config()
 poller = RacePoller()
 fetcher = ChampionshipFetcher(config)
+
+
+class RoundInfoFetcher:
+    """Pre-race data from CLS /api/overlay/round-info (last round's results,
+    next-round RSVP counts, participation per round) for the /lastrace,
+    /table, /rsvp and /stats pages. Uses the same league/season as the
+    championship fetcher; refreshed every 60 s (the endpoint is edge-cached)."""
+
+    REFRESH_S = 60.0
+
+    def __init__(self, champ: ChampionshipFetcher):
+        self._champ = champ
+        self._lock = threading.Lock()
+        self._data: dict | None = None
+        self._error: str | None = None
+
+    def get(self) -> dict:
+        with self._lock:
+            return {"data": self._data, "error": self._error}
+
+    def run(self) -> None:
+        while True:
+            try:
+                cfg = self._champ.get()["config"]
+                base = (cfg.get("api_base") or DEFAULT_API).rstrip("/")
+                params = {"league": cfg.get("league_slug") or ""}
+                if cfg.get("season_id"):
+                    params["season"] = cfg["season_id"]
+                r = requests.get(f"{base}/api/overlay/round-info", params=params, timeout=10)
+                r.raise_for_status()
+                body = r.json()
+                if not body.get("ok"):
+                    raise RuntimeError(body.get("error") or "API returned ok=false")
+                with self._lock:
+                    self._data, self._error = body, None
+            except Exception as e:
+                with self._lock:
+                    self._error = f"{type(e).__name__}: {e}"
+                print(f"[championship] round-info fetch failed: {self._error}")
+            time.sleep(self.REFRESH_S)
+
+
+round_info = RoundInfoFetcher(fetcher)
 round_memory = RoundMemory()
 
 # UI state shared between the overlay page and the control endpoints
 ui_state = {
-    "view":   "A",       # "A" = race+delta, "B" = projection
+    "view":   "B",       # "B" = championship table (default), "A" = race order
     "stream": True,      # True = transparent BG (default for OBS)
 }
 
@@ -1094,6 +1140,8 @@ OVERLAY_HTML = r"""<!DOCTYPE html>
   .gap { width: 70px; text-align: right; color: var(--muted);
     font-size: 13px; }
   .pts { width: 60px; text-align: right; font-weight: 700; }
+  .pts.before { color: var(--muted); font-weight: 600; }
+  .pts.plus { color: #4ade80; }
   .pts small { display:block; font-size: 11px; color: var(--muted);
     font-weight: 400; }
 
@@ -1149,12 +1197,19 @@ OVERLAY_HTML = r"""<!DOCTYPE html>
 
 <script>
 const STATE = { paused: false };
+// ?view=A / ?view=B pins this browser source to one view (V then toggles
+// only this source); without it the shared server view is used (default B).
+let LOCAL_VIEW = (new URLSearchParams(location.search).get('view') || '').toUpperCase();
+if (LOCAL_VIEW !== 'A' && LOCAL_VIEW !== 'B') LOCAL_VIEW = '';
+// ?top=N limits the championship table to the (projected) top N; 0 = all.
+const TOP_N = (() => { const v = parseInt(new URLSearchParams(location.search).get('top') ?? '10', 10);
+                       return isNaN(v) ? 10 : v; })();
 
 function fmtDelta(d) {
   if (d === null || d === undefined) return '<span class="delta none">—</span>';
   if (d > 0)  return `<span class="delta up">▲${d}</span>`;
   if (d < 0)  return `<span class="delta down">▼${Math.abs(d)}</span>`;
-  return `<span class="delta same">＝</span>`;
+  return `<span class="delta same">=</span>`;
 }
 
 function fmtGap(s) {
@@ -1178,7 +1233,7 @@ function renderRaceView(d) {
   }
   const head = `<thead><tr>
     <th class="pos">P</th><th class="num">#</th>
-    <th>Driver</th><th class="gap">Gap</th><th class="delta">Δ Ch.</th>
+    <th>Driver</th><th class="pts">+Pts</th><th class="delta">Δ Ch.</th>
   </tr></thead>`;
   const body = rows.map(r => {
     const cls = [];
@@ -1192,7 +1247,7 @@ function renderRaceView(d) {
       <td class="pos">${r.race_pos ?? ''}</td>
       <td class="num">#${esc(r.car_number || '')}</td>
       <td class="name">${esc(r.abbrev || r.name || '—')}${carClass}${team}</td>
-      <td class="gap">${r.race_pos === 1 ? 'LEADER' : fmtGap(r.gap_leader)}</td>
+      <td class="pts">${r.race_pts != null ? '+' + r.race_pts : ''}</td>
       <td>${deltaCell}</td>
     </tr>`;
   }).join('');
@@ -1200,7 +1255,8 @@ function renderRaceView(d) {
 }
 
 function renderChampView(d) {
-  const rows = d.champ_rows || [];
+  const all = d.champ_rows || [];   // sorted by projected rank
+  const rows = TOP_N > 0 ? all.slice(0, TOP_N) : all;
   if (rows.length === 0) {
     return '<div class="empty">No championship rows loaded.</div>';
   }
@@ -1208,7 +1264,9 @@ function renderChampView(d) {
     <th class="pos">P</th>
     <th class="delta">Δ</th>
     <th>Driver</th>
-    <th class="pts">PTS</th>
+    <th class="pts">Before</th>
+    <th class="pts">+Race</th>
+    <th class="pts">Total</th>
   </tr></thead>`;
   const body = rows.map(r => {
     const team = r.team_name ? `<span class="team">${esc(r.team_name)}</span>` : '';
@@ -1223,12 +1281,16 @@ function renderChampView(d) {
       const lbl = nPrev ? `R${nPrev + 1} ` : 'Race ';
       bits.push(`${lbl}P${r.race_pos} → +${pts}`);
     }
-    const liveBit = `<small>${bits.length ? esc(bits.join(' · ')) : '—'}</small>`;
+    // sub-line under the name: where the points come from (R1 P2 +35 · R2 P1 → +41)
+    const sub = bits.length ? `<span class="team">${esc(bits.join(' · '))}</span>` : team;
+    const gained = r.proj_points - r.pre_points;
     return `<tr class="${r.in_race && !r.in_world ? 'dnf' : ''}">
       <td class="pos">${r.proj_rank}</td>
       <td>${fmtDelta(r.delta)}</td>
-      <td class="name">${esc(r.name)}${classBadge(r.pro_am)}${team}</td>
-      <td class="pts">${r.proj_points}${liveBit}</td>
+      <td class="name">${esc(r.name)}${classBadge(r.pro_am)}${sub}</td>
+      <td class="pts before">${r.pre_points}</td>
+      <td class="pts plus">${gained ? '+' + gained : ''}</td>
+      <td class="pts">${r.proj_points}</td>
     </tr>`;
   }).join('');
   return `<table>${head}<tbody>${body}</tbody></table>`;
@@ -1244,7 +1306,8 @@ async function tick() {
   try {
     const r = await fetch('/api/state', { cache: 'no-store' });
     const d = await r.json();
-    const ui = d.ui || { view: 'A', stream: true };
+    const ui = Object.assign({ view: 'B', stream: true }, d.ui || {});
+    if (LOCAL_VIEW) ui.view = LOCAL_VIEW;
 
     document.body.classList.toggle('stream', ui.stream);
     document.body.classList.toggle('debug',  !ui.stream);
@@ -1290,7 +1353,8 @@ async function tick() {
 
 document.addEventListener('keydown', async (e) => {
   if (e.key === 'v' || e.key === 'V') {
-    await fetch('/toggle_view', { method: 'POST' });
+    if (LOCAL_VIEW) LOCAL_VIEW = LOCAL_VIEW === 'A' ? 'B' : 'A';
+    else await fetch('/toggle_view', { method: 'POST' });
     tick();
   } else if (e.key === 'h' || e.key === 'H') {
     await fetch('/toggle_stream', { method: 'POST' });
@@ -1463,6 +1527,315 @@ def duel():
     return Response(DUEL_HTML, mimetype="text/html")
 
 
+# Pre-race pages (2026-10-08): one page, four views chosen by path.
+PRERACE_HTML = r"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Pre-race</title>
+<style>
+    /* Pre-race pages from CLS (2026-10-08) — one page, four views by path:
+         /lastrace  results of the last completed round (?race=1|2, else
+                    both races alternate every ?cycle=15 s), ?top=N
+         /table     championship standings BEFORE the round, ?top=N
+         /rsvp      RSVP count for the next round (numbers only)
+         /stats     participation per round + season totals
+         /lastdotd  the last round's Driver of the Day (from CLS)
+       Tower style but SOLID panels (moderator screen); ?glass=1 makes them
+       translucent again. ?zoom=, ?debug=1 / H. Data: /api/roundinfo (CLS
+       /api/overlay/round-info + /api/overlay/standings, refreshed 60 s). */
+    /* SOLID by default — these pages run full-screen on the moderator screen
+       before the race (2026-10-08). ?glass=1 = the translucent tower look. */
+    :root { --bg: #343439; --row: #343439; --row-alt: #3e3e44;
+            --head: #54545a; --box: #1c1c20; --line: #1a1a1d;
+            --text: #f2f2f4; --muted: #b9b9c2; --accent: #2f7ff0; --sb: #d86bff;
+            --up: #45f063; --down: #ff5a6a; --gold: #ffd166; --amber: #e8a33d; --bar: #c2560c; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: rgba(0,0,0,0); overflow: hidden; }
+    body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; color: var(--text);
+           padding: 8px; font-variant-numeric: tabular-nums; }
+    body.debug-mode { background: #23262b; }
+    body.glass { --bg: rgba(52,52,57,0.92); --row: rgba(52,52,57,0.86); --row-alt: rgba(62,62,68,0.86);
+                 --head: rgba(84,84,90,0.92); --box: rgba(28,28,32,0.95); --line: rgba(0,0,0,0.35); }
+    .card { width: 560px; }
+    .card.wide { width: 760px; }
+    .top { height: 30px; background: var(--accent); display: flex; align-items: center; padding: 0 10px;
+           font-size: 15px; font-weight: 800; letter-spacing: 2px; gap: 10px; }
+    .top .sub { margin-left: auto; font-size: 13px; font-weight: 600; letter-spacing: .5px; opacity: .92; white-space: nowrap; }
+    .head, .row { display: grid; align-items: center; }
+    .head { height: 24px; background: var(--head); font-size: 13px; font-weight: 500; }
+    .row { height: 26px; background: var(--row); border-top: 1px solid var(--line); font-size: 15px; font-weight: 600; }
+    .row:nth-child(odd) { background: var(--row-alt); }
+    .pos { height: 100%; display: flex; align-items: center; justify-content: center; background: var(--box); font-size: 14px; font-weight: 700; }
+    .pos.p1 { color: var(--gold); }
+    .r { text-align: right; padding-right: 8px; white-space: nowrap; }
+    .c { text-align: center; }
+    .nm { padding-left: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mut { color: var(--muted); font-weight: 500; font-size: 13px; }
+    .num { color: var(--muted); font-size: 13px; font-weight: 700; text-align: center; }
+    .flag { width: 19px; height: 13px; object-fit: cover; justify-self: center; box-shadow: 0 0 0 1px rgba(0,0,0,0.35); }
+    .pa { width: 5px; height: 15px; border-radius: 2px; justify-self: center; }
+    .pa.PRO { background: #e63946; } .pa.AM { background: #2ecc71; }
+    .sb { color: var(--sb); }
+    .tag { font-size: 10px; font-weight: 800; padding: 0 5px; border-radius: 2px; background: rgba(255,255,255,0.14); color: var(--muted); }
+    .tabs { display: flex; gap: 2px; padding: 4px 0 0; }
+    .tabs span { padding: 2px 10px; font-size: 13px; font-weight: 800; background: var(--row); color: var(--muted); }
+    .tabs span.on { background: var(--accent); color: #fff; }
+    .msg { background: var(--bg); padding: 12px; color: var(--muted); font-size: 14px; }
+    /* rsvp */
+    .rsvp { background: var(--bg); padding: 12px 14px 14px; }
+    .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    .tile { background: var(--box); padding: 8px 6px; text-align: center; }
+    .tile .v { font-size: 30px; font-weight: 800; line-height: 1.1; }
+    .tile .l { font-size: 11px; letter-spacing: 1.2px; color: var(--muted); font-weight: 700; text-transform: uppercase; }
+    .stack { display: flex; height: 10px; margin-top: 12px; background: var(--box); }
+    .stack i { display: block; height: 100%; }
+    .foot { margin-top: 8px; font-size: 13px; color: var(--muted); display: flex; justify-content: space-between; }
+    /* stats */
+    .stats { background: var(--bg); padding: 10px 14px 12px; }
+    .prow { display: grid; grid-template-columns: 34px 1fr 150px; align-items: center; height: 30px; gap: 8px; }
+    .prow .rn { color: var(--muted); font-size: 13px; font-weight: 700; }
+    .pbar { position: relative; height: 24px; background: var(--box); }
+    .pbar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--bar); }
+    .pbar span { position: relative; padding-left: 10px; line-height: 24px; font-size: 14px; font-weight: 600; }
+    .prow .pv { text-align: right; font-size: 13px; color: var(--muted); white-space: nowrap; }
+    .prow.next .pbar { box-shadow: inset 0 0 0 1px var(--accent); }
+    .totals { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
+    /* driver of the day */
+    .dotd { background: var(--bg); padding: 12px 16px 14px; }
+    .dhead { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+    .dname { font-size: 28px; font-weight: 800; display: flex; align-items: center; gap: 10px; }
+    .dname .flag { width: 24px; height: 16px; }
+    .dnum { color: var(--gold); }
+    .dscore { text-align: right; font-size: 30px; font-weight: 800; color: var(--gold); line-height: 1.1; }
+    .dbars { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 18px; margin-top: 12px; }
+    .dl { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); font-weight: 600; }
+    .dt { height: 6px; background: var(--box); margin-top: 3px; }
+    .dt i { display: block; height: 100%; background: #c98a12; }
+    .ru { display: flex; gap: 8px; align-items: baseline; font-size: 15px; margin-top: 4px; white-space: nowrap; overflow: hidden; }
+    .ru b { font-weight: 700; } .ru .mut { font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
+    .dnote { margin-top: 10px; font-size: 13px; color: #5ec8e5; font-style: italic; }
+</style></head>
+<body>
+<div id="root"><div class="msg">Loading CLS data…</div></div>
+<script>
+const qs = new URLSearchParams(location.search);
+if (qs.get('debug') === '1') document.body.classList.add('debug-mode');
+if (qs.get('glass') === '1') document.body.classList.add('glass');
+const zoom = parseFloat(qs.get('zoom') || '1');
+if (zoom > 0 && zoom !== 1) document.body.style.zoom = zoom;
+document.addEventListener('keydown', e => { if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('debug-mode'); });
+const MODE = location.pathname.replace(/^\/+|\/+$/g, '') || 'lastrace';
+const TOP = parseInt(qs.get('top') || '0', 10);
+const RACE_P = (qs.get('race') || '').toLowerCase();   // '1' | '2' | 'combined' | '' (cycle)
+const CYCLE = parseFloat(qs.get('cycle') || '15');
+
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function abbrev(full) { const p = String(full || '').trim().split(/\s+/); return p.length < 2 ? (full || '') : `${p[0][0]}. ${p.slice(1).join(' ')}`; }
+function flag(cc) { return cc ? `<img class="flag" src="/flag/${encodeURIComponent(String(cc).toLowerCase())}.svg" alt="" onerror="this.style.visibility='hidden'">` : '<span></span>'; }
+function lap(ms) { if (!ms || ms <= 0) return ''; const t = ms / 1000, m = Math.floor(t / 60), s = t - m * 60; return m ? `${m}:${s.toFixed(3).padStart(6, '0')}` : s.toFixed(3); }
+function gap(ms) { if (ms == null || ms <= 0) return ''; const t = ms / 1000; if (t < 60) return '+' + t.toFixed(3); const m = Math.floor(t / 60); return `+${m}:${(t - m * 60).toFixed(3).padStart(6, '0')}`; }
+function fmtDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }) + ' · ' +
+           d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+}
+const lim = rows => TOP > 0 ? rows.slice(0, TOP) : rows;
+
+let raceIdx = 0, lastSwitch = Date.now();
+// Every time the source is SHOWN, start again at Race 1 → Race 2 → Combined.
+// OBS keeps hidden browser sources running, so without this the cycle could
+// be anywhere when the scene goes live. OBS fires obsSourceVisibleChanged /
+// obsSourceActiveChanged; visibilitychange covers normal browsers.
+function restartCycle() { raceIdx = 0; lastSwitch = Date.now(); if (typeof draw === 'function') draw(); }
+window.addEventListener('obsSourceVisibleChanged', e => { if (e.detail && e.detail.visible) restartCycle(); });
+window.addEventListener('obsSourceActiveChanged', e => { if (e.detail && e.detail.active) restartCycle(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') restartCycle(); });
+function renderLastRace(d) {
+    const lr = d.info && d.info.lastRound;
+    if (!lr || !(lr.races || []).length) return '<div class="msg">No completed round yet.</div>';
+    // Views: each race, then the round's combined classification (when CLS
+    // sends one and the round had more than one race).
+    const views = lr.races.map(r => ({ kind: 'race', race: r, label: `RACE ${r.raceNumber}` }));
+    if ((lr.combined || []).length && lr.races.length > 1) views.push({ kind: 'combined', label: 'COMBINED' });
+    let view;
+    if (RACE_P === 'combined' || RACE_P === 'c') view = views.find(v => v.kind === 'combined') || views[0];
+    else if (RACE_P) view = views.find(v => v.race && String(v.race.raceNumber) === RACE_P) || views[0];
+    else {
+        if (Date.now() - lastSwitch > CYCLE * 1000) { raceIdx = (raceIdx + 1) % views.length; lastSwitch = Date.now(); }
+        view = views[raceIdx % views.length];
+    }
+    const tabs = views.length > 1 ? `<div class="tabs">${views.map(v => `<span class="${v === view ? 'on' : ''}">${v.label}</span>`).join('')}</div>` : '';
+    if (view.kind === 'combined') return renderCombined(lr, tabs);
+    const race = view.race;
+    const cols = '30px 12px 30px minmax(0,1fr) 28px 96px 78px 44px';
+    // CLS often has no total race time (imported results) — then the column
+    // shows grid → result instead of a time gap.
+    const haveGaps = race.results.some(x => x.gapMs != null && x.gapMs > 0);
+    const moved = x => {
+        if (!x.startPosition) return '';
+        const dlt = x.startPosition - x.position;
+        const arrow = dlt > 0 ? `<span style="color:var(--up)">▲${dlt}</span>` : dlt < 0 ? `<span style="color:var(--down)">▼${-dlt}</span>` : '<span class="mut">=</span>';
+        return `<span class="mut">P${x.startPosition}</span> ${arrow}`;
+    };
+    const rows = lim(race.results).map(x => {
+        const res = x.status !== 'CLASSIFIED' ? `<span class="tag">${esc(x.status)}</span>`
+            : !haveGaps ? moved(x)
+            : x.position === 1 ? '<span class="mut">WINNER</span>'
+            : (x.lapsBehind > 0 ? `+${x.lapsBehind} LAP${x.lapsBehind > 1 ? 'S' : ''}` : gap(x.gapMs));
+        return `<div class="row" style="grid-template-columns:${cols}">
+            <div class="pos ${x.position === 1 ? 'p1' : ''}">${x.position}</div>
+            ${x.proAmClass ? `<div class="pa ${x.proAmClass}"></div>` : '<span></span>'}
+            <div class="num">${esc(x.startNumber || '')}</div>
+            <div class="nm">${esc(abbrev(x.name))}</div>${flag(x.countryCode)}
+            <div class="r">${res}</div>
+            <div class="r ${x.fastestLap ? 'sb' : ''}">${lap(x.bestLapMs)}</div>
+            <div class="r">${x.points ? '+' + x.points : ''}</div></div>`;
+    }).join('');
+    return `<div class="card">
+        <div class="top"><span>LAST ROUND</span><span class="sub">R${lr.number} ${esc(lr.name)}</span></div>${tabs}
+        <div class="head" style="grid-template-columns:${cols}"><span></span><span></span><span class="c">#</span><span class="nm">driver</span><span></span>
+            <span class="r">${haveGaps ? 'gap' : 'grid'}</span><span class="r">best</span><span class="r">pts</span></div>
+        ${rows}</div>`;
+}
+
+function renderCombined(lr, tabs) {
+    const cols = '30px 12px 30px minmax(0,1fr) 28px 46px 46px 44px 52px';
+    const rp = r => !r ? '<span class="mut">–</span>' : (r.status === 'CLASSIFIED' ? r.position : `<span class="tag">${esc(r.status)}</span>`);
+    const rows = lim(lr.combined).map(x => `<div class="row" style="grid-template-columns:${cols}">
+        <div class="pos ${x.position === 1 ? 'p1' : ''}">${x.position}</div>
+        ${x.proAmClass ? `<div class="pa ${x.proAmClass}"></div>` : '<span></span>'}
+        <div class="num">${esc(x.startNumber || '')}</div>
+        <div class="nm">${esc(abbrev(x.name))}</div>${flag(x.countryCode)}
+        <div class="c">${rp(x.race1)}</div><div class="c">${rp(x.race2)}</div>
+        <div class="r" style="color:var(--down)">${x.penalty ? '−' + x.penalty : ''}</div>
+        <div class="r" style="font-weight:800">${x.total}</div></div>`).join('');
+    return `<div class="card">
+        <div class="top"><span>LAST ROUND</span><span class="sub">R${lr.number} ${esc(lr.name)}</span></div>${tabs}
+        <div class="head" style="grid-template-columns:${cols}"><span></span><span></span><span class="c">#</span><span class="nm">driver</span><span></span>
+            <span class="c">R1</span><span class="c">R2</span><span class="r">pen</span><span class="r">pts</span></div>
+        ${rows}</div>`;
+}
+
+function renderLastDotd(d) {
+    const lr = d.info && d.info.lastRound;
+    const x = lr && lr.driverOfTheDay;
+    if (!x) return '<div class="msg">No Driver of the Day for the last round yet.</div>';
+    const m = x.winnerMetrics || {}, b = x.breakdown || {}, w = x.weights || { pos: .4, rec: .2, ot: .25, clean: .15 };
+    const bits = [];
+    if (m.positionsGained > 0) bits.push(`Gained ${m.positionsGained}`);
+    if (m.recovery > 0) bits.push(`recovered ${m.recovery}`);
+    if (m.overtakes > 0) bits.push(`${m.overtakes} overtakes`);
+    if (m.incidents != null) bits.push(`${m.incidents} inc`);
+    const bar = (label, v, wt) => `<div class="dbar"><div class="dl"><span>${label}</span><span>${(v ?? 0).toFixed(2)}</span></div>
+        <div class="dt"><i style="width:${wt ? Math.min(100, (v || 0) / wt * 100) : 0}%"></i></div></div>`;
+    const ru = (x.runnersUp || []).map(r => `<div class="ru"><span class="mut">${r.rank}.</span>
+        <b>${r.carNumber ? '#' + esc(r.carNumber) + ' ' : ''}${esc(r.name)}</b><span class="mut">${esc(r.why || '')}</span></div>`).join('');
+    return `<div class="card wide">
+        <div class="top" style="background:#b8860b"><span>🏆 DRIVER OF THE DAY</span><span class="sub">R${lr.number} ${esc(lr.name)}</span></div>
+        <div class="dotd">
+            <div class="dhead"><div><div class="dname">${x.winnerCarNumber ? `<span class="dnum">#${esc(x.winnerCarNumber)}</span>` : ''}${esc(x.winnerName)} ${flag(x.countryCode)}</div>
+                <div class="mut" style="font-size:15px;margin-top:2px">${esc(bits.join(' · '))}</div></div>
+                <div class="dscore"><div class="mut" style="font-size:11px;letter-spacing:1.5px">MERIT SCORE</div><div>${(x.score || 0).toFixed(3)}</div></div></div>
+            <div class="dbars">${bar('Positions gained', b.positionsGained, w.pos)}${bar('Overtakes', b.overtakes, w.ot)}${bar('Recovery', b.recovery, w.rec)}${bar('Clean racing', b.clean, w.clean)}</div>
+            ${ru ? `<div class="mut" style="margin-top:10px;font-size:11px;letter-spacing:1.5px;font-weight:700">ALSO OUTSTANDING</div>${ru}` : ''}
+            ${x.previousWinnerBlocked && x.previousWinnerName ? `<div class="dnote">${esc(x.previousWinnerName)} won the previous round and is not eligible for a back-to-back Driver of the Day.</div>` : ''}
+        </div></div>`;
+}
+
+function renderTable(d) {
+    const st = d.standings;
+    if (!st || !(st.standings || []).length) return '<div class="msg">No standings yet.</div>';
+    const cols = '30px 12px minmax(0,1fr) 28px 160px 56px';
+    const next = d.info && d.info.nextRound;
+    const rows = lim(st.standings).map(x => `<div class="row" style="grid-template-columns:${cols}">
+        <div class="pos ${x.rank === 1 ? 'p1' : ''}">${x.rank}</div>
+        ${x.proAmClass ? `<div class="pa ${x.proAmClass}"></div>` : '<span></span>'}
+        <div class="nm">${esc(x.name)}${x.retiredAt ? ' <span class="tag">RETIRED</span>' : ''}</div>${flag(x.countryCode)}
+        <div class="nm mut">${esc(x.teamName || '')}</div>
+        <div class="r">${x.points}</div></div>`).join('');
+    return `<div class="card">
+        <div class="top"><span>CHAMPIONSHIP</span><span class="sub">${next ? `before R${next.number} ${esc(next.name)}` : esc(st.season?.name || '')}</span></div>
+        <div class="head" style="grid-template-columns:${cols}"><span></span><span></span><span class="nm">driver</span><span></span><span class="nm">team</span><span class="r">pts</span></div>
+        ${rows}</div>`;
+}
+
+function renderRsvp(d) {
+    const n = d.info && d.info.nextRound;
+    if (!n) return '<div class="msg">No upcoming round.</div>';
+    const r = n.rsvp, tot = Math.max(1, r.registered);
+    const tile = (v, l, c) => `<div class="tile"><div class="v" style="color:${c}">${v}</div><div class="l">${l}</div></div>`;
+    const seg = (v, c) => v > 0 ? `<i style="width:${v / tot * 100}%;background:${c}"></i>` : '';
+    return `<div class="card">
+        <div class="top"><span>RSVP</span><span class="sub">R${n.number} ${esc(n.name)} · ${fmtDate(n.startsAt)}</span></div>
+        <div class="rsvp">
+            <div class="tiles">${tile(r.accepted, 'Racing', 'var(--up)')}${tile(r.declined, 'Declined', 'var(--down)')}${tile(r.tentative, 'Maybe', 'var(--gold)')}${tile(r.noResponse, 'No answer', 'var(--muted)')}</div>
+            <div class="stack">${seg(r.accepted, 'var(--up)')}${seg(r.tentative, 'var(--gold)')}${seg(r.declined, 'var(--down)')}</div>
+            <div class="foot"><span>${r.registered} registered drivers</span><span>${r.closed ? 'RSVP closed' : 'RSVP open'}</span></div>
+        </div></div>`;
+}
+
+function renderStats(d) {
+    const p = d.info && d.info.participation;
+    if (!p) return '<div class="msg">No statistics yet.</div>';
+    const max = Math.max(1, ...p.rounds.map(r => r.entries));
+    const next = d.info.nextRound && d.info.nextRound.number;
+    const rows = p.rounds.map(r => `<div class="prow ${r.number === next ? 'next' : ''}">
+        <span class="rn">R${r.number}</span>
+        <div class="pbar"><i style="width:${r.entries / max * 100}%"></i><span>${esc(r.name)}</span></div>
+        <span class="pv">${r.entries ? `${r.entries} entries · ${r.finishers} fin.` : (r.number === next ? 'next' : '—')}</span></div>`).join('');
+    const t = p.totals;
+    const tile = (v, l) => `<div class="tile"><div class="v">${v}</div><div class="l">${l}</div></div>`;
+    return `<div class="card wide">
+        <div class="top"><span>SEASON STATISTICS</span><span class="sub">${esc(d.info.season?.name || '')}</span></div>
+        <div class="stats"><div class="mut" style="margin-bottom:6px;letter-spacing:1px;font-weight:700">PARTICIPATION PER ROUND</div>${rows}
+        <div class="totals">${tile(t.drivers, 'Drivers')}${tile(t.avgGrid.toFixed(1), 'Avg grid')}${tile(t.totalLaps.toLocaleString('de-DE'), 'Laps')}${tile(t.avgIncidentsPerEntry.toFixed(1), 'Inc / entry')}</div>
+        </div></div>`;
+}
+
+const RENDER = { lastrace: renderLastRace, table: renderTable, rsvp: renderRsvp, stats: renderStats, lastdotd: renderLastDotd };
+let data = null;
+function draw() {
+    const root = document.getElementById('root');
+    if (!data || !data.ok) { root.innerHTML = `<div class="msg">${esc((data && data.error) || 'Loading CLS data…')}</div>`; return; }
+    root.innerHTML = (RENDER[MODE] || renderLastRace)(data);
+}
+async function load() {
+    try { data = await (await fetch('/api/roundinfo', { cache: 'no-store' })).json(); } catch (e) { /* keep last */ }
+    draw();
+}
+load(); setInterval(load, 15000); setInterval(draw, 1000);
+</script></body></html>
+"""
+
+
+@app.route("/lastrace")
+@app.route("/table")
+@app.route("/rsvp")
+@app.route("/stats")
+@app.route("/lastdotd")
+def prerace_page():
+    return Response(PRERACE_HTML, mimetype="text/html")
+
+
+@app.route("/api/roundinfo")
+def api_roundinfo():
+    info = round_info.get()
+    champ = fetcher.get()
+    if not info["data"]:
+        return jsonify({"ok": False, "error": info["error"] or "Loading CLS data…"})
+    return jsonify({"ok": True, "info": info["data"], "standings": champ.get("data"),
+                    "error": info["error"]})
+
+
+@app.route("/flag/<code>.svg")
+def flag(code: str):
+    import country_flags
+    path = country_flags.flag_path(code)
+    if not path:
+        return ("", 404)
+    from flask import send_file
+    return send_file(str(path), mimetype="image/svg+xml", max_age=86400)
+
+
 # -----------------------------------------------------------------------------
 # Entrypoint
 # -----------------------------------------------------------------------------
@@ -1473,12 +1846,14 @@ def main() -> None:
     # Start the championship fetcher
     f = threading.Thread(target=fetcher.run, daemon=True, name="ChampFetcher")
     f.start()
+    threading.Thread(target=round_info.run, daemon=True, name="RoundInfo").start()
 
     print("=" * 60)
     print("iRacing Championship Overlay")
     print("=" * 60)
     print(f"  Config page : http://localhost:5010/")
     print(f"  OBS source  : http://localhost:5010/overlay")
+    print(f"  Pre-race    : /lastrace  /table  /rsvp  /stats  /lastdotd   (+ /duel)")
     print(f"  Press H in the overlay window for debug background")
     print(f"  Press V in the overlay window to toggle views")
     print("=" * 60)

@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Twitch Chat</title>
+<!--
+  Twitch chat overlay (2026-10-08) — standalone, no Python server needed.
+  OBS: Browser source -> "Local file" -> this file.  Width 420, Height 600.
+
+  Reads Twitch chat ANONYMOUSLY (read-only IRC over WebSocket, nick
+  "justinfan…"), so there is no login and no token to manage.
+
+  URL options (OBS: use a URL source  file:///…/twitch_chat.html?max=8
+  or simply edit the DEFAULTS below):
+    ?channel=sim_racing_broadcast   which chat to show
+    ?max=6        messages on screen at once
+    ?secs=30      seconds a message stays (0 = never fades)
+    ?mode=all     all | highlight (only "Highlight My Message") | q (only "!q …")
+    ?commands=0   1 = also show "!command" messages
+    ?hide=a,b     extra accounts to hide (bots below are always hidden)
+    ?zoom=1.3     scale   ·   ?debug=1 / H = dark background + status line
+    ?demo=1       fake messages for positioning in OBS
+  Moderation is respected: a deleted message, timeout or ban removes the
+  message from the overlay too.
+-->
+<style>
+    :root { --bg: rgba(40,40,45,0.88); --box: rgba(20,20,24,0.92); --text: #f2f2f4;
+            --muted: #b9b9c2; --accent: #9146ff; --hl: #ffd166; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: rgba(0,0,0,0); overflow: hidden; height: 100%; }
+    body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; color: var(--text); padding: 8px; }
+    body.debug-mode { background: #23262b; }
+    #list { position: absolute; left: 8px; right: 8px; bottom: 8px; display: flex;
+            flex-direction: column; gap: 6px; }
+    .msg { background: var(--bg); border-left: 4px solid var(--c, var(--accent)); padding: 6px 10px 7px;
+           font-size: 17px; line-height: 1.3; word-wrap: break-word; overflow-wrap: anywhere;
+           box-shadow: 0 2px 6px rgba(0,0,0,0.45);
+           animation: slidein .35s cubic-bezier(.2,.9,.3,1.2); transition: opacity .6s ease, transform .6s ease; }
+    .msg.out { opacity: 0; transform: translateX(-20px); }
+    .msg.hl { background: rgba(70,58,20,0.92); border-left-color: var(--hl); }
+    @keyframes slidein { from { opacity: 0; transform: translateX(-30px); } to { opacity: 1; transform: none; } }
+    .who { font-weight: 800; margin-right: 6px; }
+    .badge { display: inline-block; font-size: 10px; font-weight: 800; letter-spacing: .5px; padding: 0 4px;
+             border-radius: 2px; margin-right: 4px; vertical-align: 2px; color: #fff; }
+    .b-broadcaster { background: #e91916; } .b-moderator { background: #00ad03; }
+    .b-vip { background: #e005b9; } .b-subscriber { background: #9146ff; }
+    .emote { height: 1.5em; vertical-align: -0.35em; margin: 0 1px; }
+    #status { position: fixed; top: 6px; left: 8px; font-size: 12px; color: var(--muted); display: none; }
+    body.debug-mode #status { display: block; }
+</style>
+</head>
+<body>
+<div id="status">connecting…</div>
+<div id="list"></div>
+<script>
+const DEFAULTS = { channel: 'sim_racing_broadcast', max: 6, secs: 30, mode: 'all', commands: '0' };
+const BOTS = ['streamelements', 'nightbot', 'streamlabs', 'moobot', 'fossabot', 'wizebot', 'sery_bot', 'soundalerts'];
+
+const qs = new URLSearchParams(location.search);
+const opt = k => qs.get(k) ?? DEFAULTS[k];
+const CHANNEL = String(opt('channel')).toLowerCase().replace(/^#/, '');
+const MAX = parseInt(opt('max'), 10) || 6;
+const SECS = parseFloat(opt('secs'));
+const MODE = String(opt('mode')).toLowerCase();
+const SHOW_CMDS = String(opt('commands')) === '1';
+const HIDE = new Set(BOTS.concat((qs.get('hide') || '').toLowerCase().split(',').filter(Boolean)));
+if (qs.get('debug') === '1') document.body.classList.add('debug-mode');
+const zoom = parseFloat(qs.get('zoom') || '1');
+if (zoom > 0 && zoom !== 1) document.body.style.zoom = zoom;
+document.addEventListener('keydown', e => { if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('debug-mode'); });
+
+const list = document.getElementById('list');
+const statusEl = document.getElementById('status');
+const setStatus = t => { statusEl.textContent = `#${CHANNEL} · ${t}`; };
+
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// IRCv3 tag values are escaped (\s = space, \: = ;, \\ = \).
+function unescTag(v) {
+    return (v || '').replace(/\\(.)/g, (_, c) => ({ s: ' ', ':': ';', '\\': '\\', r: '\r', n: '\n' }[c] ?? c));
+}
+function parseTags(raw) {
+    const t = {};
+    for (const kv of raw.split(';')) { const i = kv.indexOf('='); t[kv.slice(0, i)] = unescTag(kv.slice(i + 1)); }
+    return t;
+}
+
+// Replace Twitch emotes (positions are in Unicode code points) with images.
+function renderText(text, emotesTag) {
+    const chars = Array.from(text);
+    const spans = [];
+    for (const part of (emotesTag || '').split('/').filter(Boolean)) {
+        const [id, ranges] = part.split(':');
+        for (const r of ranges.split(',')) {
+            const [a, b] = r.split('-').map(Number);
+            spans.push({ a, b, id });
+        }
+    }
+    spans.sort((x, y) => x.a - y.a);
+    let out = '', i = 0;
+    for (const s of spans) {
+        if (s.a < i) continue;
+        out += esc(chars.slice(i, s.a).join(''));
+        const name = chars.slice(s.a, s.b + 1).join('');
+        out += `<img class="emote" alt="${esc(name)}" src="https://static-cdn.jtvnw.net/emoticons/v2/${encodeURIComponent(s.id)}/default/dark/2.0">`;
+        i = s.b + 1;
+    }
+    return out + esc(chars.slice(i).join(''));
+}
+
+function badgesHtml(tag) {
+    const order = ['broadcaster', 'moderator', 'vip', 'subscriber'];
+    const label = { broadcaster: 'HOST', moderator: 'MOD', vip: 'VIP', subscriber: 'SUB' };
+    const have = new Set((tag || '').split(',').map(b => b.split('/')[0]));
+    return order.filter(b => have.has(b)).map(b => `<span class="badge b-${b}">${label[b]}</span>`).join('');
+}
+
+function removeEl(el) {
+    if (!el || el.classList.contains('out')) return;
+    el.classList.add('out');
+    setTimeout(() => el.remove(), 650);
+}
+
+function addMessage(m) {
+    const el = document.createElement('div');
+    el.className = 'msg' + (m.highlight ? ' hl' : '');
+    el.dataset.id = m.id || '';
+    el.dataset.user = m.login || '';
+    if (m.color) el.style.setProperty('--c', m.color);
+    el.innerHTML = `${badgesHtml(m.badges)}<span class="who" style="color:${esc(m.color || '#bf94ff')}">${esc(m.name)}</span>${renderText(m.text, m.emotes)}`;
+    list.appendChild(el);
+    const live = [...list.children].filter(x => !x.classList.contains('out'));
+    while (live.length > MAX) removeEl(live.shift());
+    if (SECS > 0) setTimeout(() => removeEl(el), SECS * 1000);
+}
+
+function wanted(m) {
+    if (HIDE.has(m.login)) return false;
+    if (MODE === 'highlight') return m.highlight;
+    if (MODE === 'q') {
+        if (!/^!q\b/i.test(m.text)) return false;
+        m.text = m.text.replace(/^!q\s*/i, '');
+        return m.text.length > 0;
+    }
+    if (!SHOW_CMDS && m.text.startsWith('!')) return false;
+    return true;
+}
+
+function handleLine(line) {
+    let tags = {}, rest = line;
+    if (rest.startsWith('@')) { const sp = rest.indexOf(' '); tags = parseTags(rest.slice(1, sp)); rest = rest.slice(sp + 1); }
+    if (rest.startsWith('PING')) { ws.send('PONG' + rest.slice(4)); return; }
+    let prefix = '';
+    if (rest.startsWith(':')) { const sp = rest.indexOf(' '); prefix = rest.slice(1, sp); rest = rest.slice(sp + 1); }
+    const ci = rest.indexOf(' :');
+    const head = (ci >= 0 ? rest.slice(0, ci) : rest).split(' ');
+    const trailing = ci >= 0 ? rest.slice(ci + 2) : '';
+    const cmd = head[0];
+    if (cmd === 'PRIVMSG') {
+        let text = trailing;
+        if (text.startsWith('\u0001ACTION ') && text.endsWith('\u0001')) text = text.slice(8, -1);   // /me
+        const login = prefix.split('!')[0];
+        const m = { id: tags['id'], login, name: tags['display-name'] || login, color: tags['color'],
+                    badges: tags['badges'], emotes: tags['emotes'], text,
+                    highlight: tags['msg-id'] === 'highlighted-message' };
+        if (wanted(m)) addMessage(m);
+    } else if (cmd === 'CLEARMSG') {                       // a mod deleted one message
+        const el = list.querySelector(`[data-id="${CSS.escape(tags['target-msg-id'] || '')}"]`);
+        removeEl(el);
+    } else if (cmd === 'CLEARCHAT') {                      // timeout / ban (user) or /clear (all)
+        const user = (trailing || '').toLowerCase();
+        [...list.children].forEach(el => { if (!user || el.dataset.user === user) removeEl(el); });
+    } else if (cmd === '001') {
+        setStatus('connected');
+    } else if (cmd === 'RECONNECT') {
+        ws.close();
+    }
+}
+
+let ws, backoff = 1000;
+function connect() {
+    setStatus('connecting…');
+    ws = new WebSocket('wss://irc-ws.chat.twitch.tv:443');
+    ws.onopen = () => {
+        backoff = 1000;
+        ws.send('CAP REQ :twitch.tv/tags twitch.tv/commands');
+        ws.send('PASS SCHMOOPIIE');                                  // anonymous read-only
+        ws.send('NICK justinfan' + Math.floor(10000 + Math.random() * 80000));
+        ws.send('JOIN #' + CHANNEL);
+    };
+    ws.onmessage = ev => String(ev.data).split('\r\n').filter(Boolean).forEach(handleLine);
+    ws.onclose = () => {
+        setStatus(`disconnected — retrying in ${Math.round(backoff / 1000)} s`);
+        setTimeout(connect, backoff);
+        backoff = Math.min(backoff * 2, 30000);
+    };
+    ws.onerror = () => ws.close();
+}
+
+if (qs.has('demo')) {
+    setStatus('demo');
+    const demo = [
+        { name: 'RaceFan_99', color: '#1e90ff', text: 'Was für ein Start von Becker! 🔥', badges: 'subscriber/12' },
+        { name: 'Remo_Supporter', color: '#ff7f50', text: 'Grossenbacher holt sich den Titel heute', badges: '' },
+        { name: 'sim_racing_broadcast', color: '#e91916', text: 'Willkommen zur PCCD in Portimão!', badges: 'broadcaster/1' },
+        { name: 'ModMarco', color: '#00ad03', text: 'Bitte fair bleiben im Chat 🙂', badges: 'moderator/1' },
+        { name: 'GT3Gerd', color: '#daa520', text: 'Kurve 1 bergab ohne ABS… mutig', badges: 'vip/1', highlight: true },
+    ];
+    let i = 0;
+    const go = () => { const d = demo[i++ % demo.length]; addMessage({ ...d, login: d.name.toLowerCase(), id: String(i) }); };
+    go(); setInterval(go, 2500);
+} else {
+    connect();
+}
+</script>
+</body>
+</html>

@@ -54,6 +54,15 @@ SVG_MARGIN = 40
 # treated as a closed circuit and gets its final segment drawn in.
 LOOP_CLOSE_MAX_FRAC = 0.20
 
+# Pit-road trimming. In most SimRacingApps-derived files (219 of 314) the
+# ONPITROAD route is a whole LAP that starts at pit exit and ends at pit
+# entry, so the orange pit line was drawn around the entire circuit. When
+# the pit route is longer than PIT_TRIM_MIN_FRAC of a lap, only its longest
+# stretch running more than PIT_OFF_TRACK_M away from the racing line is
+# kept — that stretch is the actual pit lane.
+PIT_TRIM_MIN_FRAC = 0.5
+PIT_OFF_TRACK_M = 3.0
+
 # iRacing "track surface" enum values for in-world detection.
 SURFACE_NOT_IN_WORLD = -1
 SURFACE_OFF_TRACK    = 0
@@ -66,6 +75,59 @@ SURFACE_ON_TRACK     = 3
 # Track data loading + projection
 # ---------------------------------------------------------------------------
 _track_cache: dict[str, dict] = {}
+
+
+def _dist_to_polyline(p, line) -> float:
+    """Metres from point p to the closed polyline `line` (local x/y)."""
+    best = float("inf")
+    px, py = p
+    n = len(line)
+    for i in range(n):
+        ax, ay = line[i]
+        bx, by = line[(i + 1) % n]
+        dx, dy = bx - ax, by - ay
+        L = dx * dx + dy * dy
+        t = 0.0 if L == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / L))
+        d = math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+        if d < best:
+            best = d
+    return best
+
+
+def _trim_pit_lap(pit, track):
+    """Cut a whole-lap pit route down to the real pit lane (see
+    PIT_TRIM_MIN_FRAC). Pit data that is already just the pit lane is
+    returned unchanged; a route that never leaves the racing line is
+    dropped (nothing worth drawing)."""
+    if len(pit) < 3 or len(track) < 3:
+        return pit
+
+    def length(pts):
+        return sum(math.dist(pts[i - 1], pts[i]) for i in range(1, len(pts)))
+
+    if length(pit) <= PIT_TRIM_MIN_FRAC * length(track):
+        return pit
+    off = [_dist_to_polyline(p, track) > PIT_OFF_TRACK_M for p in pit]
+    runs, start = [], None
+    for i, o in enumerate(off + [False]):
+        if o and start is None:
+            start = i
+        elif not o and start is not None:
+            runs.append((start, i - 1))
+            start = None
+    if not runs:
+        return []
+    n = len(pit)
+
+    def with_ends(a, b):
+        return pit[max(0, a - 1):min(n, b + 2)]
+
+    segs = [with_ends(a, b) for a, b in runs]
+    # pit entry is recorded at the END of the route, pit exit at the START:
+    # when both ends are off the racing line they are one pit lane.
+    if len(runs) > 1 and runs[0][0] == 0 and runs[-1][1] == n - 1:
+        segs.append(with_ends(*runs[-1]) + with_ends(*runs[0]))
+    return max(segs, key=length)
 
 
 def _load_track(track_name: str) -> dict | None:
@@ -138,6 +200,9 @@ def _load_track(track_name: str) -> dict | None:
         gap = math.dist(ontrack_m[-1], ontrack_m[0])
         if run > 0 and gap / run <= LOOP_CLOSE_MAX_FRAC and gap > 1e-6:
             ontrack_m.append(ontrack_m[0])
+
+    # --- pit lane only --------------------------------------------------------
+    onpitroad_m = _trim_pit_lap(onpitroad_m, ontrack_m)
 
     # Compute bounding box across both layers so nothing gets clipped.
     xs = [p[0] for p in ontrack_m] + [p[0] for p in onpitroad_m]
