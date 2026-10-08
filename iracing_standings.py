@@ -2132,6 +2132,174 @@ def gapbar_page():
     return Response(GAPBAR_HTML, mimetype="text/html")
 
 
+# -----------------------------------------------------------------------------
+# YouTube live picture-in-picture (2026-10-08). Lives on this server because
+# YouTube refuses embeds on local-file pages ("Error 153") — it must be an
+# http://localhost page. OBS points at /youtube once; the video is chosen on
+# /youtube/setup and saved in youtube_config.json (gitignored).
+# -----------------------------------------------------------------------------
+import json as _json
+import re as _re
+from pathlib import Path as _Path
+
+YOUTUBE_CFG = _Path(__file__).resolve().parent / "youtube_config.json"
+_YT_ID = _re.compile(r"(?:v=|youtu\.be/|/live/|/embed/|/shorts/)([\w-]{11})")
+
+
+def _youtube_id(s: str) -> str:
+    s = (s or "").strip()
+    if _re.fullmatch(r"[\w-]{11}", s):
+        return s
+    m = _YT_ID.search(s)
+    return m.group(1) if m else ""
+
+
+def _youtube_cfg() -> dict:
+    try:
+        return {"video": "", "mute": True, **_json.loads(YOUTUBE_CFG.read_text(encoding="utf-8"))}
+    except Exception:
+        return {"video": "", "mute": True}
+
+
+YOUTUBE_HTML = r"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>YouTube Live</title>
+<style>
+    /* YouTube live picture-in-picture (2026-10-08). Must be served from
+       http://localhost — YouTube refuses embeds on local-file pages
+       ("Error 153"). Which video: /youtube/setup (saved on the server), or
+       ?v=<id or link> on this URL. ?mute=0|1 overrides the saved setting. */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; background: rgba(0,0,0,0); overflow: hidden; }
+    #player, #player iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+    #msg { position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+           background: #1c1c20; color: #b9b9c2; font: 600 18px 'Segoe UI', Arial, sans-serif; text-align: center; padding: 20px; }
+    #msg.on { display: flex; }
+</style></head>
+<body>
+<div id="player"></div>
+<div id="msg"></div>
+<script>
+const qs = new URLSearchParams(location.search);
+const msg = document.getElementById('msg');
+const say = t => { msg.textContent = t; msg.classList.toggle('on', !!t); };
+
+function videoId(s) {
+    s = String(s || '').trim();
+    if (/^[\w-]{11}$/.test(s)) return s;
+    const m = s.match(/(?:v=|youtu\.be\/|\/live\/|\/embed\/|\/shorts\/)([\w-]{11})/);
+    return m ? m[1] : '';
+}
+
+let player = null, current = null, retryT = null;
+function load(cfg) {
+    const id = videoId(qs.get('v') || cfg.video);
+    const mute = (qs.get('mute') ?? (cfg.mute ? '1' : '0')) === '1';
+    const key = id + '|' + mute;
+    if (key === current) return;
+    current = key;
+    clearTimeout(retryT);
+    if (!id) { say('No YouTube video set — open /youtube/setup'); if (player) { player.destroy(); player = null; } return; }
+    say('');
+    if (player) { player.destroy(); player = null; }
+    const div = document.createElement('div'); div.id = 'yt';
+    document.getElementById('player').replaceChildren(div);
+    player = new YT.Player('yt', {
+        videoId: id,
+        playerVars: { autoplay: 1, mute: mute ? 1 : 0, controls: 0, rel: 0, modestbranding: 1,
+                      playsinline: 1, iv_load_policy: 3, origin: location.origin },
+        events: {
+            onReady: e => { if (mute) e.target.mute(); else e.target.unMute(); e.target.playVideo(); },
+            onError: e => {
+                const why = { 2: 'invalid video id', 5: 'player error', 100: 'video not found / private',
+                              101: 'the channel does not allow embedding', 150: 'the channel does not allow embedding',
+                              153: 'player configuration error' }[e.data] || ('error ' + e.data);
+                say(`YouTube: ${why} — retrying in 60 s`);
+                retryT = setTimeout(() => { current = null; load(lastCfg); }, 60000);
+            },
+            // A live stream that hiccups ends up "ended" or stuck buffering: nudge it.
+            onStateChange: e => { if (e.data === YT.PlayerState.ENDED) setTimeout(() => player && player.playVideo(), 5000); },
+        },
+    });
+}
+
+let lastCfg = {};
+async function poll() {
+    try { lastCfg = await (await fetch('/youtube/config', { cache: 'no-store' })).json(); } catch (e) { /* keep */ }
+    if (window.YT && YT.Player) load(lastCfg);
+}
+window.onYouTubeIframeAPIReady = () => { current = null; load(lastCfg); };
+const s = document.createElement('script'); s.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(s);
+poll(); setInterval(poll, 5000);
+</script></body></html>
+"""
+
+YOUTUBE_SETUP_HTML = r"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>YouTube Live — Setup</title>
+<style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #1c1c20; color: #f2f2f4; padding: 30px; }
+    .box { max-width: 640px; background: #343439; padding: 20px 22px; }
+    h1 { font-size: 20px; margin-bottom: 14px; }
+    input[type=text] { width: 100%; padding: 9px 10px; font-size: 15px; background: #1c1c20; color: #fff; border: 1px solid #54545a; }
+    label { display: block; margin: 12px 0 6px; color: #b9b9c2; font-size: 14px; }
+    button { margin-top: 16px; padding: 9px 18px; font-size: 15px; font-weight: 700; background: #2f7ff0; color: #fff; border: 0; cursor: pointer; }
+    button.sec { background: #54545a; margin-left: 6px; }
+    #st { margin-top: 12px; color: #45f063; min-height: 20px; }
+    .hint { color: #8a8a94; font-size: 13px; margin-top: 14px; line-height: 1.5; }
+    code { background: #1c1c20; padding: 1px 5px; }
+</style></head>
+<body><div class="box">
+    <h1>YouTube live picture-in-picture</h1>
+    <label>YouTube link or video ID</label>
+    <input type="text" id="video" placeholder="https://www.youtube.com/live/… or https://youtu.be/…">
+    <label><input type="checkbox" id="mute"> Muted (recommended — otherwise control the volume in the OBS mixer)</label>
+    <button onclick="save()">Show this video</button><button class="sec" onclick="clearV()">Clear</button>
+    <div id="st"></div>
+    <div class="hint">OBS: Browser source → URL <code>http://localhost:5005/youtube</code>, 1280 × 720,
+    tick “Control audio via OBS”. The OBS source picks up a new video here within ~5 s.</div>
+</div>
+<script>
+async function load() {
+    const c = await (await fetch('/youtube/config', { cache: 'no-store' })).json();
+    document.getElementById('video').value = c.video || '';
+    document.getElementById('mute').checked = !!c.mute;
+}
+async function post(body) {
+    const r = await fetch('/youtube/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await r.json();
+    document.getElementById('st').textContent = d.ok ? (d.video ? `Showing ${d.video}` : 'Cleared') : ('Error: ' + d.error);
+    document.getElementById('st').style.color = d.ok ? '#45f063' : '#ff5a6a';
+}
+function save() { post({ video: document.getElementById('video').value, mute: document.getElementById('mute').checked }); }
+function clearV() { document.getElementById('video').value = ''; post({ video: '', mute: document.getElementById('mute').checked }); }
+load();
+</script></body></html>
+"""
+
+
+@app.route("/youtube")
+def youtube_page():
+    return Response(YOUTUBE_HTML, mimetype="text/html")
+
+
+@app.route("/youtube/setup")
+def youtube_setup():
+    return Response(YOUTUBE_SETUP_HTML, mimetype="text/html")
+
+
+@app.route("/youtube/config", methods=["GET", "POST"])
+def youtube_config():
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        raw = str(body.get("video") or "")
+        vid = _youtube_id(raw)
+        if raw.strip() and not vid:
+            return jsonify({"ok": False, "error": "not a YouTube link or video id"})
+        cfg = {"video": vid, "mute": bool(body.get("mute", True))}
+        YOUTUBE_CFG.write_text(_json.dumps(cfg), encoding="utf-8")
+        return jsonify({"ok": True, **cfg})
+    return jsonify(_youtube_cfg())
+
+
 @app.route("/standings")
 def standings():
     return jsonify(poller.get())
@@ -2140,7 +2308,7 @@ def standings():
 # Bump on every change: http://localhost:5005/version shows which code the
 # running process actually loaded (the stream PC gets this folder through
 # Nextcloud, so a restart can still pick up the previous file).
-CODE_VERSION = "2026-10-08 gapbar-clean"
+CODE_VERSION = "2026-10-08 youtube"
 
 
 @app.route("/version")

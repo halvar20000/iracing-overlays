@@ -20,6 +20,9 @@
     ?hide=a,b     extra accounts to hide (bots below are always hidden)
     ?zoom=1.3     scale   ·   ?debug=1 / H = dark background + status line
     ?demo=1       fake messages for positioning in OBS
+    ?viewers=0    hide the live viewer count (shown by default while live)
+  Viewer count: decapi.me (public, no login) every 60 s, falling back to
+  Twitch's own web endpoint; hidden while the channel is offline.
   Moderation is respected: a deleted message, timeout or ban removes the
   message from the overlay too.
 -->
@@ -45,12 +48,22 @@
     .b-broadcaster { background: #e91916; } .b-moderator { background: #00ad03; }
     .b-vip { background: #e005b9; } .b-subscriber { background: #9146ff; }
     .emote { height: 1.5em; vertical-align: -0.35em; margin: 0 1px; }
+    #viewers { position: absolute; top: 8px; left: 8px; display: none; align-items: center; gap: 8px;
+               background: var(--bg); padding: 4px 12px 5px; font-size: 16px; font-weight: 700;
+               box-shadow: 0 2px 6px rgba(0,0,0,0.45); border-left: 4px solid #e91916; }
+    #viewers.on { display: inline-flex; }
+    #viewers .dot { width: 9px; height: 9px; border-radius: 50%; background: #e91916;
+                    animation: pulse 1.6s ease-in-out infinite; }
+    #viewers .live { color: #ff5a5a; letter-spacing: 1px; font-size: 13px; font-weight: 800; }
+    @keyframes pulse { 50% { opacity: .35; } }
+    body.debug-mode #viewers { top: 26px; }
     #status { position: fixed; top: 6px; left: 8px; font-size: 12px; color: var(--muted); display: none; }
     body.debug-mode #status { display: block; }
 </style>
 </head>
 <body>
 <div id="status">connecting…</div>
+<div id="viewers"><span class="dot"></span><span class="live">LIVE</span><span id="vcount"></span></div>
 <div id="list"></div>
 <script>
 const DEFAULTS = { channel: 'sim_racing_broadcast', max: 6, secs: 30, mode: 'all', commands: '0' };
@@ -197,7 +210,38 @@ function connect() {
     ws.onerror = () => ws.close();
 }
 
+// ---- live viewer count -------------------------------------------------
+const SHOW_VIEWERS = qs.get('viewers') !== '0';
+const vBox = document.getElementById('viewers'), vCount = document.getElementById('vcount');
+function showViewers(n) {
+    if (n == null) { vBox.classList.remove('on'); return; }
+    vCount.textContent = `${n.toLocaleString('de-DE')} ${n === 1 ? 'viewer' : 'viewers'}`;
+    vBox.classList.add('on');
+}
+async function viewersDecapi() {
+    const r = await fetch(`https://decapi.me/twitch/viewercount/${encodeURIComponent(CHANNEL)}`, { cache: 'no-store' });
+    const t = (await r.text()).trim();
+    if (/^\d+$/.test(t)) return parseInt(t, 10);
+    if (/offline/i.test(t)) return null;          // a definite "offline"
+    throw new Error(t);                            // anything else: try the fallback
+}
+async function viewersTwitch() {
+    const r = await fetch('https://gql.twitch.tv/gql', {
+        method: 'POST', headers: { 'Client-Id': 'kimne78kx3ncx6brgo4mv6wki5h1ko' },
+        body: JSON.stringify({ query: `query{user(login:${JSON.stringify(CHANNEL)}){stream{viewersCount}}}` }) });
+    const d = await r.json();
+    const st = d && d.data && d.data.user && d.data.user.stream;
+    return st ? st.viewersCount : null;
+}
+async function refreshViewers() {
+    try { showViewers(await viewersDecapi()); }
+    catch (e) {
+        try { showViewers(await viewersTwitch()); } catch (e2) { /* keep the last value */ }
+    }
+}
+
 if (qs.has('demo')) {
+    if (SHOW_VIEWERS) showViewers(23);
     setStatus('demo');
     const demo = [
         { name: 'RaceFan_99', color: '#1e90ff', text: 'Was für ein Start von Becker! 🔥', badges: 'subscriber/12' },
@@ -211,6 +255,7 @@ if (qs.has('demo')) {
     go(); setInterval(go, 2500);
 } else {
     connect();
+    if (SHOW_VIEWERS) { refreshViewers(); setInterval(refreshViewers, 60000); }
 }
 </script>
 </body>
