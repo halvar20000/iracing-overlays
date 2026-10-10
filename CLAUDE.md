@@ -165,6 +165,14 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 10, 2026 (small UI requests):** "Stream mode" button hidden in
+Results (5002), Results Lite (5003) and Grid (5001) — it showed up on
+stream; H still toggles the background (dashboard keeps its button, it is
+the operator UI). Driver card (5017), Andreas: card background 0.88 → 0.97
+opacity; labels 10 px grey #8a8a99 → 14 px #d4d4de bold, team line 12 →
+16 px, values 19 → 24 px, name 23 → 29 px, licence chip 18 px nowrap —
+readable without scaling the source up in OBS (card ≈ 880 × 95 px).
+
 **October 10, 2026 (spectating an official NEC race: no data, then wrong
 livery):**
   • "Dashboard / logger get nothing" was NOT our code: new `check_sdk.py`

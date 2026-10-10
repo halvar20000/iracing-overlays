@@ -207,7 +207,8 @@ PAGE_HTML = r"""
         align-items: stretch;
         border-radius: 10px;
         overflow: hidden;
-        background: rgba(14, 14, 20, 0.88);
+        /* nearly solid (Andreas, 2026-10-10: the race showed through) */
+        background: rgba(14, 14, 20, 0.97);
         border: 1px solid rgba(255, 255, 255, 0.10);
         box-shadow: 0 6px 30px rgba(0, 0, 0, 0.6);
         font-variant-numeric: tabular-nums;
@@ -217,48 +218,50 @@ PAGE_HTML = r"""
 
     .ident {
         display: flex; align-items: center; gap: 12px;
-        padding: 10px 18px;
-        border-right: 1px solid rgba(255,255,255,0.08);
+        padding: 12px 20px;
+        border-right: 1px solid rgba(255,255,255,0.12);
     }
     .numchip {
         display: flex; flex-direction: column; align-items: center;
-        gap: 2px; min-width: 56px;
-        padding: 4px 8px;
+        gap: 2px; min-width: 64px;
+        padding: 5px 9px;
         background: rgba(255, 255, 255, 0.10);
         border-left: 4px solid var(--cls, #888);
         border-radius: 0 6px 6px 0;
     }
-    .numchip .num { font-size: 20px; font-weight: 800; }
-    .numchip .cls { font-size: 10px; font-weight: 700; letter-spacing: 1px;
-                    color: #b0b0c0; text-transform: uppercase; }
+    .numchip .num { font-size: 25px; font-weight: 800; }
+    .numchip .cls { font-size: 13px; font-weight: 800; letter-spacing: 1px;
+                    color: #e2e2ea; text-transform: uppercase; }
     /* WCT GT3 Pro/Am marker in front of the name: red PRO, green AM. */
     .pa { width: 6px; align-self: stretch; border-radius: 2px; display: none; }
     .pa.pro { display: block; background: #e63946; }
     .pa.am  { display: block; background: #2ecc71; }
     .who { display: flex; flex-direction: column; gap: 1px; }
-    .who .name { font-size: 23px; font-weight: 800; letter-spacing: 0.4px;
+    .who .name { font-size: 29px; font-weight: 800; letter-spacing: 0.4px;
                  white-space: nowrap; color: #ffb38a; }
-    .who .team { font-size: 12px; font-weight: 600; color: #8a8a99;
-                 letter-spacing: 0.6px; white-space: nowrap; }
+    .who .team { font-size: 16px; font-weight: 700; color: #d4d4de;
+                 letter-spacing: 0.4px; white-space: nowrap; }
 
     .stat {
         display: flex; flex-direction: column;
         align-items: center; justify-content: center;
-        padding: 8px 15px; gap: 1px;
-        border-right: 1px solid rgba(255,255,255,0.08);
-        min-width: 80px;
+        padding: 9px 18px; gap: 2px;
+        border-right: 1px solid rgba(255,255,255,0.12);
+        min-width: 96px;
     }
     .stat:last-child { border-right: none; }
-    .stat .label { font-size: 10px; letter-spacing: 1.6px; color: #8a8a99;
+    /* labels were 10px grey (#8a8a99) — unreadable without scaling the
+       whole card up in OBS (Andreas, 2026-10-10) */
+    .stat .label { font-size: 14px; font-weight: 700; letter-spacing: 1px; color: #d4d4de;
                    text-transform: uppercase; white-space: nowrap; }
-    .stat .value { font-size: 19px; font-weight: 800; line-height: 1.15;
+    .stat .value { font-size: 24px; font-weight: 800; line-height: 1.15;
                    white-space: nowrap; }
 
     .stat.ir  .value { color: #22c9e0; }
     .stat.pos .value { color: #ffd166; }
     .licchip {
-        font-size: 14px; font-weight: 800;
-        padding: 2px 10px; border-radius: 999px;
+        font-size: 18px; font-weight: 800; white-space: nowrap;
+        padding: 2px 12px; border-radius: 999px;
         background: var(--lic, #555); color: #fff;
         text-shadow: 0 1px 2px rgba(0,0,0,0.6);
     }

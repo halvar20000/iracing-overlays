@@ -416,7 +416,8 @@ GRID_HTML = """
 </head>
 <body>
 
-<div class="stream-toggle" id="stream-toggle" onclick="toggleStreamMode()">
+<!-- Button hidden 2026-10-10 (showed up on stream); H still toggles. -->
+<div class="stream-toggle" id="stream-toggle" style="display:none" onclick="toggleStreamMode()">
     <span id="stream-toggle-label">📺 Stream mode</span>
     <span class="kbd">H</span>
 </div>
