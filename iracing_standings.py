@@ -1484,7 +1484,9 @@ TOWER_HTML = r"""<!DOCTYPE html>
         --am:       #2ecc71;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { background: rgba(0,0,0,0); }
+    /* never a scrollbar on stream (48-car NEC field, 2026-10-10): whatever
+       does not fit the OBS source is cut off; ?rows=N shortens the list */
+    html, body { background: rgba(0,0,0,0); overflow: hidden; }
     body {
         font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
         color: var(--text);
@@ -1546,6 +1548,7 @@ TOWER_HTML = r"""<!DOCTYPE html>
         background: var(--posbox); font-size: 14px; font-weight: 700;
     }
     .row.focus .pos { background: var(--accent); }
+    .row.gapb { margin-top: 6px; border-top: 0; }
     .pa { width: 5px; height: 15px; border-radius: 2px; justify-self: center; }
     .pa.pro { background: var(--pro); }
     .pa.am  { background: var(--am); }
@@ -1696,7 +1699,7 @@ function rowHtml(r, isRace) {
             : '<div class="t muted">no time</div>';
         cells = best + last;
     }
-    return `<div class="grid row${r.focus ? ' focus' : ''}">
+    return `<div class="grid row${r.focus ? ' focus' : ''}${r._gapBefore ? ' gapb' : ''}">
         <div class="pos">${pos}</div>${pa}
         <div class="name">${esc(label(r))}${tags}</div>
         ${flag}${brand}${cells}
@@ -1711,7 +1714,16 @@ function render(d) {
         return;
     }
     const isRace = d.session_type === 'Race';
-    const rows = d.standings || [];
+    let rows = d.standings || [];
+    // ?rows=N: top N positions only. The car on camera is kept visible — if it
+    // is further back it takes the last slot (after a thin gap).
+    const ROWS = parseInt(qs.get('rows') || '0', 10);
+    if (ROWS > 0 && rows.length > ROWS) {
+        const top = rows.slice(0, ROWS);
+        const f = rows.find(r => r.focus);
+        if (f && !top.includes(f)) { top[ROWS - 1] = { ...f, _gapBefore: true }; }
+        rows = top;
+    }
     const multi = new Set(rows.map(r => r.class_id)).size > 1;
     let html = infoBar(d);
     let cur = null, open = false;
@@ -2328,7 +2340,7 @@ def standings():
 # Bump on every change: http://localhost:5005/version shows which code the
 # running process actually loaded (the stream PC gets this folder through
 # Nextcloud, so a restart can still pick up the previous file).
-CODE_VERSION = "2026-10-10 team-names"
+CODE_VERSION = "2026-10-10 rows"
 
 
 @app.route("/version")

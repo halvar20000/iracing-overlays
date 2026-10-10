@@ -165,6 +165,13 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 10, 2026 (tower: no scrollbar, ?rows=N):** a 48-car NEC field
+was taller than the OBS source and Chromium drew a scrollbar on stream.
+TOWER_HTML now has `html, body { overflow: hidden }` (overflow is cut,
+never scrolls) and `?rows=N` = top N only; the on-camera car is kept: if
+it is further back it takes the last slot after a 6 px gap (`.gapb`).
+CODE_VERSION → "2026-10-10 rows". OBS_OVERLAYS.md lists all loaders.
+
 **October 10, 2026 (standings — TEAM names in team events, IEC / NEC):**
 `/standings` carries `team_event` (WeekendInfo.TeamRacing == 1). In team
 events the tower shows the TEAM name (header "team") instead of the driver
