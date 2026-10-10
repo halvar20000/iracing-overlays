@@ -29,10 +29,11 @@ stream mode (transparent background) for OBS browser sources.
 from __future__ import annotations
 import io
 import os
+import zlib
 import threading
 import time
 from pathlib import Path
-from flask import Flask, jsonify, render_template_string, send_file, abort, Response
+from flask import Flask, jsonify, render_template_string, send_file, abort, Response, request
 
 from iracing_sdk_base import SDKPoller, setup_utf8_stdout
 setup_utf8_stdout()
@@ -135,14 +136,27 @@ def _car_path_variants(car_path: str) -> list[str]:
     return variants
 
 
-def find_paint_file(car_path: str, cust_id: int) -> Path | None:
-    """Return the path to the driver's custom paint TGA, if iRacing has it."""
-    if not car_path or not cust_id:
+def find_paint_file(car_path: str, cust_id: int, team_id: int = 0) -> Path | None:
+    """Return the path to the custom paint TGA iRacing shows for this car.
+
+    TEAM RACES (NEC, IEC, endurance specials — 2026-10-10): the car on track
+    wears the TEAM's paint, which Trading Paints stores as
+    car_team_<TeamID>.tga. Looking only for the driver's personal
+    car_<custid>.tga showed his private livery (from other series) instead of
+    the team car. So with a team_id the team file is tried first; the
+    driver's own file stays the fallback.
+    """
+    if not car_path or not (cust_id or team_id):
         return None
+    names = []
+    if team_id:
+        names.append(f"car_team_{team_id}.tga")
+    if cust_id:
+        # Some older/shared paints use slightly different names
+        names += [f"car_{cust_id}.tga", f"car_num_{cust_id}.tga"]
     for fol in _car_path_variants(car_path):
         folder = PAINT_ROOT / fol
-        # Some older/shared paints use slightly different names
-        for name in (f"car_{cust_id}.tga", f"car_num_{cust_id}.tga"):
+        for name in names:
             p = folder / name
             if p.is_file():
                 return p
@@ -279,7 +293,12 @@ class LiveryPoller(SDKPoller):
         design     = d.get("CarDesignStr") or ""
         brand      = detect_brand(car_path, car_screen)
 
-        paint_file = find_paint_file(car_path, cust_id)
+        # Team race? Then the car wears the team's paint (see find_paint_file).
+        # WeekendInfo.TeamRacing is 1 in team events; TeamID 0 = no team.
+        team_racing = int((ir["WeekendInfo"] or {}).get("TeamRacing") or 0) == 1
+        team_id = int(d.get("TeamID") or 0) if team_racing else 0
+
+        paint_file = find_paint_file(car_path, cust_id, team_id)
 
         # Stash the raw driver dict (and paint path) for /carview, which
         # calls iRacing's local render server and needs the full set of
@@ -348,6 +367,11 @@ class LiveryPoller(SDKPoller):
             "license_color": d.get("LicColor", "") or "",
             "design":       parse_design_str(design),
             "paint_available": bool(paint_file),
+            "paint_file":   paint_file.name if paint_file else "",
+            "team_id":      team_id,
+            # changes whenever a different paint file is used -> new image URL,
+            # so OBS never keeps a cached render of the old paint
+            "paint_ver":    zlib.crc32(str(paint_file).encode()) if paint_file else 0,
             "paint_path":   expected_path,
             "paint_folder_exists": bool(car_path and any(
                 (PAINT_ROOT / v).is_dir()
@@ -719,7 +743,11 @@ def livery_png(car_path: str, cust_id: int):
     # Also reject obvious path-traversal tricks.
     if ".." in car_path or car_path.startswith(("/", "\\")):
         abort(400)
-    tga = find_paint_file(car_path, cust_id)
+    try:
+        team_id = int(request.args.get("team") or 0)
+    except ValueError:
+        team_id = 0
+    tga = find_paint_file(car_path, cust_id, team_id)
     if not tga:
         abort(404)
     # Defence in depth: the resolved file must be below PAINT_ROOT.
@@ -1061,13 +1089,13 @@ function render(d) {
     const sources = [];
     if (d.car_id > 0 && d.cust_id > 0) {
         sources.push({
-            url: `/carview/${d.car_id}/${d.cust_id}.png`,
+            url: `/carview/${d.car_id}/${d.cust_id}.png?p=${d.paint_ver || 0}`,
             label: 'iRacing render',
         });
     }
     if (d.paint_available) {
         sources.push({
-            url: `/livery/${encodeURIComponent(d.car_path)}/${d.cust_id}.png`,
+            url: `/livery/${encodeURIComponent(d.car_path)}/${d.cust_id}.png?team=${d.team_id || 0}`,
             label: 'flat skin · iRacing paint cache',
         });
     }

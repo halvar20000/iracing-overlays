@@ -165,6 +165,29 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 10, 2026 (spectating an official NEC race: no data, then wrong
+livery):**
+  • "Dashboard / logger get nothing" was NOT our code: new `check_sdk.py`
+    (run on the race PC, writes logs/sdk_check_<time>.txt to the share)
+    showed both pyirsdk startup gates passing (sim status running:1, data
+    event signalled) but iRacing's memory header EMPTY — ver 0, status 0,
+    numVars 0, session info length 0, only the tick counters moving,
+    sessInfoUpdate 80 (it HAD been connected). The sim had lost its
+    session; a full iRacing restart fixed it (afterwards ver 2, status 1,
+    335 vars). Unofficial vs official races make no difference to the SDK.
+    check_sdk.py also dumps gates, header, a version-bypass read, overlay
+    ports, the livery /debug + /state and a render-server probe.
+  • Livery showed the wrong paint in a TEAM race (NEC, class NECGT3 2026):
+    the car on track wears the TEAM paint, which Trading Paints stores as
+    `car_team_<TeamID>.tga`; the overlay only looked for the driver's own
+    `car_<custid>.tga`. `find_paint_file(car_path, cust_id, team_id)` now
+    tries the team file first when `WeekendInfo.TeamRacing == 1` (TeamID
+    from DriverInfo), the driver's own file as fallback; /livery takes
+    `?team=`. Image URLs carry `?p=<crc32 of the paint path>` so OBS can't
+    keep a cached render of a previous paint (the /carview URL only held
+    car_id/cust_id with max-age 3600). Verified offline with a fake paint
+    cache; not yet confirmed visually in a live team race.
+
 **October 10, 2026 (championship + duel for WCT GT3 — the series is read off
 the grid; participation points and drop-weeks):** Andreas wants the overlays
 for WCT GT3 too, so both series have to work without anyone remembering to
