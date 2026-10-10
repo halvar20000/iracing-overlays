@@ -60,6 +60,30 @@ Der Logger ist bewusst genügsam: er braucht nur `iracing_race_logger.py` +
   neueste Release.
 - **Source-Zip lokal bauen:** `./make_race_logger_zip.sh`.
 
+### Incident-Punkte im Log (`inc` / `inc_snapshot`)
+
+Seit 05.09.2026 schreibt der Logger die **offiziellen iRacing-Incident-Punkte**
+jedes Autos mit — die Zahlen, auf die sich eine Durchfahrtsstrafe stützt.
+
+- `inc` — bei **jeder Änderung** eines Autos: `car_idx`, `car_number`, `driver`,
+  `team`, `lap`, `delta` (z. B. 2 bei einem 2x), `total` (neuer Stand),
+  `t_session` + `t_wall`.
+- `inc_snapshot` — einmal pro Minute alle Stände als `{"car_idx": total}`.
+  Damit lässt sich die Timeline auch dann rekonstruieren, wenn der Logger
+  mitten im Rennen gestartet oder nach einem Absturz neu gestartet wurde.
+
+Quelle ist `SessionInfo.Sessions[].ResultsPositions[].Incidents`; in der
+Telemetrie gibt es **kein** CarIdx-Array für Incidents, nur Werte für das
+eigene Auto. In Team-Events ist der Wert der **Auto-/Team-Stand** — genau der,
+den Race Control für einen DT heranzieht. Gelesen wird alle
+`INC_POLL_INTERVAL` (2 s), weil jeder Zugriff das SessionInfo-YAML parst.
+
+**Nicht verwechseln** mit den `incident`-Events: die kommen aus der
+Dreher-/Kontakt-**Erkennung** des Dashboards (Port 5000) und fehlen komplett,
+wenn das Dashboard nicht mitläuft. `inc` braucht nur iRacing selbst.
+
+Test: `python3 test_inc_points.py` (29 Checks, gestubbtes irsdk + Fake-Uhr).
+
 ### Upload-Protokoll
 
 `POST <liga>/api/race-log` mit `Authorization: Bearer <key>` und dem Log als

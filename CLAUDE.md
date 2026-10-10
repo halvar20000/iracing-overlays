@@ -147,6 +147,74 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 10, 2026 (championship + duel for WCT GT3 — the series is read off
+the grid; participation points and drop-weeks):** Andreas wants the overlays
+for WCT GT3 too, so both series have to work without anyone remembering to
+switch.
+  • NOTHING was league-specific to begin with: `DEFAULT_CONFIG["league_slug"]`
+    was already `cas-gt3-wct`, points tables / `classPointsTable` / standings /
+    the `iracingMemberId` join all come from the API, and `/duel` shares
+    `_state()` so the title card follows for free. The configs are gitignored,
+    so a fresh clone (Andreas) gets WCT GT3 out of the box.
+  • NEW `cls_league_detect.py` (`LeagueDetector`): roster map of EVERY CLS
+    league's runnable seasons, `detect(user_ids)` → the (league, SEASON) whose
+    roster matches the most drivers in the session. Same identity bridge and
+    the same MIN_MATCHES=3 / MIN_MATCH_SHARE=0.5 thresholds as `cls_proam.py`
+    (two different answers about "is this that league's session" on one stream
+    would be unreadable). Cache `cls_league_cache.json` (gitignored) so it
+    works offline at race start; urllib only. Fetch thread starts in `main()`,
+    not at import — a test must not reach the network.
+  • **It matches per SEASON, not per league, and that is the point.** Two
+    leagues have TWO seasons open at once and the API returns the EMPTY new one
+    when no `season` is given — `cas-pccd` 5th has 27 linked ids, 6th has 1;
+    `cas-sfl-cup` 8th has 19, 9th has 0. That is exactly the trap
+    `championship_config.json` worked around by pinning a season id by hand.
+    Auto picks the season the drivers are actually in, so the pin stops needing
+    a repoint every rollover. Ties break on `completed_rounds`, so an empty new
+    season can never outrank the raced one.
+  • Rosters DO overlap (GT3 WCT ∩ IEC = 14 drivers) but only drivers PRESENT in
+    the session count, so the raced series wins outright — verified live: a real
+    20-car WCT grid scored 20/20 WCT vs 6 IEC. Below the thresholds `detect()`
+    returns None and the overlay KEEPS its configured league; it never guesses,
+    and a field of strangers never blanks the tower. SFL 9th has zero linked
+    ids and can never be detected — that is what manual mode stays for.
+  • `championship_config.json` gains `"league_mode": "auto" | "manual"`
+    (default auto, the `proam_config.json` precedent). Config page has the
+    selector plus a live readout of what the grid says (`GET /api/detect`:
+    mode, drivers seen, detection, every known season, roster errors).
+    `_apply_detected_league()` runs inside `_state()` and only calls
+    `fetcher.update_config` on a CHANGE, so the 60 s championship fetch is not
+    restarted every tick. RoundMemory needed nothing — `earlier_races()`
+    already filters on `season_id`, so two leagues cannot contaminate each other.
+  • **Two scoring rules PCCD never needed and WCT GT3 does** — both already
+    published in `scoring`, just never read:
+      – `participationPoints` (5 in GT3 WCT, 0 in PCCD) at
+        `participation_min_distance_pct` (75, config — CLS does not publish the
+        threshold). Added in `_score_race`. It counts in the Pro/Am total and
+        NOT in the Combined one (`participation_in_combined`, default false =
+        GT3 WCT's `participationInCombined`); every other league awards 0, so
+        the flag cannot change their numbers. Verified live: P1 Combined +35,
+        Pro/Am +40; a car at 65 % of the leader's distance gets position points
+        but no participation point; at 45 % it gets neither.
+      – `dropWorstNRounds` (3 of 12 → best 9 count). The overlay CANNOT do this
+        properly — it would need each driver's per-round history, which the
+        standings endpoint does not carry — so `scoring_info.drop_weeks_active`
+        says when a plain "add the race" projection stops being exact
+        (completed + 1 > total − drop, i.e. **round 10** for GT3 WCT) instead of
+        silently overstating. Flagging it beats guessing; add per-round points to
+        the API if it ever needs to be exact.
+  • Tests: `test_league_detect.py` 23 offline + 5 more with `--live`;
+    `test_championship_rounds.py` 18 → **39** (participation, both distance
+    thresholds, the drop-week flag, the auto-switch, manual pinning, a missing
+    detector). `test_proam.py` / `test_dotd_round.py` / `test_standings_delta.py`
+    / `test_fastest_lap.py` unchanged and passing. Backup:
+    `iracing_championship.py.bak-20261010-multileague`.
+  • No new port and no new page → launchers and `make_obs_loaders.py` untouched.
+    **Restart overlay 5010 to pick it up** (the June 4 lesson).
+  • Flask is not installed on the Unraid box; a throwaway venv in the scratchpad
+    runs the suites.
+
+
 **October 8, 2026 — evening (PCCD Algarve post-mortem: wrong numbers in
 race 2 for championship / title fight, wrong provisional DotD):**
   • CHAMPIONSHIP ROOT CAUSE: RoundMemory keyed races by the TELEMETRY

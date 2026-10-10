@@ -74,6 +74,25 @@ DEFAULT_CONFIG = {
     # equal to pointsTable). Override per league in championship_config.json.
     "race_points_min_distance_pct": 50,
     "points_table_race2":           None,   # {"1": 41, "2": 35, ...} or None
+    # Which series is on the stream. "auto" reads it off the grid — the CLS
+    # season whose roster matches the most drivers in the session IS the
+    # session's season (cls_league_detect). "manual" pins league_slug /
+    # season_id below, which is what the config page writes.
+    # Auto also solves the season-pinning trap: two leagues have two seasons
+    # open at once and the API returns the EMPTY new one when no season is
+    # given, so a hand-pinned id had to be repinned every rollover.
+    "league_mode":                  "auto",   # auto | manual
+    # CLS publishes participationPoints and dropWorstNRounds in `scoring`,
+    # but not the distance threshold that earns the participation point
+    # (ScoringSystem.participationMinDistancePct, 75 for GT3 WCT).
+    "participation_min_distance_pct": 75,
+    # CLS ScoringSystem.participationInCombined — also not published by the
+    # overlay API. GT3 WCT sets it FALSE: the participation point counts in
+    # the Pro/Am tables (which are the ones GT3 WCT actually publishes) but
+    # NOT in the Combined one. False is the safe default here because every
+    # other current CLS league awards 0 participation points, so the flag
+    # cannot change their numbers either way.
+    "participation_in_combined":      False,
 }
 
 # Earlier races of the CURRENT round (race 1 while race 2 runs) are kept in
@@ -500,9 +519,19 @@ def _distance_ok(laps: int, leader_laps: int, min_pct: float) -> bool:
 
 
 def _score_race(order: list[dict], by_custid: dict, pro_am: bool,
-                table: dict, class_table: dict, min_pct: float) -> dict:
+                table: dict, class_table: dict, min_pct: float,
+                part_pts: int = 0, part_min_pct: float = 75,
+                part_in_combined: bool = False) -> dict:
     """Points for one race. `order` = [{cust_id, pos, laps, out}] in
-    finishing order. Returns {cust_id: {"pos", "pts", "class_pts"}}."""
+    finishing order. Returns {cust_id: {"pos", "pts", "class_pts", "part"}}.
+
+    `part_pts` is the league's participation award (CLS
+    ScoringSystem.participationPoints — 5 in GT3 WCT, 0 in PCCD), earned by
+    covering `part_min_pct` % of the leader's distance. It always counts in
+    the CLASS total and only counts in the COMBINED one when
+    `part_in_combined` is set — GT3 WCT has participationInCombined=false,
+    and the Pro/Am tables are the ones it publishes.
+    """
     leader_laps = max((o.get("laps") or 0 for o in order), default=0)
     seen = {"PRO": 0, "AM": 0}
     out: dict[int, dict] = {}
@@ -511,16 +540,23 @@ def _score_race(order: list[dict], by_custid: dict, pro_am: bool,
         if not cid:
             continue
         ok = _distance_ok(o.get("laps") or 0, leader_laps, min_pct)
-        pts = _points_for_position(table, o["pos"]) if ok else 0
-        class_pts = pts
+        part = (part_pts if part_pts and
+                _distance_ok(o.get("laps") or 0, leader_laps, part_min_pct)
+                else 0)
+        pts = (_points_for_position(table, o["pos"]) if ok else 0)
+        if part_in_combined:
+            pts += part
+        class_pts = pts if part_in_combined else pts + part
         if pro_am:
             ch = by_custid.get(cid)
             cls = (ch or {}).get("proAmClass")
             class_pts = 0
             if cls in seen:
                 seen[cls] += 1
-                class_pts = _points_for_position(class_table, seen[cls]) if ok else 0
-        out[cid] = {"pos": o["pos"], "pts": pts, "class_pts": class_pts}
+                class_pts = (_points_for_position(class_table, seen[cls])
+                             if ok else 0) + part
+        out[cid] = {"pos": o["pos"], "pts": pts, "class_pts": class_pts,
+                    "part": part}
     return out
 
 
@@ -578,6 +614,20 @@ def build_projection(race_state: dict, champ_payload: dict | None,
     table_r2 = cfg.get("points_table_race2") or points_table
     min_pct = float(cfg.get("race_points_min_distance_pct") or 0)
     pro_am = bool(season.get("proAmEnabled"))
+    # Published by the overlay API since v2.37; 0 / absent for leagues
+    # that award neither (PCCD), so reading them changes nothing there.
+    try:
+        part_pts = int(scoring.get("participationPoints") or 0)
+    except (TypeError, ValueError):
+        part_pts = 0
+    part_min_pct = float(cfg.get("participation_min_distance_pct") or 75)
+    part_in_comb = bool(cfg.get("participation_in_combined"))
+    try:
+        drop_n = int(scoring.get("dropWorstNRounds") or 0)
+    except (TypeError, ValueError):
+        drop_n = 0
+    total_rounds = season.get("totalRounds") or 0
+    completed_rounds = season.get("completedRounds") or 0
 
     # Index championship rows by iRacing customer ID for O(1) lookup.
     by_custid: dict[int, dict] = {}
@@ -595,7 +645,9 @@ def build_projection(race_state: dict, champ_payload: dict | None,
     for i, e in enumerate(earlier_races):
         table = points_table if i == 0 else table_r2
         earlier_scores.append(_score_race(e["results"], by_custid, pro_am,
-                                          table, class_points_table, min_pct))
+                                          table, class_points_table, min_pct,
+                                          part_pts, part_min_pct,
+                                          part_in_comb))
 
     # ---- The race running now ----
     live_scores: dict[int, dict] = {}
@@ -604,7 +656,8 @@ def build_projection(race_state: dict, champ_payload: dict | None,
         order = [{"cust_id": r.get("cust_id"), "pos": r["race_pos"],
                   "laps": r.get("laps_done") or 0, "out": 0} for r in rows]
         live_scores = _score_race(order, by_custid, pro_am, table,
-                                  class_points_table, min_pct)
+                                  class_points_table, min_pct,
+                                  part_pts, part_min_pct, part_in_comb)
     live_by_cust = {r.get("cust_id"): r for r in rows if r.get("cust_id")}
 
     # Build the projected championship rows.
@@ -716,6 +769,22 @@ def build_projection(race_state: dict, champ_payload: dict | None,
         "earlier_races":  [e.get("name") for e in earlier_races],
         "race_rows":      sorted(race_rows, key=lambda x: x["race_pos"] or 999),
         "champ_rows":     sorted(champ_rows, key=lambda x: x["proj_rank"]),
+        "scoring_info":   {
+            "participation_points": part_pts,
+            "participation_in_combined": part_in_comb,
+            "drop_worst_n":         drop_n,
+            # A projection that just ADDS the race cannot be right once
+            # drop-weeks bite: from then on a new result replaces a
+            # driver's worst one, or is itself dropped. The per-round
+            # history needed to do that properly is not in the overlay
+            # API, so the overlay says "approximate" instead of quietly
+            # overstating. GT3 WCT: 12 rounds, drop 3, keep 9 -> this
+            # turns on at round 10.
+            "drop_weeks_active":    bool(
+                drop_n and total_rounds
+                and (completed_rounds + 1) > (total_rounds - drop_n)),
+            "counting_rounds":      (total_rounds - drop_n) if drop_n else None,
+        },
     }
 
 
@@ -770,6 +839,55 @@ class RoundInfoFetcher:
 round_info = RoundInfoFetcher(fetcher)
 round_memory = RoundMemory()
 
+# Which series is on the stream (league_mode="auto"). Shared roster map of
+# every CLS league's runnable seasons; see cls_league_detect.
+try:
+    from cls_league_detect import LeagueDetector
+    # Constructed at import (it loads its disk cache, so detection works
+    # from the first tick), but the fetch thread starts in main() like
+    # every other thread here — importing this module for a test must not
+    # reach the network.
+    detector = LeagueDetector(config.get("api_base") or DEFAULT_API)
+except Exception as _exc:  # noqa: BLE001 — never stop the overlay starting
+    print(f"[championship] League auto-detect unavailable: {_exc}")
+    detector = None
+
+# Last detection, surfaced on the config page and in /api/state.
+detected_state: dict = {"result": None, "applied": None, "at": 0.0}
+
+
+def _apply_detected_league(race: dict | None) -> dict | None:
+    """In auto mode, point the fetchers at the series actually being raced.
+
+    Only switches on a CHANGE, so the once-a-minute championship fetch is
+    not restarted every tick, and only on a confident match — below the
+    detector's thresholds the configured league stands (a field of
+    strangers must not blank the overlay).
+    """
+    if detector is None:
+        return None
+    cfg = fetcher.get().get("config") or {}
+    if (cfg.get("league_mode") or "auto").lower() != "auto":
+        return None
+    ids = [r.get("cust_id") for r in (race or {}).get("rows") or []]
+    hit = detector.detect(ids)
+    detected_state["result"] = hit
+    detected_state["at"] = time.time()
+    if not hit:
+        return None
+    if (hit["league_slug"] == cfg.get("league_slug")
+            and hit["season_id"] == cfg.get("season_id")):
+        return hit
+    new_cfg = dict(cfg)
+    new_cfg["league_slug"] = hit["league_slug"]
+    new_cfg["season_id"] = hit["season_id"]
+    fetcher.update_config(new_cfg)
+    detected_state["applied"] = f"{hit['league_slug']}/{hit['season_id']}"
+    print(f"[championship] Auto-detected {hit.get('league_name')} · "
+          f"{hit.get('season_name')} ({hit['matched']}/{hit['drivers']} drivers)"
+          f" — switching")
+    return hit
+
 # UI state shared between the overlay page and the control endpoints
 ui_state = {
     "view":   "B",       # "B" = championship table (default), "A" = race order
@@ -782,6 +900,7 @@ app = Flask(__name__)
 def _state() -> dict:
     """The full projection — shared by /api/state and /api/duel."""
     race = poller.get()
+    _apply_detected_league(race)
     fetch = fetcher.get()
     champ = fetch.get("data")
     round_memory.update(race, champ)
@@ -792,7 +911,28 @@ def _state() -> dict:
                                 if fetch.get("last_fetch_at") else None
     payload["ui"]            = dict(ui_state)
     payload["config"]        = fetch.get("config")
+    payload["detected"]      = detected_state.get("result")
     return payload
+
+
+@app.route("/api/detect")
+def api_detect():
+    """What the grid says the series is — for the config page and debugging."""
+    if detector is None:
+        return jsonify({"ok": False, "error": "cls_league_detect not loaded"})
+    race = poller.get()
+    st = detector.status()
+    return jsonify({
+        "ok":             True,
+        "mode":           (fetcher.get().get("config") or {}).get("league_mode"),
+        "race_connected": bool(race and race.get("connected")),
+        "drivers_seen":   len([r for r in (race or {}).get("rows") or []
+                               if r.get("cust_id")]),
+        "detected":       detected_state.get("result"),
+        "applied":        detected_state.get("applied"),
+        "seasons":        st.get("seasons"),
+        "roster_error":   st.get("error"),
+    })
 
 
 @app.route("/api/state")
@@ -850,7 +990,8 @@ def api_config():
     if request.method == "POST":
         body = request.get_json(silent=True) or {}
         cfg = load_config()
-        for k in ("api_base", "league_slug", "season_id", "refresh_seconds"):
+        for k in ("api_base", "league_slug", "season_id", "refresh_seconds",
+                  "league_mode", "participation_min_distance_pct"):
             if k in body:
                 cfg[k] = body[k]
         # Empty string season_id -> None (means "API picks ACTIVE")
@@ -942,7 +1083,21 @@ CONFIG_HTML = r"""<!DOCTYPE html>
         <label for="refresh">Refresh interval (seconds)</label>
         <input id="refresh" type="number" min="10" step="5" value="60">
       </div>
+      <div>
+        <label for="modeSelect">Which series is on the stream?</label>
+        <select id="modeSelect">
+          <option value="auto">Auto — read it off the grid (recommended)</option>
+          <option value="manual">Manual — always use the league above</option>
+        </select>
+        <div class="help">Auto matches the drivers in the session against every
+          CLS season's roster, so Porsche Cup and WCT GT3 need no switching —
+          and it picks the right season when a league has two open at once.
+          Below 3 matching drivers (or half the field) it keeps the league
+          selected above rather than guessing.</div>
+      </div>
     </div>
+
+    <div id="detectBox" class="help" style="margin-top:4px"></div>
 
     <button id="saveBtn">Save</button>
     <button id="testBtn" class="secondary">Test fetch</button>
@@ -1012,6 +1167,7 @@ async function loadConfig() {
   $("apiBase").value = c.api_base || "";
   $("refresh").value = c.refresh_seconds || 60;
   await loadLeagues();
+  if (c.league_mode) $("modeSelect").value = c.league_mode;
   if (c.league_slug) {
     $("leagueSelect").value = c.league_slug;
     populateSeasons();
@@ -1022,6 +1178,7 @@ async function loadConfig() {
 async function save() {
   const body = {
     api_base:        $("apiBase").value.trim(),
+    league_mode:     $("modeSelect").value,
     league_slug:     $("leagueSelect").value,
     season_id:       $("seasonSelect").value || null,
     refresh_seconds: parseInt($("refresh").value, 10) || 60,
@@ -1059,6 +1216,33 @@ async function test() {
     }
   }, 2500);
 }
+
+// Live detection readout: what the grid says, whether it matches what is
+// configured, and why it is staying quiet when it is.
+async function pollDetect() {
+  try {
+    const r = await fetch("/api/detect");
+    const j = await r.json();
+    const box = $("detectBox");
+    if (!j.ok) { box.textContent = "Auto-detect unavailable: " + (j.error || "?"); return; }
+    const d = j.detected;
+    const seasons = (j.seasons || []).length;
+    if (d) {
+      box.innerHTML = "<b>On the grid now:</b> " +
+        (d.league_name || d.league_slug) + " · " + (d.season_name || d.season_id) +
+        " — matched " + d.matched + " of " + d.drivers + " drivers" +
+        (d.ambiguous ? " <b>(ambiguous — two seasons match equally)</b>" : "") +
+        (j.mode === "auto" ? "" : " · mode is manual, so this is not applied");
+    } else if (!j.race_connected) {
+      box.textContent = "Auto-detect ready (" + seasons + " seasons known) — waiting for a session.";
+    } else {
+      box.textContent = "No confident match in this session (" + seasons +
+        " seasons known) — keeping the league selected above.";
+    }
+  } catch (e) { /* page works without it */ }
+}
+pollDetect();
+setInterval(pollDetect, 5000);
 
 $("saveBtn").addEventListener("click", save);
 $("testBtn").addEventListener("click", test);
@@ -1866,6 +2050,8 @@ def main() -> None:
     f = threading.Thread(target=fetcher.run, daemon=True, name="ChampFetcher")
     f.start()
     threading.Thread(target=round_info.run, daemon=True, name="RoundInfo").start()
+    if detector is not None:
+        detector.start()
 
     print("=" * 60)
     print("iRacing Championship Overlay")

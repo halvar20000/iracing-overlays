@@ -21,9 +21,17 @@ What's captured per session:
                      avg_per_lap, laps_remaining_est, use_per_hour).
                      iRacing only broadcasts tire/fuel telemetry for the
                      local car, so these are absent for spectated drivers.
-  - incident       — fetched from the dashboard's /incidents feed
-                     (port 5000); deduped, so the same incident is
-                     never written twice
+  - incident       — DETECTED spins / contacts, fetched from the
+                     dashboard's /incidents feed (port 5000); deduped,
+                     so the same incident is never written twice. Absent
+                     when the dashboard isn't running.
+  - inc            — OFFICIAL iRacing incident POINTS: one event each
+                     time a car's count changes (delta + new total +
+                     lap). Read straight from iRacing, so it needs no
+                     other overlay running. This is the timeline a
+                     drive-through rule is judged on.
+  - inc_snapshot   — every car's official incident total, once a minute,
+                     so the timeline survives a logger restart
   - session_end    — final classification when iRacing flips the
                      checkered (positions, laps completed, best lap,
                      incident count, finished / DNF / DQ)
@@ -41,7 +49,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import sys
 import threading
 import time
 from collections import deque
@@ -63,237 +70,15 @@ setup_utf8_stdout()
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-# Base folder: next to the .py when run from source, next to the .exe when
-# frozen by PyInstaller (sys._MEIPASS would be a temp dir that disappears).
-if getattr(sys, "frozen", False):
-    HERE = Path(sys.executable).resolve().parent
-else:
-    HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parent
 LOGS_DIR = HERE / "logs"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
-
-# ---------------------------------------------------------------------------
-# CLS (league.simracing-hub.com) auto-upload
-# ---------------------------------------------------------------------------
-# When a driver has pasted their personal key from
-# https://league.simracing-hub.com/race-logger into the setup page at
-# http://localhost:5009/league, every finished race log is POSTed to the
-# league site automatically. The file is ALWAYS kept locally as well — the
-# upload is a convenience, never the only copy. Failed uploads stay visible
-# on the setup page with a "Send again" button.
-LOGGER_VERSION   = "1.3.1"
-CLS_DEFAULT_URL  = "https://league.simracing-hub.com"
-CLS_CONFIG_PATH  = HERE / "league_manager.json"
-CLS_STATE_PATH   = LOGS_DIR / "upload_state.json"
-CLS_TIMEOUT      = 120          # seconds; a big endurance log takes a while
-CLS_RETRIES      = 3
-CLS_RETRY_SLEEP  = 5.0
-
-_cls_lock = threading.Lock()
-
-
-def cls_load_config() -> dict:
-    """{'url': ..., 'token': ..., 'auto': bool}. Never raises."""
-    cfg = {"url": CLS_DEFAULT_URL, "token": "", "auto": True}
-    try:
-        if CLS_CONFIG_PATH.is_file():
-            raw = json.loads(CLS_CONFIG_PATH.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                cfg["url"]   = str(raw.get("url") or CLS_DEFAULT_URL).strip().rstrip("/")
-                cfg["token"] = str(raw.get("token") or "").strip()
-                cfg["auto"]  = bool(raw.get("auto", True))
-    except Exception as e:
-        print(f"[cls] config unreadable ({e!r}) — using defaults")
-    return cfg
-
-
-def cls_save_config(url: str, token: str, auto: bool) -> dict:
-    cfg = {
-        "url":   (url or CLS_DEFAULT_URL).strip().rstrip("/"),
-        "token": (token or "").strip(),
-        "auto":  bool(auto),
-    }
-    try:
-        CLS_CONFIG_PATH.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-    except Exception as e:
-        print(f"[cls] could not save config: {e!r}")
-    return cfg
-
-
-def cls_load_state() -> dict:
-    try:
-        if CLS_STATE_PATH.is_file():
-            raw = json.loads(CLS_STATE_PATH.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                return raw
-    except Exception:
-        pass
-    return {}
-
-
-def cls_set_state(name: str, status: str, message: str) -> None:
-    """status: 'ok' | 'error' | 'sending'. One entry per log file name."""
-    with _cls_lock:
-        state = cls_load_state()
-        state[name] = {
-            "status":  status,
-            "message": message,
-            "at":      datetime.now().isoformat(timespec="seconds"),
-        }
-        try:
-            CLS_STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
-        except Exception as e:
-            print(f"[cls] could not save upload state: {e!r}")
-
-
-def cls_ping(url: str = "", token: str = "") -> tuple[bool, str]:
-    """Validate the key. Returns (ok, human message)."""
-    cfg   = cls_load_config()
-    url   = (url or cfg["url"]).strip().rstrip("/")
-    token = (token or cfg["token"]).strip()
-    if requests is None:
-        return False, "Python package 'requests' is missing (pip install requests)"
-    if not token:
-        return False, "No key yet — get one at " + url + "/race-logger"
-    try:
-        r = requests.get(
-            f"{url}/api/race-log",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=20,
-        )
-    except Exception as e:
-        return False, f"Could not reach {url}: {e}"
-    if r.status_code == 401:
-        return False, "The league site does not know this key — copy it again from /race-logger"
-    if r.status_code >= 400:
-        return False, f"League site answered {r.status_code}"
-    try:
-        data = r.json()
-    except Exception:
-        return False, "Unexpected answer from the league site"
-    return True, (f"Connected as {data.get('driver', 'driver')} "
-                  f"({data.get('uploads', 0)} logs uploaded so far)")
-
-
-def cls_upload_log(path: Path) -> tuple[bool, str]:
-    """Upload one .jsonl. Blocking, with retries. Safe to call twice — the
-    server recognises an identical file and does not duplicate it."""
-    cfg = cls_load_config()
-    if requests is None:
-        msg = "Python package 'requests' is missing (pip install requests)"
-        cls_set_state(path.name, "error", msg)
-        return False, msg
-    if not cfg["token"]:
-        msg = "No key configured — open http://localhost:5009/league"
-        cls_set_state(path.name, "error", msg)
-        return False, msg
-    if not path.is_file():
-        msg = "Log file is gone"
-        cls_set_state(path.name, "error", msg)
-        return False, msg
-
-    cls_set_state(path.name, "sending", "Sending to the league site…")
-    last = "upload failed"
-    for attempt in range(1, CLS_RETRIES + 1):
-        try:
-            with open(path, "rb") as fh:
-                r = requests.post(
-                    f"{cfg['url']}/api/race-log",
-                    headers={
-                        "Authorization":   f"Bearer {cfg['token']}",
-                        "X-Logger-Version": LOGGER_VERSION,
-                    },
-                    files={"file": (path.name, fh, "application/x-ndjson")},
-                    data={"client_version": LOGGER_VERSION},
-                    timeout=CLS_TIMEOUT,
-                )
-            if r.status_code == 401:
-                last = "The league site rejected the key — copy it again from /race-logger"
-                break                       # retrying will not help
-            try:
-                data = r.json()
-            except Exception:
-                data = {}
-            if r.ok and data.get("ok"):
-                msg = data.get("message") or "Uploaded"
-                cls_set_state(path.name, "ok", msg)
-                print(f"[cls] {path.name}: {msg}")
-                return True, msg
-            last = data.get("error") or f"League site answered {r.status_code}"
-            if 400 <= r.status_code < 500:
-                break                       # our fault — do not hammer the server
-        except Exception as e:
-            last = f"{e}"
-        if attempt < CLS_RETRIES:
-            time.sleep(CLS_RETRY_SLEEP * attempt)
-
-    cls_set_state(path.name, "error", last)
-    print(f"[cls] {path.name}: upload failed — {last}")
-    return False, last
-
-
-def cls_upload_async(path: Path) -> None:
-    """Fire-and-forget upload so the poll loop never blocks on the network."""
-    threading.Thread(target=cls_upload_log, args=(path,), daemon=True).start()
-
-
-def cls_autoupload(path) -> None:
-    """Called when a race log is closed. Honours the 'auto' switch."""
-    if path is None:
-        return
-    cfg = cls_load_config()
-    if not cfg["auto"] or not cfg["token"]:
-        return
-    print(f"[cls] sending {Path(path).name} to {cfg['url']} …")
-    cls_upload_async(Path(path))
 
 # Where to fetch the incident feed from. The dashboard publishes JSON at
 # /incidents on port 5000. If the dashboard isn't running we silently
 # skip incident logging — laps + classification still get recorded.
 DASHBOARD_INCIDENTS_URL = "http://127.0.0.1:5000/incidents"
 INCIDENT_POLL_INTERVAL  = 5.0   # seconds between fetches (laps poll faster)
-
-# --- Weather sampling ---
-# Track temperature is the one condition that moves through a long race, and
-# it moves lap times with it: an evening enduro can shed 15 C between the
-# green flag and the finish, which is worth more than a driver change. The
-# session_start block records it once -- enough to label a race, useless for
-# comparing a stint at 40 C with one at 25 C. So sample it periodically: one
-# small event every WEATHER_SAMPLE_INTERVAL seconds lets the post-race tools
-# put a temperature on every lap by its session clock.
-# 30 s over a 24 h race is ~2900 events -- a few hundred KB, next to nothing
-# beside the position stream.
-WEATHER_SAMPLE_INTERVAL = 30.0  # seconds of session time between samples
-
-# --- Team driver swaps ---
-# In a team race the car keeps its CarIdx and the person in it changes.
-# iRacing re-sends the session info on a swap, so DriverInfo's UserName for
-# that CarIdx follows the driver actually sitting in the car. The logger used
-# to read that list ONCE, when it opened the log, and every lap event for the
-# rest of the race therefore carried whoever was in the car at the green flag
-# -- three drivers over 7,848 laps of a 6 h race, one name. Re-reading it
-# closes that: a lap is stamped with whoever is driving, and a swap is
-# written down as its own event.
-DRIVER_REFRESH_INTERVAL = 5.0  # seconds of session time between refreshes
-
-# --- Incidents without the dashboard ---
-# The incident feed above comes from the dashboard on port 5000. A driver
-# running the standalone RaceLogger at home has no dashboard, so that poll
-# never answers and the log gets NO incidents at all -- silently. Verified on
-# three real CLS uploads: 0 incident events against 589 / 790 / 505 laps,
-# while a log taken with the dashboard running carries 58.
-#
-# iRacing publishes its OWN scored incident count per driver inside
-# DriverInfo.Drivers[] as CurDriverIncidentCount (TeamIncidentCount in team
-# races). It ticks up exactly the way iRacing scores: +1 minor off, +2 four
-# wheels off, +4 loss of control, +6 car-to-car contact. Watching it for
-# jumps gives the same incidents without any dashboard.
-#
-# CAVEAT: in SPECTATOR mode iRacing sets the field to -1 for every car, so
-# this is a no-op on a broadcast machine -- which is fine, because that is
-# the machine that HAS the dashboard. It is used only when the dashboard
-# feed is not answering, so the two can never double-count.
-SDK_INCIDENT_INTERVAL = 1.0  # seconds of session time between checks
 
 # --- Pit detection ---
 # Below this duration in seconds we treat the pit-road event as edge-of-
@@ -324,6 +109,23 @@ CAR_PENALTY_BITS = {
     0x20000:   "disqualify",       # DQ
     0x100000:  "repair",           # mandatory repair (meatball)
 }
+
+# --- Official iRacing incident points (per car) ----------------------------
+# DO NOT confuse these with the "incident" events in this log: those come
+# from the dashboard's own spin/contact DETECTION (port 5000) and only
+# exist when the dashboard happens to be running. The numbers race control
+# judges a drive-through on are iRacing's own incident POINTS, and the only
+# per-car source for them in the SDK is
+#   SessionInfo.Sessions[].ResultsPositions[].Incidents
+# (telemetry exposes incident counts for the LOCAL car only — there is no
+# CarIdx array for them). In a team event that value is the CAR's count,
+# which is exactly what a DT threshold is judged on.
+#
+# We emit one `inc` event per change (with the delta) plus a periodic
+# `inc_snapshot` holding every car's total, so the timeline can be rebuilt
+# even if the logger was started mid-race or restarted after a crash.
+INC_POLL_INTERVAL     = 2.0    # seconds between ResultsPositions reads
+INC_SNAPSHOT_INTERVAL = 60.0   # seconds between full inc_snapshot rows
 
 # --- Slow-lap detection ---
 # A lap > average × this is flagged as anomalous (rolling 5-lap window).
@@ -394,6 +196,14 @@ class RaceLogger(SDKPoller):
         # fixing here.
         self._driver_incident_count: dict[int, int] = {}   # car_idx -> count
 
+        # OFFICIAL iRacing incident points per car, read from
+        # ResultsPositions (see INC_POLL_INTERVAL). Separate from
+        # _driver_incident_count above, which counts the dashboard's
+        # DETECTED incidents and needs the dashboard to be running.
+        self._inc_points: dict[int, int] = {}    # car_idx -> last seen total
+        self._inc_last_poll = -1e9               # time.monotonic()
+        self._inc_last_snapshot = -1e9           # time.monotonic()
+
         # Recent events for the live monitor timeline (newest first).
         # Captures lap-completion + incident events while the logger is
         # active. Bounded so it can never grow unbounded over a long race.
@@ -430,23 +240,6 @@ class RaceLogger(SDKPoller):
         # without it, the lap-completion events alone are far too sparse
         # for a smooth replay. ~360 KB per 30-min race; trivial.
         self._last_pos_emit_t: float = -1e9   # session_time of last emit
-
-        # Track/air temperature sampling -- see WEATHER_SAMPLE_INTERVAL.
-        self._last_weather_emit_t: float = -1e9
-
-        # Team driver swaps -- see DRIVER_REFRESH_INTERVAL.
-        self._last_driver_refresh_t: float = -1e9
-
-        # SDK-derived incidents -- see SDK_INCIDENT_INTERVAL.
-        self._last_sdk_inc_t: float = -1e9
-        self._sdk_inc_prev: dict[int, int] = {}
-        # True once the dashboard feed has actually answered. While it has,
-        # the SDK path stays out of the way so nothing is counted twice.
-        self._dashboard_incidents_live: bool = False
-        # Which source the OPEN log recorded its incidents from, written
-        # once as an incident_source event so a post-race tool can tell
-        # "no incidents happened" from "incidents were never measured".
-        self._incident_source_written: str | None = None
 
         # Pit-stop tracking — entry/exit, duration, running count per car.
         # Detected via CarIdxOnPitRoad transitions (broader than the
@@ -526,6 +319,9 @@ class RaceLogger(SDKPoller):
         self._incidents_logged = 0
         self._final_written = False
         self._driver_incident_count = {}
+        self._inc_points = {}
+        self._inc_last_poll = -1e9
+        self._inc_last_snapshot = -1e9
         self._seen_incidents.clear()
         self._last_lap_seen.clear()
         self._recent_events.clear()
@@ -533,11 +329,6 @@ class RaceLogger(SDKPoller):
         self._overtakes_made.clear()
         self._overtakes_against.clear()
         self._last_pos_emit_t = -1e9
-        self._last_weather_emit_t = -1e9
-        self._last_driver_refresh_t = -1e9
-        self._last_sdk_inc_t = -1e9
-        self._sdk_inc_prev.clear()
-        self._incident_source_written = None
         self._pit_in_pit.clear()
         self._pit_entry_t.clear()
         self._pit_entry_lap.clear()
@@ -582,12 +373,9 @@ class RaceLogger(SDKPoller):
                 self._log_fp.close()
             except Exception:
                 pass
-        closed_path = self._log_path
         self._log_fp = None
         self._log_path = None
         self._log_session_key = None
-        # Hand the finished race to the league site (no-op when not configured).
-        cls_autoupload(closed_path)
 
     def stop(self) -> None:
         """Override SDKPoller.stop() so we get a chance to write the
@@ -615,8 +403,8 @@ class RaceLogger(SDKPoller):
         # Keep an in-memory copy for the live race monitor (newest first).
         # Skip the verbose session_start/end blocks — those are big and
         # the monitor renders them from a different code path.
-        if event.get("type") in ("lap", "incident", "pit", "flag",
-                                 "penalty", "slow_lap", "driver_change"):
+        if event.get("type") in ("lap", "incident", "inc", "pit", "flag",
+                                 "penalty", "slow_lap"):
             self._recent_events.appendleft(event)
 
     # ----- iRacing read helpers ------------------------------------------
@@ -817,189 +605,6 @@ class RaceLogger(SDKPoller):
                     "raw_bit":   bit,
                 })
 
-    # ----- incidents straight from the SDK --------------------------------
-    def _note_incident_source(self, source: str, cars: int) -> None:
-        """Write down, once per log, where the incidents came from.
-
-        Without this a reader cannot tell a genuinely clean race from a race
-        nobody measured -- both are zero incident events.
-        """
-        if self._log_fp is None or self._incident_source_written == source:
-            return
-        self._incident_source_written = source
-        self._emit({
-            "type":   "incident_source",
-            "source": source,
-            "cars":   cars,
-        })
-
-    def _maybe_emit_sdk_incidents(self) -> None:
-        """Turn jumps in iRacing's own incident counter into events.
-
-        Only runs while the dashboard feed is silent -- see
-        SDK_INCIDENT_INTERVAL for why, and for the spectator-mode caveat.
-        The first pass only takes baselines: a driver who already carries
-        incidents when we start watching did not commit them just now.
-        """
-        if self._log_fp is None or self._dashboard_incidents_live:
-            return
-        t_session = float(self.ir["SessionTime"] or 0.0)
-        if t_session - self._last_sdk_inc_t < SDK_INCIDENT_INTERVAL:
-            return
-        self._last_sdk_inc_t = t_session
-
-        info = self.ir["DriverInfo"] or {}
-        counts: dict[int, int] = {}
-        for d in info.get("Drivers", []) or []:
-            cidx = d.get("CarIdx")
-            if cidx is None or d.get("CarIsPaceCar") == 1:
-                continue
-            raw = d.get("CurDriverIncidentCount")
-            if raw is None:
-                raw = d.get("TeamIncidentCount")
-            try:
-                val = int(raw)
-            except (TypeError, ValueError):
-                continue
-            # -1 is iRacing's 'not available' sentinel (spectator mode).
-            # Treating it as a count would fabricate a huge jump the moment
-            # it flipped to a real 0.
-            if val < 0:
-                continue
-            counts[int(cidx)] = val
-
-        if not counts:
-            self._note_incident_source("none", 0)
-            return
-        self._note_incident_source("sdk", len(counts))
-
-        by_idx = {d["car_idx"]: d for d in self._log_session_meta.get("drivers", [])}
-        for cidx, val in counts.items():
-            prev = self._sdk_inc_prev.get(cidx)
-            self._sdk_inc_prev[cidx] = val
-            if prev is None or val <= prev:
-                continue
-            delta = val - prev
-            # iRacing's own severities, the same buckets the dashboard uses.
-            if delta <= 1:
-                kind = "off_track"
-            elif delta <= 3:
-                kind = "lost_control"
-            else:
-                kind = "collision"
-            d = by_idx.get(cidx, {})
-            self._driver_incident_count[cidx] = (
-                self._driver_incident_count.get(cidx, 0) + 1
-            )
-            self._emit({
-                "type":          "incident",
-                "t_session":     round(t_session, 2),
-                "car_idx":       cidx,
-                "car_number":    d.get("car_number", ""),
-                "driver":        d.get("name", ""),
-                "incident_type": kind,
-                "details":       "+%d" % delta,
-                "source":        "sdk",
-            })
-            self._incidents_logged += 1
-
-    # ----- team driver swaps ---------------------------------------------
-    def _refresh_driver_names(self) -> None:
-        """Follow the person actually sitting in each car.
-
-        Updates the session driver list in place, so every event emitted
-        afterwards (lap, pit, penalty) carries the CURRENT driver's name
-        instead of whoever was in the car when the log was opened. A change
-        is also written down as its own driver_change event, so a post-race
-        tool can split the stints on facts rather than on the plan someone
-        typed before the race.
-
-        Entries are merged, never replaced: a car that drops out of
-        DriverInfo mid-race keeps its entry, because losing it would stop
-        lap detection for that car entirely.
-        """
-        if self._log_fp is None:
-            return
-        t_session = float(self.ir["SessionTime"] or 0.0)
-        if t_session - self._last_driver_refresh_t < DRIVER_REFRESH_INTERVAL:
-            return
-        self._last_driver_refresh_t = t_session
-
-        current = self._build_drivers_list()
-        if not current:
-            return
-        known = self._log_session_meta.setdefault("drivers", [])
-        by_idx = {d["car_idx"]: d for d in known}
-
-        for fresh in current:
-            idx = fresh["car_idx"]
-            old = by_idx.get(idx)
-            if old is None:
-                known.append(fresh)
-                by_idx[idx] = fresh
-                continue
-            new_name = fresh.get("name") or ""
-            old_name = old.get("name") or ""
-            if not new_name or new_name == old_name:
-                continue
-            # A real swap. Update in place so the lap emitter -- which
-            # iterates this very list -- picks it up on the next tick.
-            old["name"] = new_name
-            old["irating"] = fresh.get("irating", old.get("irating"))
-            old["license"] = fresh.get("license", old.get("license"))
-            self._emit({
-                "type":       "driver_change",
-                "t_session":  round(t_session, 2),
-                "car_idx":    idx,
-                "car_number": old.get("car_number", ""),
-                "driver":     new_name,
-                "previous":   old_name,
-            })
-
-    # ----- weather sampling ----------------------------------------------
-    def _maybe_emit_weather(self) -> None:
-        """Sample track + air temperature every WEATHER_SAMPLE_INTERVAL.
-
-        The values are already read every tick for the live monitor; this
-        only writes them down. Post-race tools match a sample to a lap by
-        't_session' (a lap event carries the session clock at its END), so
-        the sampling interval is the resolution of that match -- 30 s is far
-        finer than the couple of degrees an hour a track actually moves.
-
-        Emitted even when nothing changed: a flat line is a measurement too,
-        and a consumer that has to guess whether a gap means 'unchanged' or
-        'not sampled' cannot correct anything.
-        """
-        if self._log_fp is None:
-            return
-        t_session = float(self.ir["SessionTime"] or 0.0)
-        if t_session - self._last_weather_emit_t < WEATHER_SAMPLE_INTERVAL:
-            return
-        self._last_weather_emit_t = t_session
-
-        track = self.ir["TrackTempCrew"]
-        air = self.ir["AirTemp"]
-        # Before the sim has real data these read 0.0 or None; writing those
-        # would drag any later correction towards freezing point.
-        if track is None or air is None:
-            return
-        try:
-            track_f = float(track)
-            air_f = float(air)
-        except (TypeError, ValueError):
-            return
-        if track_f <= 0.0:
-            return
-
-        self._emit({
-            "type":         "weather",
-            "t_session":    round(t_session, 2),
-            "track_temp_c": round(track_f, 2),
-            "air_temp_c":   round(air_f, 2),
-            "wetness":      self.ir["TrackWetness"],
-            "skies":        self.ir["Skies"],
-        })
-
     # ----- per-car penalty detection -------------------------------------
     def _maybe_emit_penalty_events(self) -> None:
         """Watch each car's CarIdxSessionFlags for newly-set penalty
@@ -1030,6 +635,97 @@ class RaceLogger(SDKPoller):
                         "penalty_type": name,
                         "raw_bit":      bit,
                     })
+
+    # ----- official incident points --------------------------------------
+    def _maybe_emit_incident_points(self) -> None:
+        """Track every car's OFFICIAL iRacing incident points and emit an
+        `inc` event whenever the number changes, plus a periodic
+        `inc_snapshot` with all totals.
+
+        This is the timeline race control's drive-through rule is judged
+        on, and — unlike the dashboard-sourced `incident` events — it needs
+        nothing but iRacing itself. Source is
+        SessionInfo.Sessions[].ResultsPositions[].Incidents; there is no
+        per-car incident array in telemetry.
+
+        Throttled to INC_POLL_INTERVAL because reading SessionInfo parses
+        the whole YAML block. Every read is defensive: a missing or
+        half-written SessionInfo must never kill the poll loop.
+        """
+        if self._log_fp is None:
+            return
+        now = time.monotonic()
+        if now - self._inc_last_poll < INC_POLL_INTERVAL:
+            return
+        self._inc_last_poll = now
+
+        try:
+            info = self.ir["SessionInfo"] or {}
+            sessions = info.get("Sessions", []) or []
+            sess_num = self.ir["SessionNum"]
+            cur = next((s for s in sessions if s.get("SessionNum") == sess_num), None)
+            if cur is None:
+                return
+            results = cur.get("ResultsPositions") or []
+            if not results:
+                return
+            t_session = float(self.ir["SessionTime"] or 0.0)
+            laps_arr = self.ir["CarIdxLap"] or []
+            d_by_idx = {d["car_idx"]: d
+                        for d in self._log_session_meta.get("drivers", [])}
+        except Exception as e:
+            print(f"[logger] inc read error: {e!r}")
+            return
+
+        for r in results:
+            try:
+                cidx = r.get("CarIdx")
+                if cidx is None:
+                    continue
+                total = int(r.get("Incidents", 0) or 0)
+                prev = self._inc_points.get(cidx)
+                self._inc_points[cidx] = total
+                # First sighting of this car: remember the number but do
+                # NOT invent an event. Starting the logger mid-race would
+                # otherwise report everyone's running total as one big
+                # incident. The snapshot below records the baseline.
+                if prev is None:
+                    continue
+                delta = total - prev
+                if delta <= 0:
+                    # Unchanged, or iRacing reset/re-seeded the value
+                    # (session change) — adopt it silently.
+                    continue
+                drv = d_by_idx.get(cidx, {})
+                lap = None
+                if cidx < len(laps_arr):
+                    lap_val = laps_arr[cidx]
+                    if lap_val is not None and lap_val >= 0:
+                        lap = int(lap_val)
+                self._emit({
+                    "type":       "inc",
+                    "t_session":  round(t_session, 2),
+                    "car_idx":    cidx,
+                    "car_number": drv.get("car_number", ""),
+                    "driver":     drv.get("name", ""),
+                    "team":       drv.get("team", ""),
+                    "lap":        lap,
+                    "delta":      delta,
+                    "total":      total,
+                })
+            except Exception as e:
+                print(f"[logger] inc row error: {e!r}")
+
+        # Periodic full snapshot — lets a post-race tool rebuild the
+        # timeline even across a logger restart, and gives every `inc`
+        # delta something to be checked against.
+        if now - self._inc_last_snapshot >= INC_SNAPSHOT_INTERVAL:
+            self._inc_last_snapshot = now
+            self._emit({
+                "type":      "inc_snapshot",
+                "t_session": round(t_session, 2),
+                "totals":    {str(k): v for k, v in sorted(self._inc_points.items())},
+            })
 
     # ----- tire temperature reader (LOCAL PLAYER ONLY) -------------------
     def _read_tire_temps(self) -> dict | None:
@@ -1524,11 +1220,6 @@ class RaceLogger(SDKPoller):
                 payload = r.json()
             except Exception:
                 continue
-            # A 200 means the dashboard is there. From here on it owns the
-            # incidents and the SDK path stands down, so nothing is counted
-            # twice -- even in a race where nobody has an incident yet.
-            self._dashboard_incidents_live = True
-            self._note_incident_source("dashboard", 0)
             # Dashboard /incidents shape: {"incidents": [{"t_session":..., "car_idx":..., "type":..., ...}, ...]}
             items = payload.get("incidents") if isinstance(payload, dict) else payload
             if not items:
@@ -1623,10 +1314,8 @@ class RaceLogger(SDKPoller):
         self._maybe_emit_position()
         self._maybe_emit_pit_events()
         self._maybe_emit_flag_events()
-        self._maybe_emit_weather()
-        self._refresh_driver_names()
-        self._maybe_emit_sdk_incidents()
         self._maybe_emit_penalty_events()
+        self._maybe_emit_incident_points()
         self._maybe_emit_laps()
         self._maybe_emit_final()
         return self._status_snapshot(session_key, session_type, meta)
@@ -1832,68 +1521,6 @@ def download_specific(name: str):
                      mimetype="application/x-ndjson")
 
 
-# ----- CLS league-manager upload -------------------------------------------
-# Setup + status page for drivers who only run the logger (no OBS overlays).
-
-@app.route("/league")
-def league_page():
-    return render_template_string(LEAGUE_HTML)
-
-
-@app.route("/league/state")
-def league_state():
-    cfg = cls_load_config()
-    state = cls_load_state()
-    logs = []
-    for p in sorted(LOGS_DIR.glob("*.jsonl"),
-                    key=lambda p: p.stat().st_mtime, reverse=True)[:25]:
-        st = p.stat()
-        info = state.get(p.name, {})
-        logs.append({
-            "name":     p.name,
-            "size":     st.st_size,
-            "modified": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
-            "status":   info.get("status", "new"),
-            "message":  info.get("message", ""),
-            "at":       info.get("at", ""),
-            "active":   bool(poller._log_path and poller._log_path.name == p.name),
-        })
-    return jsonify({"config": cfg, "logs": logs, "version": LOGGER_VERSION})
-
-
-@app.route("/league/save", methods=["POST"])
-def league_save():
-    payload = request.get_json(silent=True) or {}
-    cfg = cls_save_config(
-        payload.get("url", ""),
-        payload.get("token", ""),
-        bool(payload.get("auto", True)),
-    )
-    return jsonify({"ok": True, "config": cfg})
-
-
-@app.route("/league/test", methods=["POST"])
-def league_test():
-    payload = request.get_json(silent=True) or {}
-    ok, msg = cls_ping(payload.get("url", ""), payload.get("token", ""))
-    return jsonify({"ok": ok, "message": msg})
-
-
-@app.route("/league/upload", methods=["POST"])
-def league_upload():
-    payload = request.get_json(silent=True) or {}
-    name = str(payload.get("name", ""))
-    safe = re.sub(r"[^A-Za-z0-9_\-.]+", "", name)
-    if safe != name or not name:
-        abort(400)
-    p = LOGS_DIR / safe
-    if not p.is_file():
-        abort(404)
-    cls_set_state(p.name, "sending", "Sending to the league site…")
-    cls_upload_async(p)
-    return jsonify({"ok": True})
-
-
 # ----- Live chart endpoints ------------------------------------------------
 # Pattern: operator picks drivers + chart type in the live monitor (which
 # POSTs to /chart/select); the OBS browser source loads /chart/render and
@@ -2072,184 +1699,6 @@ def share_standings():
 # ---------------------------------------------------------------------------
 # HTML — minimal status page
 # ---------------------------------------------------------------------------
-
-LEAGUE_HTML = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>Race Logger — League upload</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0a0a0f;
-         color: #e8e8ea; padding: 20px; font-variant-numeric: tabular-nums; }
-  .wrap { max-width: 820px; margin: 0 auto; display: flex;
-          flex-direction: column; gap: 14px; }
-  h1 { font-size: 17px; color: #ff6b35; letter-spacing: 1px; }
-  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px;
-       color: #8a8aa0; margin-bottom: 8px; }
-  .card { background: #14141c; border: 1px solid #26262f; border-radius: 8px;
-          padding: 16px; }
-  label { display: block; font-size: 12px; color: #8a8aa0; margin-bottom: 4px; }
-  input[type=text] { width: 100%; padding: 8px 10px; border-radius: 6px;
-        border: 1px solid #2e2e3d; background: #0a0a0f; color: #e8e8ea;
-        font-family: inherit; font-size: 13px; }
-  .row { margin-bottom: 12px; }
-  .check { display: flex; align-items: center; gap: 8px; font-size: 13px;
-           color: #c8c8d4; }
-  button { padding: 8px 14px; border-radius: 6px; border: 0; cursor: pointer;
-           font-weight: 700; font-size: 12px; font-family: inherit; }
-  button.primary { background: #ff6b35; color: #0a0a0f; }
-  button.ghost { background: #1f1f2b; color: #c8c8d4; border: 1px solid #2e2e3d; }
-  .msg { margin-top: 10px; font-size: 13px; padding: 8px 10px; border-radius: 6px;
-         display: none; }
-  .msg.ok  { display: block; background: #10251c; color: #7fe0b0; border: 1px solid #1c4634; }
-  .msg.err { display: block; background: #2a1216; color: #ff9c9c; border: 1px solid #5c2028; }
-  table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  th { text-align: left; color: #6a6a7a; font-weight: 600; padding: 6px 4px;
-       text-transform: uppercase; font-size: 10px; letter-spacing: 1px; }
-  td { padding: 7px 4px; border-top: 1px solid #1f1f2b; vertical-align: top; }
-  .pill { padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 800;
-          letter-spacing: 0.5px; }
-  .pill.ok      { background: #10251c; color: #7fe0b0; }
-  .pill.error   { background: #2a1216; color: #ff9c9c; }
-  .pill.sending { background: #241d10; color: #e5c07b; }
-  .pill.new     { background: #1f1f2b; color: #8a8aa0; }
-  .hint { font-size: 11px; color: #6a6a7a; line-height: 1.5; }
-  a { color: #ff8a5b; }
-</style>
-</head>
-<body>
-<div class="wrap">
-  <div style="display:flex;justify-content:space-between;align-items:center">
-    <h1>RACE LOGGER — LEAGUE UPLOAD</h1>
-    <a href="/">← live monitor</a>
-  </div>
-
-  <div class="card">
-    <h2>Setup</h2>
-    <div class="row">
-      <label for="url">League site</label>
-      <input type="text" id="url" spellcheck="false">
-    </div>
-    <div class="row">
-      <label for="token">Your personal key</label>
-      <input type="text" id="token" spellcheck="false"
-             placeholder="cls_rl_…  — copy it from the league site">
-    </div>
-    <div class="row check">
-      <input type="checkbox" id="auto" checked>
-      <label for="auto" style="margin:0">Send every finished race log automatically</label>
-    </div>
-    <div style="display:flex;gap:8px">
-      <button class="primary" onclick="save()">Save</button>
-      <button class="ghost" onclick="test()">Test connection</button>
-    </div>
-    <div id="msg" class="msg"></div>
-    <p class="hint" style="margin-top:12px">
-      Get your key on the league site under <strong>Race Logger</strong> (you have to be
-      signed in). It only allows uploading race logs as you — nothing else. Logs are always
-      kept on this PC too, in the <code>logs</code> folder next to the program.
-    </p>
-  </div>
-
-  <div class="card">
-    <h2>Recorded races</h2>
-    <table>
-      <thead>
-        <tr><th>File</th><th>Recorded</th><th>Size</th><th>Upload</th><th></th></tr>
-      </thead>
-      <tbody id="rows"><tr><td colspan="5" class="hint">Loading…</td></tr></tbody>
-    </table>
-    <p class="hint" style="margin-top:10px">
-      Only race sessions are recorded — practice and qualifying are ignored. A race that is
-      still running shows up here as soon as it starts and is sent when it ends.
-    </p>
-  </div>
-</div>
-
-<script>
-let loaded = false;
-
-function show(ok, text) {
-  const m = document.getElementById('msg');
-  m.className = 'msg ' + (ok ? 'ok' : 'err');
-  m.textContent = text;
-}
-
-function fmtSize(b) {
-  if (b < 1024) return b + ' B';
-  if (b < 1024 * 1024) return (b / 1024).toFixed(0) + ' KB';
-  return (b / 1024 / 1024).toFixed(1) + ' MB';
-}
-
-async function refresh() {
-  const r = await fetch('/league/state');
-  const s = await r.json();
-  if (!loaded) {
-    document.getElementById('url').value   = s.config.url || '';
-    document.getElementById('token').value = s.config.token || '';
-    document.getElementById('auto').checked = !!s.config.auto;
-    loaded = true;
-  }
-  const rows = s.logs.map(l => {
-    const status = l.status || 'new';
-    const label  = status === 'ok' ? 'sent'
-                 : status === 'error' ? 'failed'
-                 : status === 'sending' ? 'sending…' : 'not sent';
-    const btn = (status === 'sending')
-      ? ''
-      : `<button class="ghost" onclick="send('${l.name}')">` +
-        (status === 'ok' ? 'Send again' : 'Send now') + `</button>`;
-    return `<tr>
-      <td>${l.name}${l.active ? ' <span class="pill sending">recording</span>' : ''}</td>
-      <td>${(l.modified || '').replace('T', ' ')}</td>
-      <td>${fmtSize(l.size)}</td>
-      <td><span class="pill ${status}">${label}</span>
-          <div class="hint">${l.message || ''}</div></td>
-      <td style="text-align:right">${btn}</td>
-    </tr>`;
-  });
-  document.getElementById('rows').innerHTML =
-    rows.join('') || '<tr><td colspan="5" class="hint">No race recorded yet.</td></tr>';
-}
-
-function body() {
-  return JSON.stringify({
-    url:   document.getElementById('url').value,
-    token: document.getElementById('token').value,
-    auto:  document.getElementById('auto').checked,
-  });
-}
-
-async function save() {
-  const r = await fetch('/league/save', {method: 'POST',
-    headers: {'Content-Type': 'application/json'}, body: body()});
-  const s = await r.json();
-  show(s.ok, s.ok ? 'Saved.' : 'Could not save.');
-}
-
-async function test() {
-  show(true, 'Checking…');
-  const r = await fetch('/league/test', {method: 'POST',
-    headers: {'Content-Type': 'application/json'}, body: body()});
-  const s = await r.json();
-  show(s.ok, s.message);
-}
-
-async function send(name) {
-  await fetch('/league/upload', {method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name: name})});
-  refresh();
-}
-
-refresh();
-setInterval(refresh, 4000);
-</script>
-</body>
-</html>
-"""
 STATUS_HTML = """
 <!DOCTYPE html>
 <html lang="en">
@@ -4300,12 +3749,6 @@ def main():
     print("iRacing Race Logger")
     print(f"Logs folder: {LOGS_DIR}")
     print(f"Open:        http://localhost:5009")
-    _cfg = cls_load_config()
-    if _cfg["token"]:
-        print(f"League:      {_cfg['url']} — auto-upload "
-              f"{'ON' if _cfg['auto'] else 'OFF'}")
-    else:
-        print("League:      not set up yet — open http://localhost:5009/league")
     print("Press Ctrl+C to stop")
     print("=" * 60)
 

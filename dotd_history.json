@@ -131,6 +131,314 @@
           "track": "Hockenheimring Baden-Württemberg",
           "score": 0.9053,
           "t": "2026-08-05T22:16:02"
+        },
+        {
+          "log": "20260813-200050_oran_park_raceway_grand_prix_race.jsonl",
+          "name": "Klaus Oberlaender",
+          "car_number": "860",
+          "track": "Oran Park Raceway",
+          "score": 1.0,
+          "t": "2026-08-13T20:28:21"
+        },
+        {
+          "log": "20260813-203351_oran_park_raceway_grand_prix_race.jsonl",
+          "name": "Dominique Meyers",
+          "car_number": "99",
+          "track": "Oran Park Raceway",
+          "score": 0.8717,
+          "t": "2026-08-13T21:01:13"
+        },
+        {
+          "log": "20260818-092852_circuito_de_navarra_speed_circuit_medium_race.jsonl",
+          "name": "Sean St. Cyr",
+          "car_number": "5",
+          "track": "Circuito de Navarra",
+          "score": 0.75,
+          "t": "2026-08-18T09:41:00"
+        },
+        {
+          "log": "20260818-094534_canadian_tire_motorsport_park_race.jsonl",
+          "name": "Jack Rampling",
+          "car_number": "1",
+          "track": "Canadian Tire Motorsport Park",
+          "score": 0.775,
+          "t": "2026-08-18T09:46:28"
+        },
+        {
+          "log": "20260818-195244_indianapolis_motor_speedway_road_course_race.jsonl",
+          "name": "Robert Zellner",
+          "car_number": "360",
+          "track": "Indianapolis Motor Speedway",
+          "score": 0.7818,
+          "t": "2026-08-18T20:58:41"
+        },
+        {
+          "log": "20260819-200654_zolder_circuit_alternate_race.jsonl",
+          "name": "Marcus Rothe",
+          "car_number": "21",
+          "track": "Zolder Circuit",
+          "score": 0.9357,
+          "t": "2026-08-19T20:29:37"
+        },
+        {
+          "log": "20260819-203507_zolder_circuit_alternate_race.jsonl",
+          "name": "Kevin Chmielewski",
+          "car_number": "27",
+          "track": "Zolder Circuit",
+          "score": 0.94,
+          "t": "2026-08-19T20:58:15"
+        },
+        {
+          "log": "20260821-194058_indianapolis_motor_speedway_stock_car_oval_race.jsonl",
+          "name": "Justin Christiansen",
+          "car_number": "116",
+          "track": "Indianapolis Motor Speedway",
+          "score": 0.9643,
+          "t": "2026-08-21T20:42:18"
+        },
+        {
+          "log": "20260826-065610_st_petersburg_grand_prix_race.jsonl",
+          "name": "Michael Endres",
+          "car_number": "198",
+          "track": "St Petersburg Grand Prix",
+          "score": 0.75,
+          "t": "2026-08-26T06:56:21"
+        },
+        {
+          "log": "20260826-065735_st_petersburg_grand_prix_race.jsonl",
+          "name": "Andreas Bastian",
+          "car_number": "921",
+          "track": "St Petersburg Grand Prix",
+          "score": 0.625,
+          "t": "2026-08-26T06:57:51"
+        },
+        {
+          "log": "20260826-065754_st_petersburg_grand_prix_race.jsonl",
+          "name": "Justin Christiansen",
+          "car_number": "15",
+          "track": "St Petersburg Grand Prix",
+          "score": 0.9045,
+          "t": "2026-08-26T08:02:01"
+        },
+        {
+          "log": "20260826-200650_okayama_international_circuit_full_course_race.jsonl",
+          "name": "Thomas Herbrig",
+          "car_number": "67",
+          "track": "Okayama International Circuit",
+          "score": 0.9313,
+          "t": "2026-08-26T20:30:51"
+        },
+        {
+          "log": "20260826-203619_okayama_international_circuit_full_course_race.jsonl",
+          "name": "Manfred Flor",
+          "car_number": "74",
+          "track": "Okayama International Circuit",
+          "score": 1.0,
+          "t": "2026-08-26T20:59:09"
+        },
+        {
+          "log": "20260827-200102_motorsport_arena_oschersleben_grand_prix_race.jsonl",
+          "name": "Manfred Baar",
+          "car_number": "581",
+          "track": "Motorsport Arena Oschersleben",
+          "score": 0.975,
+          "t": "2026-08-27T20:28:55"
+        },
+        {
+          "log": "20260827-203424_motorsport_arena_oschersleben_grand_prix_race.jsonl",
+          "name": "Don Utz",
+          "car_number": "101",
+          "track": "Motorsport Arena Oschersleben",
+          "score": 0.9182,
+          "t": "2026-08-27T21:02:29"
+        },
+        {
+          "log": "20260901-195149_red_bull_ring_grand_prix_race.jsonl",
+          "name": "Robert Zellner",
+          "car_number": "360",
+          "track": "Red Bull Ring",
+          "score": 0.9271,
+          "t": "2026-09-01T20:57:29"
+        },
+        {
+          "log": "20260905-220902_sebring_international_raceway_international_race.jsonl",
+          "name": "Andre N Villela",
+          "car_number": "827",
+          "track": "Sebring International Raceway",
+          "score": 0.575,
+          "t": "2026-09-05T22:09:02"
+        },
+        {
+          "log": "20260906-075204_sebring_international_raceway_international_race.jsonl",
+          "name": "Djavit Segashi",
+          "car_number": "583",
+          "track": "Sebring International Raceway",
+          "score": 0.7,
+          "t": "2026-09-06T07:52:05"
+        },
+        {
+          "log": "20260906-075259_sebring_international_raceway_international_race.jsonl",
+          "name": "Florian Eigner",
+          "car_number": "112",
+          "track": "Sebring International Raceway",
+          "score": 0.575,
+          "t": "2026-09-06T07:53:03"
+        },
+        {
+          "log": "20260906-075346_sebring_international_raceway_international_race.jsonl",
+          "name": "Max Mu",
+          "car_number": "35",
+          "track": "Sebring International Raceway",
+          "score": 0.7205,
+          "t": "2026-09-06T07:53:51"
+        },
+        {
+          "log": "20260906-075437_sebring_international_raceway_international_race.jsonl",
+          "name": "Fritz Morawetz",
+          "car_number": "862",
+          "track": "Sebring International Raceway",
+          "score": 0.8946,
+          "t": "2026-09-06T11:01:15"
+        },
+        {
+          "log": "20260907-220811_circuit_gilles_villeneuve_race.jsonl",
+          "name": "Mike Girenz",
+          "car_number": "33",
+          "track": "Circuit Gilles Villeneuve",
+          "score": 0.8085,
+          "t": "2026-09-07T23:10:27"
+        },
+        {
+          "log": "20260910-171056_autodromo_enzo_e_dino_ferrari_race.jsonl",
+          "name": "Jan Nosek",
+          "car_number": "1",
+          "track": "Autodromo Enzo e Dino Ferrari",
+          "score": 0.5,
+          "t": "2026-09-10T17:14:42"
+        },
+        {
+          "log": "20260910-200100_donington_park_racing_circuit_grand_prix_race.jsonl",
+          "name": "Benjamin Schlosser",
+          "car_number": "83",
+          "track": "Donington Park Racing Circuit",
+          "score": 0.8875,
+          "t": "2026-09-10T20:30:01"
+        },
+        {
+          "log": "20260910-203529_donington_park_racing_circuit_grand_prix_race.jsonl",
+          "name": "Maurice Becker",
+          "car_number": "49",
+          "track": "Donington Park Racing Circuit",
+          "score": 0.9182,
+          "t": "2026-09-10T21:04:13"
+        }
+      ]
+    },
+    "lm:cmt01d23n0001o3011qc3nc0a": {
+      "name": "GT3 WCT 14th Season",
+      "league": "CAS GT3 WCT",
+      "winners": [
+        {
+          "log": "20260916-200659_brands_hatch_circuit_grand_prix_race.jsonl",
+          "name": "Marcus Rothe",
+          "car_number": "21",
+          "track": "Brands Hatch Circuit",
+          "score": 0.85,
+          "t": "2026-09-16T20:29:31"
+        },
+        {
+          "log": "20260916-203500_brands_hatch_circuit_grand_prix_race.jsonl",
+          "name": "Alexander Stannek",
+          "car_number": "5",
+          "track": "Brands Hatch Circuit",
+          "score": 0.9813,
+          "t": "2026-09-16T20:57:28"
+        },
+        {
+          "log": "20260922-195406_silverstone_circuit_arena_grand_prix_race.jsonl",
+          "name": "Andreas Bastian",
+          "car_number": "921",
+          "track": "Silverstone Circuit",
+          "score": 0.818,
+          "t": "2026-09-22T20:59:30"
+        },
+        {
+          "log": "20260924-200109_zolder_circuit_grand_prix_race.jsonl",
+          "name": "Andre Brechmann",
+          "car_number": "82",
+          "track": "Zolder Circuit",
+          "score": 0.9625,
+          "t": "2026-09-24T20:29:21"
+        },
+        {
+          "log": "20260924-203450_zolder_circuit_grand_prix_race.jsonl",
+          "name": "Maurice Becker",
+          "car_number": "49",
+          "track": "Zolder Circuit",
+          "score": 0.925,
+          "t": "2026-09-24T21:02:31"
+        },
+        {
+          "log": "20261007-133736_circuit_zandvoort_grand_prix_race.jsonl",
+          "name": "Leon Klein",
+          "car_number": "16",
+          "track": "Circuit Zandvoort",
+          "score": 0.759,
+          "t": "2026-10-07T14:42:53"
+        },
+        {
+          "log": "20261007-200651_virginia_international_raceway_north_race.jsonl",
+          "name": "Björn Krumpschmied",
+          "car_number": "666",
+          "track": "Virginia International Raceway",
+          "score": 0.9833,
+          "t": "2026-10-07T20:31:04"
+        },
+        {
+          "log": "20261007-203633_virginia_international_raceway_north_race.jsonl",
+          "name": "Daniel Brandt",
+          "car_number": "75",
+          "track": "Virginia International Raceway",
+          "score": 0.85,
+          "t": "2026-10-07T21:00:45"
+        }
+      ]
+    },
+    "lm:cmoefqawn0001l104qb7429mq": {
+      "name": "5th season CAS Porsche Community CUP",
+      "league": "CAS PCCD",
+      "winners": [
+        {
+          "log": "20261008-103436_circuit_zandvoort_grand_prix_race.jsonl",
+          "name": "Klaus Oberlaender",
+          "car_number": "51",
+          "track": "Circuit Zandvoort",
+          "score": 0.7583,
+          "t": "2026-10-08T10:48:47"
+        },
+        {
+          "log": "20261008-152703_oulton_park_circuit_fosters_race.jsonl",
+          "name": "Haoran Jing2",
+          "car_number": "7",
+          "track": "Oulton Park Circuit",
+          "score": 0.8336,
+          "t": "2026-10-08T15:41:48"
+        },
+        {
+          "log": "20261008-200046_aut_dromo_internacional_do_algarve_grand_prix_race.jsonl",
+          "name": "Jan Tobias Schrader",
+          "car_number": "771",
+          "track": "Autódromo Internacional do Algarve",
+          "score": 0.9,
+          "t": "2026-10-08T20:29:55"
+        },
+        {
+          "log": "20261008-203525_aut_dromo_internacional_do_algarve_grand_prix_race.jsonl",
+          "name": "Remo Grossenbacher",
+          "car_number": "11",
+          "track": "Autódromo Internacional do Algarve",
+          "score": 0.7719,
+          "t": "2026-10-08T21:03:30"
         }
       ]
     }
