@@ -552,6 +552,7 @@ class StandingsPoller(SDKPoller):
                 "delta": (bl - prev[0]) if prev else None,
                 "prev_name": prev[1]["name"] if prev else None,
                 "name": r.get("name"), "car_number": r.get("car_number"),
+                "team_name": r.get("team_name"),
                 "lap": int(lap) if lap and lap > 0 else None,
                 "class_name": r.get("class_name") if multi else "",
                 "brand": r.get("brand"), "brand_logo": r.get("brand_logo"),
@@ -822,6 +823,9 @@ class StandingsPoller(SDKPoller):
             "num_on_track": num_on_track,
             "standings":    rows,
             "proam_active": proam_on,
+            # Team event (IEC, NEC, …): each car is a TEAM — the overlays show
+            # the team name instead of whoever is driving (2026-10-10).
+            "team_event":   int(weekend.get("TeamRacing") or 0) == 1,
             "fastest_lap":  fastest_lap,
         }
 
@@ -1520,6 +1524,10 @@ TOWER_HTML = r"""<!DOCTYPE html>
         column-gap: 0;
     }
     .race .grid { grid-template-columns: 28px 14px minmax(0, 1fr) 26px 28px 76px 76px 40px; }
+    /* Team events: no flag column (it would be the CURRENT driver's country,
+       meaningless for a team) — the team name gets the room instead. */
+    .teams .grid { grid-template-columns: 28px 14px minmax(0, 1fr) 28px 82px 82px; }
+    .teams.race .grid { grid-template-columns: 28px 14px minmax(0, 1fr) 28px 76px 76px 40px; }
     .head {
         height: 24px; background: var(--head);
         font-size: 14px; font-weight: 500; color: var(--text);
@@ -1640,9 +1648,15 @@ function infoBar(d) {
     </div>`;
 }
 
+// Team events show the TEAM (?names=driver keeps the driver).
+let TEAM_MODE = false;
+function label(r) {
+    return (TEAM_MODE && r.team_name) ? r.team_name : abbrev(r.name || 'Unknown');
+}
+
 function headRow(isRace) {
     return `<div class="grid head">
-        <div></div><div></div><div class="c-name">driver name</div><div></div><div></div>
+        <div></div><div></div><div class="c-name">${TEAM_MODE ? 'team' : 'driver name'}</div>${TEAM_MODE ? '' : '<div></div>'}<div></div>
         ${isRace
             ? '<div class="r">interval</div><div class="r">last</div><div class="r" style="text-align:center;padding:0">+/-</div>'
             : '<div class="r">fastest</div><div class="r">last</div>'}
@@ -1656,7 +1670,8 @@ function rowHtml(r, isRace) {
     let tags = '';
     if (r.on_pit) tags += '<span class="tag pit">PIT</span>';
     else if (!r.in_world) tags += `<span class="tag out">${r.left ? 'LEFT' : 'OUT'}</span>`;
-    const flag = r.country ? `<img class="flag" src="/flag/${encodeURIComponent(r.country)}.svg" alt="">` : '<div></div>';
+    const flag = TEAM_MODE ? ''
+        : r.country ? `<img class="flag" src="/flag/${encodeURIComponent(r.country)}.svg" alt="">` : '<div></div>';
     const brand = (r.brand && r.brand_logo) ? `<img class="brand" src="/brand/${encodeURIComponent(r.brand)}" alt="">` : '<div></div>';
     const lastCls = r.last_is_pb ? 'pb' : '';
     const last = `<div class="t ${lastCls}">${fmtLap(r.last_lap)}</div>`;
@@ -1683,12 +1698,13 @@ function rowHtml(r, isRace) {
     }
     return `<div class="grid row${r.focus ? ' focus' : ''}">
         <div class="pos">${pos}</div>${pa}
-        <div class="name">${esc(abbrev(r.name || 'Unknown'))}${tags}</div>
+        <div class="name">${esc(label(r))}${tags}</div>
         ${flag}${brand}${cells}
     </div>`;
 }
 
 function render(d) {
+    TEAM_MODE = !!(d && d.team_event) && qs.get('names') !== 'driver';
     const el = document.getElementById('tower');
     if (!d || !d.connected) {
         el.innerHTML = '<div class="msg">Waiting for iRacing…</div>';
@@ -1708,7 +1724,7 @@ function render(d) {
             html += `<div class="tabs">
                 <span class="tab cls"${style}>${esc(r.class_name || 'Class')}</span>
                 <span class="tab cnt">${ICON.helmet}${r.class_count || ''}</span>
-            </div><div class="${isRace ? 'race' : ''}">${headRow(isRace)}`;
+            </div><div class="${isRace ? 'race' : ''}${TEAM_MODE ? ' teams' : ''}">${headRow(isRace)}`;
             open = true;
         }
         html += rowHtml(r, isRace);
@@ -1822,7 +1838,7 @@ let lastSeq = null, hideT = null;
 function show(e) {
     document.getElementById('who').innerHTML =
         `${paBar(e.proam)}<span class="num">#${esc(e.car_number)}</span>
-         <span class="nm">${esc(abbrev(e.name))}</span>${flagImg(e.country)}${brandImg(e)}
+         <span class="nm">${esc(e.team_mode && e.team_name ? e.team_name : abbrev(e.name))}</span>${e.team_mode && e.team_name ? `<span class="cls">${esc(abbrev(e.name))}</span>` : ''}${flagImg(e.country)}${brandImg(e)}
          ${e.class_name ? `<span class="cls">${esc(e.class_name)}</span>` : ''}`;
     document.getElementById('t').textContent = fmtLap(e.time);
     const bits = [];
@@ -1840,6 +1856,7 @@ async function tick() {
     if (lastSeq === null) { lastSeq = fl.seq; return; }   // never replay an old lap on load
     if (fl.seq !== lastSeq && fl.event) {
         lastSeq = fl.seq;
+        fl.event.team_mode = !!d.team_event && qs.get('names') !== 'driver';
         if (ALL || fl.event.session_type === 'Race') show(fl.event);
     }
 }
@@ -1924,14 +1941,16 @@ const N = parseInt(qs.get('n') || '3', 10);
 function line(r, up) {
     const pd = r.pos_delta;
     return `<div class="r"><div class="dv ${up ? 'up' : 'down'}">${up ? '▲' : '▼'}${Math.abs(pd)}</div>
-        ${paBar(r.proam) || '<span></span>'}<div class="n">${esc(abbrev(r.name))}</div>
+        ${paBar(r.proam) || '<span></span>'}<div class="n">${esc(r._label || abbrev(r.name))}</div>
         <div>${flagImg(r.country)}</div>
         <div class="pp">P${r.grid_pos}→P${r.class_position || r.position}</div></div>`;
 }
 function render(d) {
     const card = document.getElementById('card');
     if (!d || !d.connected || d.session_type !== 'Race') { card.classList.remove('on'); return; }
-    const rows = (d.standings || []).filter(r => r.pos_delta != null && r.in_world);
+    const teamMode = !!d.team_event && qs.get('names') !== 'driver';
+    const rows = (d.standings || []).filter(r => r.pos_delta != null && r.in_world)
+        .map(r => ({ ...r, _label: teamMode && r.team_name ? r.team_name : abbrev(r.name) }));
     const gain = rows.filter(r => r.pos_delta > 0).sort((a, b) => b.pos_delta - a.pos_delta).slice(0, N);
     const lose = rows.filter(r => r.pos_delta < 0).sort((a, b) => a.pos_delta - b.pos_delta).slice(0, N);
     if (!rows.length) { card.classList.remove('on'); return; }
@@ -2090,7 +2109,8 @@ function render(d) {
             if (r.focus) cls.push('focus');
             if (r.on_pit) cls.push('pit');
             const pos = r.class_position || r.position;
-            const lab = r.focus ? `<div class="flabel" style="left:${x}px">${esc(abbrev(r.name))}</div>` : '';
+            const nm = (d.team_event && qs.get('names') !== 'driver' && r.team_name) ? r.team_name : abbrev(r.name);
+            const lab = r.focus ? `<div class="flabel" style="left:${x}px">${esc(nm)}</div>` : '';
             return `${lab}<div class="${cls.join(' ')}" style="left:${x}px;top:${LANES[lane] - 12}px" title="${esc(r.name)}">${pos}</div>`;
         }).join('');
         const lapped = c.lapped.length ? `<div class="lapped"><div class="t">+LAP</div>${c.lapped.map(r =>
@@ -2308,7 +2328,7 @@ def standings():
 # Bump on every change: http://localhost:5005/version shows which code the
 # running process actually loaded (the stream PC gets this folder through
 # Nextcloud, so a restart can still pick up the previous file).
-CODE_VERSION = "2026-10-08 youtube"
+CODE_VERSION = "2026-10-10 team-names"
 
 
 @app.route("/version")

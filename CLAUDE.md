@@ -165,6 +165,16 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 10, 2026 (standings — TEAM names in team events, IEC / NEC):**
+`/standings` carries `team_event` (WeekendInfo.TeamRacing == 1). In team
+events the tower shows the TEAM name (header "team") instead of the driver
+currently in the car, and drops the flag column (it would be the current
+driver's country) so the team name gets the room. Same on /movers, the
+/gapbar focus label and /fastest (team name + the lap-setting driver in
+small text; fastest-lap events now carry team_name). `?names=driver`
+restores driver names per source. Classic page unchanged.
+CODE_VERSION → "2026-10-10 team-names".
+
 **October 10, 2026 (small UI requests):** "Stream mode" button hidden in
 Results (5002), Results Lite (5003) and Grid (5001) — it showed up on
 stream; H still toggles the background (dashboard keeps its button, it is
