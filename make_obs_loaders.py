@@ -44,6 +44,7 @@ OVERLAYS = [
     ("catch",         "Catch-Up Battle",  5015),
     ("weather",       "Weather",          5016),
     ("driver",        "Driver Card",      5017),
+    ("driver_simple", "Driver Card (no iRating / SR)", 5017, "/simple"),
     ("leader",        "New Race Leader",  5018),
     # Extra pages on existing servers (2026-10-08) — no new ports.
     ("duel",          "Title Fight",      5010, "/duel"),

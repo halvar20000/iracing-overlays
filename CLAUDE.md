@@ -165,6 +165,11 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 10, 2026 (second driver card):** `5017/simple` = the same card
+without iRating and licence / safety rating (license stat now has class
+`lic-stat`); `?hide=ir,lic` does the same on any URL. Loader
+`obs_loaders/driver_simple.html` (make_obs_loaders entry, 32 loaders).
+
 **October 10, 2026 (tower: no scrollbar, ?rows=N):** a 48-car NEC field
 was taller than the OBS source and Chromium drew a scrollbar on stream.
 TOWER_HTML now has `html, body { overflow: hidden }` (overflow is cut,

@@ -22,6 +22,7 @@ Loader-Datei verwenden).
 | Abstandsbalken (Gap Bar) | 5005 `/gapbar` | `gapbar.html` | ✓ frei wählbar × 135 (füllt die Breite) |
 | Überhol-Ticker | 5000 `/ticker` | `ticker.html` | ✓ 650 × 56 |
 | Driver Card | 5017 | `driver.html` | ✓ 1000 × 130 |
+| Driver Card ohne iRating / Safety Rating | 5017 `/simple` | `driver_simple.html` | ✓ 800 × 130 |
 | Livery (Auto der Kamera) | 5006 | `livery.html` | ≈ 800 × 350 |
 | Track Map | 5007 | `trackmap.html` | ≈ 1000 × 600 (skaliert mit) |
 | Flaggen (weiß / karierte) | 5008 | `flag.html` | ≈ 280 × 200 |

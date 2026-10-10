@@ -258,6 +258,7 @@ PAGE_HTML = r"""
                    white-space: nowrap; }
 
     .stat.ir  .value { color: #22c9e0; }
+    /* first visible stat after the ident block keeps a clean edge */
     .stat.pos .value { color: #ffd166; }
     .licchip {
         font-size: 18px; font-weight: 800; white-space: nowrap;
@@ -290,7 +291,7 @@ PAGE_HTML = r"""
         <span class="label">iRating</span>
         <span class="value" id="ir">—</span>
     </div>
-    <div class="stat">
+    <div class="stat lic-stat">
         <span class="label">License</span>
         <span class="licchip" id="lic">—</span>
     </div>
@@ -311,6 +312,14 @@ PAGE_HTML = r"""
 
 <script>
 const qs = new URLSearchParams(location.search);
+// /simple (2026-10-10): the same card without iRating and licence / safety
+// rating. ?hide=ir,lic does the same on any URL.
+const HIDE = new Set((qs.get('hide') || '').split(',').filter(Boolean));
+if (location.pathname.replace(/\/+$/, '') === '/simple') { HIDE.add('ir'); HIDE.add('lic'); }
+for (const k of HIDE) {
+    const el = document.querySelector(k === 'ir' ? '.stat.ir' : k === 'lic' ? '.stat.lic-stat' : null);
+    if (el) el.style.display = 'none';
+}
 if (qs.get('debug') === '1') document.body.classList.add('debug');
 document.addEventListener('keydown', e => {
     if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('debug');
@@ -383,6 +392,7 @@ async function tick() {
 
 
 @app.route("/")
+@app.route("/simple")
 def index():
     return render_template_string(PAGE_HTML)
 
