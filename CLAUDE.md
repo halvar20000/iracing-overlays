@@ -1,9 +1,27 @@
 # iRacing Overlays — Project Notes for Claude
 
-Location: `/Users/thomasherbrig/Nextcloud/iRacing/python/files/`
-GitHub:   https://github.com/halvar20000/iracing-overlays (primary repo,
-          source of truth; local folder is where I edit, user pushes via
-          git from Terminal).
+GitHub:   https://github.com/halvar20000/iracing-overlays — the primary
+          repo and the source of truth. Sync between machines via git,
+          never by copying folders (June 26 lesson).
+
+Checkouts, and which is which:
+  • `/mnt/user/AI/Projects/iracing-overlays-main` (Unraid) — a real git
+    CLONE with `origin` set, and where Claude sessions work. Commits and
+    pushes happen here.
+  • `/Users/thomasherbrig/Nextcloud/iRacing/python/files/` (Mac) — where
+    Thomas edits, inside Nextcloud. Historically a ZIP download rather
+    than a clone, which is how the two lineages diverged in June 2026;
+    `push_to_github.sh` exists for it.
+  • The stream PC runs the overlays straight off the Unraid SMB share.
+
+**The "stale / truncated mount" and "Nextcloud ate the folder" warnings
+scattered through the session notes below are about the MAC path.** The
+Unraid clone is plain local storage and has never been on Nextcloud —
+do not reach for that explanation when something looks odd here (it was
+reached for once, on 2026-10-10, to explain a 691-line diff in
+`iracing_race_logger.py` that was simply unpushed work). Check the
+content: `git show HEAD:<file>` against the working copy, then compile
+and run its test.
 
 ## Scripts
 
