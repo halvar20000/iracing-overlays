@@ -14,3 +14,9 @@
 *.pdf  binary
 *.mp4  binary
 *.zip  binary
+
+# Windows scripts: CRLF everywhere (cmd labels / goto misbehave with LF),
+# also inside the GitHub ZIP the installer / updater downloads.
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf

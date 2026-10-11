@@ -165,6 +165,29 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 11, 2026 (installer + updater):** for Andreas (ZIP installs).
+`updater.py` (stdlib only): `check()` compares `.install_info.json` (commit of
+the last install, gitignored) with GitHub `commits/main` + `compare/` (count +
+commit subjects); `apply_update()` downloads codeload ZIP of exactly that
+commit, writes every file via temp + os.replace, NEVER deletes, skips
+`PROTECTED` runtime files (configs, caches, dotd_history.json — which IS
+tracked in git —, logs/, .git/), pip only when requirements.txt changed
+(always on --install). A `.git` folder = developer checkout (the Unraid share):
+never written, GUI only reports. No stamp = "version unknown" → update
+offered. **Add new runtime/config files to `PROTECTED`** as well as
+.gitignore. `install.bat` → `install.ps1` (local or downloaded from raw):
+Python 3.10+ with tkinter (winget Python 3.12 if missing, Store alias
+skipped), folder prompt, `updater.py --install`, desktop + Start-menu shortcut
+to pythonw + launch_gui.py. `launch_gui.py`: version label in the header
+(click = re-check), green banner with up to 6 commit subjects + "Update &
+restart" → stops running overlays, applies, relaunches itself with
+`--autostart tag,…` (waits up to 15 s for each port to free). Failure → error
+dialog, overlays restarted, GUI keeps running. `launch_gui.bat` falls back to
+`pyw -3`. Tested: real GitHub install into a temp folder (1565 files), stamp
+3 commits back → banner list, update wrote 1 file, config kept; GUI flow
+12/12 with stubbed tkinter; install.ps1 parses in PowerShell 7 and the
+Python finder works — NOT yet run on Windows. Guide: INSTALL.md (German).
+
 **October 10, 2026 (F1-style battle graphics + "TURN 11" label):** from F1 TV
 screenshots, all as extra pages on existing servers (no new ports, loaders
 added → 36). Catch-up server 5015 (camera car vs same-class car ahead, same

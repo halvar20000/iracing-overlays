@@ -36,7 +36,12 @@ import time
 import tkinter as tk
 import webbrowser
 from pathlib import Path
-from tkinter import ttk
+from tkinter import messagebox, ttk
+
+try:
+    import updater  # stdlib only; missing in very old folders -> no banner
+except Exception:  # pragma: no cover
+    updater = None
 
 # ---------------------------------------------------------------------------
 # Overlay definitions — (tag, friendly name, script filename, port, tag color)
@@ -217,9 +222,11 @@ class OverlayController:
 # Main app
 # ---------------------------------------------------------------------------
 class LauncherApp(tk.Tk):
-    def __init__(self):
+    def __init__(self, autostart=()):
         super().__init__()
         self.title("iRacing Overlay Launcher")
+        self._update_info = None
+        self._updating = False
         self.minsize(760, 520)
         self.configure(bg=COLOR_BG)
 
@@ -235,6 +242,13 @@ class LauncherApp(tk.Tk):
         self._poll_log_queue()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        if autostart:
+            # Restarted by the updater: bring back what was running before.
+            self.after(800, lambda: threading.Thread(
+                target=self._autostart, args=(list(autostart),), daemon=True).start())
+        if updater is not None:
+            self.after(1200, self._check_updates)
 
     def _size_to_contents(self):
         """Open tall enough to show every overlay row without manual resizing.
@@ -272,6 +286,13 @@ class LauncherApp(tk.Tk):
         )
         subtitle.pack(side="left", padx=(10, 0), pady=(6, 0))
 
+        self._version_lbl = tk.Label(
+            header, text="", bg=COLOR_BG, fg=COLOR_MUTED,
+            font=("Segoe UI", 8), cursor="hand2",
+        )
+        self._version_lbl.pack(side="left", padx=(12, 0), pady=(6, 0))
+        self._version_lbl.bind("<Button-1>", lambda e: self._check_updates(manual=True))
+
         btn_start_all = tk.Button(
             header, text="Start All", command=self._start_all,
             bg=COLOR_ACCENT, fg="white", activebackground=COLOR_ACCENT2,
@@ -287,6 +308,31 @@ class LauncherApp(tk.Tk):
             font=("Segoe UI", 9, "bold"), cursor="hand2",
         )
         btn_stop_all.pack(side="right")
+
+        # --- update banner (hidden until a check finds something) ---
+        self._banner = tk.Frame(self, bg="#1f2a1f", highlightthickness=1,
+                                highlightbackground=COLOR_OK)
+        self._banner_text = tk.Label(
+            self._banner, text="", bg="#1f2a1f", fg=COLOR_TEXT, justify="left",
+            anchor="w", font=("Segoe UI", 9),
+        )
+        self._banner_text.pack(side="left", fill="x", expand=True, padx=12, pady=8)
+        self._banner_later = tk.Button(
+            self._banner, text="Later", command=self._hide_banner,
+            bg="#1f2a1f", fg=COLOR_MUTED, activebackground="#1f2a1f",
+            activeforeground=COLOR_TEXT, relief="flat", cursor="hand2",
+            font=("Segoe UI", 9), padx=10, pady=4,
+        )
+        self._banner_later.pack(side="right", padx=(4, 10))
+        self._banner_btn = tk.Button(
+            self._banner, text="Update & restart", command=self._do_update,
+            bg=COLOR_OK, fg="#0a0a0f", activebackground="#6be898",
+            activeforeground="#0a0a0f", relief="flat", cursor="hand2",
+            font=("Segoe UI", 9, "bold"), padx=14, pady=4,
+        )
+        self._banner_btn.pack(side="right", padx=(4, 0))
+        self._banner_anchor = tk.Frame(self, bg=COLOR_BG, height=0)
+        self._banner_anchor.pack(fill="x")
 
         # --- overlay rows ---
         rows_container = tk.Frame(self, bg=COLOR_BG)
@@ -341,6 +387,7 @@ class LauncherApp(tk.Tk):
         for tag, _, _, _, color in OVERLAYS:
             self._log_text.tag_configure(f"tag_{tag}", foreground=color)
         self._log_text.tag_configure("muted", foreground=COLOR_MUTED)
+        self._log_text.tag_configure("tag_update", foreground=COLOR_OK)
 
     def _build_row(self, parent, tag, name, script, port, color, index):
         row = tk.Frame(parent, bg=COLOR_PANEL if index % 2 == 0 else COLOR_PANEL_ALT)
@@ -518,6 +565,133 @@ class LauncherApp(tk.Tk):
         self._log_text.see("end")
         self._log_text.configure(state="disabled")
 
+    # ----- updates ---------------------------------------------------------
+    def _check_updates(self, manual=False):
+        if self._updating:
+            return
+        self._version_lbl.configure(text="checking for updates…")
+
+        def work():
+            info = updater.check(HERE)
+            self.after(0, lambda: self._show_update_info(info, manual))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _show_update_info(self, info, manual):
+        self._update_info = info
+        local = (info.get("local") or "")[:7] or "unknown"
+        kind = info.get("kind")
+        if info.get("update_available"):
+            ver = "version %s · update available" % local
+        elif info.get("behind") == 0:
+            ver = "version %s · up to date" % local
+        else:
+            ver = "version %s" % local
+        if info.get("error"):
+            ver += " · " + info["error"]
+            if manual:
+                self._append_log("update", "check failed: " + info["error"])
+        self._version_lbl.configure(text=ver + "  ↻")
+
+        if kind == "git":
+            # Developer clone (Unraid share): report only, git does updates.
+            if info.get("behind"):
+                self._append_log("update", "%d new commit(s) on GitHub — this is a "
+                                 "git checkout, update it with git pull"
+                                 % info["behind"])
+            return
+        if not info.get("update_available"):
+            self._hide_banner()
+            if manual and not info.get("error"):
+                self._append_log("update", "already up to date (%s)" % local)
+            return
+
+        n = info.get("behind")
+        if info.get("local") is None:
+            head = "Update available — installed version unknown (old ZIP download)."
+        else:
+            head = "Update available: %s new change%s." % (n if n is not None else "some",
+                                                           "" if n == 1 else "s")
+        msgs = info.get("commits") or []
+        lines = ["  • " + m for m in msgs[:6]]
+        if len(msgs) > 6:
+            lines.append("  … and %d more" % (len(msgs) - 6))
+        self._banner_text.configure(text="\n".join([head] + lines))
+        self._banner_btn.configure(state="normal")
+        self._banner.pack(fill="x", padx=16, pady=(4, 2), after=self._banner_anchor)
+        self._append_log("update", head)
+
+    def _hide_banner(self):
+        self._banner.pack_forget()
+
+    def _do_update(self):
+        info = self._update_info or {}
+        if self._updating or not info.get("can_update"):
+            return
+        running = [t for t, c in self.controllers.items() if c.is_running]
+        msg = "Download the new version and restart the launcher?"
+        if running:
+            msg += ("\n\n%d running overlay(s) will be stopped and started again "
+                    "afterwards (OBS sources reconnect by themselves)." % len(running))
+        if not messagebox.askyesno("Update", msg, parent=self):
+            return
+        self._updating = True
+        self._banner_btn.configure(state="disabled", text="Updating…")
+        self._banner_later.configure(state="disabled")
+        log = lambda m: self.log_queue.put(("update", m))
+
+        def work():
+            for t in running:
+                log("stopping %s" % t)
+                self.controllers[t].stop()
+            try:
+                res = updater.apply_update(HERE, sha=info.get("remote"), log=log)
+            except Exception as e:
+                self.after(0, lambda: self._update_failed(str(e), running))
+                return
+            if not res.get("pip_ok"):
+                log("WARNING: pip install reported an error — see above")
+            self.after(0, lambda: self._restart(running))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _update_failed(self, err, running):
+        self._updating = False
+        self._append_log("update", "UPDATE FAILED: " + err)
+        self._banner_btn.configure(state="normal", text="Update & restart")
+        self._banner_later.configure(state="normal")
+        messagebox.showerror("Update failed", err + "\n\nThe launcher keeps "
+                             "running the current version; overlays that were "
+                             "running are started again.", parent=self)
+        threading.Thread(target=self._autostart, args=(running,), daemon=True).start()
+
+    def _restart(self, running):
+        self._append_log("update", "restarting the launcher…")
+        args = [sys.executable, str(HERE / "launch_gui.py")]
+        if running:
+            args += ["--autostart", ",".join(running)]
+        kw = dict(cwd=str(HERE))
+        if os.name == "nt":
+            kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        try:
+            subprocess.Popen(args, **kw)
+        except Exception as e:
+            self._update_failed("could not restart the launcher: %s — close it and "
+                                "start it again by hand" % e, running)
+            return
+        self.after(300, self.destroy)
+
+    def _autostart(self, tags):
+        """Start overlays once their ports are free (the old processes may
+        need a moment to release them after an update restart)."""
+        for t in tags:
+            c = self.controllers.get(t)
+            if c is None or c.is_running:
+                continue
+            deadline = time.time() + 15
+            while c.port and _port_in_use(c.port) and time.time() < deadline:
+                time.sleep(0.5)
+            c.start()
+            time.sleep(0.15)
+
     # ----- shutdown --------------------------------------------------------
     def _on_close(self):
         running = [c for c in self.controllers.values() if c.is_running]
@@ -532,5 +706,10 @@ class LauncherApp(tk.Tk):
 
 
 if __name__ == "__main__":
-    app = LauncherApp()
+    _auto = ()
+    if "--autostart" in sys.argv:
+        i = sys.argv.index("--autostart")
+        if i + 1 < len(sys.argv):
+            _auto = tuple(t for t in sys.argv[i + 1].split(",") if t)
+    app = LauncherApp(autostart=_auto)
     app.mainloop()
