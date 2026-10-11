@@ -22,6 +22,22 @@ Stream-Deck-App → Taste anklicken → unten links auf das **Bild der Taste**
 klicken → **„Aus Datei wählen"** → Datei aus diesem Ordner. Den **Titel**
 der Taste leer lassen (der Name steht schon im Bild).
 
+## Zweiter Zustand „aus" (grau) — Design von Andreas
+
+`overlays_off/` und `dashboard_off/` enthalten dieselben Bilder in Grau, mit
+**denselben Dateinamen**. Für Tasten mit zwei Zuständen:
+
+- **OBS → Quelle ein/aus**: Zustand 1 (sichtbar) = Bild aus `overlays/`,
+  Zustand 2 (versteckt) = gleiches Bild aus `overlays_off/`. Das Stream Deck
+  zeigt dann immer an, ob das Overlay gerade im Bild ist.
+- **Dashboard-Schalter** (`auto_follow`, `auto_replay`, `auto_replay_ot`,
+  `hide_ui`): die Website-Aktion hat nur einen Zustand. Für Farbe/Grau die
+  Taste als **Multi-Action-Wechsel** (Multi Action Switch) anlegen, in beide
+  Zustände dieselbe Website-URL, Bilder aus `dashboard/` und
+  `dashboard_off/`. Achtung: das Stream Deck merkt sich nur seine eigenen
+  Klicks — wird der Modus im Dashboard umgeschaltet, stimmt die Farbe nicht
+  mehr (einmal drücken bringt es wieder in Gleichschritt).
+
 ## `overlays/` — für die OBS-Tasten (Quelle ein/aus, Szene …)
 
 Die Dateinamen sind dieselben wie die Loader in `obs_loaders/`
@@ -123,4 +139,4 @@ installieren", dann öffnet sie in einem eigenen schlanken Fenster.
 ## Eigene Symbole
 
 Liste in `make_streamdeck_icons.py` ergänzen und `python make_streamdeck_icons.py`
-ausführen (nutzt Microsoft Edge im Hintergrund, dauert ein paar Minuten).
+ausführen (nur einzelne Ordner: `python make_streamdeck_icons.py overlays_off`) (nutzt Microsoft Edge im Hintergrund, dauert ein paar Minuten).

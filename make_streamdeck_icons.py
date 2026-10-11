@@ -7,6 +7,9 @@ Writes 288 × 288 PNGs (sharp on the Stream Deck XL / + too) into
   overlays/   one per OBS loader (same names as obs_loaders/*.html), so a
               button "OBS: source on/off" can be given the matching picture
   dashboard/  camera groups + the dashboard's /streamdeck/<action> commands
+  overlays_off/, dashboard_off/  the same pictures greyed out (Andreas's
+              design, 2026-10-11) as the second state of a toggle button:
+              OBS source hidden / auto mode off. Same file names.
 
 Each image: a coloured strip with the CATEGORY (LIVE, ZWEIKAMPF, QUALI, …,
 same groups as OBS_OVERLAYS.md — the colour finds the group at a glance), a
@@ -183,7 +186,7 @@ DASH_ICONS = [
 PAGE = """<!doctype html><html><head><meta charset="utf-8"><style>
 html,body{margin:0;width:%(s)dpx;height:%(s)dpx;overflow:hidden;background:#000}
 .k{width:%(s)dpx;height:%(s)dpx;box-sizing:border-box;position:relative;
-   background:radial-gradient(circle at 50%% 38%%,#262633 0%%,#14141c 70%%);
+   background:radial-gradient(circle at 50%% 38%%,%(bg1)s 0%%,%(bg2)s 70%%);
    font-family:'Segoe UI','Noto Sans','DejaVu Sans',Arial,sans-serif;color:#fff}
 .strip{position:absolute;left:0;right:0;top:0;height:46px;background:%(c)s;
    color:#0b0b10;font-weight:900;font-size:%(cs)dpx;letter-spacing:2px;
@@ -216,13 +219,25 @@ def _label_html(label):
     return html.escape(best[1]) + "<br>" + html.escape(best[2]), 2, best[0]
 
 
-def render_html(cat, glyph, label):
+# "off" state: strip + symbol grey, neutral (not blue-tinted) background,
+# label stays white — sampled from Andreas's ticker / trackmap examples.
+OFF_COLOR = "#949494"
+BG_ON = ("#262633", "#14141c")
+BG_OFF = ("#202020", "#111111")
+# dashboard commands that toggle something get an off picture too
+DASH_TOGGLES = {"auto_follow", "auto_replay", "auto_replay_ot", "hide_ui"}
+
+
+def render_html(cat, glyph, label, off=False):
     cat_text, color = CAT[cat]
+    if off:
+        color = OFF_COLOR
+    bg1, bg2 = BG_OFF if off else BG_ON
     lbl, lines, longest = _label_html(label)
     fs = 44 if longest <= 7 else 38 if longest <= 9 else 33 if longest <= 11 else 28 if longest <= 14 else 24
     gs = 132 if lines == 1 else 112
     gy = 64 if lines == 1 else 60
-    return PAGE % {"s": SIZE, "c": color, "cs": 22 if len(cat_text) <= 11 else 18,
+    return PAGE % {"s": SIZE, "c": color, "bg1": bg1, "bg2": bg2, "cs": 22 if len(cat_text) <= 11 else 18,
                    "cat": html.escape(cat_text), "glyph": G[glyph], "gs": gs, "gy": gy,
                    "fs": fs, "label": lbl}
 
@@ -256,24 +271,32 @@ def shoot(browser, page_html, out_png, tmpdir):
 
 
 def all_icons():
+    """(path, cat, glyph, label, off) for every picture."""
     for name, cat, glyph, label in OVERLAY_ICONS:
-        yield Path("overlays") / (name + ".png"), cat, glyph, label
+        yield Path("overlays") / (name + ".png"), cat, glyph, label, False
+        yield Path("overlays_off") / (name + ".png"), cat, glyph, label, True
     for cam in CAMS:
         yield (Path("dashboard") / ("cam_" + cam.lower().replace(" ", "_") + ".png"),
-               "cam", "camera", cam)
+               "cam", "camera", cam, False)
     for name, cat, glyph, label, _ in DASH_ICONS:
-        yield Path("dashboard") / (name + ".png"), cat, glyph, label
+        yield Path("dashboard") / (name + ".png"), cat, glyph, label, False
+        if name in DASH_TOGGLES:
+            yield Path("dashboard_off") / (name + ".png"), cat, glyph, label, True
 
 
 def main():
+    # optional args = only these folders, e.g. `overlays_off dashboard_off`
+    only = set(sys.argv[1:])
     browser = find_browser()
     if not browser:
         print("No Edge / Chrome / Chromium found (set CHROME=<path to browser>).")
         return 1
     with tempfile.TemporaryDirectory() as tmp:
         n = 0
-        for rel, cat, glyph, label in all_icons():
-            shoot(browser, render_html(cat, glyph, label), OUT / rel, tmp)
+        for rel, cat, glyph, label, off in all_icons():
+            if only and rel.parent.name not in only:
+                continue
+            shoot(browser, render_html(cat, glyph, label, off), OUT / rel, tmp)
             n += 1
     print("%d icons written to %s" % (n, OUT))
     return 0
