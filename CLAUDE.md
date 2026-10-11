@@ -165,6 +165,23 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 10, 2026 (F1-style battle graphics + "TURN 11" label):** from F1 TV
+screenshots, all as extra pages on existing servers (no new ports, loaders
+added → 36). Catch-up server 5015 (camera car vs same-class car ahead, same
+/status): `/gap` (P · first/LAST name · team-or-car + brand logo | "+0.787s
+CURRENT GAP" or "+1 LAP" | other driver), `/chasing` ("CHASING NORRIS FOR
+5TH"), `/laps` (last 4 lap NUMBERS both cars completed; per lap the slower
+car shows its time, the faster one "-0.098" in green, PIT tag on pit laps).
+New `_lap_log` keeps every lap incl. pit laps with its number (lap_now - 1 at
+the increment); the 3-lap pace window still excludes pit laps. Name colour =
+first CarDesignStr colour (too dark → white), team hidden when it equals the
+driver name. Corner-cue server 5012: `/turn` = label for the CAMERA car's
+current corner (not in pit), holds `?hold=1.5` s after the exit. Numbers are
+the GEOMETRY numbering — counts match Algarve (15/15) but differ by one at Spa
+/ Nürburgring, so `cues/<track>.json` now also takes `"turn": <official no.>`
+and `"hide": true` per detected corner. All pages: `?zoom=`, `?debug=1` / H,
+`?demo=1`. test_catchup.py 30 → 40; demo pages rendered in Chromium.
+
 **October 10, 2026 (second driver card):** `5017/simple` = the same card
 without iRating and licence / safety rating (license stat now has class
 `lic-stat`); `?hide=ir,lic` does the same on any URL. Loader

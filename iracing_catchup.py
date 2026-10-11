@@ -40,8 +40,10 @@ from collections import deque
 from pathlib import Path
 from statistics import mean
 
-from flask import Flask, Response, jsonify, render_template_string
+from flask import (Flask, Response, abort, jsonify, render_template_string,
+                   send_file)
 
+from car_brands import detect_brand, resolve_logo
 from iracing_sdk_base import SDKPoller, setup_utf8_stdout
 setup_utf8_stdout()
 
@@ -78,6 +80,21 @@ MIN_DELTA_S     = 0.03   # minimum delta used for a catch computation
 LAP_RESOLVE_MIN = 0.3    # s to wait after a lap increment before trusting
 LAP_RESOLVE_MAX = 3.0    # CarIdxLastLapTime; give up after this long
 DRIVERS_TTL     = 5.0    # s between DriverInfo YAML re-parses
+LAP_LOG_LEN     = 8      # every lap (incl. pit laps) kept for /laps
+
+
+def _design_color(design) -> "str | None":
+    """First colour of CarDesignStr ("pattern,c1,c2,c3,...") as a name
+    accent, like F1's team colour. Too-dark colours return None (the page
+    then uses white) — a black name on a dark panel is unreadable."""
+    try:
+        c = str(design or "").split(",")[1].strip().lstrip("#")
+        r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+    except (IndexError, ValueError):
+        return None
+    if 0.2126 * r + 0.7152 * g + 0.0722 * b < 90:
+        return None
+    return "#%02x%02x%02x" % (r, g, b)
 
 
 def _abbrev(name: str) -> str:
@@ -212,7 +229,10 @@ class CatchPoller(SDKPoller):
         self._lap_hist = {}          # cidx -> deque(maxlen=LAP_WINDOW)
         self._last_lap_num = {}      # cidx -> int
         self._pit_this_lap = {}      # cidx -> bool
-        self._pending_lap = {}       # cidx -> (resolve_after, deadline, was_pit)
+        self._pending_lap = {}       # cidx -> (resolve_after, deadline, was_pit, lap_no)
+        # Every completed lap incl. pit laps, with its lap NUMBER — the
+        # /laps table compares the same lap numbers of two cars.
+        self._lap_log = {}           # cidx -> deque[(lap_no, time, pit)]
 
     def _check_session_change(self, ir):
         key = (ir["SessionUniqueID"], ir["SessionNum"])
@@ -248,8 +268,21 @@ class CatchPoller(SDKPoller):
                     if class_color_raw else None
             except (TypeError, ValueError):
                 class_color = None
+            full = (d.get("UserName") or "").strip()
+            parts = full.split()
+            team = (d.get("TeamName") or "").strip()
+            if team == full:
+                team = ""   # solo sessions report the driver as his own team
             out[cidx] = {
-                "name":        d.get("UserName") or "",
+                "name":        full,
+                "first":       " ".join(parts[:-1]),
+                "last":        parts[-1] if parts else "",
+                "team":        team,
+                "car":         (d.get("CarScreenNameShort")
+                                or d.get("CarScreenName") or "").strip(),
+                "brand":       detect_brand(d.get("CarPath"),
+                                            d.get("CarScreenName")),
+                "color":       _design_color(d.get("CarDesignStr")),
                 "short":       _abbrev(d.get("UserName") or ""),
                 "num":         str(d.get("CarNumber") or "").strip("\""),
                 "class_id":    int(d.get("CarClassID") or 0),
@@ -296,13 +329,17 @@ class CatchPoller(SDKPoller):
                 # New lap starts now — if it starts on pit road the flag
                 # is re-set by the check above on the next polls anyway.
                 self._pit_this_lap[cidx] = in_pit
+                # CarIdxLap is the lap being DRIVEN, so the one just
+                # completed is lap_now - 1.
                 self._pending_lap[cidx] = (t_now + LAP_RESOLVE_MIN,
-                                           t_now + LAP_RESOLVE_MAX, was_pit)
+                                           t_now + LAP_RESOLVE_MAX, was_pit,
+                                           lap_now - 1)
                 self._last_lap_num[cidx] = lap_now
             elif lap_now < prev:
                 # Reset / tow / reconnect — history for this car is suspect.
                 self._last_lap_num[cidx] = lap_now
                 self._lap_hist.pop(cidx, None)
+                self._lap_log.pop(cidx, None)
                 self._pending_lap.pop(cidx, None)
                 self._pit_this_lap[cidx] = False
 
@@ -310,11 +347,15 @@ class CatchPoller(SDKPoller):
             # a moment to settle after the crossing.
             pend = self._pending_lap.get(cidx)
             if pend:
-                resolve_after, deadline, was_pit = pend
+                resolve_after, deadline, was_pit, lap_no = pend
                 if t_now >= resolve_after:
                     llt = last_lap[cidx] if cidx < len(last_lap) else 0.0
                     if llt and llt > 0:
                         del self._pending_lap[cidx]
+                        if lap_no >= 1:
+                            self._lap_log.setdefault(
+                                cidx, deque(maxlen=LAP_LOG_LEN)
+                            ).append((lap_no, float(llt), bool(was_pit)))
                         if not was_pit:
                             self._lap_hist.setdefault(
                                 cidx, deque(maxlen=LAP_WINDOW)
@@ -418,6 +459,9 @@ class CatchPoller(SDKPoller):
             return {
                 "cidx": c,
                 "pos": pos, "num": d["num"], "name": d["short"],
+                "first": d.get("first", ""), "last": d.get("last", ""),
+                "team": d.get("team", ""), "car": d.get("car", ""),
+                "brand": d.get("brand"), "color": d.get("color"),
                 "full_name": d["name"], "class_name": d["class_name"],
                 "class_color": d["class_color"],
                 "laps_used": len(self._lap_hist.get(c) or ()),
@@ -437,7 +481,19 @@ class CatchPoller(SDKPoller):
             "status": status,
             "catch_laps": catch_laps,
             "catch_seconds": catch_seconds,
+            "laps": self._compare_laps(ahead, focus),
         }
+
+    def _compare_laps(self, a, b, n=4):
+        """The last `n` lap NUMBERS both cars have completed, with each
+        car's time — for the F1 "LAST 4 LAPS" table."""
+        la = {no: (t, pit) for no, t, pit in self._lap_log.get(a, ())}
+        lb = {no: (t, pit) for no, t, pit in self._lap_log.get(b, ())}
+        common = sorted(set(la) & set(lb))[-n:]
+        return [{"lap": no,
+                 "ahead": la[no][0], "ahead_pit": la[no][1],
+                 "focus": lb[no][0], "focus_pit": lb[no][1]}
+                for no in common]
 
 
 # -----------------------------------------------------------------------------
@@ -685,6 +741,194 @@ def status():
     return jsonify(poller.get())
 
 
+# -----------------------------------------------------------------------------
+# F1-style broadcast graphics (2026-10-10) — extra pages on this server, same
+# /status data: /gap (current gap, two drivers), /chasing ("CHASING X FOR 4TH")
+# and /laps (last 4 laps of both drivers side by side). All follow the camera
+# car and the same-class car ahead. ?zoom= scales, ?debug=1 / H = dark bg,
+# ?demo=1 = fake data for layout.
+# -----------------------------------------------------------------------------
+F1_HTML = r"""
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Battle graphics</title>
+<style>
+  html, body { margin:0; padding:0; background:rgba(0,0,0,0); overflow:hidden;
+               font-family:'Titillium Web','Segoe UI',Arial,sans-serif; color:#fff; }
+  body.debug { background:#2a3a2a; }
+  #root { padding:8px; display:inline-block; transform-origin:0 0; }
+  .card { display:none; background:linear-gradient(180deg,#1d1d3a 0%,#131329 100%);
+          border:1px solid rgba(255,255,255,0.10); border-radius:3px;
+          box-shadow:0 4px 18px rgba(0,0,0,0.45); }
+  .card.on { display:flex; }
+  .pos { font-size:46px; font-weight:800; width:62px; text-align:center;
+         font-variant-numeric:tabular-nums; }
+  .who { display:flex; flex-direction:column; justify-content:center; line-height:1.05; }
+  .first { font-size:22px; font-weight:500; }
+  .last  { font-size:34px; font-weight:800; text-transform:uppercase; letter-spacing:.5px; }
+  .sub   { font-size:17px; font-weight:600; text-transform:uppercase; color:#e8e8f0;
+           display:flex; align-items:center; gap:6px; white-space:nowrap; }
+  .sub img { height:17px; }
+  .accent { color:#ff8a1f; }
+  /* /gap */
+  #gap { align-items:stretch; height:96px; }
+  #gap .side { display:flex; align-items:center; gap:10px; padding:0 16px; min-width:330px; }
+  #gap .side.r { justify-content:flex-end; text-align:right; }
+  #gap .side.r .who { align-items:flex-end; }
+  #gap .mid { display:flex; flex-direction:column; justify-content:center; align-items:center;
+              border-left:1px solid rgba(255,255,255,0.18); border-right:1px solid rgba(255,255,255,0.18);
+              padding:0 34px; min-width:220px; }
+  #gap .gv { font-size:46px; font-weight:800; color:#3ee06a; font-variant-numeric:tabular-nums; line-height:1; }
+  #gap .gv small { font-size:28px; }
+  #gap .gl { font-size:18px; font-weight:600; letter-spacing:1px; margin-top:4px; }
+  /* /chasing */
+  #chase { align-items:center; height:96px; padding-right:30px; }
+  #chase .who { min-width:250px; }
+  #chase .txt { font-size:30px; font-weight:800; text-transform:uppercase; text-align:center;
+                line-height:1.15; padding-left:30px; }
+  #chase .txt .accent { font-size:34px; }
+  #chase sup { font-size:18px; }
+  /* /laps */
+  #laps { flex-direction:column; padding:10px 18px 12px; }
+  #laps table { border-collapse:collapse; }
+  #laps th { font-size:22px; font-weight:800; text-transform:uppercase; text-align:center;
+             padding:0 16px 6px; white-space:nowrap; }
+  #laps th.t { text-align:left; padding-left:0; min-width:250px; }
+  #laps td { font-size:26px; font-weight:700; text-align:center; padding:2px 16px;
+             font-variant-numeric:tabular-nums; white-space:nowrap; }
+  #laps td.n { text-align:left; padding-left:0; font-size:24px; font-weight:800; text-transform:uppercase; }
+  #laps td.n span.p { display:inline-block; width:34px; font-size:22px; }
+  #laps .fast { color:#3ee06a; }
+  #laps .pit  { font-size:13px; color:#ffd24d; margin-left:4px; vertical-align:top; }
+  #msg { display:none; color:#aab; font-size:14px; padding:6px; }
+  body.debug #msg { display:block; }
+</style></head>
+<body>
+<div id="root">
+  <div class="card" id="gap">
+    <div class="side l"><div class="pos" id="g_pa"></div><div class="who">
+      <div class="first" id="g_fa"></div><div class="last" id="g_la"></div><div class="sub" id="g_sa"></div></div></div>
+    <div class="mid"><div class="gv" id="g_v"></div><div class="gl">CURRENT GAP</div></div>
+    <div class="side r"><div class="who">
+      <div class="first" id="g_fb"></div><div class="last" id="g_lb"></div><div class="sub" id="g_sb"></div></div><div class="pos" id="g_pb"></div></div>
+  </div>
+  <div class="card" id="chase">
+    <div class="pos" id="c_p"></div>
+    <div class="who"><div class="first" id="c_f"></div><div class="last" id="c_l"></div><div class="sub" id="c_s"></div></div>
+    <div class="txt">CHASING <span class="accent" id="c_t"></span><br>FOR <span id="c_for"></span></div>
+  </div>
+  <div class="card" id="laps"><table id="l_tab"></table></div>
+  <div id="msg"></div>
+</div>
+<script>
+const qs = new URLSearchParams(location.search);
+const VIEW = (location.pathname.replace(/\/+$/, '').split('/').pop()) || 'gap';
+const DEMO = qs.get('demo') === '1';
+if (qs.get('debug') === '1') document.body.classList.add('debug');
+document.addEventListener('keydown', e => { if (e.key==='h'||e.key==='H') document.body.classList.toggle('debug'); });
+const z = parseFloat(qs.get('zoom') || '1');
+if (z > 0 && z !== 1) document.getElementById('root').style.transform = 'scale(' + z + ')';
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function fmtLap(t) {
+  if (t == null || !(t > 0)) return '';
+  const m = Math.floor(t / 60), s = t - m * 60;
+  return m + ':' + (s < 10 ? '0' : '') + s.toFixed(3);
+}
+function ordinal(n) {
+  const v = n % 100, s = (v >= 11 && v <= 13) ? 'th' : (['th','st','nd','rd'][n % 10] || 'th');
+  return n + '<sup>' + s.toUpperCase() + '</sup>';
+}
+function sub(c) {
+  const logo = c.brand ? '<img src="/brand/' + encodeURIComponent(c.brand) + '" onerror="this.remove()">' : '';
+  return esc(c.team || c.car || '') + logo;
+}
+function nameColor(el, c) { el.style.color = c.color || '#ffffff'; }
+let last = '';
+function setHTML(id, html) { const el = $(id); if (el.innerHTML !== html) el.innerHTML = html; }
+
+function render(d) {
+  const sig = JSON.stringify(d);
+  if (sig === last) return; last = sig;
+  for (const id of ['gap','chase','laps']) $(id).classList.remove('on');
+  if (!d || !d.show) { $('msg').textContent = (d && d.reason) || 'waiting…'; return; }
+  $('msg').textContent = '';
+  const a = d.ahead, b = d.focus;
+  if (VIEW === 'gap') {
+    $('g_pa').textContent = a.pos; $('g_pb').textContent = b.pos;
+    $('g_fa').textContent = a.first; $('g_fb').textContent = b.first;
+    $('g_la').textContent = a.last;  $('g_lb').textContent = b.last;
+    nameColor($('g_la'), a); nameColor($('g_lb'), b);
+    setHTML('g_sa', sub(a)); setHTML('g_sb', sub(b));
+    let g;
+    if (d.lap_gap >= 1) g = '+' + d.lap_gap + ' LAP' + (d.lap_gap > 1 ? 'S' : '');
+    else if (d.gap != null) g = '+' + d.gap.toFixed(3) + '<small>s</small>';
+    else g = '—';
+    setHTML('g_v', g);
+    $('gap').classList.add('on');
+  } else if (VIEW === 'chasing') {
+    $('c_p').textContent = b.pos; $('c_f').textContent = b.first;
+    $('c_l').textContent = b.last; nameColor($('c_l'), b);
+    setHTML('c_s', sub(b));
+    $('c_t').textContent = a.last; $('c_t').style.color = a.color || '#ff8a1f';
+    setHTML('c_for', ordinal(a.pos));
+    $('chase').classList.add('on');
+  } else if (VIEW === 'laps') {
+    const laps = d.laps || [];
+    if (!laps.length) { $('msg').textContent = 'no common completed laps yet'; return; }
+    let h = '<tr><th class="t">LAST ' + laps.length + ' LAP' + (laps.length > 1 ? 'S' : '') + '</th>';
+    for (const l of laps) h += '<th>LAP ' + l.lap + '</th>';
+    h += '</tr>';
+    for (const [key, c] of [['ahead', a], ['focus', b]]) {
+      const other = key === 'ahead' ? 'focus' : 'ahead';
+      h += '<tr><td class="n"><span class="p">' + c.pos + '</span>' + esc(c.last) + '</td>';
+      for (const l of laps) {
+        const mine = l[key], theirs = l[other];
+        const pit = l[key + '_pit'] ? '<span class="pit">PIT</span>' : '';
+        // F1 convention: the slower car shows its lap time, the faster
+        // one shows how much quicker it was (green, negative).
+        if (mine < theirs) h += '<td class="fast">-' + (theirs - mine).toFixed(3) + pit + '</td>';
+        else h += '<td>' + fmtLap(mine) + pit + '</td>';
+      }
+      h += '</tr>';
+    }
+    setHTML('l_tab', h);
+    $('laps').classList.add('on');
+  }
+}
+
+const DEMO_DATA = {show:true, gap:0.787, lap_gap:0,
+  ahead:{pos:5, first:'Lando', last:'Norris', team:'McLaren', car:'', color:'#ff8a1f', brand:null},
+  focus:{pos:6, first:'Kimi', last:'Antonelli', team:'Mercedes-AMG', car:'', color:'#27d9c2', brand:null},
+  laps:[{lap:12, ahead:107.830, focus:107.166}, {lap:13, ahead:107.731, focus:107.128},
+        {lap:14, ahead:107.346, focus:107.323}, {lap:15, ahead:106.892, focus:106.990, ahead_pit:false}]};
+
+async function tick() {
+  if (DEMO) { render(DEMO_DATA); return; }
+  try { render(await (await fetch('/status', {cache:'no-store'})).json()); }
+  catch (e) { render(null); }
+}
+(function loop() { tick().finally(() => setTimeout(loop, 500)); })();
+</script>
+</body></html>
+"""
+
+
+@app.route("/gap")
+@app.route("/chasing")
+@app.route("/laps")
+def f1_pages():
+    return Response(F1_HTML, mimetype="text/html")
+
+
+@app.route("/brand/<slug>")
+def brand_logo(slug: str):
+    path = resolve_logo(slug)
+    if not path or not path.is_file():
+        abort(404)
+    return send_file(str(path), max_age=3600)
+
+
 # In-memory render cache. Key = (carPath, cust_id, design) so a mid-session
 # livery change (rare) or a car swap gets a fresh render; bounded like the
 # livery overlay's PNG cache.
@@ -728,6 +972,7 @@ if __name__ == "__main__":
     print(f"  OBS browser source:  http://localhost:{PORT}")
     print("  Shows on-camera driver vs the same-class car ahead:")
     print("  live gap, 3-lap pace delta, laps until caught.")
+    print(f"  F1 graphics: /gap  /chasing  /laps   (?demo=1 for a preview)")
     print("  Press H (or ?debug=1) for a debug background.")
     print("  Press Ctrl+C to stop")
     print("=" * 60 + "\n")

@@ -26,6 +26,8 @@ class _FakeApp:
 flask_stub.Flask = _FakeApp
 flask_stub.Response = lambda *a, **k: None
 flask_stub.jsonify = lambda *a, **k: None
+flask_stub.abort = lambda *a, **k: None
+flask_stub.send_file = lambda *a, **k: None
 flask_stub.render_template_string = lambda s: s
 sys.modules["flask"] = flask_stub
 
@@ -240,6 +242,42 @@ p.ir.d["SessionUniqueID"] = 2       # new hosted session
 p.ir.d["SessionTime"] = 0.0
 p._read_snapshot()
 check("histories cleared", not p._lap_hist.get(1), str(p._lap_hist))
+
+# =========================== 9b. F1 GRAPHICS DATA ============================
+print("\n[9b] /laps comparison + name fields for /gap and /chasing")
+d0 = drv(0, "Lando Norris", "4"); d0["TeamName"] = "McLaren"
+d0["CarDesignStr"] = "1,ff8a1f,000000,ffffff"
+d1 = drv(1, "Andrea Kimi Antonelli", "12"); d1["TeamName"] = "Andrea Kimi Antonelli"
+d1["CarDesignStr"] = "1,111111,ffffff,ffffff"
+p = make_poller([d0, d1], 1)
+ir = p.ir
+for i, (ta, tf) in enumerate([(107.830, 107.166), (107.731, 107.128),
+                              (107.346, 107.323), (106.892, 106.990),
+                              (108.0, 107.0)]):
+    complete_lap(p, 0, ta, pit=(i == 4))
+    if i < 4:                       # focus has not finished lap 5 yet
+        complete_lap(p, 1, tf)
+    advance(2)
+ir.d["CarIdxLap"] = [ir.d["CarIdxLap"][0], ir.d["CarIdxLap"][0]]
+ir.d["CarIdxLapDistPct"] = [0.30, 0.20]
+ir.d["CarIdxF2Time"] = [0.0, 0.787]
+snap = p._read_snapshot()
+laps = snap.get("laps") or []
+check("only laps BOTH completed", [l["lap"] for l in laps] == [1, 2, 3, 4],
+      str([l["lap"] for l in laps]))
+check("times paired per lap", laps and laps[0]["ahead"] == 107.830
+      and laps[0]["focus"] == 107.166, str(laps[:1]))
+check("first / last name split", snap["focus"]["first"] == "Andrea Kimi"
+      and snap["focus"]["last"] == "Antonelli")
+check("team kept", snap["ahead"]["team"] == "McLaren")
+check("solo team suppressed", snap["focus"]["team"] == "")
+check("livery colour accent", snap["ahead"]["color"] == "#ff8a1f",
+      str(snap["ahead"]["color"]))
+check("dark livery colour -> None", snap["focus"]["color"] is None)
+check("gap", abs(snap["gap"] - 0.787) < 1e-9, str(snap["gap"]))
+log0 = list(p._lap_log[0])
+check("pit lap logged in /laps log", log0[-1] == (5, 108.0, True), str(log0[-1]))
+check("pit lap still out of pace window", 108.0 not in p._lap_hist[0])
 
 # =========================== 10. LIVERY RENDER HELPERS ======================
 print("\n[10] livery render helpers")

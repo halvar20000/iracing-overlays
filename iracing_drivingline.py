@@ -40,7 +40,7 @@ from iracing_sdk_base import SDKPoller, setup_utf8_stdout
 setup_utf8_stdout()
 
 try:
-    from flask import Flask, jsonify, render_template_string
+    from flask import Flask, Response, jsonify, render_template_string
 except ImportError:
     print("ERROR: flask not installed. Run:  pip install flask")
     raise SystemExit(1)
@@ -302,6 +302,8 @@ def _apply_cue_overrides(track_file: str, corners: list[dict]) -> list[dict]:
     """Optional future enrichment: cues/<track_file>.json may carry
     per-corner overrides keyed by corner number, e.g.
       {"5": {"gear": 2, "brake_m": 120, "speed_kmh": 78, "name": "Hairpin"}}
+    For the broadcast /turn label: "turn": 11 = official turn number,
+    "hide": true = never label this (detected) bend.
     Recorded-reference-lap tooling can generate this later."""
     path = CUES_DIR / f"{track_file}.json"
     if not path.is_file():
@@ -404,8 +406,31 @@ class LinePoller(SDKPoller):
         speed = ir["Speed"]
         speed_kmh = round(float(speed) * 3.6, 0) if isinstance(speed, (int, float)) else None
 
+        # Broadcast "TURN 11" label (/turn) always follows the CAMERA car,
+        # independent of the driver-side cue above.
+        cam_turn = None
+        cam_idx = ir["CamCarIdx"]
+        on_pit = ir["CarIdxOnPitRoad"] or []
+        if (track and isinstance(cam_idx, int) and 0 <= cam_idx < len(lap_pct_arr)
+                and (cam_idx >= len(surface)
+                     or int(surface[cam_idx]) != SURFACE_NOT_IN_WORLD)
+                and not (cam_idx < len(on_pit) and on_pit[cam_idx])):
+            c = compute_cue(track, float(lap_pct_arr[cam_idx] or 0.0))["in_corner"]
+            if c and not c.get("hide"):
+                cam_turn = {
+                    # cues/<track>.json may give the OFFICIAL number
+                    # ("turn": 11) or a name — geometry numbering counts
+                    # chicane halves / skips kinks, so it can differ.
+                    "turn": c.get("turn", c["num"]),
+                    "num": c["num"],
+                    "name": c.get("name") or "",
+                    "dir": c["dir"],
+                }
+
         snap = {
             "connected":       True,
+            "cam_idx":         cam_idx,
+            "cam_turn":        cam_turn,
             "track_file":      track_file,
             "track_display":   weekend.get("TrackDisplayName", "") or track_name_raw,
             "track_available": bool(track),
@@ -563,6 +588,73 @@ setInterval(tick, 100); tick();
 </body>
 </html>
 """
+
+
+# Broadcast corner label (2026-10-10, F1 "TURN 11" style) — follows the
+# camera car. ?hold=1.5 s after the corner exit, ?names=1 adds the corner
+# name from cues/<track>.json, ?zoom=, ?debug=1 / H, ?demo=1.
+TURN_PAGE = r"""
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Turn label</title>
+<style>
+  html, body { margin:0; padding:0; background:rgba(0,0,0,0); overflow:hidden;
+               font-family:'Titillium Web','Segoe UI',Arial,sans-serif; }
+  body.debug { background:#555b66; }
+  #root { padding:8px 14px; display:inline-block; transform-origin:0 0; }
+  #lab { color:#fff; white-space:nowrap; opacity:0; transition:opacity .35s;
+         text-shadow:0 2px 6px rgba(0,0,0,0.55), 0 0 2px rgba(0,0,0,0.6); }
+  #lab.on { opacity:1; }
+  #w { font-size:30px; font-weight:700; letter-spacing:1px; }
+  #n { font-size:52px; font-weight:800; margin-left:6px; }
+  #nm { display:block; font-size:20px; font-weight:600; letter-spacing:1px;
+        text-transform:uppercase; }
+  #msg { display:none; color:#dde; font-size:13px; }
+  body.debug #msg { display:block; }
+</style></head>
+<body><div id="root">
+  <div id="lab"><span id="w">TURN</span><span id="n"></span><span id="nm"></span></div>
+  <div id="msg"></div>
+</div>
+<script>
+const qs = new URLSearchParams(location.search);
+if (qs.get('debug') === '1') document.body.classList.add('debug');
+document.addEventListener('keydown', e => { if (e.key==='h'||e.key==='H') document.body.classList.toggle('debug'); });
+const z = parseFloat(qs.get('zoom') || '1');
+if (z > 0 && z !== 1) document.getElementById('root').style.transform = 'scale(' + z + ')';
+const HOLD = 1000 * parseFloat(qs.get('hold') || '1.5');
+const NAMES = qs.get('names') === '1';
+const DEMO = qs.get('demo') === '1';
+let shown = null, until = 0;
+async function tick() {
+  let t = null, msg = '';
+  if (DEMO) t = {turn: 11, name: 'Demo'};
+  else {
+    try {
+      const d = await (await fetch('/data', {cache:'no-store'})).json();
+      t = d.cam_turn;
+      msg = !d.connected ? 'waiting for iRacing…'
+          : !d.track_available ? 'track not bundled: ' + (d.track_file || '?')
+          : t ? '' : 'camera car not in a corner';
+    } catch (e) { msg = 'no data'; }
+  }
+  document.getElementById('msg').textContent = msg;
+  const now = Date.now();
+  if (t) { shown = t; until = now + HOLD; }
+  const lab = document.getElementById('lab');
+  if (shown && now < until) {
+    document.getElementById('n').textContent = shown.turn;
+    document.getElementById('nm').textContent = NAMES ? (shown.name || '') : '';
+    lab.classList.add('on');
+  } else lab.classList.remove('on');
+}
+setInterval(tick, 200); tick();
+</script></body></html>
+"""
+
+
+@app.route("/turn")
+def turn_label():
+    return Response(TURN_PAGE, mimetype="text/html")
 
 
 @app.route("/")
