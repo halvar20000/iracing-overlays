@@ -161,8 +161,9 @@ PAGE_HTML = """
         gap: 4px;
         padding: 16px 28px;
         border-radius: 14px;
-        background: rgba(20, 20, 28, 0.78);
-        border: 2px solid rgba(255, 107, 53, 0.5);
+        /* nearly solid — same readability pass as the driver card */
+        background: rgba(20, 20, 28, 0.97);
+        border: 2px solid rgba(255, 107, 53, 0.6);
         box-shadow: 0 4px 28px rgba(0, 0, 0, 0.55);
         min-width: 260px;
         user-select: none;
@@ -187,10 +188,11 @@ PAGE_HTML = """
         font-variant-numeric: tabular-nums;
     }
     .row .label {
-        color: #b0b0c0;
+        color: #d4d4de;
+        font-weight: 700;
         letter-spacing: 1px;
         text-transform: uppercase;
-        font-size: 0.7em;
+        font-size: 0.8em;
     }
     .row .value { color: #fff; font-weight: 800; }
     .row.remain .value { color: #ffd166; }   /* highlight remaining */

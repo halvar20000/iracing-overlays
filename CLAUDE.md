@@ -170,6 +170,14 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 11, 2026 (readability pass, same as the driver card):** Weather
+(5016), Catch-Up banner (5015 `/`), Session info (5011), Quali Delta (5014)
+and the live DotD card (5013): backgrounds 0.78-0.94 → 0.97, grey 10-12 px
+labels → 13-15 px bold #d4d4de, values a few px larger. Weather strip now
+≈ 980 × 100, catch ≈ 1100 × 150 (OBS_OVERLAYS.md). Tower, championship
+and the F1 pages left alone (their own designs). Weather rendered before /
+after in Chromium; overlay tests pass.
+
 **October 11, 2026 (installer + updater):** for Andreas (ZIP installs).
 `updater.py` (stdlib only): `check()` compares `.install_info.json` (commit of
 the last install, gitignored) with GitHub `commits/main` + `compare/` (count +

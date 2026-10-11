@@ -674,7 +674,7 @@ PAGE_HTML = """
         --red:    #ff4d4d;
         --purple: #b06bff;
         --amber:  #ffcf33;
-        --panel:  rgba(10, 10, 14, 0.90);   /* dark broadcast bar */
+        --panel:  rgba(10, 10, 14, 0.97);   /* dark broadcast bar, nearly solid */
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
@@ -738,7 +738,7 @@ PAGE_HTML = """
     .delta-big.behind { color: var(--amber); }
 
     .ref-name {
-        font-size: 14px; font-weight: 700; letter-spacing: 1px; color: #9aa0b4;
+        font-size: 15px; font-weight: 800; letter-spacing: 1px; color: #d4d4de;
         text-transform: uppercase; white-space: nowrap;
         max-width: 150px; overflow: hidden; text-overflow: ellipsis;
     }
@@ -747,11 +747,11 @@ PAGE_HTML = """
     /* ---- bottom sector strip ---- */
     .sectors { display: flex; gap: 2px; background: var(--panel); padding: 0 2px 2px; }
     .sector {
-        flex: 1 1 0; min-width: 0; height: 26px;
+        flex: 1 1 0; min-width: 0; height: 30px;
         display: flex; align-items: center; justify-content: center;
-        font-size: 12px; font-weight: 800; letter-spacing: 1px;
-        text-transform: uppercase; color: #cfd3e0;
-        background: rgba(255, 255, 255, 0.07);
+        font-size: 15px; font-weight: 800; letter-spacing: 1px;
+        text-transform: uppercase; color: #e2e4ee;
+        background: rgba(255, 255, 255, 0.09);
         border-bottom: 3px solid rgba(255, 255, 255, 0.14);
     }
     .sector.faster  { background: rgba(39, 211, 103, 0.24); border-color: var(--green);  color: #e3fcec; }
@@ -761,12 +761,12 @@ PAGE_HTML = """
     .sector.pending { opacity: 0.5; }
 
     .note {
-        background: var(--panel); color: #6f93c9;
-        font-size: 12px; font-weight: 700; text-align: center; padding: 4px 0 8px;
+        background: var(--panel); color: #9fbbe6;
+        font-size: 14px; font-weight: 700; text-align: center; padding: 4px 0 8px;
     }
     .idle {
         background: var(--panel); text-align: center;
-        font-size: 20px; font-weight: 700; color: #5a6072;
+        font-size: 20px; font-weight: 700; color: #9aa0b4;
         letter-spacing: 1px; padding: 22px 28px;
     }
     .hidden { display: none !important; }

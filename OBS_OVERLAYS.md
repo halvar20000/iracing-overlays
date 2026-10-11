@@ -27,12 +27,12 @@ Loader-Datei verwenden).
 | Track Map | 5007 | `trackmap.html` | ≈ 1000 × 600 (skaliert mit) |
 | Flaggen (weiß / karierte) | 5008 | `flag.html` | ≈ 280 × 200 |
 | Neuer Führender (Banner) | 5018 | `leader.html` | ≈ 760 × 220 |
-| Catch-Up Battle | 5015 | `catch.html` | ≈ 1000 × 140 |
+| Catch-Up Battle | 5015 | `catch.html` | ≈ 1100 × 150 |
 | Zweikampf: aktueller Abstand (F1-Stil) | 5015 `/gap` | `battle_gap.html` | ✓ 1040 × 115 |
 | Zweikampf: „Chasing X for 5th" | 5015 `/chasing` | `chasing.html` | ✓ 680 × 115 |
 | Zweikampf: letzte 4 Runden | 5015 `/laps` | `last_laps.html` | ✓ 860 × 140 |
 | Kurven-Label „TURN 11" (Auto der Kamera) | 5012 `/turn` | `turn.html` | ✓ 260 × 90 (`?names=1` + Kurvenname ≈ 260 × 115) |
-| Wetter-Leiste | 5016 | `weather.html` | ≈ 900 × 80 |
+| Wetter-Leiste | 5016 | `weather.html` | ✓ 980 × 100 |
 | Session-Info (Restzeit) | 5011 | `sess.html` | ≈ 300 × 120 |
 | LIVE / REPLAY-Badge | 5004 | `live.html` | ≈ 300 × 80 |
 | Meisterschaft live (Top 10) | 5010 `/overlay` | `champ.html` | ✓ 540 × 545 (`?top=0` = alle ≈ 540 × 1530) |

@@ -242,7 +242,7 @@ PAGE_HTML = """
   .card {
     position: relative; min-width: 420px; max-width: 560px;
     padding: 22px 26px 20px; border-radius: 16px;
-    background: linear-gradient(155deg, rgba(24,24,34,0.94), rgba(14,14,20,0.94));
+    background: linear-gradient(155deg, rgba(24,24,34,0.97), rgba(14,14,20,0.97));
     border: 2px solid rgba(255,107,53,0.55);
     box-shadow: 0 10px 44px rgba(0,0,0,0.6);
     user-select: none;
@@ -264,38 +264,38 @@ PAGE_HTML = """
     background: #ffd166; border-radius: 8px; padding: 1px 11px; line-height: 1.25;
   }
   .name { font-size: 40px; font-weight: 800; letter-spacing: 1px; line-height: 1.05; }
-  .car-name { font-size: 16px; color: #b0b0c0; margin-top: 2px; letter-spacing: 1px; }
+  .car-name { font-size: 17px; font-weight: 600; color: #d4d4de; margin-top: 2px; letter-spacing: 1px; }
 
   .why { margin-top: 12px; font-size: 18px; font-weight: 600; color: #eaeaf2; }
 
   .metrics { display: flex; gap: 10px; margin-top: 14px; }
   .metric {
-    flex: 1; background: rgba(255,255,255,0.05); border-radius: 10px;
+    flex: 1; background: rgba(255,255,255,0.07); border-radius: 10px;
     padding: 8px 6px 9px; text-align: center;
   }
   .metric .v { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; }
-  .metric .l { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: #9a9aaa; margin-top: 2px; }
+  .metric .l { font-size: 14px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; color: #d4d4de; margin-top: 2px; }
   .metric.gain .v { color: #4ade80; }
   .metric.rec  .v { color: #38bdf8; }
   .metric.ot   .v { color: #ffd166; }
   .metric.inc  .v { color: #f87171; }
 
   .runners { margin-top: 14px; border-top: 1px solid rgba(255,255,255,0.10); padding-top: 10px; }
-  .runners .h { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: #8a8a9a; margin-bottom: 6px; }
-  .runner { display: flex; align-items: baseline; gap: 8px; font-size: 15px; padding: 2px 0; color: #c8c8d4; }
-  .runner .rk { color: #6a6a7a; width: 16px; }
+  .runners .h { font-size: 14px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase; color: #d4d4de; margin-bottom: 6px; }
+  .runner { display: flex; align-items: baseline; gap: 8px; font-size: 17px; padding: 2px 0; color: #e2e2ea; }
+  .runner .rk { color: #a8a8b8; width: 16px; }
   .runner .rn { color: #ffd166; font-weight: 700; }
-  .runner .rs { margin-left: auto; color: #8a8a9a; font-variant-numeric: tabular-nums; }
+  .runner .rs { margin-left: auto; color: #c0c0cc; font-variant-numeric: tabular-nums; }
 
-  .footer { margin-top: 12px; font-size: 11px; letter-spacing: 1px; color: #6a6a7a;
+  .footer { margin-top: 12px; font-size: 13px; font-weight: 600; letter-spacing: 1px; color: #a8a8b8;
             display: flex; justify-content: space-between; }
 
   .card.prov { border-color: rgba(255,209,102,0.55); }
-  .prov-tag { font-size: 12px; letter-spacing: 2px; color: #0a0a0f; background: #ffd166;
+  .prov-tag { font-size: 13px; font-weight: 700; letter-spacing: 2px; color: #0a0a0f; background: #ffd166;
               border-radius: 4px; padding: 1px 7px; }
-  .empty-msg { font-size: 22px; font-weight: 700; color: #6a6a7a; text-align: center; padding: 18px 6px; }
+  .empty-msg { font-size: 22px; font-weight: 700; color: #a8a8b8; text-align: center; padding: 18px 6px; }
 
-  .note { margin-top: 10px; font-size: 13px; color: #9a9aaa; font-style: italic;
+  .note { margin-top: 10px; font-size: 15px; color: #c8c8d4; font-style: italic;
           border-left: 3px solid rgba(255,107,53,0.55); padding-left: 8px; }
 </style>
 </head>

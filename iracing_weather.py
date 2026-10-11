@@ -223,7 +223,9 @@ PAGE_HTML = r"""
         align-items: stretch;
         border-radius: 10px;
         overflow: hidden;
-        background: rgba(14, 14, 20, 0.88);
+        /* nearly solid + bigger, lighter labels — same pass as the driver
+           card (2026-10-10/11: the race showed through, labels too small) */
+        background: rgba(14, 14, 20, 0.97);
         border: 1px solid rgba(255, 255, 255, 0.10);
         box-shadow: 0 4px 22px rgba(0, 0, 0, 0.55);
         font-variant-numeric: tabular-nums;
@@ -234,29 +236,29 @@ PAGE_HTML = r"""
     .cell {
         display: flex; flex-direction: column;
         align-items: center; justify-content: center;
-        padding: 7px 16px; gap: 1px;
-        border-right: 1px solid rgba(255,255,255,0.08);
-        min-width: 88px;
+        padding: 9px 18px; gap: 2px;
+        border-right: 1px solid rgba(255,255,255,0.12);
+        min-width: 104px;
     }
     .cell:last-child { border-right: none; }
-    .label { font-size: 10px; letter-spacing: 1.6px; color: #8a8a99;
+    .label { font-size: 14px; font-weight: 700; letter-spacing: 1px; color: #d4d4de;
              text-transform: uppercase; white-space: nowrap; }
-    .value { font-size: 21px; font-weight: 800; line-height: 1.1;
+    .value { font-size: 26px; font-weight: 800; line-height: 1.1;
              white-space: nowrap; }
-    .sub   { font-size: 10px; font-weight: 700; color: #b0b0c0;
+    .sub   { font-size: 13px; font-weight: 700; color: #d4d4de;
              letter-spacing: 0.6px; white-space: nowrap; }
 
-    .value .arrow { font-size: 15px; vertical-align: 2px; }
+    .value .arrow { font-size: 19px; vertical-align: 2px; }
     .arrow.up   { color: #ff6b74; }     /* warming / increasing = red   */
     .arrow.down { color: #61b4ff; }     /* cooling / easing     = blue  */
-    .arrow.flat { color: #8a8a99; }
+    .arrow.flat { color: #b0b0c0; }
 
     .cell.track .value { color: #ff6b35; }
     .cell.air   .value { color: #ffd166; }
-    .cell.rain.wet { background: rgba(36, 86, 196, 0.28); }
+    .cell.rain.wet { background: rgba(36, 86, 196, 0.35); }
     .cell.rain.wet .value { color: #7db8ff; }
-    .cell.trend { min-width: 0; padding: 7px 18px; }
-    .cell.trend .value { font-size: 13px; font-weight: 700; color: #19d36b;
+    .cell.trend { min-width: 0; padding: 9px 20px; }
+    .cell.trend .value { font-size: 17px; font-weight: 700; color: #19d36b;
                          letter-spacing: 0.4px; }
 
     #dbg { position: fixed; top: 4px; left: 8px; font-size: 12px;
@@ -291,7 +293,7 @@ PAGE_HTML = r"""
     </div>
     <div class="cell">
         <span class="label">Sky</span>
-        <span class="value" id="skies" style="font-size:14px; font-weight:700;">—</span>
+        <span class="value" id="skies" style="font-size:18px; font-weight:800;">—</span>
     </div>
     <div class="cell trend" id="trend-cell" style="display:none;">
         <span class="label">Trend</span>

@@ -538,7 +538,8 @@ PAGE_HTML = r"""
         align-items: stretch;
         border-radius: 10px;
         overflow: hidden;
-        background: rgba(14, 14, 20, 0.88);
+        /* nearly solid — same readability pass as the driver card */
+        background: rgba(14, 14, 20, 0.97);
         border: 1px solid rgba(255, 255, 255, 0.10);
         box-shadow: 0 6px 30px rgba(0, 0, 0, 0.6);
         font-variant-numeric: tabular-nums;
@@ -551,18 +552,18 @@ PAGE_HTML = r"""
         padding: 10px 18px;
         min-width: 230px;
     }
-    .driver.focus { background: rgba(255, 107, 53, 0.12); }
+    .driver.focus { background: rgba(255, 107, 53, 0.14); }
     .driver.focus .name { color: #ffb38a; }
 
     .posbadge {
         min-width: 42px; text-align: center;
-        font-size: 22px; font-weight: 800;
-        padding: 3px 7px; border-radius: 6px;
+        font-size: 25px; font-weight: 800;
+        padding: 3px 8px; border-radius: 6px;
         background: rgba(255, 255, 255, 0.10);
         border-left: 4px solid var(--cls, #888);
     }
-    .carnum { font-size: 15px; font-weight: 700; color: #b0b0c0; }
-    .name   { font-size: 21px; font-weight: 800; white-space: nowrap;
+    .carnum { font-size: 18px; font-weight: 800; color: #d4d4de; }
+    .name   { font-size: 25px; font-weight: 800; white-space: nowrap;
               letter-spacing: 0.4px; }
     .carimg {
         height: 46px; width: auto; max-width: 130px;
@@ -575,26 +576,26 @@ PAGE_HTML = r"""
         display: flex; flex-direction: column;
         align-items: center; justify-content: center;
         padding: 8px 26px; gap: 2px;
-        background: rgba(255, 255, 255, 0.045);
-        border-left: 1px solid rgba(255,255,255,0.08);
-        border-right: 1px solid rgba(255,255,255,0.08);
+        background: rgba(255, 255, 255, 0.05);
+        border-left: 1px solid rgba(255,255,255,0.12);
+        border-right: 1px solid rgba(255,255,255,0.12);
         min-width: 240px;
     }
-    .gap-label { font-size: 11px; letter-spacing: 2px; color: #8a8a99;
+    .gap-label { font-size: 14px; font-weight: 700; letter-spacing: 1.4px; color: #d4d4de;
                  text-transform: uppercase; }
-    .gap-value { font-size: 34px; font-weight: 800; line-height: 1.0;
+    .gap-value { font-size: 38px; font-weight: 800; line-height: 1.0;
                  color: #ffd166; }
     .pace-chip {
         display: inline-flex; align-items: center; gap: 6px;
         margin-top: 3px; padding: 2px 12px; border-radius: 999px;
-        font-size: 14px; font-weight: 700; letter-spacing: 0.5px;
+        font-size: 16px; font-weight: 800; letter-spacing: 0.5px;
     }
-    .pace-chip.catching { background: rgba(25, 211, 107, 0.16); color: #19d36b; }
-    .pace-chip.losing   { background: rgba(230, 57, 70, 0.16);  color: #ff6b74; }
-    .pace-chip.holding  { background: rgba(255, 255, 255, 0.08); color: #b0b0c0; }
-    .pace-chip.gathering{ background: rgba(255, 255, 255, 0.06); color: #6a6a77;
+    .pace-chip.catching { background: rgba(25, 211, 107, 0.20); color: #19d36b; }
+    .pace-chip.losing   { background: rgba(230, 57, 70, 0.22);  color: #ff6b74; }
+    .pace-chip.holding  { background: rgba(255, 255, 255, 0.10); color: #d4d4de; }
+    .pace-chip.gathering{ background: rgba(255, 255, 255, 0.08); color: #a8a8b8;
                           font-weight: 600; }
-    .catch-line { font-size: 14px; font-weight: 700; color: #19d36b;
+    .catch-line { font-size: 17px; font-weight: 800; color: #19d36b;
                   letter-spacing: 0.4px; margin-top: 1px; min-height: 18px; }
     .catch-line.hide { visibility: hidden; }
 
