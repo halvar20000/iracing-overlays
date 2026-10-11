@@ -180,6 +180,8 @@ connected / track / auto_replay_overtakes / playback_mode (the /ticker only
 reads `overtakes`). Stream Deck: Website action WITHOUT background opens it;
 icon `streamdeck_icons/dashboard/ot_panel.png`, README section "Seiten als
 Fenster öffnen". Tested with Flask's test client + a Chromium render at 380 px.
+FOLLOW-UP: ⛶ button / F key = browser fullscreen (Fullscreen API), `?zoom=`
+scales the page for a big portrait screen.
 
 **October 11, 2026 (Stream Deck icon pack):** `streamdeck_icons/` — 288 px
 PNG button images: `overlays/<loader name>.png` (38, same names as

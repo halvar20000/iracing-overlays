@@ -3831,6 +3831,7 @@ OT_PANEL_HTML = r"""<!DOCTYPE html>
     .pill { font-size: 12px; font-weight: 800; padding: 3px 8px; border-radius: 3px; background: var(--card2); color: var(--muted); }
     .pill.live { background: var(--red); color: #fff; }
     .pill.replay { background: var(--amber); color: #1a1205; }
+    button.fs { padding: 2px 8px; font-size: 17px; line-height: 1.2; align-self: center; }
     .meta { font-size: 12px; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ctrl { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
     button { font: inherit; font-size: 14px; font-weight: 700; color: var(--text); background: var(--card2);
@@ -3857,7 +3858,8 @@ OT_PANEL_HTML = r"""<!DOCTYPE html>
 </style></head>
 <body>
 <header>
-    <div class="row1"><h1>OVERTAKES</h1><span class="pill" id="mode">—</span></div>
+    <div class="row1"><h1>OVERTAKES</h1><span class="pill" id="mode">—</span>
+        <button class="fs" id="fs" onclick="toggleFs()" title="Vollbild an/aus (Taste F)">⛶</button></div>
     <div class="meta" id="meta">Verbinde…</div>
     <div class="ctrl">
         <button id="auto" onclick="toggleAuto()" title="Jeden Überholvorgang automatisch als Replay zeigen">Auto-Replay</button>
@@ -3868,6 +3870,19 @@ OT_PANEL_HTML = r"""<!DOCTYPE html>
 <div id="list"><div class="empty">Noch keine Überholmanöver.</div></div>
 <script>
 let auto = false;
+// Vollbild (2026-10-11): button / F key; ?zoom=1.5 scales everything (big
+// portrait screen). The Fullscreen API needs a click or key press.
+const qs = new URLSearchParams(location.search);
+const zoom = parseFloat(qs.get('zoom') || '1');
+if (zoom > 0 && zoom !== 1) document.body.style.zoom = zoom;
+function toggleFs() {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen().catch(() => {});
+}
+document.addEventListener('fullscreenchange', () => {
+    document.getElementById('fs').textContent = document.fullscreenElement ? '✕' : '⛶';
+});
+document.addEventListener('keydown', e => { if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.altKey) toggleFs(); });
 function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function abbrev(full) { const p = String(full || '').trim().split(/\s+/); return p.length < 2 ? (full || '') : `${p[0][0]}. ${p.slice(1).join(' ')}`; }
 function hhmmss(wall) { return new Date(wall * 1000).toTimeString().slice(0, 8); }
