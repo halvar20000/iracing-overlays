@@ -176,6 +176,8 @@ DASH_ICONS = [
     ("auto_follow",       "auto",   "follow",      "Auto-Follow",       "toggle_auto_follow"),
     ("auto_replay",       "auto",   "auto_replay", "Auto-Replay Unfälle", "toggle_auto_replay"),
     ("auto_replay_ot",    "auto",   "auto_ot",     "Auto-Replay Überholer", "toggle_auto_replay_overtakes"),
+    # a PAGE, not a /streamdeck command: Website action without "background"
+    ("ot_panel",          "tool",   "overtake",    "Überhol Fenster",   "/overtakes/panel"),
 ]
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8"><style>

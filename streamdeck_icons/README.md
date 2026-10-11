@@ -100,6 +100,26 @@ URL wie unten. Das Dashboard (Port 5000) muss laufen.
 | `auto_replay.png` | `http://localhost:5000/streamdeck/toggle_auto_replay` |
 | `auto_replay_ot.png` | `http://localhost:5000/streamdeck/toggle_auto_replay_overtakes` |
 
+## Seiten als Fenster öffnen (z. B. auf dem Hochkant-Monitor)
+
+Gleiche Aktion **System → Website**, aber **ohne** Haken bei „Im
+Hintergrund aufrufen" — dann öffnet die Taste die Seite im Browser. Das
+jeweilige Overlay muss im Launcher gestartet sein (das Dashboard für das
+Überhol-Fenster also auch; seine große Seite muss aber nicht offen sein).
+
+| Datei | URL | Seite |
+|---|---|---|
+| `dashboard/ot_panel.png` | `http://localhost:5000/overtakes/panel` | Überhol-Fenster: Replay 10 s / 20 s, Kamera, Auto-Replay, Go Live |
+| `overlays/dashboard.png` | `http://localhost:5000` | ganzes Dashboard |
+| `overlays/logger.png` | `http://localhost:5009` | Race Logger Monitor |
+| — | `http://localhost:8080` | Race Control (Stewards) |
+| `overlays/<name>.png` | Adresse aus `OBS_OVERLAYS.md` | jedes Overlay zum Anschauen |
+
+Tipp: In Edge/Chrome die Seite einmal öffnen, Fenster auf die gewünschte
+Größe und Position ziehen — Windows merkt sich das beim nächsten Öffnen
+meistens. Ganz ohne Adressleiste: Edge-Menü → Apps → „Diese Seite als App
+installieren", dann öffnet sie in einem eigenen schlanken Fenster.
+
 ## Eigene Symbole
 
 Liste in `make_streamdeck_icons.py` ergänzen und `python make_streamdeck_icons.py`

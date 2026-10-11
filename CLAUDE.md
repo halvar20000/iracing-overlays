@@ -170,6 +170,17 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 11, 2026 (overtake panel, for Andreas):** `5000/overtakes/panel` =
+the dashboard's overtake column as a small stand-alone window (portrait
+race-control monitor, no room for the full dashboard): list newest first,
+▶ 10s / ▶ 20s replay (same /replay_5s + incident_id → seek to the move, marks
+"gezeigt"), Kamera (/switch_car), ✕ (/incidents/dismiss), Alle löschen,
+Auto-Replay toggle, Go Live, LIVE/REPLAY pill. `/overtakes` now also returns
+connected / track / auto_replay_overtakes / playback_mode (the /ticker only
+reads `overtakes`). Stream Deck: Website action WITHOUT background opens it;
+icon `streamdeck_icons/dashboard/ot_panel.png`, README section "Seiten als
+Fenster öffnen". Tested with Flask's test client + a Chromium render at 380 px.
+
 **October 11, 2026 (Stream Deck icon pack):** `streamdeck_icons/` — 288 px
 PNG button images: `overlays/<loader name>.png` (38, same names as
 obs_loaders/) and `dashboard/` (13 camera groups + cam/driver next/prev,

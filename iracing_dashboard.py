@@ -3797,8 +3797,141 @@ def incidents_feed():
 
 @app.route("/overtakes")
 def overtakes_feed():
-    """Overtake feed (newest first) for the /ticker overlay."""
-    return jsonify({"overtakes": list(poller._overtakes)})
+    """Overtake feed (newest first) for the /ticker overlay and the
+    /overtakes/panel operator page (which also needs the status fields)."""
+    snap = poller.get()
+    pb = snap.get("playback") or {}
+    return jsonify({
+        "overtakes": list(poller._overtakes),
+        "connected": bool(snap.get("connected")),
+        "track": snap.get("track") or "",
+        "auto_replay_overtakes": poller.auto_replay_overtakes,
+        "playback_mode": pb.get("mode") or "",
+    })
+
+
+# Overtake panel (2026-10-11, Andreas): the dashboard's overtake column as a
+# small stand-alone browser window, for a screen without room for the full
+# dashboard (e.g. the portrait race-control monitor). Same feed and the same
+# endpoints as the dashboard buttons: replay 10 s / 20 s, jump camera,
+# dismiss, clear all, auto-replay toggle, go live. Works down to ~320 px wide.
+OT_PANEL_HTML = r"""<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><title>Overtakes</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+    :root { --bg: #15161a; --card: #22242b; --card2: #2b2e37; --text: #f2f2f4; --muted: #a8abb8;
+            --up: #45f063; --red: #ff5a5f; --amber: #ffb347; --blue: #61b4ff; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: var(--bg); color: var(--text); height: 100%; }
+    body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; display: flex; flex-direction: column;
+           font-variant-numeric: tabular-nums; }
+    header { padding: 8px 10px; background: #0e0f12; border-bottom: 2px solid var(--up); }
+    .row1 { display: flex; align-items: center; gap: 8px; }
+    h1 { font-size: 16px; letter-spacing: 1.5px; color: var(--up); flex: 1; }
+    .pill { font-size: 12px; font-weight: 800; padding: 3px 8px; border-radius: 3px; background: var(--card2); color: var(--muted); }
+    .pill.live { background: var(--red); color: #fff; }
+    .pill.replay { background: var(--amber); color: #1a1205; }
+    .meta { font-size: 12px; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ctrl { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+    button { font: inherit; font-size: 14px; font-weight: 700; color: var(--text); background: var(--card2);
+             border: 1px solid #3a3e4a; border-radius: 4px; padding: 7px 10px; cursor: pointer; }
+    button:hover { border-color: var(--muted); }
+    button.on { background: var(--up); color: #0d1a10; border-color: var(--up); }
+    button.live { background: var(--red); border-color: var(--red); }
+    .ctrl button { flex: 1 1 auto; }
+    #list { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 7px; }
+    .ot { background: var(--card); border-left: 4px solid var(--up); border-radius: 4px; padding: 8px 10px; }
+    .ot.done { border-left-color: #4a4e5a; opacity: .78; }
+    .top { display: flex; align-items: center; gap: 8px; }
+    .pos { font-weight: 800; font-size: 18px; color: var(--up); min-width: 38px; }
+    .time { color: var(--muted); font-size: 12px; flex: 1; }
+    .badge { font-size: 11px; font-weight: 800; color: var(--up); }
+    .x { background: none; border: none; color: var(--muted); font-size: 16px; padding: 0 4px; }
+    .who { font-size: 16px; font-weight: 700; margin-top: 4px; line-height: 1.35; }
+    .who .vs { color: var(--muted); font-weight: 600; font-size: 13px; margin: 0 4px; }
+    .num { background: var(--card2); padding: 0 6px; border-radius: 3px; font-size: 13px; margin-right: 5px; }
+    .btns { display: flex; gap: 6px; margin-top: 7px; }
+    .btns button { flex: 1; padding: 6px 4px; }
+    .btns .rp { background: #1d3a26; border-color: #2c5a3a; }
+    .empty { color: var(--muted); text-align: center; padding: 30px 10px; font-size: 14px; line-height: 1.5; }
+</style></head>
+<body>
+<header>
+    <div class="row1"><h1>OVERTAKES</h1><span class="pill" id="mode">—</span></div>
+    <div class="meta" id="meta">Verbinde…</div>
+    <div class="ctrl">
+        <button id="auto" onclick="toggleAuto()" title="Jeden Überholvorgang automatisch als Replay zeigen">Auto-Replay</button>
+        <button class="live" onclick="post('/go_live')">Go Live</button>
+        <button onclick="clearAll()">Alle löschen</button>
+    </div>
+</header>
+<div id="list"><div class="empty">Noch keine Überholmanöver.</div></div>
+<script>
+let auto = false;
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function abbrev(full) { const p = String(full || '').trim().split(/\s+/); return p.length < 2 ? (full || '') : `${p[0][0]}. ${p.slice(1).join(' ')}`; }
+function hhmmss(wall) { return new Date(wall * 1000).toTimeString().slice(0, 8); }
+async function post(url, body) {
+    try {
+        const r = await fetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'},
+                                     body: JSON.stringify(body || {}) });
+        return await r.json();
+    } catch (e) { return null; }
+}
+async function toggleAuto() {
+    const d = await post('/auto_replay_overtakes', { enabled: !auto });
+    if (d) { auto = !!d.enabled; document.getElementById('auto').classList.toggle('on', auto); }
+}
+async function clearAll() { await post('/overtakes/clear'); tick(); }
+const host = document.getElementById('list');
+function render(list) {
+    const sig = list.map(o => o.id + (o.replayed ? 'r' : '')).join('|');
+    if (host.dataset.sig === sig) return;
+    host.dataset.sig = sig;
+    if (!list.length) { host.innerHTML = '<div class="empty">Noch keine Überholmanöver.<br>Bestätigte Überholungen erscheinen hier.</div>'; return; }
+    host.innerHTML = '';
+    for (const o of list) {
+        const d = document.createElement('div');
+        d.className = 'ot' + (o.replayed ? ' done' : '');
+        d.innerHTML = `
+            <div class="top"><span class="pos">${o.position ? 'P' + o.position : ''}</span>
+                <span class="time">${hhmmss(o.wall_clock)}</span>
+                ${o.replayed ? '<span class="badge">▶ gezeigt</span>' : ''}
+                <button class="x" title="Entfernen">✕</button></div>
+            <div class="who"><span class="num">#${esc(o.car_number)}</span>${esc(abbrev(o.name))}<span class="vs">überholt</span>${
+                o.passed_number ? `<span class="num">#${esc(o.passed_number)}</span>` : ''}${esc(abbrev(o.passed_name))}</div>
+            <div class="btns"><button class="rp" data-s="10">▶ 10s</button><button class="rp" data-s="20">▶ 20s</button>
+                <button data-a="jump">Kamera</button></div>`;
+        d.querySelector('.x').onclick = async () => { await post('/incidents/dismiss', { id: o.id }); tick(); };
+        d.querySelectorAll('[data-s]').forEach(b => b.onclick = async () => {
+            await post('/replay_5s', { car_number: o.car_number, incident_id: o.id, replay_seconds: +b.dataset.s }); tick(); });
+        d.querySelector('[data-a=jump]').onclick = () => post('/switch_car', { car_number: o.car_number });
+        host.appendChild(d);
+    }
+}
+async function tick() {
+    let d;
+    try { d = await (await fetch('/overtakes', { cache: 'no-store' })).json(); }
+    catch (e) { document.getElementById('meta').textContent = 'Dashboard-Server nicht erreichbar'; return; }
+    const m = document.getElementById('mode');
+    if (!d.connected) { m.className = 'pill'; m.textContent = 'OFFLINE';
+                        document.getElementById('meta').textContent = 'Warte auf iRacing…'; }
+    else { const live = d.playback_mode === 'live';
+           m.className = 'pill ' + (live ? 'live' : 'replay'); m.textContent = live ? 'LIVE' : 'REPLAY';
+           document.getElementById('meta').textContent = d.track || ''; }
+    if (auto !== !!d.auto_replay_overtakes) { auto = !!d.auto_replay_overtakes;
+                                              document.getElementById('auto').classList.toggle('on', auto); }
+    render(d.overtakes || []);
+}
+setInterval(tick, 1000); tick();
+</script></body></html>
+"""
+
+
+@app.route("/overtakes/panel")
+def overtakes_panel():
+    from flask import Response
+    return Response(OT_PANEL_HTML, mimetype="text/html")
 
 
 # Overtake ticker — OBS lower third (served as a plain string, no Jinja).
@@ -4225,6 +4358,8 @@ def incidents_dismiss():
 #   Specific camera group:  http://localhost:5000/streamdeck/cam/4
 #   Next driver:            http://localhost:5000/streamdeck/driver_next
 #   Prev driver:            http://localhost:5000/streamdeck/driver_prev
+#   Overtake panel (page):  http://localhost:5000/overtakes/panel  (Website
+#                           action WITHOUT "background" = opens the window)
 # -----------------------------------------------------------------------------
 @app.route("/streamdeck/<action>")
 @app.route("/streamdeck/<action>/<param>")
@@ -4386,6 +4521,7 @@ if __name__ == "__main__":
     print("  List cameras      http://localhost:5000/cameras?format=text")
     print("  Driver next/prev  http://localhost:5000/streamdeck/driver_next")
     print("  Toggle follow     http://localhost:5000/streamdeck/toggle_auto_follow")
+    print("  Overtake panel    http://localhost:5000/overtakes/panel")
     print("  Open in browser:  http://localhost:5000")
     print("  - TOP: race progress (laps + time remaining)")
     print("  - LEFT: drivers, starred, auto-follow")
