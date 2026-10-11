@@ -12,7 +12,12 @@ Checkouts, and which is which:
     Thomas edits, inside Nextcloud. Historically a ZIP download rather
     than a clone, which is how the two lineages diverged in June 2026;
     `push_to_github.sh` exists for it.
-  • The stream PC runs the overlays straight off the Unraid SMB share.
+  • The stream PC ran the overlays straight off the Unraid SMB share
+    (`Y:\iracing-overlays-main`) until 2026-10-11. Since then Thomas uses
+    a LOCAL install made with install.bat (updater, no git) — so changes
+    reach the stream PC only once they are PUSHED, via the launcher's
+    "Update & restart" banner; and new race logs (`logs/`) are written on
+    that PC, not on the share — ask for them for post-mortems.
 
 **The "stale / truncated mount" and "Nextcloud ate the folder" warnings
 scattered through the session notes below are about the MAC path.** The
@@ -180,7 +185,13 @@ Python 3.10+ with tkinter (winget Python 3.12 if missing, Store alias
 skipped), folder prompt, `updater.py --install`, desktop + Start-menu shortcut
 to pythonw + launch_gui.py. `launch_gui.py`: version label in the header
 (click = re-check), green banner with up to 6 commit subjects + "Update &
-restart" → stops running overlays, applies, relaunches itself with
+restart" → stops running overlays, applies,
+[FOLLOW-UP 2026-10-11, first real Windows run on the stream PC: Python 3.14
+failed CERTIFICATE_VERIFY_FAILED against api.github.com — Python only trusts
+roots already IN the Windows store, Windows fetches missing ones lazily (the
+PowerShell raw download worked). `_get()` now retries with certifi, then
+Windows' own curl.exe, and keeps whichever worked; tested with a simulated
+cert failure (both fallbacks, 404 still surfaces as HTTPError).] relaunches itself with
 `--autostart tag,…` (waits up to 15 s for each port to free). Failure → error
 dialog, overlays restarted, GUI keeps running. `launch_gui.bat` falls back to
 `pyw -3`. Tested: real GitHub install into a temp folder (1565 files), stamp

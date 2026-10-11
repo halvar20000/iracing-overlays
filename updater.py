@@ -68,13 +68,99 @@ HERE = Path(__file__).resolve().parent
 # -----------------------------------------------------------------------------
 # HTTP
 # -----------------------------------------------------------------------------
-def _get(url, timeout=10.0):
+# Python on Windows only trusts root certificates that are ALREADY in the
+# Windows store. Windows itself fetches missing roots on demand (browsers,
+# PowerShell, curl.exe do that), Python does not — so on a fresh PC GitHub can
+# fail with CERTIFICATE_VERIFY_FAILED although the browser is fine (seen on the
+# stream PC, Python 3.14, 2026-10-11). Then we retry with certifi (if pip
+# already installed it) and finally with Windows' own curl.exe, and stay on
+# whatever worked for the rest of the run.
+_transport = None
+
+
+def _is_cert_error(e):
+    import ssl
+    r = getattr(e, "reason", e)
+    return isinstance(r, ssl.SSLCertVerificationError) or \
+        "CERTIFICATE_VERIFY_FAILED" in str(r)
+
+
+def _urllib_get(url, timeout, context=None):
     req = urllib.request.Request(url, headers={
         "User-Agent": USER_AGENT,
         "Accept": "application/vnd.github+json",
     })
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, timeout=timeout, context=context) as resp:
         return resp.read()
+
+
+def _certifi_get(url, timeout):
+    import ssl
+    import certifi
+    return _urllib_get(url, timeout, ssl.create_default_context(cafile=certifi.where()))
+
+
+def _curl_exe():
+    import shutil
+    exe = shutil.which("curl.exe") or shutil.which("curl")
+    if not exe and os.name == "nt":
+        cand = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "curl.exe"
+        exe = str(cand) if cand.is_file() else None
+    return exe
+
+
+def _curl_get(url, timeout):
+    exe = _curl_exe()
+    if not exe:
+        raise urllib.error.URLError("curl not found")
+    fd, tmp = tempfile.mkstemp(prefix="upd-dl-")
+    os.close(fd)
+    kw = {"creationflags": 0x08000000} if os.name == "nt" else {}
+    try:
+        p = subprocess.run(
+            [exe, "-sSL", "--max-time", str(int(timeout)),
+             "-H", "User-Agent: " + USER_AGENT,
+             "-H", "Accept: application/vnd.github+json",
+             "-o", tmp, "-w", "%{http_code}", url],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kw)
+        code = p.stdout.decode("ascii", "replace").strip()
+        if code.isdigit() and int(code) >= 400:
+            raise urllib.error.HTTPError(url, int(code), "HTTP %s" % code, None, None)
+        if p.returncode != 0:
+            raise urllib.error.URLError(
+                "curl: " + p.stderr.decode("utf-8", "replace").strip())
+        with open(tmp, "rb") as f:
+            return f.read()
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _get(url, timeout=10.0):
+    global _transport
+    if _transport is not None:
+        return _transport(url, timeout)
+    try:
+        return _urllib_get(url, timeout)
+    except urllib.error.HTTPError:
+        raise
+    except urllib.error.URLError as e:
+        if not _is_cert_error(e):
+            raise
+        first = e
+    for fn in (_certifi_get, _curl_get):
+        try:
+            data = fn(url, timeout)
+        except urllib.error.HTTPError:
+            _transport = fn  # the connection works, the answer is an error
+            raise
+        except Exception:
+            continue
+        _transport = fn
+        return data
+    raise first
 
 
 def _get_json(url, timeout=10.0):
@@ -229,7 +315,10 @@ def apply_update(root: Path = HERE, sha: str = None, log=print,
     root.mkdir(parents=True, exist_ok=True)
 
     if not sha:
-        sha = _get_json(API + "/commits/" + BRANCH)["sha"]
+        try:
+            sha = _get_json(API + "/commits/" + BRANCH)["sha"]
+        except Exception as e:
+            raise RuntimeError("could not reach GitHub: %s" % e)
     log("downloading %s @ %s …" % (REPO, sha[:7]))
     try:
         data = _get(ZIP_URL.format(sha=sha), timeout=120)
