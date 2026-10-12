@@ -62,6 +62,9 @@ OVERLAYS = [
     ("chasing",       "Battle: Chasing",  5015, "/chasing"),
     ("last_laps",     "Battle: Last 4 Laps", 5015, "/laps"),
     ("turn",          "Turn Label",       5012, "/turn"),
+    # Whole-field sector graphics on the quali-delta server (2026-10-12).
+    ("sectors",       "Best Sectors",     5014, "/sectors"),
+    ("topspeed",      "Sector Top Speed", 5014, "/speed"),
     # Note: racecontrol (iCASControl, port 8080) is an interactive steward
     # web app, opened directly in a browser — NOT an OBS browser source — so
     # it intentionally has no loader page here.
@@ -183,6 +186,12 @@ def main():
         print(f"  written  {out}  ->  http://localhost:{port}{path}  ({mode})")
     print(f"\n{len(OVERLAYS)} loader pages in {outdir}")
     print("In OBS: Browser source -> check 'Local file' -> pick the .html")
+    # keep OVERLAY_TABLE.md (ports / loaders / Stream Deck icons) in step
+    try:
+        import make_streamdeck_icons
+        make_streamdeck_icons.write_table()
+    except Exception as e:
+        print("OVERLAY_TABLE.md NOT updated: %s" % e)
 
 if __name__ == "__main__":
     main()

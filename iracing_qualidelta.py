@@ -53,6 +53,7 @@ import threading
 from flask import Flask, jsonify, render_template_string
 
 from iracing_sdk_base import SDKPoller, setup_utf8_stdout
+from field_sectors import FieldSectors
 setup_utf8_stdout()
 
 PORT = 5014   # 5013 is the Driver-of-the-Day overlay; Quali Delta moved to 5014
@@ -71,10 +72,13 @@ class QualiDeltaPoller(SDKPoller):
     def __init__(self, poll_hz: int = 15):
         super().__init__(poll_interval=1.0 / poll_hz)
         self._last_session_key = None
+        # whole-field best sectors + sector top speeds (/sectors, /speed)
+        self._field = FieldSectors()
         self._reset_session()
 
     # --- per-session state ------------------------------------------------
     def _reset_session(self):
+        self._field.reset()
         self._sector_pcts = None          # [SectorStartPct, ...]
         # --- driving-mode (own car) sector state ---
         self._cur_lap = None
@@ -501,8 +505,83 @@ class QualiDeltaPoller(SDKPoller):
             pass
         return ""
 
+    # --- whole field: best sectors + sector top speed (2026-10-12) --------
+    def _track_m(self):
+        """WeekendInfo.TrackLength ("5.41 km" / "3.36 mi") in metres."""
+        try:
+            raw = str((self.ir["WeekendInfo"] or {}).get("TrackLength") or "").strip().lower()
+            num = float(raw.split()[0])
+            return num * (1609.344 if "mi" in raw else 1000.0)
+        except Exception:
+            return None
+
+    def _names(self):
+        """car_idx -> (number, "M. Becker") for every driver."""
+        out = {}
+        try:
+            for d in (self.ir["DriverInfo"] or {}).get("Drivers") or []:
+                name = (d.get("UserName") or "").strip()
+                parts = name.split()
+                if len(parts) >= 2:
+                    name = parts[0][0] + ". " + " ".join(parts[1:])
+                out[d.get("CarIdx")] = (str(d.get("CarNumber", "")), name)
+        except Exception:
+            pass
+        return out
+
+    def _field_snapshot(self) -> dict:
+        ir = self.ir
+        if self._sector_pcts is None:
+            self._load_sectors()
+        f = self._field
+        f.configure(self._sector_pcts, self._track_m())
+        f.update(ir["SessionTime"], ir["CarIdxLapDistPct"] or [],
+                 ir["CarIdxTrackSurface"] or [], ir["CarIdxOnPitRoad"] or [])
+        names = self._names()
+
+        def who(idx):
+            num, name = names.get(idx, ("", ""))
+            return {"number": num, "name": name}
+
+        sectors = []
+        for i, b in enumerate(f.best):
+            row = {"s": i + 1, "time": b[0] if b else None}
+            row.update(who(b[1]) if b else {"number": "", "name": ""})
+            sectors.append(row)
+        best_lap, best_idx = None, None
+        for idx, v in enumerate(ir["CarIdxBestLapTime"] or []):
+            if v and v > 0 and (best_lap is None or v < best_lap):
+                best_lap, best_idx = v, idx
+        out = {"n": f.n, "session_label": self._session_label(),
+               "sectors": sectors, "ideal": f.ideal(),
+               "best_lap": best_lap, "best_lap_by": who(best_idx) if best_idx is not None else None,
+               "speed": None}
+
+        cam = ir["CamCarIdx"]
+        sec, live, _full = f.cam_speed(cam)
+        if sec is not None:
+            rank = f.ranking(sec)
+            top = [dict(who(i), kmh=round(v, 1), cam=(i == cam)) for i, v in rank[:5]]
+            pos = next((k + 1 for k, (i, _) in enumerate(rank) if i == cam), None)
+            mine = f.top[sec].get(cam)
+            if pos and pos > 5:
+                top.append(dict(who(cam), kmh=round(mine, 1), cam=True, pos=pos))
+            out["speed"] = dict(who(cam), sector=sec + 1,
+                                live=round(live, 1) if live else None,
+                                best=round(mine, 1) if mine else None,
+                                rank=pos, count=len(rank), top=top)
+        return out
+
     # --- snapshot ---------------------------------------------------------
     def _read_snapshot(self) -> dict:
+        snap = self._read_delta()
+        try:
+            snap["field"] = self._field_snapshot()
+        except Exception as e:               # never take the delta page down
+            snap["field"] = {"error": str(e)}
+        return snap
+
+    def _read_delta(self) -> dict:
         ir = self.ir
         ir.freeze_var_buffer_latest()
 
@@ -970,9 +1049,144 @@ tick();
 """
 
 
+# Best sectors (/sectors) and sector top speed (/speed) — 2026-10-12.
+# One page, view picked from the path; data = /status → "field". Plain
+# Response (no Jinja). ?zoom=, ?debug=1 / H, ?demo=1, /speed also ?top=N.
+FIELD_HTML = r"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Sectors</title>
+<style>
+    :root { --panel: rgba(10,10,14,0.97); --row: rgba(255,255,255,0.06); --text: #fff; --muted: #d4d4de;
+            --purple: #b06bff; --amber: #ffb347; --green: #27d367; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: transparent; overflow: hidden; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; color: var(--text); padding: 8px;
+           font-variant-numeric: tabular-nums; }
+    body.debug { background: #15151c; }
+    .card { width: 440px; background: var(--panel); border-radius: 6px; overflow: hidden;
+            box-shadow: 0 6px 26px rgba(0,0,0,0.6); transform: translateZ(0); }
+    .card.hidden { display: none; }
+    .head { display: flex; align-items: center; padding: 9px 14px; border-bottom: 3px solid var(--accent); }
+    .title { flex: 1; font-size: 17px; font-weight: 900; letter-spacing: 1.5px; color: var(--accent); }
+    .sess { font-size: 14px; font-weight: 700; color: var(--muted); letter-spacing: 1px; }
+    .row { display: flex; align-items: center; gap: 10px; padding: 6px 14px; min-height: 40px; }
+    .row:nth-child(even) { background: var(--row); }
+    .chip { flex: 0 0 auto; min-width: 38px; text-align: center; font-size: 15px; font-weight: 900;
+            padding: 3px 6px; border-radius: 4px; background: rgba(255,255,255,0.12); color: var(--muted); }
+    .chip.on { background: var(--accent); color: #12081f; }
+    .t { flex: 0 0 auto; min-width: 86px; font-size: 22px; font-weight: 800; }
+    .t.best { color: var(--purple); }
+    .who { flex: 1; min-width: 0; font-size: 18px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .num { background: rgba(255,255,255,0.12); padding: 1px 6px; border-radius: 3px; font-size: 14px; margin-right: 6px; }
+    .wait { color: var(--muted); font-size: 16px; font-weight: 600; }
+    .foot { padding: 10px 14px 12px; border-top: 2px solid rgba(255,255,255,0.10); }
+    .ideal { display: flex; align-items: baseline; gap: 12px; }
+    .ideal .l { flex: 1; font-size: 15px; font-weight: 800; letter-spacing: 1px; color: var(--muted); }
+    .ideal .v { font-size: 32px; font-weight: 900; color: var(--purple); }
+    .sub { margin-top: 3px; font-size: 15px; font-weight: 600; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sub b { color: var(--text); }
+    .gain { color: var(--green); font-weight: 800; }
+    /* speed */
+    .live { display: flex; align-items: center; gap: 10px; padding: 10px 14px; }
+    .live .who { font-size: 22px; font-weight: 800; }
+    .live .v { font-size: 34px; font-weight: 900; color: var(--accent); }
+    .live .u { font-size: 15px; font-weight: 700; color: var(--muted); margin-left: 3px; }
+    .live .lbl { font-size: 12px; font-weight: 800; letter-spacing: 1px; color: var(--muted); text-align: right; }
+    .rk { flex: 0 0 auto; width: 26px; font-size: 17px; font-weight: 900; color: var(--muted); }
+    .kmh { flex: 0 0 auto; font-size: 20px; font-weight: 800; }
+    .row.cam { background: rgba(255,179,71,0.20); box-shadow: inset 4px 0 0 var(--accent); }
+    .row.first .kmh { color: var(--purple); }
+</style></head>
+<body>
+<div class="card hidden" id="card"></div>
+<script>
+const qs = new URLSearchParams(location.search);
+const VIEW = location.pathname.replace(/\/+$/, '').endsWith('/speed') ? 'speed' : 'sectors';
+document.documentElement.style.setProperty('--accent', VIEW === 'speed' ? 'var(--amber)' : 'var(--purple)');
+if (qs.get('debug') === '1') document.body.classList.add('debug');
+const zoom = parseFloat(qs.get('zoom') || '1');
+if (zoom > 0 && zoom !== 1) document.body.style.zoom = zoom;
+document.addEventListener('keydown', e => { if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('debug'); });
+const TOP = Math.max(1, parseInt(qs.get('top') || '5', 10));
+const card = document.getElementById('card');
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function fmt(t) {
+    if (t == null) return '—';
+    const m = Math.floor(t / 60), sec = t - m * 60;
+    return m > 0 ? `${m}:${sec.toFixed(3).padStart(6, '0')}` : sec.toFixed(3);
+}
+function who(o) { return o && o.name ? `${o.number ? `<span class="num">#${esc(o.number)}</span>` : ''}${esc(o.name)}` : ''; }
+let lastHtml = '';
+function put(html) {
+    if (html === null) { card.classList.add('hidden'); lastHtml = ''; return; }
+    card.classList.remove('hidden');
+    if (html !== lastHtml) { card.innerHTML = html; lastHtml = html; }
+}
+function renderSectors(f) {
+    if (!f || !f.n) return put(null);
+    let h = `<div class="head"><div class="title">BEST SECTORS</div><div class="sess">${esc(f.session_label || '')}</div></div>`;
+    for (const r of f.sectors) {
+        h += `<div class="row"><span class="chip on">S${r.s}</span>` +
+             (r.time == null ? `<span class="t">—</span><span class="who wait">no time yet</span>`
+                             : `<span class="t best">${fmt(r.time)}</span><span class="who">${who(r)}</span>`) + `</div>`;
+    }
+    h += `<div class="foot"><div class="ideal"><span class="l">THEORETICAL BEST</span><span class="v">${fmt(f.ideal)}</span></div>`;
+    if (f.best_lap) {
+        const d = f.ideal != null ? f.ideal - f.best_lap : null;
+        h += `<div class="sub">Best lap <b>${fmt(f.best_lap)}</b>${f.best_lap_by ? ' · ' + esc(f.best_lap_by.name) : ''}` +
+             (d != null && d < 0 ? ` &nbsp;<span class="gain">${d.toFixed(3)}</span>` : '') + `</div>`;
+    }
+    put(h + `</div>`);
+}
+function renderSpeed(f) {
+    const s = f && f.speed;
+    if (!s) return put(null);
+    let h = `<div class="head"><div class="title">TOP SPEED · SECTOR ${s.sector}</div><div class="sess">${esc(f.session_label || '')}</div></div>`;
+    h += `<div class="live"><span class="who">${who(s)}</span><div><div class="lbl">THIS LAP</div>` +
+         `<span class="v">${s.live != null ? Math.round(s.live) : '—'}</span><span class="u">km/h</span></div></div>`;
+    const top = (s.top || []).filter((r, i) => i < TOP || r.cam);
+    top.forEach((r, i) => {
+        const rk = r.pos || (i + 1);
+        h += `<div class="row${r.cam ? ' cam' : ''}${rk === 1 ? ' first' : ''}"><span class="rk">${rk}</span>` +
+             `<span class="who">${who(r)}</span><span class="kmh">${Math.round(r.kmh)} km/h</span></div>`;
+    });
+    if (!top.length) h += `<div class="row"><span class="who wait">no top speed recorded in this sector yet</span></div>`;
+    put(h);
+}
+function render(f) { VIEW === 'speed' ? renderSpeed(f) : renderSectors(f); }
+async function tick() {
+    try {
+        const d = await (await fetch('/status', { cache: 'no-store' })).json();
+        render(d && d.connected ? d.field : null);
+    } catch (e) { render(null); }
+}
+if (qs.has('demo')) {
+    render({ n: 3, session_label: 'QUALIFY',
+             sectors: [{ s: 1, time: 31.245, number: '7', name: 'M. Becker' },
+                       { s: 2, time: 38.912, number: '22', name: 'R. Schwarz' },
+                       { s: 3, time: 32.104, number: '7', name: 'M. Becker' }],
+             ideal: 102.261, best_lap: 102.587, best_lap_by: { number: '7', name: 'M. Becker' },
+             speed: { sector: 2, number: '13', name: 'A. Frauenknecht', live: 244.6, best: 247.9, rank: 7, count: 20,
+                      top: [{ number: '22', name: 'R. Schwarz', kmh: 251.3 }, { number: '7', name: 'M. Becker', kmh: 250.8 },
+                            { number: '16', name: 'L. Klein', kmh: 249.9 }, { number: '5', name: 'A. Weber', kmh: 249.2 },
+                            { number: '63', name: 'D. Richter', kmh: 248.7 },
+                            { number: '13', name: 'A. Frauenknecht', kmh: 247.9, cam: true, pos: 7 }] } });
+} else {
+    setInterval(tick, 500); tick();
+}
+</script></body></html>
+"""
+
+
 @app.route("/")
 def index():
     return render_template_string(PAGE_HTML)
+
+
+@app.route("/sectors")
+@app.route("/speed")
+def field_pages():
+    from flask import Response
+    return Response(FIELD_HTML, mimetype="text/html")
 
 
 @app.route("/own")
@@ -1002,6 +1216,8 @@ if __name__ == "__main__":
     print("  DRIVING: iRacing predictive delta for your own car.")
     print("  SPECTATING: computed delta for the on-camera car.")
     print("  Reference: POLE (session best) or OWN BEST — press M to toggle.")
+    print(f"  Best sectors + theoretical best:  http://localhost:{PORT}/sectors")
+    print(f"  Top speed, camera car's sector:   http://localhost:{PORT}/speed")
     print("  Press H (or ?debug=1) for a debug background.")
     print("  Press Ctrl+C to stop")
     print("=" * 60 + "\n")

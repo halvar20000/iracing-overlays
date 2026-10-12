@@ -46,7 +46,7 @@ and run its test.
 | sess        | `iracing_session_info.py`     | 5011 | Session name + total / remaining time card |
 | line        | `iracing_drivingline.py`      | 5012 | Corner cues (driving-line substitute)      |
 | dotd        | `iracing_dotd_overlay.py`     | 5013 | Driver of the Day (from race logs, no SDK) |
-| delta       | `iracing_qualidelta.py`       | 5014 | Qualifying live delta + per-sector splits  |
+| delta       | `iracing_qualidelta.py`       | 5014 | Quali live delta + per-sector splits; /sectors, /speed |
 | catch       | `iracing_catchup.py`          | 5015 | F1-style catch-up battle (gap + catch prediction) |
 | weather     | `iracing_weather.py`          | 5016 | Weather strip (temps, rain, wind, sky + live trends) |
 | driver      | `iracing_drivercard.py`       | 5017 | Driver card (name, team, iRating, license, laps, inc) |
@@ -69,7 +69,7 @@ different ports.
 
 **Whenever a new `iracing_*.py` overlay is added to this folder (or an
 existing one is renamed / given a new port), ALL FOUR launcher files
-must be updated in the same session.** The three that actually list
+must be updated in the same session.** The files that actually list
 overlays:
 
 1. `launch_all.bat` — add a new `start "…"  cmd /k python <newscript>.py`
@@ -83,6 +83,13 @@ overlays:
    loader pages in `obs_loaders/` (local-file browser sources that
    auto-retry until the overlay server is up; added June 12, 2026 —
    OBS sources should point at these files, not at localhost URLs).
+5. `make_streamdeck_icons.py` — append to `OVERLAY_ICONS` (same name as
+   the loader; category, symbol, short German label) and run
+   `python make_streamdeck_icons.py overlays overlays_off`. That renders
+   the on/off Stream Deck pictures AND rewrites `OVERLAY_TABLE.md` (the
+   GitHub table of every overlay: port, loader, icons). Step 4 also
+   rewrites the table and prints a WARNING for any loader without an icon
+   — commit OVERLAY_TABLE.md together with the new overlay.
 
 Keep tags short (single lowercase word). Use distinct colors per overlay
 so log output and status dots stay visually clear.
@@ -169,6 +176,28 @@ an entry to `CAR_PREFIX_TO_BRAND` in `car_brands.py` if it's a car family
 that isn't already prefix-matched.
 
 ## Recent sessions
+
+**October 12, 2026 (best sectors + sector top speed, on 5014):** two pages on
+the Quali Delta server, no new port. NEW `field_sectors.py` (`FieldSectors`,
+no SDK import): every car's sector times from CarIdxLapDistPct vs SessionTime,
+boundaries = the same SplitTimeInfo sectors the delta uses, crossing time
+INTERPOLATED between two samples (exact to ~ms at 15 Hz). A sector counts only
+if its ENTRY was seen (no half sectors after a mid-lap start), no off-track /
+pit-road sample and no gap > 1 s. Session best per sector + driver; ideal lap =
+their sum (`car_ideal()` = a driver's own). Top speed: no per-car speed in the
+SDK → distance (pct × WeekendInfo.TrackLength) over a 0.3-0.6 s window, max per
+car per sector, pit road excluded, reads ~1-2 km/h under a true peak. Replay
+scrub / gap / teleport only restart that car's tracking; session change resets
+(via `_reset_session`). `_read_snapshot` = old one (now `_read_delta`) + a
+`field` key; an exception there never breaks the delta page. Pages (one
+FIELD_HTML): `/sectors` (S1..Sn time + driver, THEORETICAL BEST, best lap +
+gain), `/speed` (camera car's sector: its top speed this pass, ranking top 5 +
+the camera car highlighted if further back, `?top=N`). Both `?zoom` `?debug=1`
+`?demo=1`. Works in every session type (sectors are most useful in quali).
+LIMIT: iRacing has no per-sector validity — a lap deleted without leaving the
+surface can still set a sector best. Loaders sectors.html / topspeed.html (38),
+icons + OVERLAY_TABLE.md. test_field_sectors.py 28/28, test_qualidelta 27/27;
+both pages rendered in Chromium from a simulated 7-car session. Restart 5014.
 
 **October 11, 2026 (overtake panel, for Andreas):** `5000/overtakes/panel` =
 the dashboard's overtake column as a small stand-alone window (portrait

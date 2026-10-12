@@ -32,6 +32,7 @@ Loader-Datei verwenden).
 | Zweikampf: „Chasing X for 5th" | 5015 `/chasing` | `chasing.html` | ✓ 680 × 115 |
 | Zweikampf: letzte 4 Runden | 5015 `/laps` | `last_laps.html` | ✓ 860 × 140 |
 | Kurven-Label „TURN 11" (Auto der Kamera) | 5012 `/turn` | `turn.html` | ✓ 260 × 90 (`?names=1` + Kurvenname ≈ 260 × 115) |
+| Top Speed im Sektor der Kamera (Top 5 + Auto der Kamera) | 5014 `/speed` | `topspeed.html` | ✓ 456 × 390 (`?top=3` ≈ 456 × 310) |
 | Wetter-Leiste | 5016 | `weather.html` | ✓ 980 × 100 |
 | Session-Info (Restzeit) | 5011 | `sess.html` | ≈ 300 × 120 |
 | LIVE / REPLAY-Badge | 5004 | `live.html` | ≈ 300 × 80 |
@@ -49,6 +50,7 @@ Loader-Datei verwenden).
 | Quali-Delta (zur Pole) | 5014 | `delta.html` | ≈ 480 × 160 |
 | Quali-Delta (zur eigenen Bestzeit) | 5014 `/own` | `delta_own.html` | ≈ 480 × 160 |
 | Startaufstellung | 5001 | `grid.html` | ≈ 920 × 1000 |
+| Beste Sektoren + theoretische Bestzeit | 5014 `/sectors` | `sectors.html` | ✓ 456 × 280 (3 Sektoren; +40 px je weiterem Sektor) |
 
 ## Vor dem Rennen / Moderatoren-Bildschirm (Daten aus CLS, deckende Panels)
 

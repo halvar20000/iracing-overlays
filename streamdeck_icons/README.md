@@ -60,6 +60,7 @@ Die Dateinamen sind dieselben wie die Loader in `obs_loaders/`
 | `sess.png` | Restzeit (Live) |
 | `live.png` | LIVE / Replay (Live) |
 | `turn.png` | Kurve (Live) |
+| `topspeed.png` | Top Speed (Live) |
 | `logger_chart.png` | Renn-Grafik (Live) |
 | `twitch_chat.png` | Twitch Chat (Live) |
 | `youtube.png` | YouTube (Live) |
@@ -73,6 +74,7 @@ Die Dateinamen sind dieselben wie die Loader in `obs_loaders/`
 | `delta.png` | Delta Pole (Qualifying) |
 | `delta_own.png` | Delta eigene (Qualifying) |
 | `grid.png` | Start Grid (Qualifying) |
+| `sectors.png` | Beste Sektoren (Qualifying) |
 | `lastrace.png` | Letzte Runde (Vor Dem Rennen) |
 | `table.png` | Tabelle (Vor Dem Rennen) |
 | `rsvp.png` | RSVP (Vor Dem Rennen) |

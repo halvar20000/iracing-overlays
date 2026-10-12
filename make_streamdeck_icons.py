@@ -98,6 +98,13 @@ G = {
                 '<rect x="15.8" y="9" width="3.2" height="10" class="F"/>',
     "list": '<path d="M8.5 6h12M8.5 12h12M8.5 18h12"/><circle cx="4.5" cy="6" r="1.4" class="F"/>'
             '<circle cx="4.5" cy="12" r="1.4" class="F"/><circle cx="4.5" cy="18" r="1.4" class="F"/>',
+    # three sector pieces above, their sum (one full lap) below
+    "sectors": '<rect x="2.5" y="5" width="5.5" height="5" rx="1" class="F"/><rect x="9.25" y="5" width="5.5" height="5" rx="1" class="F"/>'
+               '<rect x="16" y="5" width="5.5" height="5" rx="1" class="F"/><rect x="2.5" y="14" width="19" height="5" rx="1.2"/>',
+    # speedometer with scale ticks, needle near the top end
+    "speedo": '<path d="M3.5 17.5a8.5 8.5 0 1 1 17 0"/>'
+              '<path d="M5.4 13.7l1.4.8M8.2 10.9l.8 1.4M12 9.9v1.6M15.8 10.9l-.8 1.4M18.6 13.7l-1.4.8"/>'
+              '<path d="M12 17.5l4.6-3.9"/><circle cx="12" cy="17.5" r="1.7" class="F"/>',
     "gauge": '<path d="M3.5 17a8.5 8.5 0 1 1 17 0"/><path d="M12 17l4.5-5.5"/><circle cx="12" cy="17" r="1.6" class="F"/>',
     "doc": '<path d="M6 2.5h8l4.5 4.5v14.5H6z"/><path d="M14 2.5V7h4.5M9 12h6.5M9 15.5h6.5M9 19h4"/>',
     "chat": '<path d="M4 4.5h16a1.5 1.5 0 0 1 1.5 1.5v9.5a1.5 1.5 0 0 1-1.5 1.5H10l-5 4v-4H4A1.5 1.5 0 0 1 2.5 15.5V6A1.5 1.5 0 0 1 4 4.5z"/>'
@@ -138,6 +145,7 @@ OVERLAY_ICONS = [
     ("sess",          "live",   "clock",     "Restzeit"),
     ("live",          "live",   "broadcast", "LIVE / Replay"),
     ("turn",          "live",   "turn",      "Kurve"),
+    ("topspeed",      "live",   "speedo",    "Top Speed"),
     ("logger_chart",  "live",   "chart",     "Renn-Grafik"),
     ("twitch_chat",   "live",   "chat",      "Twitch Chat"),
     ("youtube",       "live",   "play",      "YouTube"),
@@ -151,6 +159,7 @@ OVERLAY_ICONS = [
     ("delta",         "quali",  "delta",     "Delta Pole"),
     ("delta_own",     "quali",  "delta_own", "Delta eigene"),
     ("grid",          "quali",  "grid",      "Start Grid"),
+    ("sectors",       "quali",  "sectors",   "Beste Sektoren"),
     ("lastrace",      "pre",    "podium",    "Letzte Runde"),
     ("table",         "pre",    "table",     "Tabelle"),
     ("rsvp",          "pre",    "rsvp",      "RSVP"),
@@ -326,6 +335,18 @@ def write_table():
         rows.append("| %s | %s | %s | %s | %s | %s |" % (
             group, title, where, ld,
             img % ("overlays", name, label), img % ("overlays_off", name, label + " aus")))
+    # a loader without an OVERLAY_ICONS entry still gets a row (no picture)
+    # and a warning, so a new overlay can never silently miss the table
+    have = {e[0] for e in OVERLAY_ICONS}
+    missing = [k for k in loaders if k not in have]
+    for name in missing:
+        friendly, port, path, loader = loaders[name]
+        where = "`%d`" % port + ("" if path == "/" else " `%s`" % path) if port else "—"
+        ld = "[`%s`](%s)" % (loader.split("/")[-1], loader) if loader else "—"
+        rows.append("| ? | **%s** | %s | %s | fehlt | fehlt |" % (friendly, where, ld))
+        print("WARNING: no Stream Deck icon for '%s' — add it to OVERLAY_ICONS "
+              "in make_streamdeck_icons.py and run `python make_streamdeck_icons.py "
+              "overlays overlays_off`" % name)
     rows += ["", "Bedienseiten (kein OBS): Überhol-Fenster `http://localhost:5000/overtakes/panel` "
              '<img src="streamdeck_icons/dashboard/ot_panel.png" width="48" alt="Überhol-Fenster">, '
              "Race Control `http://localhost:8080`. Kamera- und Replay-Tasten: "
