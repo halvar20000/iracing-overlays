@@ -1,0 +1,60 @@
+{
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+  "Name": "OBS Seitenwechsel",
+  "Version": "1.0.0.0",
+  "Author": "Thomas Herbrig",
+  "Description": "Wechselt beim Szenenwechsel in OBS die XL-Decks automatisch auf die passende Seite.",
+  "UUID": "com.halvar.obspages",
+  "Icon": "imgs/plugin",
+  "Category": "OBS Seitenwechsel",
+  "CategoryIcon": "imgs/category",
+  "CodePath": "bin/plugin.js",
+  "SDKVersion": 3,
+  "Software": {
+    "MinimumVersion": "7.1"
+  },
+  "OS": [
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    },
+    {
+      "Platform": "mac",
+      "MinimumVersion": "13"
+    }
+  ],
+  "Nodejs": {
+    "Version": "24"
+  },
+  "Profiles": [
+    {
+      "Name": "XLlinks",
+      "DeviceType": 2,
+      "DontAutoSwitchWhenInstalled": true
+    },
+    {
+      "Name": "XLrechts",
+      "DeviceType": 2,
+      "DontAutoSwitchWhenInstalled": true
+    }
+  ],
+  "Actions": [
+    {
+      "Name": "OBS-Status",
+      "UUID": "com.halvar.obspages.status",
+      "Icon": "imgs/action",
+      "Tooltip": "Zeigt OBS-Verbindung und Szene. Drücken = Seiten für die aktuelle Szene erneut setzen.",
+      "Controllers": [
+        "Keypad"
+      ],
+      "States": [
+        {
+          "Image": "imgs/key",
+          "TitleAlignment": "middle",
+          "FontSize": 12
+        }
+      ],
+      "SupportedInMultiActions": false
+    }
+  ]
+}

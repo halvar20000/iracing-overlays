@@ -177,6 +177,27 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 12, 2026 (Stream Deck plugin "OBS Seitenwechsel", `streamdeck_plugin/`):**
+not an overlay (no port, launchers untouched). Node SDK 3 (@elgato/streamdeck
+3.0.2, SDKVersion 3, Node 24, Stream Deck ≥ 7.1; Thomas runs 7.6). Watches
+OBS via obs-websocket v5 (127.0.0.1:4455, auth supported but off) and on every
+CurrentProgramSceneChanged calls switchToProfile on the decks named
+XLlinks / XLrechts: Intro 1, Moderator 2, iRacing 3, Werbung 4, Schedule PCC 5
+(`config.json` in the .sdPlugin; unknown scene = no switch; the Plus and the
+normal deck are never touched). STREAM DECK RULE: a plugin can only switch to
+profiles it BUNDLES — Thomas's exports XLlinks/XLrechts.streamDeckProfile are
+inside the plugin (at export time each had ONE populated page; pages 2-5 must
+be built in the plugin's copy). `ReadOnly` is rejected by the SDK-3 schema.
+SDK marks decks from the registration info as disconnected until a
+deviceDidConnect → plugin does not filter on isConnected. Bundle: rollup →
+`com.halvar.obspages.sdPlugin/bin/plugin.js` (gitignored); package
+`dist/com.halvar.obspages.streamDeckPlugin` (validated with `streamdeck
+validate`). `npm test` 19/19 incl. END-TO-END: built plugin spawned against a
+fake Stream Deck websocket + fake OBS. NOT yet tried on the real decks.
+Same day, no code: stream key light NEEWER GL25B on Tasmota plug
+`switch.neewer_gl25b` in Home Assistant, switched by OBS Advanced Scene
+Switcher → HA webhooks (GET; ASS's POST body breaks HA's JSON parse).
+
 **October 12, 2026 (best sectors + sector top speed, on 5014):** two pages on
 the Quali Delta server, no new port. NEW `field_sectors.py` (`FieldSectors`,
 no SDK import): every car's sector times from CarIdxLapDistPct vs SessionTime,

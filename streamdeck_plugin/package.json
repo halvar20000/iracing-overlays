@@ -1,0 +1,22 @@
+{
+  "name": "obs-seitenwechsel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Stream Deck plugin: OBS scene change -> show a page on the XL decks",
+  "type": "module",
+  "scripts": {
+    "build": "rollup -c",
+    "test": "node test_plugin.mjs",
+    "pack": "npm run build && streamdeck pack com.halvar.obspages.sdPlugin --output dist --force"
+  },
+  "dependencies": {
+    "@elgato/streamdeck": "3.0.2",
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@elgato/cli": "1.10.2",
+    "@rollup/plugin-commonjs": "28.0.6",
+    "@rollup/plugin-node-resolve": "16.0.1",
+    "rollup": "4.45.1"
+  }
+}

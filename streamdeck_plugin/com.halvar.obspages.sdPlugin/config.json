@@ -1,0 +1,11 @@
+{
+  "obs": { "host": "127.0.0.1", "port": 4455, "password": "" },
+  "decks": { "XLlinks": "XLlinks", "XLrechts": "XLrechts" },
+  "scenes": {
+    "Intro": 1,
+    "Moderator": 2,
+    "iRacing": 3,
+    "Werbung": 4,
+    "Schedule PCC": 5
+  }
+}
