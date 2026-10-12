@@ -284,9 +284,63 @@ def all_icons():
             yield Path("dashboard_off") / (name + ".png"), cat, glyph, label, True
 
 
+TABLE = HERE / "OVERLAY_TABLE.md"
+# overlays that are not in make_obs_loaders.OVERLAYS
+EXTRA_PAGES = {
+    "twitch_chat": ("Twitch Chat + viewer count", None, "", "obs_loaders/twitch_chat.html"),
+    "youtube": ("YouTube picture-in-picture", 5005, "/youtube", None),
+}
+
+
+def write_table():
+    """OVERLAY_TABLE.md — every overlay with port, OBS loader and both
+    Stream Deck pictures, rendered as images on GitHub. Built from the
+    loader list (make_obs_loaders.py) and OVERLAY_ICONS, so it is rewritten
+    on every run and cannot drift."""
+    sys.path.insert(0, str(HERE))
+    import make_obs_loaders
+    loaders = {}
+    for e in make_obs_loaders.OVERLAYS:
+        path = e[3] if len(e) > 3 else "/"
+        loaders[e[0]] = (e[1], e[2], path, "obs_loaders/%s.html" % e[0])
+    loaders.update(EXTRA_PAGES)
+    rows = ["# Overlays — Ports, OBS-Loader, Stream-Deck-Symbole", "",
+            "Automatisch erzeugt von `make_streamdeck_icons.py` (nicht von Hand "
+            "ändern). Größen für OBS: [OBS_OVERLAYS.md](OBS_OVERLAYS.md) · "
+            "Stream-Deck-Einrichtung: [streamdeck_icons/README.md](streamdeck_icons/README.md).",
+            "", "„aus“ = zweiter Zustand einer Taste (OBS-Quelle versteckt).", "",
+            "| Gruppe | Overlay | Port / Pfad | OBS-Loader | Symbol an | Symbol aus |",
+            "|---|---|---|---|:---:|:---:|"]
+    for name, cat, _glyph, label in OVERLAY_ICONS:
+        friendly, port, path, loader = loaders[name]
+        if port is None:
+            where = "— (eigenständig)"
+        else:
+            where = "`%d`" % port + ("" if path == "/" else " `%s`" % path)
+        ld = "[`%s`](%s)" % (loader.split("/")[-1], loader) if loader else \
+             "keiner — URL-Quelle `http://localhost:%d%s`" % (port, path)
+        img = '<img src="streamdeck_icons/%s/%s.png" width="64" alt="%s">'
+        group = {"VOR DEM RENNEN": "Vor dem Rennen", "NACH DEM RENNEN": "Nach dem Rennen"
+                 }.get(CAT[cat][0], CAT[cat][0].capitalize())
+        title = "**%s**" % label + ("" if friendly.lower() == label.lower() else "<br>" + friendly)
+        rows.append("| %s | %s | %s | %s | %s | %s |" % (
+            group, title, where, ld,
+            img % ("overlays", name, label), img % ("overlays_off", name, label + " aus")))
+    rows += ["", "Bedienseiten (kein OBS): Überhol-Fenster `http://localhost:5000/overtakes/panel` "
+             '<img src="streamdeck_icons/dashboard/ot_panel.png" width="48" alt="Überhol-Fenster">, '
+             "Race Control `http://localhost:8080`. Kamera- und Replay-Tasten: "
+             "[streamdeck_icons/README.md](streamdeck_icons/README.md).", ""]
+    TABLE.write_text("\n".join(rows), encoding="utf-8")
+    print("wrote", TABLE.name)
+
+
 def main():
-    # optional args = only these folders, e.g. `overlays_off dashboard_off`
+    # optional args = only these folders, e.g. `overlays_off dashboard_off`;
+    # `--table` = only rewrite OVERLAY_TABLE.md
     only = set(sys.argv[1:])
+    write_table()
+    if only == {"--table"}:
+        return 0
     browser = find_browser()
     if not browser:
         print("No Edge / Chrome / Chromium found (set CHROME=<path to browser>).")
