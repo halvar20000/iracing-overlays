@@ -177,6 +177,18 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 13, 2026 (/lastrace — PRO then AM in Pro/Am seasons):** same
+mixed-list complaint as /table. In Pro/Am seasons every /lastrace view (each
+race, COMBINED if >1 race) is split into PRO then AM, 20 s each (`cycleSec()`;
+?cycle= overrides, non-Pro/Am stays 15 s), restarting at PRO on show. Inside
+the class `classRace()` renumbers positions, grid slots, gap / laps behind and
+the fastest lap. GOTCHA: race-result `points` are the OVERALL points (AM winner
+Bastian P7 overall = 23); class points come from `combined[].raceN.points`
+(35), fallback `classPointsTable`. Combined per class shows class positions
+in R1/R2. `?class=pro|am|all` as on /table, ?race= still pins a race.
+Rendered with the live WCT R3 Zandvoort feed: PRO 12 / AM 10, switch at 20 s,
+back at 40 s, points = CLS. Restart 5010.
+
 **October 13, 2026 (/rsvp — WCT GT3 is opt-out):** in WCT GT3 drivers only
 DECLINE, nobody accepts, so "No answer" IS racing. /rsvp on 5010: for leagues
 in `OPTOUT_LEAGUES` (JS, PRERACE_HTML; only `cas-gt3-wct`, matched on

@@ -1736,7 +1736,9 @@ PRERACE_HTML = r"""<!DOCTYPE html>
 <style>
     /* Pre-race pages from CLS (2026-10-08) — one page, four views by path:
          /lastrace  results of the last completed round (?race=1|2, else
-                    both races alternate every ?cycle=15 s), ?top=N
+                    both races alternate every ?cycle=15 s), ?top=N;
+                    Pro/Am seasons: each view PRO then AM, 20 s each,
+                    ?class=pro|am|all as on /table
          /table     championship standings BEFORE the round, ?top=N;
                     Pro/Am seasons: PRO then AM, ?cycle=20 s each,
                     ?class=pro|am pins one, ?class=all = mixed list
@@ -1834,8 +1836,10 @@ const RACE_P = (qs.get('race') || '').toLowerCase();   // '1' | '2' | 'combined'
 const CLASS_P = (qs.get('class') || '').toLowerCase(); // /table: 'pro' | 'am' | 'all' | '' (cycle)
 const OPTOUT_P = qs.get('optout') || '';                 // /rsvp: '1' | '0' | '' (by league)
 const OPTOUT_LEAGUES = ['cas-gt3-wct'];                  // only declines count — no answer = racing
-// seconds per view: /lastrace races 15 s, /table Pro → Am 20 s
-const CYCLE = parseFloat(qs.get('cycle') || (MODE === 'table' ? '20' : '15'));
+// seconds per view: /lastrace races 15 s, Pro/Am pages (/table, /lastrace in
+// a Pro/Am season) 20 s per class
+const CYCLE_Q = parseFloat(qs.get('cycle') || '0');
+const cycleSec = proAm => CYCLE_Q || (proAm || MODE === 'table' ? 20 : 15);
 
 function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function abbrev(full) { const p = String(full || '').trim().split(/\s+/); return p.length < 2 ? (full || '') : `${p[0][0]}. ${p.slice(1).join(' ')}`; }
@@ -1865,18 +1869,28 @@ function renderLastRace(d) {
     if (!lr || !(lr.races || []).length) return '<div class="msg">No completed round yet.</div>';
     // Views: each race, then the round's combined classification (when CLS
     // sends one and the round had more than one race).
-    const views = lr.races.map(r => ({ kind: 'race', race: r, label: `RACE ${r.raceNumber}` }));
-    if ((lr.combined || []).length && lr.races.length > 1) views.push({ kind: 'combined', label: 'COMBINED' });
-    let view;
-    if (RACE_P === 'combined' || RACE_P === 'c') view = views.find(v => v.kind === 'combined') || views[0];
-    else if (RACE_P) view = views.find(v => v.race && String(v.race.raceNumber) === RACE_P) || views[0];
-    else {
-        if (Date.now() - lastSwitch > CYCLE * 1000) { raceIdx = (raceIdx + 1) % views.length; lastSwitch = Date.now(); }
-        view = views[raceIdx % views.length];
-    }
+    // Pro/Am seasons (WCT GT3, 2026-10-13): every view split into PRO, then
+    // AM (?cycle= s each, default 20), positions renumbered inside the class
+    // — CLS points are class points already. ?class=pro|am pins one class,
+    // ?class=all = the old mixed list.
+    const st = d.standings;
+    const all = lr.races.flatMap(r => r.results);
+    const present = ['PRO', 'AM'].filter(c => all.some(x => x.proAmClass === c));
+    const proAm = !!(st && st.season && st.season.proAmEnabled) && present.length > 0 && CLASS_P !== 'all';
+    const classes = !proAm ? [null] : (CLASS_P === 'pro' || CLASS_P === 'am')
+        ? [present.find(c => c === CLASS_P.toUpperCase()) || present[0]] : present;
+    let base = lr.races.map(r => ({ kind: 'race', race: r, label: `RACE ${r.raceNumber}` }));
+    if ((lr.combined || []).length && lr.races.length > 1) base.push({ kind: 'combined', label: 'COMBINED' });
+    if (RACE_P === 'combined' || RACE_P === 'c') base = [base.find(v => v.kind === 'combined') || base[0]];
+    else if (RACE_P) base = [base.find(v => v.race && String(v.race.raceNumber) === RACE_P) || base[0]];
+    const views = base.flatMap(v => classes.map(cls => ({ ...v, cls,
+        label: cls ? (base.length > 1 ? `${v.label} · ${cls}` : cls) : v.label })));
+    if (Date.now() - lastSwitch > cycleSec(proAm) * 1000) { raceIdx = (raceIdx + 1) % views.length; lastSwitch = Date.now(); }
+    const view = views[raceIdx % views.length];
     const tabs = views.length > 1 ? `<div class="tabs">${views.map(v => `<span class="${v === view ? 'on' : ''}">${v.label}</span>`).join('')}</div>` : '';
-    if (view.kind === 'combined') return renderCombined(lr, tabs);
-    const race = view.race;
+    const title = `LAST ROUND${view.cls ? ' · ' + view.cls : ''}`;
+    if (view.kind === 'combined') return renderCombined(lr, tabs, view.cls, title);
+    const race = view.cls ? classRace(view.race, view.cls, lr, st) : view.race;
     const cols = '30px 12px 30px minmax(0,1fr) 28px 96px 78px 44px';
     // CLS often has no total race time (imported results) — then the column
     // shows grid → result instead of a time gap.
@@ -1902,16 +1916,51 @@ function renderLastRace(d) {
             <div class="r">${x.points ? '+' + x.points : ''}</div></div>`;
     }).join('');
     return `<div class="card">
-        <div class="top"><span>LAST ROUND</span><span class="sub">R${lr.number} ${esc(lr.name)}</span></div>${tabs}
+        <div class="top"><span>${title}</span><span class="sub">R${lr.number} ${esc(lr.name)}</span></div>${tabs}
         <div class="head" style="grid-template-columns:${cols}"><span></span><span></span><span class="c">#</span><span class="nm">driver</span><span></span>
             <span class="r">${haveGaps ? 'gap' : 'grid'}</span><span class="r">best</span><span class="r">pts</span></div>
         ${rows}</div>`;
 }
 
-function renderCombined(lr, tabs) {
+// One race reduced to a Pro/Am class: positions, grid slots, gaps and the
+// fastest lap all measured inside the class. Race-result `points` are the
+// OVERALL points; the class points come from CLS's round classification
+// (combined[].raceN.points), fallback the season's classPointsTable.
+function classRace(race, cls, lr, st) {
+    const res = race.results.filter(x => x.proAmClass === cls);
+    const lead = res.find(x => x.status === 'CLASSIFIED');
+    const grid = res.filter(x => x.startPosition).map(x => x.startPosition).sort((a, b) => a - b);
+    const best = Math.min(...res.filter(x => x.bestLapMs > 0).map(x => x.bestLapMs));
+    return { ...race, results: res.map((x, i) => ({ ...x, position: i + 1,
+        startPosition: x.startPosition ? grid.indexOf(x.startPosition) + 1 : null,
+        gapMs: x.gapMs != null && lead && lead.gapMs != null ? x.gapMs - lead.gapMs : x.gapMs,
+        lapsBehind: lead && x.laps != null && lead.laps != null ? Math.max(0, lead.laps - x.laps) : x.lapsBehind,
+        fastestLap: x.bestLapMs > 0 && x.bestLapMs === best,
+        points: classPts(x, i + 1, race.raceNumber, lr, st) })) };
+}
+function classPts(x, pos, n, lr, st) {
+    const c = ((lr && lr.combined) || []).find(y => (y.iracingMemberId && y.iracingMemberId === x.iracingMemberId) || y.name === x.name);
+    const r = c && c['race' + n];
+    if (r && r.points != null) return r.points;
+    const t = st && st.scoring && st.scoring.classPointsTable;
+    return x.status === 'CLASSIFIED' && t ? (t[pos] || 0) : x.points;
+}
+
+function renderCombined(lr, tabs, cls, title) {
     const cols = '30px 12px 30px minmax(0,1fr) 28px 46px 46px 44px 52px';
-    const rp = r => !r ? '<span class="mut">–</span>' : (r.status === 'CLASSIFIED' ? r.position : `<span class="tag">${esc(r.status)}</span>`);
-    const rows = lim(lr.combined).map(x => `<div class="row" style="grid-template-columns:${cols}">
+    let rp = r => !r ? '<span class="mut">–</span>' : (r.status === 'CLASSIFIED' ? r.position : `<span class="tag">${esc(r.status)}</span>`);
+    let list = lr.combined;
+    if (cls) {
+        // race columns show the CLASS finishing position
+        const pos = {};
+        lr.races.forEach(r => classRace(r, cls, lr, null).results.forEach(x => { pos[r.raceNumber + ':' + (x.iracingMemberId || x.name)] = x.position; }));
+        list = list.filter(x => x.proAmClass === cls).map((x, i) => {
+            const k = n => pos[n + ':' + (x.iracingMemberId || x.name)];
+            const fix = (r, n) => r && r.status === 'CLASSIFIED' && k(n) ? { ...r, position: k(n) } : r;
+            return { ...x, position: i + 1, race1: fix(x.race1, 1), race2: fix(x.race2, 2) };
+        });
+    }
+    const rows = lim(list).map(x => `<div class="row" style="grid-template-columns:${cols}">
         <div class="pos ${x.position === 1 ? 'p1' : ''}">${x.position}</div>
         ${x.proAmClass ? `<div class="pa ${x.proAmClass}"></div>` : '<span></span>'}
         <div class="num">${esc(x.startNumber || '')}</div>
@@ -1920,7 +1969,7 @@ function renderCombined(lr, tabs) {
         <div class="r" style="color:var(--down)">${x.penalty ? '−' + x.penalty : ''}</div>
         <div class="r" style="font-weight:800">${x.total}</div></div>`).join('');
     return `<div class="card">
-        <div class="top"><span>LAST ROUND</span><span class="sub">R${lr.number} ${esc(lr.name)}</span></div>${tabs}
+        <div class="top"><span>${title || 'LAST ROUND'}</span><span class="sub">R${lr.number} ${esc(lr.name)}</span></div>${tabs}
         <div class="head" style="grid-template-columns:${cols}"><span></span><span></span><span class="c">#</span><span class="nm">driver</span><span></span>
             <span class="c">R1</span><span class="c">R2</span><span class="r">pen</span><span class="r">pts</span></div>
         ${rows}</div>`;
@@ -1970,7 +2019,7 @@ function renderTable(d) {
         let cls;
         if (CLASS_P === 'pro' || CLASS_P === 'am') cls = classes.find(c => c === CLASS_P.toUpperCase()) || classes[0];
         else {
-            if (Date.now() - lastSwitch > CYCLE * 1000) { raceIdx = (raceIdx + 1) % classes.length; lastSwitch = Date.now(); }
+            if (Date.now() - lastSwitch > cycleSec(true) * 1000) { raceIdx = (raceIdx + 1) % classes.length; lastSwitch = Date.now(); }
             cls = classes[raceIdx % classes.length];
         }
         list = st.standings.filter(x => x.proAmClass === cls).map((x, i) => ({ ...x, rank: i + 1 }));
