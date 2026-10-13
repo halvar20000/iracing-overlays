@@ -193,7 +193,24 @@ deviceDidConnect → plugin does not filter on isConnected. Bundle: rollup →
 `com.halvar.obspages.sdPlugin/bin/plugin.js` (gitignored); package
 `dist/com.halvar.obspages.streamDeckPlugin` (validated with `streamdeck
 validate`). `npm test` 19/19 incl. END-TO-END: built plugin spawned against a
-fake Stream Deck websocket + fake OBS. NOT yet tried on the real decks.
+fake Stream Deck websocket + fake OBS. CONFIRMED by Thomas on the real decks 2026-10-12.
+FOLLOW-UP 2026-10-13 (v1.1, for Andreas: decks "Main"/"Cam", own page per
+deck): SETTINGS WINDOW = property inspector of the OBS-Status key
+(`ui/settings.html`, vanilla JS, no CDN). OBS port/password + live status;
+per deck "nicht umschalten" or a bundled profile whose DeviceType fits; scene
+list LIVE from OBS (GetSceneList, re-read on SceneListChanged/Created/Removed/
+NameChanged, sorted by sceneIndex DESC = dock order — fake-OBS assumption,
+not checked against a real OBS) × deck → page, blank = deck stays. Model
+`{version:1, obs, decks:{name:profile}, pages:{scene:{deck:page}}}` in the
+app's GLOBAL settings (survive plugin updates); nothing stored → config.json
+(converted by `fromConfig`, same page for all decks). Plugin owns all logic:
+PI sends get/save/reset/apply via sendToPlugin, gets `state` back.
+`ObsClient.configure()` reconnects on a port change. No confirm() in the PI
+(reset = click twice). npm test 38/38 (save, live apply, restart keeps
+settings, port change, reset); full chain (real plugin + settings.html in
+headless Chromium via CDP + fake app routing + fake OBS, Andreas's 4 decks)
+14/14 — that harness lives only in the session scratchpad. Look in the real
+app NOT yet seen.
 Same day, no code: stream key light NEEWER GL25B on Tasmota plug
 `switch.neewer_gl25b` in Home Assistant, switched by OBS Advanced Scene
 Switcher → HA webhooks (GET; ASS's POST body breaks HA's JSON parse).

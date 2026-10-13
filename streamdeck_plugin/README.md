@@ -4,7 +4,10 @@ Wechselt die beiden **Stream Deck XL** automatisch auf die passende Seite,
 sobald in OBS die Szene wechselt – egal ob per Ulanzi, Maus oder Makro.
 Die anderen Decks (Stream Deck, Stream Deck +) werden nie angefasst.
 
-| OBS-Szene | Seite auf XLlinks und XLrechts |
+**Für andere Nutzer (z. B. Andreas): Schritt-für-Schritt-Anleitung in
+[ANLEITUNG.md](ANLEITUNG.md).**
+
+| OBS-Szene (Voreinstellung) | Seite auf XLlinks und XLrechts |
 |---|---|
 | Intro | 1 |
 | Moderator | 2 |
@@ -21,9 +24,9 @@ Die anderen Decks (Stream Deck, Stream Deck +) werden nie angefasst.
    Stream-Deck-App fragt „Installieren?“ → Ja.
 3. Die App fragt, ob die Profile **XLlinks** und **XLrechts** installiert
    werden sollen → **Ja**. Es sind die Profile aus deinem Export.
-4. Die Decks müssen in der Stream-Deck-App **XLlinks** und **XLrechts**
-   heißen (Geräte-Einstellungen). Groß-/Kleinschreibung und Leerzeichen sind
-   egal.
+4. Heißen die Decks in der Stream-Deck-App **XLlinks** und **XLrechts**,
+   gilt sofort die Voreinstellung (Tabelle oben). Andere Namen oder andere
+   Seiten → Einstellungsfenster (unten).
 
 ## Wichtig: Seiten anlegen
 
@@ -38,21 +41,30 @@ Plugin-Profil die Seiten 2–5 an (rechts neben den Seitenpunkten „+“) und
 belege sie. Fehlt eine Seite, kann der Wechsel auf sie nicht klappen (was
 die App dann genau anzeigt, ließ sich ohne echtes Deck nicht testen).
 
-## Zuordnung ändern
+## Zuordnung ändern – Einstellungsfenster (ab Version 1.1)
 
-Szenennamen, Seitennummern, Deck-Namen und OBS-Port stehen in
-`config.json` im installierten Plugin-Ordner:
+Taste **„OBS-Status“** auf ein Deck ziehen und in der Stream-Deck-App
+anklicken. Unten erscheinen die Einstellungen:
+
+- **OBS:** Verbindung (grün/rot), Port, Passwort.
+- **Decks:** pro Deck „nicht umschalten“ oder Profil XLlinks / XLrechts
+  (nur XL – andere Decks können die XL-Profile nicht laden).
+- **Szene → Seite:** Szenen kommen live aus OBS; pro Szene und Deck eine
+  Seitennummer, **jedes Deck kann eine andere Seite bekommen**. Leer = Deck
+  bleibt, wo es ist.
+
+Wird sofort gespeichert und gilt sofort. Gespeichert wird in der
+Stream-Deck-App (globale Plugin-Einstellungen), nicht in einer Datei – bleibt
+also bei Plugin-Updates erhalten. **Zurücksetzen** löscht das, dann gilt
+wieder `config.json` im Plugin-Ordner (die Voreinstellung oben):
 
 `%APPDATA%\Elgato\StreamDeck\Plugins\com.halvar.obspages.sdPlugin\config.json`
 
-Nach dem Ändern die Stream-Deck-App neu starten. (Ein Plugin-Update
-überschreibt die Datei – Änderungen deshalb auch hier im Repo eintragen.)
+## Taste „OBS-Status“
 
-## Taste „OBS-Status“ (optional)
-
-In der Aktionsliste unter **OBS Seitenwechsel**. Zeigt „OBS aus“ oder die
-aktuelle Szene. Drücken = Seiten für die laufende Szene erneut setzen, z. B.
-nachdem du von Hand geblättert hast.
+Zeigt „OBS aus“ oder die aktuelle Szene. Drücken = Seiten für die laufende
+Szene erneut setzen, z. B. nachdem du von Hand geblättert hast. Anklicken in
+der App = Einstellungen (siehe oben).
 
 ## Fehlersuche
 
@@ -65,7 +77,8 @@ jedem Szenenwechsel umgeschaltet wurde („scene "iRacing" -> XLlinks: …“).
 ```
 npm install
 npm run build     # bündelt src/ nach com.halvar.obspages.sdPlugin/bin/
-npm test          # 19 Prüfungen, inkl. echter Lauf gegen Fake-Stream-Deck + Fake-OBS
+npm test          # 38 Prüfungen, inkl. echter Lauf gegen Fake-Stream-Deck + Fake-OBS
+                  # (Einstellungen speichern, Neustart, OBS-Port wechseln, Zurücksetzen)
 npm run pack      # baut dist/com.halvar.obspages.streamDeckPlugin
 ```
 

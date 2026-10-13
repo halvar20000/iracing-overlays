@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<title>OBS Seitenwechsel</title>
+<style>
+  /* Stream Deck property inspector look: dark, small, full width */
+  :root { --bg:#2d2d2d; --field:#3d3d3d; --line:#4a4a4a; --text:#d8d8d8; --dim:#969696; --ok:#4cbb6c; --bad:#e0574f; --on:#3b82f6; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:8px 10px 14px; background:var(--bg); color:var(--text);
+         font:12px/1.4 "Segoe UI", -apple-system, Arial, sans-serif; }
+  h2 { font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--dim);
+       margin:14px 0 6px; border-bottom:1px solid var(--line); padding-bottom:3px; }
+  h2:first-child { margin-top:2px; }
+  .row { display:flex; align-items:center; gap:8px; margin:4px 0; }
+  .row label { width:80px; flex:none; color:var(--dim); }
+  input, select { background:var(--field); color:var(--text); border:1px solid transparent; border-radius:3px;
+                  padding:3px 6px; font:inherit; min-width:0; }
+  input:focus, select:focus { outline:none; border-color:var(--on); }
+  .row input, .row select { flex:1; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; background:var(--bad); }
+  .dot.ok { background:var(--ok); }
+  .hint { color:var(--dim); font-size:11px; margin:4px 0; }
+  .warn { color:#e8b04b; }
+  table { width:100%; border-collapse:collapse; }
+  th { font-weight:600; color:var(--dim); text-align:left; padding:3px 4px; font-size:11px;
+       overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:80px; }
+  td { padding:2px 4px; border-top:1px solid #363636; }
+  td.scene { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:130px; }
+  td.live { color:#fff; font-weight:600; }
+  td.live::before { content:"● "; color:var(--bad); }
+  td.page { width:52px; }
+  td.page input { width:48px; text-align:center; }
+  td.x { width:18px; }
+  .gone { color:var(--dim); font-style:italic; }
+  button { background:var(--field); color:var(--text); border:1px solid var(--line); border-radius:3px;
+           padding:4px 10px; font:inherit; cursor:pointer; }
+  button:hover { border-color:var(--on); }
+  button.link { background:none; border:none; color:var(--dim); padding:0 2px; }
+  button.link:hover { color:var(--bad); }
+  .buttons { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+  #saved { margin-left:auto; color:var(--ok); align-self:center; opacity:0; transition:opacity .3s; }
+  #saved.show { opacity:1; }
+  #add { display:flex; gap:6px; margin-top:6px; }
+  #add input { flex:1; }
+</style>
+</head>
+<body>
+<h2>OBS</h2>
+<div class="row" id="obsStatus"><span class="dot"></span><span>…</span></div>
+<div class="row"><label for="port">Port</label><input id="port" type="number" min="1" max="65535" data-k="port"></div>
+<div class="row"><label for="password">Passwort</label><input id="password" type="password" placeholder="leer = ohne Passwort" data-k="password"></div>
+
+<h2>Decks</h2>
+<div id="decks"></div>
+<div class="hint">Nur Decks mit einem Profil blättern mit. Alle anderen werden nie umgeschaltet.</div>
+
+<h2>Szene → Seite</h2>
+<div id="scenes"></div>
+<div id="add"><input id="newScene" placeholder="Szene von Hand hinzufügen"><button id="addBtn">+</button></div>
+<div class="hint">Leeres Feld = dieses Deck bleibt bei dieser Szene, wo es ist.</div>
+
+<div class="buttons">
+  <button id="apply" title="Seiten für die laufende Szene jetzt setzen">Jetzt anwenden</button>
+  <button id="reset" title="Gespeicherte Einstellungen löschen, config.json gilt wieder">Zurücksetzen</button>
+  <span id="saved">gespeichert ✓</span>
+</div>
+<div class="hint" id="source"></div>
+
+<script>
+"use strict";
+let ws = null, ctx = null, actionUUID = null;
+let state = null;      // last state from the plugin
+let draft = null;      // settings being edited
+let saveTimer = null;
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+const norm = (s) => String(s || "").toLowerCase().replace(/\s+/g, "");
+
+// Called by the Stream Deck app when the settings window opens.
+function connectElgatoStreamDeckSocket(port, uuid, registerEvent, info, actionInfo) {
+  ctx = uuid;
+  try { actionUUID = JSON.parse(actionInfo).action; } catch { actionUUID = "com.halvar.obspages.status"; }
+  ws = new WebSocket("ws://127.0.0.1:" + port);
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ event: registerEvent, uuid }));
+    send({ type: "get" });
+  };
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.event === "sendToPropertyInspector" && m.payload && m.payload.type === "state") onState(m.payload);
+  };
+}
+window.connectElgatoStreamDeckSocket = connectElgatoStreamDeckSocket;
+
+function send(payload) {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ event: "sendToPlugin", action: actionUUID, context: ctx, payload }));
+}
+
+function onState(s) {
+  state = s;
+  if (!saveTimer) draft = JSON.parse(JSON.stringify(s.settings));
+  render();
+}
+
+function scheduleSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    send({ type: "save", settings: draft });
+    const el = $("saved");
+    el.classList.add("show");
+    setTimeout(() => el.classList.remove("show"), 1500);
+  }, 400);
+}
+
+// ------------------------------------------------------------- render
+function deckColumns() {
+  // decks that switch, in the order of the deck list
+  return deckRows().filter((d) => draft.decks[d.name]).map((d) => d.name);
+}
+
+function deckRows() {
+  const rows = state.decks.map((d) => ({ name: d.name, type: d.type, connected: d.connected !== false, known: true }));
+  for (const name of Object.keys(draft.decks)) {
+    if (!rows.some((r) => norm(r.name) === norm(name))) rows.push({ name, type: null, connected: false, known: false });
+  }
+  return rows;
+}
+
+function deckKey(name) {
+  // the saved key for a deck (names match ignoring case / spaces, like the plugin)
+  return Object.keys(draft.decks).find((k) => norm(k) === norm(name)) || name;
+}
+
+function sceneRows() {
+  const live = state.obs.scenes || [];
+  const rows = live.map((name) => ({ name, inObs: true }));
+  for (const name of Object.keys(draft.pages)) {
+    if (!rows.some((r) => norm(r.name) === norm(name))) rows.push({ name, inObs: !state.obs.scenes });
+    // OBS offline -> we cannot tell; don't flag everything as missing
+  }
+  return rows.map((r) => ({ ...r, key: Object.keys(draft.pages).find((k) => norm(k) === norm(r.name)) || r.name }));
+}
+
+function render() {
+  if (!state || !draft) return;
+  const focus = document.activeElement && document.activeElement.dataset ? { ...document.activeElement.dataset } : null;
+
+  // OBS
+  const o = state.obs;
+  $("obsStatus").innerHTML = o.connected
+    ? `<span class="dot ok"></span><span>verbunden · Szene: <b>${esc(o.scene || "?")}</b></span>`
+    : `<span class="dot"></span><span>nicht verbunden${o.error ? " (" + esc(o.error) + ")" : ""}<br><span class="hint">OBS starten · Werkzeuge → WebSocket-Server-Einstellungen: Server an</span></span>`;
+  if (document.activeElement !== $("port")) $("port").value = draft.obs.port;
+  if (document.activeElement !== $("password")) $("password").value = draft.obs.password;
+
+  // Decks
+  let h = "";
+  for (const d of deckRows()) {
+    const key = deckKey(d.name);
+    const current = draft.decks[key] || "";
+    const fits = state.profiles.filter((p) => d.type === null || p.deviceType === d.type);
+    let opts = `<option value="">nicht umschalten</option>`;
+    for (const p of fits) opts += `<option value="${esc(p.name)}"${p.name === current ? " selected" : ""}>Profil ${esc(p.name)}</option>`;
+    if (current && !fits.some((p) => p.name === current)) opts += `<option value="${esc(current)}" selected>Profil ${esc(current)} (passt nicht)</option>`;
+    const note = !d.known ? " <span class='gone'>(nicht angeschlossen)</span>" : (!fits.length ? " <span class='gone'>(kein passendes Profil)</span>" : "");
+    h += `<div class="row"><label title="${esc(d.name)}">${esc(d.name)}</label><select data-deck="${esc(d.name)}"${!fits.length && !current ? " disabled" : ""}>${opts}</select></div>`;
+    if (note) h += `<div class="hint" style="margin:-2px 0 4px 88px">${note}</div>`;
+  }
+  $("decks").innerHTML = h || `<div class="hint">Keine Decks gefunden.</div>`;
+
+  // Scenes x decks
+  const cols = deckColumns();
+  const rows = sceneRows();
+  if (!cols.length) {
+    $("scenes").innerHTML = `<div class="hint warn">Erst oben bei mindestens einem Deck ein Profil wählen.</div>`;
+  } else if (!rows.length) {
+    $("scenes").innerHTML = `<div class="hint">${o.connected ? "OBS meldet keine Szenen." : "Die Szenen kommen aus OBS, sobald es verbunden ist."}</div>`;
+  } else {
+    let t = `<table><tr><th>Szene</th>${cols.map((c) => `<th title="${esc(c)}">${esc(c)}</th>`).join("")}<th></th></tr>`;
+    for (const r of rows) {
+      const live = o.connected && norm(o.scene) === norm(r.name);
+      const row = draft.pages[r.key] || {};
+      t += `<tr><td class="scene${live ? " live" : ""}${r.inObs ? "" : " gone"}" title="${esc(r.name)}${r.inObs ? "" : " – gibt es in OBS nicht (mehr)"}">${esc(r.name)}</td>`;
+      for (const c of cols) {
+        const dk = Object.keys(row).find((k) => norm(k) === norm(c));
+        const v = dk ? row[dk] : "";
+        t += `<td class="page"><input type="number" min="1" max="99" placeholder="–" value="${esc(v)}" data-scene="${esc(r.key)}" data-col="${esc(c)}"></td>`;
+      }
+      t += `<td class="x">${r.inObs ? "" : `<button class="link" data-del="${esc(r.key)}" title="entfernen">✕</button>`}</td></tr>`;
+    }
+    $("scenes").innerHTML = t + "</table>";
+  }
+
+  // where the settings come from
+  $("source").textContent = state.source === "app"
+    ? "Einstellungen sind in der Stream-Deck-App gespeichert (bleiben bei Plugin-Updates erhalten)."
+    : "Noch nichts gespeichert – es gelten die Werte aus config.json. Die erste Änderung hier speichert sie in der App.";
+
+  // keep the cursor where it was
+  if (focus && focus.scene !== undefined) {
+    const el = [...document.querySelectorAll("input[data-scene]")].find((i) => i.dataset.scene === focus.scene && i.dataset.col === focus.col);
+    if (el) el.focus();
+  }
+}
+
+// -------------------------------------------------------------- edits
+document.addEventListener("input", (e) => {
+  const el = e.target;
+  if (!draft) return;
+  if (el.dataset.k === "port") draft.obs.port = Number(el.value) || 4455;
+  else if (el.dataset.k === "password") draft.obs.password = el.value;
+  else if (el.dataset.scene !== undefined) {
+    const row = draft.pages[el.dataset.scene] || (draft.pages[el.dataset.scene] = {});
+    for (const k of Object.keys(row)) if (norm(k) === norm(el.dataset.col)) delete row[k];
+    const n = Math.round(Number(el.value));
+    if (el.value !== "" && n >= 1 && n <= 99) row[deckKey(el.dataset.col)] = n;
+  } else return;
+  scheduleSave();
+});
+
+document.addEventListener("change", (e) => {
+  const el = e.target;
+  if (!draft || el.dataset.deck === undefined) return;
+  const name = el.dataset.deck;
+  for (const k of Object.keys(draft.decks)) if (norm(k) === norm(name)) delete draft.decks[k];
+  if (el.value) draft.decks[name] = el.value;
+  render();
+  scheduleSave();
+});
+
+document.addEventListener("click", (e) => {
+  const el = e.target;
+  if (el.dataset && el.dataset.del !== undefined && draft) {
+    delete draft.pages[el.dataset.del];
+    render();
+    scheduleSave();
+  }
+});
+
+$("addBtn").onclick = () => {
+  const name = $("newScene").value.trim();
+  if (!name || !draft) return;
+  if (!Object.keys(draft.pages).some((k) => norm(k) === norm(name))) draft.pages[name] = {};
+  $("newScene").value = "";
+  render();
+  scheduleSave();
+};
+$("newScene").addEventListener("keydown", (e) => { if (e.key === "Enter") $("addBtn").click(); });
+$("apply").onclick = () => send({ type: "apply" });
+// two clicks instead of confirm() - dialogs are not reliable in the app's settings view
+let resetArmed = null;
+$("reset").onclick = () => {
+  const b = $("reset");
+  if (!resetArmed) {
+    b.textContent = "Wirklich? Nochmal klicken";
+    resetArmed = setTimeout(() => { resetArmed = null; b.textContent = "Zurücksetzen"; }, 3000);
+    return;
+  }
+  clearTimeout(resetArmed); resetArmed = null; b.textContent = "Zurücksetzen";
+  clearTimeout(saveTimer); saveTimer = null;
+  send({ type: "reset" });
+};
+</script>
+</body>
+</html>
