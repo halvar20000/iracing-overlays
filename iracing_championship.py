@@ -1737,7 +1737,9 @@ PRERACE_HTML = r"""<!DOCTYPE html>
     /* Pre-race pages from CLS (2026-10-08) — one page, four views by path:
          /lastrace  results of the last completed round (?race=1|2, else
                     both races alternate every ?cycle=15 s), ?top=N
-         /table     championship standings BEFORE the round, ?top=N
+         /table     championship standings BEFORE the round, ?top=N;
+                    Pro/Am seasons: PRO then AM, ?cycle=20 s each,
+                    ?class=pro|am pins one, ?class=all = mixed list
          /rsvp      RSVP count for the next round (numbers only)
          /stats     participation per round + season totals
          /lastdotd  the last round's Driver of the Day (from CLS)
@@ -1828,7 +1830,9 @@ document.addEventListener('keydown', e => { if (e.key === 'h' || e.key === 'H') 
 const MODE = location.pathname.replace(/^\/+|\/+$/g, '') || 'lastrace';
 const TOP = parseInt(qs.get('top') || '0', 10);
 const RACE_P = (qs.get('race') || '').toLowerCase();   // '1' | '2' | 'combined' | '' (cycle)
-const CYCLE = parseFloat(qs.get('cycle') || '15');
+const CLASS_P = (qs.get('class') || '').toLowerCase(); // /table: 'pro' | 'am' | 'all' | '' (cycle)
+// seconds per view: /lastrace races 15 s, /table Pro → Am 20 s
+const CYCLE = parseFloat(qs.get('cycle') || (MODE === 'table' ? '20' : '15'));
 
 function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function abbrev(full) { const p = String(full || '').trim().split(/\s+/); return p.length < 2 ? (full || '') : `${p[0][0]}. ${p.slice(1).join(' ')}`; }
@@ -1844,7 +1848,8 @@ function fmtDate(iso) {
 const lim = rows => TOP > 0 ? rows.slice(0, TOP) : rows;
 
 let raceIdx = 0, lastSwitch = Date.now();
-// Every time the source is SHOWN, start again at Race 1 → Race 2 → Combined.
+// Every time the source is SHOWN, start again at Race 1 → Race 2 → Combined
+// (/table: at PRO).
 // OBS keeps hidden browser sources running, so without this the cycle could
 // be anywhere when the scene goes live. OBS fires obsSourceVisibleChanged /
 // obsSourceActiveChanged; visibilitychange covers normal browsers.
@@ -1949,14 +1954,34 @@ function renderTable(d) {
     if (!st || !(st.standings || []).length) return '<div class="msg">No standings yet.</div>';
     const cols = '30px 12px minmax(0,1fr) 28px 160px 56px';
     const next = d.info && d.info.nextRound;
-    const rows = lim(st.standings).map(x => `<div class="row" style="grid-template-columns:${cols}">
+    // Pro/Am seasons (WCT GT3, 2026-10-13): CLS `points` IS the Pro/Am
+    // championship total (class points + participation), so the one mixed
+    // list read as a "combined" table. Show the PRO table, then the AM one,
+    // ?cycle= s each (default 20), restarting at PRO whenever the source is
+    // shown. Ranks renumbered inside the class; CLS order (its tie-breaks)
+    // kept. ?class=pro|am pins one, ?class=all = the old mixed list.
+    const classes = ['PRO', 'AM'].filter(c => st.standings.some(x => x.proAmClass === c));
+    const proAm = !!(st.season && st.season.proAmEnabled) && classes.length > 0 && CLASS_P !== 'all';
+    let list = st.standings, label = '', tabs = '';
+    if (proAm) {
+        let cls;
+        if (CLASS_P === 'pro' || CLASS_P === 'am') cls = classes.find(c => c === CLASS_P.toUpperCase()) || classes[0];
+        else {
+            if (Date.now() - lastSwitch > CYCLE * 1000) { raceIdx = (raceIdx + 1) % classes.length; lastSwitch = Date.now(); }
+            cls = classes[raceIdx % classes.length];
+        }
+        list = st.standings.filter(x => x.proAmClass === cls).map((x, i) => ({ ...x, rank: i + 1 }));
+        label = ' · ' + cls;
+        if (classes.length > 1) tabs = `<div class="tabs">${classes.map(c => `<span class="${c === cls ? 'on' : ''}">${c}</span>`).join('')}</div>`;
+    }
+    const rows = lim(list).map(x => `<div class="row" style="grid-template-columns:${cols}">
         <div class="pos ${x.rank === 1 ? 'p1' : ''}">${x.rank}</div>
         ${x.proAmClass ? `<div class="pa ${x.proAmClass}"></div>` : '<span></span>'}
         <div class="nm">${esc(x.name)}${x.retiredAt ? ' <span class="tag">RETIRED</span>' : ''}</div>${flag(x.countryCode)}
         <div class="nm mut">${esc(x.teamName || '')}</div>
         <div class="r">${x.points}</div></div>`).join('');
     return `<div class="card">
-        <div class="top"><span>CHAMPIONSHIP</span><span class="sub">${next ? `before R${next.number} ${esc(next.name)}` : esc(st.season?.name || '')}</span></div>
+        <div class="top"><span>CHAMPIONSHIP${label}</span><span class="sub">${next ? `before R${next.number} ${esc(next.name)}` : esc(st.season?.name || '')}</span></div>${tabs}
         <div class="head" style="grid-template-columns:${cols}"><span></span><span></span><span class="nm">driver</span><span></span><span class="nm">team</span><span class="r">pts</span></div>
         ${rows}</div>`;
 }

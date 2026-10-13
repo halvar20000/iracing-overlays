@@ -177,6 +177,18 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 13, 2026 (championship /table — PRO then AM in Pro/Am seasons):**
+in a WCT GT3 session /table showed one mixed list ("combined"). CLS
+standings `points` already IS the Pro/Am total (classRawPoints +
+participation; `combinedTotal` is the overall one), so only the split was
+missing: Pro/Am seasons (season.proAmEnabled) now show the PRO table, then
+the AM one, `?cycle=` s each (default 20 on /table, /lastrace keeps 15),
+restarting at PRO every time the source is shown (same OBS visibility hook as
+/lastrace). Ranks renumbered inside the class, CLS order (tie-breaks) kept.
+`?class=pro|am` pins one, `?class=all` = old mixed list. Other leagues
+unchanged. Rendered with the live WCT 14th-season feed in Chromium: PRO 16 /
+AM 20, switch at 20 s and back at 40 s. Restart 5010.
+
 **October 12, 2026 (Stream Deck plugin "OBS Seitenwechsel", `streamdeck_plugin/`):**
 not an overlay (no port, launchers untouched). Node SDK 3 (@elgato/streamdeck
 3.0.2, SDKVersion 3, Node 24, Stream Deck ≥ 7.1; Thomas runs 7.6). Watches
@@ -199,8 +211,8 @@ deck): SETTINGS WINDOW = property inspector of the OBS-Status key
 (`ui/settings.html`, vanilla JS, no CDN). OBS port/password + live status;
 per deck "nicht umschalten" or a bundled profile whose DeviceType fits; scene
 list LIVE from OBS (GetSceneList, re-read on SceneListChanged/Created/Removed/
-NameChanged, sorted by sceneIndex DESC = dock order — fake-OBS assumption,
-not checked against a real OBS) × deck → page, blank = deck stays. Model
+NameChanged, sorted by sceneIndex DESC = dock order — CONFIRMED by Thomas
+against his real OBS dock 2026-10-13) × deck → page, blank = deck stays. Model
 `{version:1, obs, decks:{name:profile}, pages:{scene:{deck:page}}}` in the
 app's GLOBAL settings (survive plugin updates); nothing stored → config.json
 (converted by `fromConfig`, same page for all decks). Plugin owns all logic:
@@ -209,8 +221,9 @@ PI sends get/save/reset/apply via sendToPlugin, gets `state` back.
 (reset = click twice). npm test 38/38 (save, live apply, restart keeps
 settings, port change, reset); full chain (real plugin + settings.html in
 headless Chromium via CDP + fake app routing + fake OBS, Andreas's 4 decks)
-14/14 — that harness lives only in the session scratchpad. Look in the real
-app NOT yet seen.
+14/14 — that harness lives only in the session scratchpad. SEEN in Thomas's
+real app 2026-10-13 (screenshot): renders fine, OBS connected, 6 decks listed,
+only the two XL offer profiles, 7 real OBS scenes.
 Same day, no code: stream key light NEEWER GL25B on Tasmota plug
 `switch.neewer_gl25b` in Home Assistant, switched by OBS Advanced Scene
 Switcher → HA webhooks (GET; ASS's POST body breaks HA's JSON parse).
