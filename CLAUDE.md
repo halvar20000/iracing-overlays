@@ -177,6 +177,18 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 13, 2026 (trackmap — no map at Motegi, WCT R4):** the map EXISTS
+(motegi_gp / motegi_grandprix / twinring_gp from the June 5 OSM bulk build)
+but under GUESSED slugs that never matched iRacing's TrackName. New
+`_resolve_track_file()` in iracing_trackmap.py: exact `<TrackName>.json`
+first; else a bundled `<word>_<layout>` where word = a word (≥4 chars) of
+TrackName / TrackDisplayName and layout = TrackConfigName squeezed
+("grandprix") or its initials ("gp"). Nothing certain → still "not bundled"
+(a wrong map is worse than none). Prints once which file it used and the
+exact name to rename it to. Offline-checked: motegi_fullcourse /
+twinring_fullcourse → the GP map, East stays East, unknown stays unknown.
+Covers every other guessed-slug map of the bulk build too. Restart 5007.
+
 **October 13, 2026 (/lastrace — PRO then AM in Pro/Am seasons):** same
 mixed-list complaint as /table. In Pro/Am seasons every /lastrace view (each
 race, COMBINED if >1 race) is split into PRO then AM, 20 s each (`cycleSec()`;

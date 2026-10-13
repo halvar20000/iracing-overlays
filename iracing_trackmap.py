@@ -28,6 +28,7 @@ Background on the data:
 from __future__ import annotations
 import json
 import math
+import re
 import threading
 import time
 from pathlib import Path
@@ -128,6 +129,46 @@ def _trim_pit_lap(pit, track):
     if len(runs) > 1 and runs[0][0] == 0 and runs[-1][1] == n - 1:
         segs.append(with_ends(*runs[-1]) + with_ends(*runs[0]))
     return max(segs, key=length)
+
+
+_resolve_logged: set = set()
+
+
+def _resolve_track_file(track_file: str, display: str, config: str) -> str:
+    """Exact file first. Otherwise a bundled map of the same circuit + layout.
+
+    Many maps were built by hand (OSM bulk build, June 2026) under GUESSED
+    slugs because iRacing's TrackName wasn't known yet — e.g. Motegi exists
+    as motegi_gp / motegi_grandprix / twinring_gp. Instead of renaming files
+    after every first visit, look for <word>_<layout> where <word> is a word
+    of TrackName / TrackDisplayName ("motegi") and <layout> is the
+    TrackConfigName squeezed ("grandprix") or its initials ("gp"). Anything
+    less certain stays "not bundled" — a wrong map is worse than none.
+    """
+    if not track_file or (TRACKS_DIR / f"{track_file}.json").is_file():
+        return track_file
+    sq = lambda t: re.sub(r"[^a-z0-9]", "", (t or "").lower())
+    words = re.findall(r"[a-z0-9]+", f"{track_file.replace('_', ' ')} {display}".lower())
+    bases = [w for w in dict.fromkeys(words) if len(w) >= 4]
+    cfg_words = re.findall(r"[a-z0-9]+", (config or "").lower())
+    layouts = {sq(config)} | ({"".join(w[0] for w in cfg_words)} if len(cfg_words) > 1 else set())
+    layouts.discard("")
+    stems = sorted(f.stem for f in TRACKS_DIR.glob("*.json")) if TRACKS_DIR.is_dir() else []
+    pick = None
+    for b in bases:
+        same = [st for st in stems if st == b or st.startswith(b + "_")]
+        hit = [st for st in same if sq(st[len(b):]) in layouts]
+        if hit:
+            pick = hit[0]
+            break
+        if len(same) == 1 and not layouts:
+            pick = same[0]
+            break
+    if pick and track_file not in _resolve_logged:
+        _resolve_logged.add(track_file)
+        print(f"[trackmap] no {track_file}.json - using {pick}.json "
+              f"(same circuit, layout {config!r}); rename it to {track_file}.json to make it exact")
+    return pick or track_file
 
 
 def _load_track(track_name: str) -> dict | None:
@@ -357,6 +398,7 @@ class TrackmapPoller(SDKPoller):
         self._last_track_id    = track_id
         self._last_track_file  = track_file
 
+        track_file = _resolve_track_file(track_file, track_display, track_config)
         track = _load_track(track_file)
         cam_idx = ir["CamCarIdx"]
 
