@@ -1740,7 +1740,8 @@ PRERACE_HTML = r"""<!DOCTYPE html>
          /table     championship standings BEFORE the round, ?top=N;
                     Pro/Am seasons: PRO then AM, ?cycle=20 s each,
                     ?class=pro|am pins one, ?class=all = mixed list
-         /rsvp      RSVP count for the next round (numbers only)
+         /rsvp      RSVP count for the next round (numbers only); WCT GT3:
+                    no answer = racing (opt-out), ?optout=1|0 overrides
          /stats     participation per round + season totals
          /lastdotd  the last round's Driver of the Day (from CLS)
        Tower style but SOLID panels (moderator screen); ?glass=1 makes them
@@ -1831,6 +1832,8 @@ const MODE = location.pathname.replace(/^\/+|\/+$/g, '') || 'lastrace';
 const TOP = parseInt(qs.get('top') || '0', 10);
 const RACE_P = (qs.get('race') || '').toLowerCase();   // '1' | '2' | 'combined' | '' (cycle)
 const CLASS_P = (qs.get('class') || '').toLowerCase(); // /table: 'pro' | 'am' | 'all' | '' (cycle)
+const OPTOUT_P = qs.get('optout') || '';                 // /rsvp: '1' | '0' | '' (by league)
+const OPTOUT_LEAGUES = ['cas-gt3-wct'];                  // only declines count — no answer = racing
 // seconds per view: /lastrace races 15 s, /table Pro → Am 20 s
 const CYCLE = parseFloat(qs.get('cycle') || (MODE === 'table' ? '20' : '15'));
 
@@ -1992,12 +1995,20 @@ function renderRsvp(d) {
     const r = n.rsvp, tot = Math.max(1, r.registered);
     const tile = (v, l, c) => `<div class="tile"><div class="v" style="color:${c}">${v}</div><div class="l">${l}</div></div>`;
     const seg = (v, c) => v > 0 ? `<i style="width:${v / tot * 100}%;background:${c}"></i>` : '';
+    // Opt-out leagues (WCT GT3, 2026-10-13): drivers only DECLINE, nobody
+    // accepts — so no answer = racing. ?optout=1|0 overrides per source.
+    const slug = (d.info.league && d.info.league.slug) || '';
+    const optOut = OPTOUT_P === '1' || (OPTOUT_P !== '0' && OPTOUT_LEAGUES.includes(slug));
+    const racing = optOut ? r.accepted + r.noResponse : r.accepted;
+    const tiles = optOut
+        ? `<div class="tiles" style="grid-template-columns:repeat(3,1fr)">${tile(racing, 'Racing', 'var(--up)')}${tile(r.declined, 'Declined', 'var(--down)')}${tile(r.tentative, 'Maybe', 'var(--gold)')}</div>`
+        : `<div class="tiles">${tile(r.accepted, 'Racing', 'var(--up)')}${tile(r.declined, 'Declined', 'var(--down)')}${tile(r.tentative, 'Maybe', 'var(--gold)')}${tile(r.noResponse, 'No answer', 'var(--muted)')}</div>`;
     return `<div class="card">
         <div class="top"><span>RSVP</span><span class="sub">R${n.number} ${esc(n.name)} · ${fmtDate(n.startsAt)}</span></div>
         <div class="rsvp">
-            <div class="tiles">${tile(r.accepted, 'Racing', 'var(--up)')}${tile(r.declined, 'Declined', 'var(--down)')}${tile(r.tentative, 'Maybe', 'var(--gold)')}${tile(r.noResponse, 'No answer', 'var(--muted)')}</div>
-            <div class="stack">${seg(r.accepted, 'var(--up)')}${seg(r.tentative, 'var(--gold)')}${seg(r.declined, 'var(--down)')}</div>
-            <div class="foot"><span>${r.registered} registered drivers</span><span>${r.closed ? 'RSVP closed' : 'RSVP open'}</span></div>
+            ${tiles}
+            <div class="stack">${seg(racing, 'var(--up)')}${seg(r.tentative, 'var(--gold)')}${seg(r.declined, 'var(--down)')}</div>
+            <div class="foot"><span>${r.registered} registered drivers${optOut ? ' · racing unless declined' : ''}</span><span>${r.closed ? 'RSVP closed' : 'RSVP open'}</span></div>
         </div></div>`;
 }
 

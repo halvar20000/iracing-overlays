@@ -177,6 +177,14 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 13, 2026 (/rsvp — WCT GT3 is opt-out):** in WCT GT3 drivers only
+DECLINE, nobody accepts, so "No answer" IS racing. /rsvp on 5010: for leagues
+in `OPTOUT_LEAGUES` (JS, PRERACE_HTML; only `cas-gt3-wct`, matched on
+round-info `league.slug`) Racing = accepted + noResponse, the "No answer" tile
+is dropped (3 tiles), foot says "racing unless declined". `?optout=1|0`
+overrides per source. Other leagues unchanged. Rendered with the live WCT
+feed (R4: 30 racing / 7 declined / 0 maybe of 37). Restart 5010.
+
 **October 13, 2026 (championship /table — PRO then AM in Pro/Am seasons):**
 in a WCT GT3 session /table showed one mixed list ("combined"). CLS
 standings `points` already IS the Pro/Am total (classRawPoints +
