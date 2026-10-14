@@ -1,0 +1,41 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Commentary Voice (REGIE) — loader</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0); overflow: hidden;
+  }
+</style>
+</head>
+<body>
+<script>
+  // SELF-HEALING loader (REDIRECT variant). Waits until the overlay server
+  // first answers, then navigates THIS page straight to the overlay so it runs
+  // as a normal top-level page — identical to opening the URL directly, which
+  // OBS renders reliably. The overlay page then recovers from any later server
+  // hiccup on its own (it keeps polling /status and re-renders), so we never
+  // reload it.
+  var URL_ = "http://localhost:5000/commentary/voice";
+
+  function ping() {
+    return fetch(URL_, { mode: "no-cors", cache: "no-store" })
+      .then(function () { return true; })
+      .catch(function () { return false; });
+  }
+
+  function tick() {
+    ping().then(function (up) {
+      if (up) {
+        window.location.replace(URL_);
+      } else {
+        setTimeout(tick, 1500);
+      }
+    });
+  }
+  tick();
+</script>
+</body>
+</html>

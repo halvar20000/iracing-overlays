@@ -184,6 +184,7 @@ class Commentator:
         self.last_error = ""
         self.last_info = ""
         self._thinking_off_ok = True
+        self.on_line = None            # callback(line dict) for every published line (voice)
 
     # -- public ---------------------------------------------------------------
     @property
@@ -241,9 +242,15 @@ class Commentator:
         with self._lock:
             if self.lines and now - self.lines[0]["t"] < MIN_GAP_S and self.lines[0]["kind"] != "replay":
                 self.lines.popleft()          # the picture moved on before it was read
-            self.lines.appendleft({"id": self._next_id, "t": round(now, 1), "text": text,
-                                   "kind": f["kind"], "source": source})
+            line = {"id": self._next_id, "t": round(now, 1), "text": text,
+                    "kind": f["kind"], "source": source}
+            self.lines.appendleft(line)
             self._next_id += 1
+        if self.on_line is not None:
+            try:
+                self.on_line(dict(line))
+            except Exception:
+                pass
 
     def _publish_template(self, f, now):
         line = template_line(f, self.rng, set(self._recent_tpl))

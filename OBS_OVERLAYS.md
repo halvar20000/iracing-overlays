@@ -22,6 +22,7 @@ Loader-Datei verwenden).
 | Abstandsbalken (Gap Bar) | 5005 `/gapbar` | `gapbar.html` | ✓ frei wählbar × 135 (füllt die Breite) |
 | Überhol-Ticker | 5000 `/ticker` | `ticker.html` | ✓ 650 × 56 |
 | Kommentar (REGIE) | 5000 `/commentary/overlay` | `commentary.html` | ≈ 1130 × 110 (zwei Zeilen; `?width=` ändert die Breite) |
+| Kommentar-Stimme (REGIE) | 5000 `/commentary/voice` | `commentary_voice.html` | unsichtbar, nur Ton — in OBS **„Audio über OBS steuern“** anhaken (beliebige Größe, z. B. 400 × 100) |
 | Driver Card | 5017 | `driver.html` | ✓ 1000 × 130 |
 | Driver Card ohne iRating / Safety Rating | 5017 `/simple` | `driver_simple.html` | ✓ 800 × 130 |
 | Livery (Auto der Kamera) | 5006 | `livery.html` | ≈ 800 × 350 |

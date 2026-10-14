@@ -109,6 +109,7 @@ G = {
     "doc": '<path d="M6 2.5h8l4.5 4.5v14.5H6z"/><path d="M14 2.5V7h4.5M9 12h6.5M9 15.5h6.5M9 19h4"/>',
     "chat": '<path d="M4 4.5h16a1.5 1.5 0 0 1 1.5 1.5v9.5a1.5 1.5 0 0 1-1.5 1.5H10l-5 4v-4H4A1.5 1.5 0 0 1 2.5 15.5V6A1.5 1.5 0 0 1 4 4.5z"/>'
             '<path d="M7 9h10M7 12.5h6"/>',
+    "speaker": '<path d="M3.5 9.5h4l5-4.5v14l-5-4.5h-4z"/><path d="M16 9a4 4 0 0 1 0 6M18.8 6.2a8 8 0 0 1 0 11.6"/>',
     "play": '<rect x="2" y="5" width="20" height="14" rx="4"/><path d="M10 9v6l5-3z" class="F"/>',
     "curve": '<path d="M4 20c0-6 3-8 8-8s8-3 8-8"/><path d="M16.5 4H20v3.5"/>',
     "camera": '<path d="M3 8.5a1.5 1.5 0 0 1 1.5-1.5H7l1.6-2.5h6.8L17 7h2.5A1.5 1.5 0 0 1 21 8.5v10a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/>'
@@ -136,6 +137,7 @@ OVERLAY_ICONS = [
     ("gapbar",        "live",   "gapbar",    "Gap Bar"),
     ("ticker",        "live",   "overtake",  "Überhol Ticker"),
     ("commentary",    "live",   "chat",      "Kommentar"),
+    ("commentary_voice", "live", "speaker",  "Stimme"),
     ("driver",        "live",   "card",      "Driver Card"),
     ("driver_simple", "live",   "card",      "Driver Card simpel"),
     ("livery",        "live",   "car",       "Livery"),

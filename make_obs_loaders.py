@@ -67,6 +67,8 @@ OVERLAYS = [
     ("topspeed",      "Sector Top Speed", 5014, "/speed"),
     # REGIE commentary lower third on the dashboard (2026-10-14).
     ("commentary",    "Commentary (REGIE)", 5000, "/commentary/overlay"),
+    # ...and its spoken version (audio only; top-level page so OBS gets the sound).
+    ("commentary_voice", "Commentary Voice (REGIE)", 5000, "/commentary/voice", "redirect"),
     # Note: racecontrol (iCASControl, port 8080) is an interactive steward
     # web app, opened directly in a browser — NOT an OBS browser source — so
     # it intentionally has no loader page here.

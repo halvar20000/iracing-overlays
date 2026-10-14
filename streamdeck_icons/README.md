@@ -51,6 +51,7 @@ Die Dateinamen sind dieselben wie die Loader in `obs_loaders/`
 | `gapbar.png` | Gap Bar (Live) |
 | `ticker.png` | Überhol Ticker (Live) |
 | `commentary.png` | Kommentar (Live) |
+| `commentary_voice.png` | Stimme (Live) |
 | `driver.png` | Driver Card (Live) |
 | `driver_simple.png` | Driver Card simpel (Live) |
 | `livery.png` | Livery (Live) |

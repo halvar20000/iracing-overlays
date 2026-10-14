@@ -24,6 +24,11 @@ pywin32>=306; sys_platform == "win32"
 # Python wheel so Windows users don't have to install ffmpeg manually.
 imageio-ffmpeg>=0.4.9
 
+# REGIE voice (race_voice.py, dashboard /commentary/voice): Microsoft's neural
+# German voices via the Edge read-aloud service. Optional — without it (or
+# without internet) the voice falls back to the Windows SAPI voice (pywin32).
+edge-tts>=7.0
+
 # Driving Mode (DRIVE.bat / drive.py) — on-top overlay windows while driving.
 # pywebview hosts the Quali Delta / Track Map HTML overlays as always-on-top
 # windows (driving_overlay_window.py); on Windows it uses the Edge WebView2

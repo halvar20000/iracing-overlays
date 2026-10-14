@@ -294,8 +294,40 @@ commentary.html (39), icon, OVERLAY_TABLE, OBS_OVERLAYS.md. Dashboard shows
 the newest line in italics under the REGIE line. Also: events detected
 during our own replay are now marked seen for good (after the NEXT replay
 moved the window they used to become news again). test_race_commentator.py
-17/17; integ2.py 13/13; overlay rendered (demo) in Chromium. No voice yet
-(step 3: TTS into OBS).
+17/17; integ2.py 13/13; overlay rendered (demo) in Chromium.
+FIRST CLAUDE RUN (stream PC, same evening) — three API gotchas, each now shown
+in `/commentary` last_error: (1) "HTTP Error 400" alone said nothing → the
+error BODY is read (Anthropic says why). (2) the key was not scoped to a
+workspace ("must include the anthropic-workspace-id header") → optional
+`workspace_id` in commentary_config.json; Thomas made a workspace key instead.
+(3) claude-haiku-5-5 THINKS by default and spent all 80 tokens on it (only a
+thinking block, stop_reason max_tokens) → `thinking: {type: disabled}`,
+max_tokens 400; if a model rejects that switch, one retry without it and
+3000 tokens, remembered. A reply not used says why (too slow / no text +
+stop_reason). Then real Claude lines, e.g. "Mike Zocher lauert auf Dennis
+Richter, nur 0,44 Sekunden dahinter auf Platz zwei."
+STEP 3 (voice) same evening, while Thomas raced: NEW `race_voice.py`
+(`Voice`): every published commentary line (Commentator.on_line) → audio in a
+background thread, last 12 clips in memory, backlog collapsed to the newest,
+a line > 12 s old dropped. Engines (commentary_config.json "tts"): "edge" =
+Microsoft neural voices via the `edge-tts` package (unofficial Edge read-aloud
+service, free, internet; default de-DE-ConradNeural, "tts_voice" / "tts_rate"
++10 %; ~1 s per line), "sapi" = Windows' own SAPI5 voice via pywin32 (offline,
+robotic, German voice picked by language 407/c07/807 or "sapi_voice"), "auto"
+= edge, SAPI for 60 s after an edge failure; "off". Audio is only made while
+a voice page polls `/commentary?voice=1` (15 s) — nothing goes out when the
+source is not in OBS. Dashboard: `/commentary` lines carry `audio`, plus
+`voice` status and `now`; `GET /commentary/audio/<id>`; OBS page
+`/commentary/voice` (invisible; ?debug=1 / H shows engine, voice, errors,
+last line; ?vol= ?wait=8 ?maxage=15): plays one line at a time, newest only,
+skips history on load. Loader commentary_voice.html is a REDIRECT loader (top
+level page → OBS gets the sound), in OBS tick "Control audio via OBS" → own
+mixer channel. Icon "Stimme" (speaker), OVERLAY_TABLE, OBS_OVERLAYS.md;
+requirements.txt + edge-tts (the updater pip-installs on the change).
+test_race_voice.py 16/16 (+ --live real edge-tts 1.0 s); end-to-end in the
+scratchpad: real dashboard Flask app + real edge-tts + the voice page in
+headless Chromium over CDP → clips fetched and played to the end in order.
+SAPI path NOT run (no Windows here) — first real test on the stream PC.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

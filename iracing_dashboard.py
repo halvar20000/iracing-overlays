@@ -19,6 +19,7 @@ from collections import deque
 from flask import Flask, jsonify, render_template_string, request
 from race_director import RaceDirector
 from race_commentator import Commentator
+from race_voice import Voice
 
 # Windows cp1252 stdout + Unicode in prints = UnicodeEncodeError that can
 # kill the poller thread silently. Force UTF-8 like the other overlays do.
@@ -213,6 +214,8 @@ class TelemetryPoller:
         # Mutually exclusive with the other auto camera modes.
         self.director = RaceDirector()
         self.commentator = Commentator()  # KOMMENTAR: REGIE log -> German lines
+        self.voice = Voice(self.commentator.cfg)   # STIMME: each line spoken (OBS /commentary/voice)
+        self.commentator.on_line = lambda ln: self.voice.say(ln["id"], ln["text"])
         self.director_enabled = False
         self._own_replay_until = 0.0      # director keeps still during OUR replays
         self._own_replay_from = 0.0       # ...and ignores what the detectors report from that footage
@@ -4370,7 +4373,22 @@ def director():
 def commentary():
     """KOMMENTAR: the latest commentary lines (newest first) + whether Claude
     or the templates write them."""
-    return jsonify(dict(poller.commentator.status(), enabled=poller.director_enabled))
+    if request.args.get("voice") == "1":
+        poller.voice.listening()          # a voice page is open -> make audio
+    st = poller.commentator.status()
+    for ln in st["lines"]:
+        ln["audio"] = poller.voice.has(ln["id"])
+    return jsonify(dict(st, enabled=poller.director_enabled, voice=poller.voice.status(),
+                        now=time.time()))
+
+
+@app.route("/commentary/audio/<int:line_id>")
+def commentary_audio(line_id):
+    from flask import Response
+    clip = poller.voice.get(line_id)
+    if clip is None:
+        return ("", 404)
+    return Response(clip[0], mimetype=clip[1])
 
 
 COMMENTARY_HTML = r"""<!DOCTYPE html>
@@ -4433,6 +4451,80 @@ if (qs.has('demo')) {
 def commentary_overlay():
     from flask import Response
     return Response(COMMENTARY_HTML, mimetype="text/html")
+
+
+VOICE_HTML = r"""<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><title>Commentary Voice</title>
+<style>
+    /* STIMME (2026-10-14): plays the REGIE commentary as speech (race_voice.py).
+       Invisible on stream — add it in OBS with "Control audio via OBS" and it
+       is its own channel in the audio mixer. One line at a time; a backlog is
+       skipped (only the newest line), a line not ready within ?wait=8 s or
+       older than ?maxage=15 s is skipped. ?vol=0..1, ?debug=1 / H shows the
+       status (engine, voice, errors). */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: rgba(0,0,0,0); overflow: hidden; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; color: #e6e6ea; font-size: 14px; padding: 8px; }
+    #st { display: none; background: #23262b; padding: 8px 12px; border-left: 4px solid #22d3ee; line-height: 1.5; }
+    body.debug-mode #st { display: block; }
+    #st b { color: #22d3ee; }
+    #st .err { color: #f87171; }
+</style></head>
+<body>
+<div id="st"></div>
+<script>
+const qs = new URLSearchParams(location.search);
+if (qs.get('debug') === '1') document.body.classList.add('debug-mode');
+document.addEventListener('keydown', e => { if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('debug-mode'); });
+const WAIT = parseFloat(qs.get('wait') || '8'), MAXAGE = parseFloat(qs.get('maxage') || '15');
+const audio = new Audio();
+audio.volume = Math.max(0, Math.min(1, parseFloat(qs.get('vol') || '1')));
+let lastId = null, playing = false, said = '', blocked = false, info = {};
+audio.onended = audio.onerror = () => { playing = false; };
+function esc(t) { return String(t || '').replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[c])); }
+function render() {
+    const v = info.voice || {};
+    document.getElementById('st').innerHTML =
+        '<b>STIMME</b> · REGIE ' + (info.enabled ? 'an' : 'aus') + ' · Modus ' + esc(v.mode) +
+        ' · Engine ' + esc(v.engine || '–') + ' · ' + esc(v.voice) +
+        (playing ? ' · <b>spricht</b>' : '') +
+        (blocked ? '<br><span class="err">Browser blockiert Ton – einmal in die Seite klicken (in OBS nicht nötig)</span>' : '') +
+        (v.last_error ? '<br><span class="err">' + esc(v.last_error) + '</span>' : '') +
+        (said ? '<br>zuletzt: ' + esc(said) : '');
+}
+async function tick() {
+    let d;
+    try { d = await (await fetch('/commentary?voice=1', { cache: 'no-store' })).json(); } catch (e) { return; }
+    info = d; render();
+    const lines = d.lines || [];
+    if (lastId === null) { lastId = lines.length ? lines[0].id : 0; return; }   // skip history on load
+    if (!d.enabled || playing) return;
+    const fresh = lines.filter(l => l.id > lastId);
+    if (!fresh.length) return;
+    const top = fresh[0];                                   // newest only
+    const age = (d.now || 0) - top.t;
+    if (age > MAXAGE) { lastId = top.id; return; }
+    if (!top.audio) { if (age > WAIT) lastId = top.id; return; }
+    lastId = top.id;
+    audio.src = '/commentary/audio/' + top.id;
+    playing = true; said = top.text;
+    try { await audio.play(); blocked = false; } catch (e) { playing = false; blocked = true; }
+    render();
+}
+document.addEventListener('click', () => {      // unlock sound in a normal browser
+    if (!blocked) return;
+    blocked = false; playing = true;
+    audio.play().catch(() => { playing = false; blocked = true; });
+});
+setInterval(tick, 400); tick();
+</script></body></html>
+"""
+
+
+@app.route("/commentary/voice")
+def commentary_voice():
+    from flask import Response
+    return Response(VOICE_HTML, mimetype="text/html")
 
 
 @app.route("/focus_leader", methods=["POST"])
@@ -4862,6 +4954,7 @@ if __name__ == "__main__":
     print("  Cam by name       http://localhost:5000/streamdeck/cam_name/TV1")
     print("  REGIE on/off      http://localhost:5000/streamdeck/toggle_director")
     print("  Commentary (OBS)  http://localhost:5000/commentary/overlay")
+    print("  Voice (OBS audio) http://localhost:5000/commentary/voice")
     print("  List cameras      http://localhost:5000/cameras?format=text")
     print("  Driver next/prev  http://localhost:5000/streamdeck/driver_next")
     print("  Toggle follow     http://localhost:5000/streamdeck/toggle_auto_follow")
