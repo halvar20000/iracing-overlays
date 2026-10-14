@@ -297,7 +297,9 @@ class RaceDirector:
                 self.log.appendleft({"t": round(now, 1), "kind": "seen", "car_idx": c["idx"],
                                      "car_number": c["number"], "name": c["name"], "group": None,
                                      "reason": f"{typ} #{c['number']} {c['name']} was on screen live",
-                                     "info": {"event": typ}})
+                                     "info": {"event": typ, "passed": e.get("passed_name"),
+                                              "passed_number": e.get("passed_number"),
+                                              "position": e.get("position")}})
                 continue
             if now - self.last_replay_at < REPLAY_GAP_S[kind]:
                 if kind == "incident":

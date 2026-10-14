@@ -272,6 +272,30 @@ keeps the director still `REPLAY_SETTLE_S` 5 s more (events reported in that
 window are ignored too) and `director.after_replay(resume)` restarts the shot
 on air at the resume moment (full MIN before a cut, CAM_VARY_EVERY before a
 camera change; the replay gap counts from there). integ2.py 10/10.
+After that run Thomas: "looks good" → STEP 2 DONE same evening: NEW
+`race_commentator.py` (`Commentator`): each new director log entry (battle,
+leader, field, pit, live incident, replay, "seen") → its facts → one short
+German line. TEMPLATES always (no cost, offline, variety, a template needing
+a missing fact is skipped — never "None" / "?"); CLAUDE when a key is set
+(`commentary_config.json` {mode auto|template, api_key, model
+claude-haiku-5-5, timeout_s} — gitignored + updater PROTECTED — or env
+ANTHROPIC_API_KEY): Messages API via urllib in a background thread, system
+prompt = one German sentence ≤ 18 words from the given facts only (no
+reasons / damage / lap times), recent lines passed to avoid repetition;
+backlog collapsed to the newest picture; slower than 8 s or any error →
+template line, error in `/commentary` status. A line within 4 s of the
+previous one replaces it (picture moved on), except after a replay line.
+Dashboard: `poller.commentator.feed(director.log, context)` every tick while
+REGIE is on (context: track, leader lap, laps / minutes left, cars running),
+`skip_existing` on switch-on; `GET /commentary` (lines, ai, model,
+last_error); OBS page `/commentary/overlay` = cyan KOMMENTAR tag + line,
+slides in, fades after ?secs=10, ?width= ?zoom= ?debug=1 ?demo=1; loader
+commentary.html (39), icon, OVERLAY_TABLE, OBS_OVERLAYS.md. Dashboard shows
+the newest line in italics under the REGIE line. Also: events detected
+during our own replay are now marked seen for good (after the NEXT replay
+moved the window they used to become news again). test_race_commentator.py
+17/17; integ2.py 13/13; overlay rendered (demo) in Chromium. No voice yet
+(step 3: TTS into OBS).
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

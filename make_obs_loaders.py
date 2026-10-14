@@ -65,6 +65,8 @@ OVERLAYS = [
     # Whole-field sector graphics on the quali-delta server (2026-10-12).
     ("sectors",       "Best Sectors",     5014, "/sectors"),
     ("topspeed",      "Sector Top Speed", 5014, "/speed"),
+    # REGIE commentary lower third on the dashboard (2026-10-14).
+    ("commentary",    "Commentary (REGIE)", 5000, "/commentary/overlay"),
     # Note: racecontrol (iCASControl, port 8080) is an interactive steward
     # web app, opened directly in a browser — NOT an OBS browser source — so
     # it intentionally has no loader page here.

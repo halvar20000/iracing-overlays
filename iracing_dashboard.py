@@ -18,6 +18,7 @@ import time
 from collections import deque
 from flask import Flask, jsonify, render_template_string, request
 from race_director import RaceDirector
+from race_commentator import Commentator
 
 # Windows cp1252 stdout + Unicode in prints = UnicodeEncodeError that can
 # kill the poller thread silently. Force UTF-8 like the other overlays do.
@@ -211,6 +212,7 @@ class TelemetryPoller:
         # overtakes, battles, leaders, the field — see race_director.py.
         # Mutually exclusive with the other auto camera modes.
         self.director = RaceDirector()
+        self.commentator = Commentator()  # KOMMENTAR: REGIE log -> German lines
         self.director_enabled = False
         self._own_replay_until = 0.0      # director keeps still during OUR replays
         self._own_replay_from = 0.0       # ...and ignores what the detectors report from that footage
@@ -1760,8 +1762,13 @@ class TelemetryPoller:
                 for d in drivers]
         # events detected while OUR replay was playing come from the replayed
         # footage (the same pass / contact again) — never news
-        events = [e for e in list(self._incidents) + list(self._overtakes)
-                  if not (self._own_replay_from <= (e.get("wall_clock") or 0) <= self._own_replay_until)]
+        events = []
+        for e in list(self._incidents) + list(self._overtakes):
+            if self._own_replay_from <= (e.get("wall_clock") or 0) <= self._own_replay_until:
+                if e.get("id") is not None:      # for good — not news after the NEXT replay either
+                    self.director.seen_events.add(e["id"])
+                continue
+            events.append(e)
         shot = self.director.tick(time.time(), cars, self._camera_groups,
                                   current_cam_idx, events, racing)
         if shot is None:
@@ -1797,6 +1804,23 @@ class TelemetryPoller:
         if ok and info.get("event_id") is not None:
             self.mark_incident_replayed(info["event_id"])
         print(f"[regie] REPLAY    {shot.reason}" + ("" if ok else f"  (failed: {msg})"))
+
+    def _commentary_context(self, drivers: list, track: str) -> dict:
+        """Race facts the commentator may use besides the shot itself."""
+        ctx = {"strecke": track or ""}
+        try:
+            rp = self._race_progress()
+            lead = max((d.get("lap") or 0 for d in drivers), default=0)
+            if lead:
+                ctx["runde_fuehrender"] = lead
+            if rp.get("laps_remaining") is not None:
+                ctx["runden_uebrig"] = rp["laps_remaining"]
+            if rp.get("time_remaining") is not None:
+                ctx["minuten_uebrig"] = int(rp["time_remaining"] // 60)
+            ctx["fahrer_im_rennen"] = sum(1 for d in drivers if d.get("in_world"))
+        except Exception:
+            pass
+        return ctx
 
     def _after_director_replay(self):
         """Back from a REGIE replay: let the picture settle. The director stays
@@ -1835,6 +1859,8 @@ class TelemetryPoller:
             self.focus_crashes = False
             self.set_auto_camera(False)
             self.director.reset()
+            self.commentator.reset()
+            self.commentator.skip_existing(self.director.log)
             # events already in the feeds are history, not news
             for e in list(self._incidents) + list(self._overtakes):
                 if e.get("id") is not None:
@@ -2083,6 +2109,9 @@ class TelemetryPoller:
         pb = self._playback_status()
         self._track_lap_starts(driver_list, pb["is_live"], ir["SessionTime"] or 0.0)
         self._maybe_direct(driver_list, cam_car_idx, pb)
+        if self.director_enabled:
+            self.commentator.feed(self.director.log,
+                                  lambda: self._commentary_context(driver_list, track_name))
 
         snap = {
             "connected": True,
@@ -2097,6 +2126,8 @@ class TelemetryPoller:
             "focus_leader": self.focus_leader,
             "focus_crashes": self.focus_crashes,
             "director": dict(self.director.status(), enabled=self.director_enabled),
+            "commentary": (self.commentator.lines[0]["text"]
+                           if self.director_enabled and self.commentator.lines else ""),
             "drivers": driver_list,
             "sectors": self._sector_snapshot(cam_car_idx),
             "incidents": list(self._incidents),   # newest first
@@ -3287,6 +3318,7 @@ DASHBOARD_HTML = """
                 <div id="cam-buttons" style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;"></div>
             </div>
             <div id="regie-line" style="display:none; margin-top:6px; font-size:13px; color:#7dd3fc;"></div>
+            <div id="kommentar-line" style="display:none; margin-top:4px; font-size:13px; color:#e5e7eb; font-style:italic;"></div>
         </div>
 
         <!-- Sector Times card removed -->
@@ -3832,6 +3864,12 @@ function renderDirectorLine(director) {
     }
     if (el.textContent !== txt) el.textContent = txt;
     el.style.display = txt ? "" : "none";
+    const k = document.getElementById("kommentar-line");
+    if (k) {
+        const kt = director && director.enabled && window._commentary ? `„${window._commentary}“` : "";
+        if (k.textContent !== kt) k.textContent = kt;
+        k.style.display = kt ? "" : "none";
+    }
 }
 
 async function toggleFocusLeader(enable) {
@@ -3947,6 +3985,7 @@ async function tick() {
 
         cameraGroups    = d.camera_groups || [];
         currentCamGroup = d.current_cam_group || 0;
+        window._commentary = d.commentary || "";
         renderCameraButtons(cameraGroups, currentCamGroup, !!d.auto_camera_active,
                             !!d.focus_leader, !!d.focus_crashes, d.director);
 
@@ -4325,6 +4364,75 @@ def director():
         payload = request.get_json(silent=True) or {}
         poller.set_director(bool(payload.get("enabled", True)))
     return jsonify(dict(poller.director.status(), enabled=poller.director_enabled))
+
+
+@app.route("/commentary")
+def commentary():
+    """KOMMENTAR: the latest commentary lines (newest first) + whether Claude
+    or the templates write them."""
+    return jsonify(dict(poller.commentator.status(), enabled=poller.director_enabled))
+
+
+COMMENTARY_HTML = r"""<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><title>Commentary</title>
+<style>
+    /* KOMMENTAR lower third (2026-10-14): the newest line of the REGIE
+       commentary (race_commentator.py). A new line slides in; with nothing
+       new it fades out after ?secs=10. On load old lines are skipped.
+       ?zoom=, ?debug=1 / H, ?demo=1, ?width=px (default 1100). */
+    :root { --bg: rgba(20,22,28,0.97); --tag: #22d3ee; --text: #f4f4f6; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: rgba(0,0,0,0); overflow: hidden; }
+    body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; color: var(--text); padding: 8px; }
+    body.debug-mode { background: #23262b; }
+    .c { display: inline-flex; align-items: stretch; max-width: var(--w, 1100px); opacity: 0;
+         transform: translateY(16px); transition: opacity .3s ease, transform .35s cubic-bezier(.2,.9,.3,1.2); }
+    .c.show { opacity: 1; transform: none; }
+    .tag { background: var(--tag); color: #062027; font-weight: 800; letter-spacing: 1.5px; font-size: 14px;
+           display: flex; align-items: center; padding: 0 12px; flex: 0 0 auto; }
+    .tx { background: var(--bg); font-size: 24px; font-weight: 600; line-height: 1.3; padding: 9px 16px; }
+</style></head>
+<body>
+<div class="c" id="c"><div class="tag">KOMMENTAR</div><div class="tx" id="tx"></div></div>
+<script>
+const qs = new URLSearchParams(location.search);
+if (qs.get('debug') === '1') document.body.classList.add('debug-mode');
+const zoom = parseFloat(qs.get('zoom') || '1');
+if (zoom > 0 && zoom !== 1) document.body.style.zoom = zoom;
+if (qs.get('width')) document.documentElement.style.setProperty('--w', parseInt(qs.get('width')) + 'px');
+document.addEventListener('keydown', e => { if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('debug-mode'); });
+const SECS = parseFloat(qs.get('secs') || '10');
+const c = document.getElementById('c'), tx = document.getElementById('tx');
+let lastId = null, hideT = null;
+function show(text) {
+    tx.textContent = text;
+    c.classList.remove('show'); void c.offsetWidth; c.classList.add('show');
+    clearTimeout(hideT); hideT = setTimeout(() => c.classList.remove('show'), SECS * 1000);
+}
+async function tick() {
+    let d;
+    try { d = await (await fetch('/commentary', { cache: 'no-store' })).json(); } catch (e) { return; }
+    const top = (d.lines || [])[0];
+    if (!d.enabled) { c.classList.remove('show'); return; }
+    if (lastId === null) { lastId = top ? top.id : 0; return; }      // skip history on load
+    if (top && top.id !== lastId) { lastId = top.id; show(top.text); }
+}
+if (qs.has('demo')) {
+    const demo = ['Kampf um Platz 3: Andreas Bastian liegt nur 0,4 Sekunden hinter Mike Zocher.',
+                  'In der Wiederholung: Klaus Oberlaender geht an Manfred Baar vorbei – jetzt Platz 7.',
+                  'Blick an die Spitze: Maurice Becker führt das Rennen an.'];
+    let i = 0; const go = () => show(demo[i++ % demo.length]); go(); setInterval(go, (SECS + 2) * 1000);
+} else {
+    setInterval(tick, 500); tick();
+}
+</script></body></html>
+"""
+
+
+@app.route("/commentary/overlay")
+def commentary_overlay():
+    from flask import Response
+    return Response(COMMENTARY_HTML, mimetype="text/html")
 
 
 @app.route("/focus_leader", methods=["POST"])
@@ -4753,6 +4861,7 @@ if __name__ == "__main__":
     print("  Cam by id         http://localhost:5000/streamdeck/cam/4")
     print("  Cam by name       http://localhost:5000/streamdeck/cam_name/TV1")
     print("  REGIE on/off      http://localhost:5000/streamdeck/toggle_director")
+    print("  Commentary (OBS)  http://localhost:5000/commentary/overlay")
     print("  List cameras      http://localhost:5000/cameras?format=text")
     print("  Driver next/prev  http://localhost:5000/streamdeck/driver_next")
     print("  Toggle follow     http://localhost:5000/streamdeck/toggle_auto_follow")

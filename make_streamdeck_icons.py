@@ -135,6 +135,7 @@ OVERLAY_ICONS = [
     ("movers",        "live",   "updown",    "Movers"),
     ("gapbar",        "live",   "gapbar",    "Gap Bar"),
     ("ticker",        "live",   "overtake",  "Überhol Ticker"),
+    ("commentary",    "live",   "chat",      "Kommentar"),
     ("driver",        "live",   "card",      "Driver Card"),
     ("driver_simple", "live",   "card",      "Driver Card simpel"),
     ("livery",        "live",   "car",       "Livery"),
