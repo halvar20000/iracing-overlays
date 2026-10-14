@@ -241,7 +241,7 @@ auto-replay toggles do nothing (`_try_auto_replay` returns). `replay_5s_of_car`
 now returns to WHERE IT WAS (+ elapsed) when started from a recording
 (ReplayFrameNumEnd > 60 = behind the live tip) instead of jumping to the end
 of the recording — matters for REGIE practice on replays; live unchanged.
-test_race_director.py 33/33; scratchpad integ2.py (real poller + fake SDK:
+test_race_director.py 36/36; scratchpad integ2.py (real poller + fake SDK:
 replay call, mark replayed, auto-replay off, return path) 7/7.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
