@@ -39,6 +39,7 @@ DEFAULT_CONFIG = {
     "api_key": "",
     "model": "claude-haiku-5-5",    # fast + cheap; "claude-sonnet-5-5" for nicer prose
     "timeout_s": 6.0,
+    "workspace_id": "",             # only for a key NOT scoped to a workspace (wrkspc_…)
 }
 API_URL = "https://api.anthropic.com/v1/messages"
 AI_STALE_S = 8.0          # an AI line that took longer than this is dropped (template used)
@@ -266,7 +267,7 @@ class Commentator:
                 text = self._api_call(f, ctx, recent)
                 self.last_error = ""
             except Exception as e:          # network, key, quota … -> template
-                self.last_error = str(e)[:200]
+                self.last_error = str(e)[:400]
             if text and time.time() - t0 <= AI_STALE_S:
                 self._publish(text, f, time.time(), "claude")
             else:
@@ -280,11 +281,14 @@ class Commentator:
             "system": SYSTEM_PROMPT,
             "messages": [{"role": "user", "content": user}],
         }).encode("utf-8")
-        req = urllib.request.Request(API_URL, data=body, method="POST", headers={
+        headers = {
             "content-type": "application/json",
             "x-api-key": self.cfg["api_key"],
             "anthropic-version": "2023-06-01",
-        })
+        }
+        if self.cfg.get("workspace_id"):
+            headers["anthropic-workspace-id"] = self.cfg["workspace_id"]
+        req = urllib.request.Request(API_URL, data=body, method="POST", headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=float(self.cfg.get("timeout_s") or 6.0)) as r:
                 data = json.loads(r.read().decode("utf-8"))
