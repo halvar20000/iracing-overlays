@@ -78,6 +78,7 @@ class Shot:
         self.started = 0.0
         self.cam_changed = 0.0
         self.cam_i = 0
+        self.cut_prio = prio      # priority when it went on air
 
     def key(self):
         """Same subject = same kind + same car (or the same battle pair)."""
@@ -146,7 +147,10 @@ class RaceDirector:
         others = [s for s in cands if s.key() != cur.key()]
         other = max(others, key=lambda s: s.prio) if others else None
         if age < MIN_SHOT:
-            if other and other.prio >= cur.prio + INTERRUPT_MARGIN:
+            # measured against the priority the shot was CUT with: a subject
+            # that looks weaker for a moment (S/F line glitch) is no excuse
+            # to cut after 3 s
+            if other and other.prio >= max(cur.prio, cur.cut_prio) + INTERRUPT_MARGIN:
                 return self._cut(now, other, groups)
         elif still is None or age >= MAX_SHOT.get(cur.kind, 15.0):
             # subject over (battle broke up, event shown) or shown long
@@ -271,7 +275,8 @@ class RaceDirector:
                 a, b = cl[i - 1], cl[i]                # a ahead, b chasing
                 if a.get("on_pit") or b.get("on_pit"):
                     continue
-                est = b.get("est_lap") or a.get("est_lap") or 100.0
+                est = next((e for e in (b.get("est_lap"), a.get("est_lap"))
+                            if e and e >= 20), 100.0)   # 1.0 seen in a replay
                 gap = (a["progress"] - b["progress"]) * est
                 pair = (a["idx"], b["idx"])
                 limit = BATTLE_KEEP_S if cur_key == ("battle", pair) else BATTLE_ENTER_S

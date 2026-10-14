@@ -204,6 +204,16 @@ class_name / est_lap (CarClassEstLapTime) for per-class gaps.
 test_race_director.py 27/27; integration with the real poller + fake SDK
 (scratchpad) 10/10; dashboard JS node-checked, button + "why" line rendered.
 NOT yet tried with real iRacing — first test: a recorded replay at 1x.
+FOLLOW-UP same day, first real test (Motegi WCT replay, watched live via
+192.168.86.138:5000/director): (1) 5 cuts in 3 s at the green — at the S/F
+line CarIdxLapDistPct wraps to 0 a few ticks BEFORE CarIdxLap counts up, so
+crossing cars dropped a lap, the battle on air looked weak (prio fell) and
+anything "+25 stronger" cut it. Fix: dashboard `_director_progress()` adds
+the missing lap; before MIN_SHOT the margin is measured against the shot's
+`cut_prio`. (2) only "0.0s" battles — CarClassEstLapTime AND EstLapTime read
+1.0 in that replay. Values < 20 s are now ignored (`_plausible_lap`, fallback
+median best lap / 100 s), in the dashboard and in the director.
+test_race_director.py +2 (both fail on the old code).
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

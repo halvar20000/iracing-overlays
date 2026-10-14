@@ -148,6 +148,18 @@ REPLAY_PRIORITY = {"overtake": 2, "collision": 1, "lost_control": 1}
 # -----------------------------------------------------------------------------
 # Telemetry poller
 # -----------------------------------------------------------------------------
+MIN_PLAUSIBLE_LAP_S = 20.0   # anything shorter is not a real lap estimate
+
+
+def _plausible_lap(v):
+    """CarClassEstLapTime / EstLapTime can read 1.0 in replays — ignore that."""
+    try:
+        v = float(v or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return v if v >= MIN_PLAUSIBLE_LAP_S else 0.0
+
+
 class TelemetryPoller:
     def __init__(self, poll_hz: int = 10):
         self.ir = irsdk.IRSDK()
@@ -200,6 +212,7 @@ class TelemetryPoller:
         self.director = RaceDirector()
         self.director_enabled = False
         self._own_replay_until = 0.0      # director keeps still during OUR replays
+        self._dir_laps: dict = {}         # car_idx -> (lap, pct, fixed lap) for the director
         self._focus_crash_hold_seconds = 12.0
 
         # HUD-hidden state. iRacing re-shows its broadcast HUD every time
@@ -1560,8 +1573,11 @@ class TelemetryPoller:
         # Estimated lap time (track+car) — used as the lap-1 interval
         # fallback when CarIdxF2Time hasn't been populated yet.
         est_lap_time = ir["EstLapTime"] or 0.0
-        if est_lap_time <= 0:
-            est_lap_time = 100.0  # sane default
+        if est_lap_time < MIN_PLAUSIBLE_LAP_S:
+            # seen as 1.0 in a replay (Motegi 2026-10-14): use the field's
+            # median best lap, else a sane default
+            bests = sorted(b for b in best_lap if b and b >= MIN_PLAUSIBLE_LAP_S)
+            est_lap_time = bests[len(bests) // 2] if bests else 100.0
 
         # Live-progress ordering only makes sense in a RACE — in practice /
         # qualifying iRacing's position (best-lap rank) is the right order.
@@ -1604,7 +1620,7 @@ class TelemetryPoller:
                 "progress":    (lap_v or 0) + max(pct_v or 0.0, 0.0),
                 "class_id":    d.get("CarClassID"),
                 "class_name":  d.get("CarClassShortName") or "",
-                "est_lap":     float(d.get("CarClassEstLapTime") or 0.0) or est_lap_time,
+                "est_lap":     _plausible_lap(d.get("CarClassEstLapTime")) or est_lap_time,
             })
         if is_race:
             # Sort by LIVE track progress (lap + lap pct) — iRacing's own
@@ -1735,7 +1751,7 @@ class TelemetryPoller:
         racing = (self.ir["SessionState"] == 4) and self._cur_is_race
         cars = [{"idx": d["car_idx"], "number": str(d["car_number"]), "name": d["name"],
                  "class_id": d.get("class_id"), "class_name": d.get("class_name"),
-                 "progress": d["progress"], "on_pit": d["on_pit_road"],
+                 "progress": self._director_progress(d), "on_pit": d["on_pit_road"],
                  "in_world": d["in_world"], "est_lap": d.get("est_lap") or 100.0}
                 for d in drivers]
         events = list(self._incidents) + list(self._overtakes)
@@ -1751,6 +1767,21 @@ class TelemetryPoller:
             print(f"[regie] {shot.group['name']:<9s} {shot.reason}")
         except Exception as e:
             print(f"[regie] switch failed: {e}")
+
+    def _director_progress(self, d: dict) -> float:
+        """lap + pct, with iRacing's S/F lag removed: the pct wraps to 0 a few
+        ticks BEFORE CarIdxLap counts up, so a car crossing the line would
+        drop a whole lap for a moment (seen at the green, Motegi replay
+        2026-10-14 — the director cut every 0.3 s)."""
+        idx, lap, pct = d["car_idx"], d.get("lap") or 0, max(d.get("lap_pct") or 0.0, 0.0)
+        prev = self._dir_laps.get(idx)
+        fixed = lap
+        if prev:
+            p_lap, p_pct, p_fixed = prev
+            if lap == p_lap and pct < 0.1 and (p_pct > 0.9 or p_fixed > p_lap):
+                fixed = lap + 1                     # wrapped, counter not yet
+        self._dir_laps[idx] = (lap, pct, fixed)
+        return fixed + pct
 
     def set_director(self, enabled: bool):
         self.director_enabled = bool(enabled)

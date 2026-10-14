@@ -148,5 +148,22 @@ check("status has current shot + reason", st["current"] and st["current"]["reaso
 check("log keeps the battle reason", any("battle for P3" in e["reason"] for e in st["log"]), st["log"][:2])
 check("decision log is kept", len(st["log"]) >= 2)
 
+# 12) green flag, whole field crossing the line: a battle pair that drops a
+#     lap for a moment (S/F counter lag) must not trigger cuts every 0.3 s
+#     (Motegi replay 2026-10-14)
+def sf_lag(t):
+    cs = []
+    for i in range(20):
+        p = 1.97 + (t - 1000) / 107.0 - i * 0.0026
+        lap, pct = int(p), p - int(p)
+        if pct < 0.004:
+            lap -= 1
+        cs.append(dict(car(i, 0), progress=lap + pct, est_lap=1.0))
+    return cs
+s = Sim().run(30, sf_lag)
+early = [b[0] - a[0] for a, b in zip(s.cuts, s.cuts[1:]) if b[2] != a[2]]
+check("no early cuts when cars cross the line at the green", not early or min(early) >= rd.MIN_SHOT, s.cuts)
+check("est_lap 1.0 is ignored (no 0.0 s battles)", all("0.0s" not in e["reason"] for e in s.d.log), s.d.log[0]["reason"])
+
 print(f"\n{'ALL PASS' if not fails else f'{fails} FAILED'}")
 raise SystemExit(1 if fails else 0)
