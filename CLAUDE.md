@@ -214,6 +214,16 @@ the missing lap; before MIN_SHOT the margin is measured against the shot's
 1.0 in that replay. Values < 20 s are now ignored (`_plausible_lap`, fallback
 median best lap / 100 s), in the dashboard and in the director.
 test_race_director.py +2 (both fail on the old code).
+SECOND TEST same evening (Thomas: "too many cuts from one to the next, you
+lose the overview" — it hopped battle → battle every 8 s, leader never shown):
+battles now hold ≥ 15 s, leader ≥ 10 s (`MIN_BY_KIND`); before that only
+EVENTS (incident / overtake, +25) interrupt; after it another subject needs
+`SWITCH_MARGIN` (+10), not just "one place further up"; a battle whose gap
+jitters out stays on for `GONE_GRACE_S` 3 s; the class leader becomes due
+(`LEADER_DUE_PRIO` 75) after `LEADER_EVERY_S` 120 s off screen — being the
+car AHEAD in a shown battle counts as on screen (both pair cars go into
+last_shown, which also spreads screen time). Simulated tight pack (seed 9):
+median shot 9 s → 28 s, cuts in 10 min 43 → 22. Test 13 (fails on old code).
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

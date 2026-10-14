@@ -165,5 +165,29 @@ early = [b[0] - a[0] for a, b in zip(s.cuts, s.cuts[1:]) if b[2] != a[2]]
 check("no early cuts when cars cross the line at the green", not early or min(early) >= rd.MIN_SHOT, s.cuts)
 check("est_lap 1.0 is ignored (no 0.0 s battles)", all("0.0s" not in e["reason"] for e in s.d.log), s.d.log[0]["reason"])
 
+# 13) tight pack, battles everywhere with jittering gaps: calm shots (first
+#     real test cut battle -> battle every 8 s), the leader still comes up
+R = random.Random(9)
+gaps = [R.uniform(0.1, 1.3) for _ in range(19)]
+def pack(t):
+    for i in range(19):
+        gaps[i] = min(3, max(0.05, gaps[i] + R.gauss(0, 0.12)))
+    cs, cum = [], 0.0
+    for i in range(20):
+        cum += gaps[i - 1] if i else 0.0
+        cs.append(car(i, cum))
+    return cs
+s = Sim().run(600, pack)
+cars_cuts = s.cuts[:1] + [c for a, c in zip(s.cuts, s.cuts[1:]) if c[2] != a[2] or c[1] != a[1]]
+durs = sorted(b[0] - a[0] for a, b in zip(cars_cuts, cars_cuts[1:]))
+check("tight pack: median shot >= 18 s", durs[len(durs) // 2] >= 18, durs)
+check("tight pack: battles are not cut before 15 s (except by events)",
+      all(b[0] - a[0] >= getattr(rd, "MIN_BY_KIND", {}).get("battle", 15) for a, b in zip(cars_cuts, cars_cuts[1:])
+          if a[1] == "battle" and b[1] in ("battle", "leader", "field")), cars_cuts)
+# the leader is on screen in a leader shot or in the battle for P1
+lead = [c[0] for c in s.cuts if c[1] == "leader" or (c[1] == "battle" and c[2] == 1)]
+check("tight pack: leader shown at least every ~2.5 min",
+      lead and all(b - a <= 150 for a, b in zip([1000.0] + lead, lead + [s.t])), lead)
+
 print(f"\n{'ALL PASS' if not fails else f'{fails} FAILED'}")
 raise SystemExit(1 if fails else 0)

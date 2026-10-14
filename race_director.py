@@ -31,6 +31,14 @@ from collections import deque
 
 # --- pacing (seconds) ---------------------------------------------------------
 MIN_SHOT = 8.0           # a shot is never cut earlier — except for a higher-priority event
+MIN_BY_KIND = {          # ...longer for the subjects that need time to read
+    "battle": 15.0, "leader": 10.0,
+}
+SWITCH_MARGIN = 10       # after MIN: another subject must be clearly better, not just
+                         # "a battle one place further up" (first test: cut every 8 s,
+                         # viewers lost the overview — Thomas, 2026-10-14)
+GONE_GRACE_S = 3.0       # a battle that breaks up for a moment is not over yet
+LEADER_EVERY_S = 120.0   # the leader gets a shot at least this often
 CAM_VARY_EVERY = 14.0    # long shots change camera group this often
 MAX_SHOT = {             # after this a shot loses its claim, something else gets a turn
     "incident": 10.0, "overtake": 9.0, "battle": 40.0, "pit": 12.0,
@@ -48,6 +56,7 @@ PIT_TOP_N = 5            # pit stops worth showing: top N of a class
 # --- base priorities ----------------------------------------------------------
 PRIO = {"incident": 100, "overtake": 70, "battle": 60, "pit": 45,
         "leader": 35, "field": 20}
+LEADER_DUE_PRIO = 75     # ...by outranking battles (+ SWITCH_MARGIN) once due
 INTERRUPT_MARGIN = 25    # a candidate this much stronger may cut a shot before MIN_SHOT
 
 # Camera groups per shot kind, by name (exact, case/space-insensitive),
@@ -98,6 +107,8 @@ class RaceDirector:
         self.last_shown: dict[int, float] = {}   # car idx -> last time on screen
         self.seen_events: set = set()
         self.paused_until = 0.0
+        self.missing_since: float | None = None   # current subject not a candidate since
+        self.started_at = None                    # first racing tick (leader-due clock)
         self.log: deque = deque(maxlen=60)
         self.kind_cuts: dict[str, int] = {}      # cuts per kind -> camera rotation
 
@@ -107,6 +118,8 @@ class RaceDirector:
         self.last_shown.clear()
         self.seen_events.clear()
         self.paused_until = 0.0
+        self.missing_since = None
+        self.started_at = None
 
     def manual_override(self, now: float | None = None):
         """Operator picked a car / camera by hand: hands off for a while."""
@@ -137,20 +150,33 @@ class RaceDirector:
             cur = self.current = None            # car left the world: re-pick now
         if cur is not None:
             cur.car = by_idx[cur.car["idx"]]
-            self.last_shown[cur.car["idx"]] = now
+            # both cars of a battle are on screen
+            for i in (cur.info.get("pair") or (cur.car["idx"],)):
+                self.last_shown[i] = now
         if cur is None:
             best = max(cands, key=lambda s: s.prio) if cands else None
             return self._cut(now, best, groups) if best else None
 
         age = now - cur.started
         still = next((s for s in cands if s.key() == cur.key()), None)
+        if still is None and cur.kind == "battle":
+            # gap jitter: keep the battle for GONE_GRACE_S before calling it over
+            if self.missing_since is None:
+                self.missing_since = now
+            if now - self.missing_since < GONE_GRACE_S:
+                still = Shot(cur.kind, cur.car, cur.prio, cur.reason, cur.info)
+        else:
+            self.missing_since = None
         others = [s for s in cands if s.key() != cur.key()]
         other = max(others, key=lambda s: s.prio) if others else None
-        if age < MIN_SHOT:
+        if age < MIN_BY_KIND.get(cur.kind, MIN_SHOT):
             # measured against the priority the shot was CUT with: a subject
             # that looks weaker for a moment (S/F line glitch) is no excuse
             # to cut after 3 s
-            if other and other.prio >= max(cur.prio, cur.cut_prio) + INTERRUPT_MARGIN:
+            # only EVENTS interrupt (a spin, a pass) — a due leader or a new
+            # battle waits for the shot to run its course
+            if (other and other.kind in ("incident", "overtake")
+                    and other.prio >= max(cur.prio, cur.cut_prio) + INTERRUPT_MARGIN):
                 return self._cut(now, other, groups)
         elif still is None or age >= MAX_SHOT.get(cur.kind, 15.0):
             # subject over (battle broke up, event shown) or shown long
@@ -160,7 +186,7 @@ class RaceDirector:
             if still is None:
                 self.current = None
                 return None
-        elif other and other.prio > still.prio:
+        elif other and other.prio >= still.prio + SWITCH_MARGIN:
             return self._cut(now, other, groups)
         # same subject continues — vary the camera on long shots
         if still is not None:
@@ -199,6 +225,7 @@ class RaceDirector:
         shot.started = shot.cam_changed = now
         self.kind_cuts[shot.kind] = n + 1
         self.current = shot
+        self.missing_since = None
         self.last_shown[shot.car["idx"]] = now
         self.log.appendleft({"t": round(now, 1), **shot.as_dict()})
         return shot
@@ -299,13 +326,20 @@ class RaceDirector:
                                 f"pit stop: #{c['number']} {c['name']} ({label(c)})",
                                 {"position": pos[c["idx"]]}))
 
-        # 5) class leaders
+        # 5) class leaders — due again after LEADER_EVERY_S off screen
+        if self.started_at is None:
+            self.started_at = now
         for cl in classes.values():
             c = cl[0]
             if c.get("on_pit"):
                 continue
-            pen = 0 if cur_key == ("leader", c["idx"]) else self._recent_penalty(now, c["idx"])
-            out.append(Shot("leader", c, PRIO["leader"] - pen,
+            seen = self.last_shown.get(c["idx"], self.started_at)
+            if cur_key != ("leader", c["idx"]) and now - seen >= LEADER_EVERY_S:
+                prio = LEADER_DUE_PRIO
+            else:
+                prio = PRIO["leader"] - (0 if cur_key == ("leader", c["idx"])
+                                         else self._recent_penalty(now, c["idx"]))
+            out.append(Shot("leader", c, prio,
                             f"leader: #{c['number']} {c['name']} ({label(c)})",
                             {"position": 1}))
 
