@@ -27,6 +27,7 @@ import queue
 import random
 import threading
 import time
+import urllib.error
 import urllib.request
 from collections import deque
 from pathlib import Path
@@ -284,8 +285,16 @@ class Commentator:
             "x-api-key": self.cfg["api_key"],
             "anthropic-version": "2023-06-01",
         })
-        with urllib.request.urlopen(req, timeout=float(self.cfg.get("timeout_s") or 6.0)) as r:
-            data = json.loads(r.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(req, timeout=float(self.cfg.get("timeout_s") or 6.0)) as r:
+                data = json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            # Anthropic says WHY in the body (credit balance, model, key …)
+            try:
+                msg = json.loads(e.read().decode("utf-8")).get("error", {}).get("message", "")
+            except Exception:
+                msg = ""
+            raise RuntimeError(f"HTTP {e.code}: {msg or e.reason}") from None
         parts = [b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"]
         text = " ".join(p.strip() for p in parts).strip().strip('"„“')
         return text[:220] or None
