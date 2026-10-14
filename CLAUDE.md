@@ -177,6 +177,14 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
+red = PRO, green = AM (same colours as the tower bars), via `cls_proam`
+ProAmRoster — only when the field IS a WCT field (auto mode: ≥ 50 % and ≥ 3
+drivers on the roster), otherwise the old orange. Camera car stays yellow
+with the glow, r 12 instead of 8 (11 outside WCT). In the pit a Pro/Am dot
+keeps its colour at 45 % opacity. `/state` cars carry `proam`. Rendered in
+Chromium on the Motegi map with the real WCT roster. Restart 5007.
+
 **October 13, 2026 (trackmap — no map at Motegi, WCT R4):** the map EXISTS
 (motegi_gp / motegi_grandprix / twinring_gp from the June 5 OSM bulk build)
 but under GUESSED slugs that never matched iRacing's TrackName. New
@@ -188,6 +196,11 @@ TrackName / TrackDisplayName and layout = TrackConfigName squeezed
 exact name to rename it to. Offline-checked: motegi_fullcourse /
 twinring_fullcourse → the GP map, East stays East, unknown stays unknown.
 Covers every other guessed-slug map of the bulk build too. Restart 5007.
+FOLLOW-UP same evening: still no map — the stream PC's /debug (reachable on
+the LAN, 192.168.86.138:5007) said TrackName **"twinring fullrc"**, config
+"Full Road Course" (initials "frc", not "gp"), so the fallback could not
+match. Added `tracks/twinring_fullrc.json` (copy of motegi_gp = the GP road
+course). The other Motegi guesses can go once this is confirmed on stream.
 
 **October 13, 2026 (/lastrace — PRO then AM in Pro/Am seasons):** same
 mixed-list complaint as /table. In Pro/Am seasons every /lastrace view (each

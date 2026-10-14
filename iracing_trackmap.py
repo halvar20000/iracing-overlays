@@ -35,6 +35,7 @@ from pathlib import Path
 from flask import Flask, jsonify, render_template_string, Response, abort, request
 
 from iracing_sdk_base import SDKPoller, setup_utf8_stdout
+from cls_proam import ProAmRoster
 setup_utf8_stdout()
 
 
@@ -409,6 +410,13 @@ class TrackmapPoller(SDKPoller):
         surface   = ir["CarIdxTrackSurface"] or []
         positions = ir["CarIdxPosition"] or []
 
+        # WCT GT3 (2026-10-13): dots in the Pro/Am colours — red PRO, green
+        # AM — only when the field IS a WCT field (cls_proam auto mode, same
+        # rule as the tower's bars). The camera car keeps its own colour.
+        proam_on = proam.active_for(
+            d.get("UserID") for d in drivers
+            if d.get("CarIsPaceCar") != 1 and d.get("IsSpectator") != 1)
+
         cars = []
         for d in drivers:
             idx = d.get("CarIdx")
@@ -433,6 +441,7 @@ class TrackmapPoller(SDKPoller):
                 "on_pit":     bool(on_pit[idx]) if idx < len(on_pit) else False,
                 "position":   int(positions[idx] or 0) if idx < len(positions) else 0,
                 "cam":        (idx == cam_idx),
+                "proam":      proam.lookup(d.get("UserID")) if proam_on else None,
             })
 
         return {
@@ -454,6 +463,7 @@ class TrackmapPoller(SDKPoller):
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
 poller = TrackmapPoller()
+proam = ProAmRoster()
 
 
 @app.after_request
@@ -626,6 +636,12 @@ TRACKMAP_HTML = r"""
         filter: drop-shadow(0 0 6px #facc15);
     }
     .car.pit { fill: #94a3b8; }
+    /* WCT GT3: Pro/Am colours (same as the tower's bars); in the pit the
+       dot keeps its class colour, just faded. Camera car stays yellow. */
+    .car.pro { fill: #e63946; }
+    .car.am  { fill: #2ecc71; }
+    .car.pro.pit, .car.am.pit { fill-opacity: 0.45; }
+    .car.cam.pro, .car.cam.am { fill: #facc15; fill-opacity: 1; }
     .car-label {
         font-family: 'Segoe UI', sans-serif;
         font-size: 10px;
@@ -783,8 +799,9 @@ function renderCars(d) {
     for (const c of cars) {
         const xy = pctToXY(c.pct);
         if (!xy) continue;
-        const cls = 'car' + (c.cam ? ' cam' : '') + (c.on_pit ? ' pit' : '');
-        const r   = c.cam ? 11 : 8;
+        const pa  = c.proam === 'PRO' ? ' pro' : c.proam === 'AM' ? ' am' : '';
+        const cls = 'car' + pa + (c.cam ? ' cam' : '') + (c.on_pit ? ' pit' : '');
+        const r   = c.cam ? (pa ? 12 : 11) : 8;
         parts.push(`<circle class="${cls}" cx="${xy[0].toFixed(1)}" cy="${xy[1].toFixed(1)}" r="${r}"></circle>`);
         parts.push(`<text class="car-label" x="${xy[0].toFixed(1)}" y="${xy[1].toFixed(1)}">${esc(c.num)}</text>`);
     }
@@ -838,6 +855,7 @@ def main():
     print("Press Ctrl+C to stop")
     print("=" * 60)
 
+    proam.start()
     t = threading.Thread(target=poller.run, daemon=True)
     t.start()
     try:
