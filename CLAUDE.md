@@ -251,6 +251,7 @@ set `green_lead` a lap too high, so laps 1-3 were skipped instead of 1-2).
 `_director_progress()` now takes, near the line (pct < 0.1 or > 0.9), whichever
 of lap-1 / lap / lap+1 (+pct) is within 0.05 of the car's previous progress;
 anything farther is a replay seek and is taken as is.
+Then Thomas: overtakes from LAP 2 on → `OVERTAKE_SKIP_LAPS` 2.0 → 1.0.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

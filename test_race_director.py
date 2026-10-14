@@ -101,20 +101,20 @@ check("contact seen live (car in the battle on air) -> no replay",
       not any(c[1] == "replay" for c in s.cuts), s.cuts[-3:])
 check("...and the log says why", any(e["kind"] == "seen" for e in s.d.log))
 
-# 4) overtakes: ignored in the first 2 laps after the green, then replayed
+# 4) overtakes: ignored in the first lap after the green, then replayed
 #    when they were not on screen
 def moving(t):          # whole field moves, 4 s apart, lap 107 s... EST 100
     return [dict(car(i, i * 4.0), progress=5.0 - i * 0.04 + (t - 1000) / EST) for i in range(8)]
 ot = lambda k, t: {"id": 100 + k, "type": "overtake", "car_idx": 6, "passed_idx": 5,
                    "passed_name": "Driver 5", "passed_number": "15", "position": 6}
-s = Sim().run(150, moving, {1100.0: [ot(1, 1100)]})          # lap 1-2 after the green
-check("overtake in the first 2 laps is ignored", not any(c[1] == "replay" for c in s.cuts), s.cuts)
-s.run(100, moving, {1210.0: [ot(2, 1210)]})                    # lap 3
+s = Sim().run(100, moving, {1050.0: [ot(1, 1050)]})          # lap 1 after the green
+check("overtake in the first lap is ignored", not any(c[1] == "replay" for c in s.cuts), s.cuts)
+s.run(60, moving, {1150.0: [ot(2, 1150)]})                     # lap 2
 rp = [c for c in s.cuts if c[1] == "replay"]
-check("overtake after lap 2, not on screen -> replay", rp and rp[0][2] == 6, s.cuts[-4:])
+check("overtake in lap 2, not on screen -> replay", rp and rp[0][2] == 6, s.cuts[-4:])
 check("replay reason names both cars", "passes #15" in s.d.log[-1]["reason"] or
       any("replay overtake" in e["reason"] and "#15" in e["reason"] for e in s.d.log))
-s.run(60, moving, {1240.0: [ot(3, 1240)]})                     # within REPLAY_GAP_S
+s.run(60, moving, {1180.0: [ot(3, 1180)]})                     # within REPLAY_GAP_S
 check("no second overtake replay within REPLAY_GAP_S",
       sum(1 for c in s.cuts if c[1] == "replay") == 1, [c for c in s.cuts if c[1] == "replay"])
 

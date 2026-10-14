@@ -55,8 +55,8 @@ EVENT_FRESH_S = 4.0      # incidents / overtakes older than this are not cut to
 # --- replays (Thomas, 2026-10-14) ---------------------------------------------
 # Incidents (contact / spin) are ALWAYS shown, as a REPLAY — unless they were in
 # the live picture already. Overtakes: ignored in the first OVERTAKE_SKIP_LAPS
-# laps after the green (start chaos), afterwards replayed the same way.
-OVERTAKE_SKIP_LAPS = 2.0
+# lap(s) after the green (start chaos), afterwards replayed the same way.
+OVERTAKE_SKIP_LAPS = 1.0   # = from lap 2 on (Thomas: "ab Runde 2")
 VISIBLE_S = 1.5          # cars this close (s) to the camera car are in the picture
 SEEN_WINDOW_S = {        # look back this far for "was it on screen" (detection delay:
     "overtake": 10.0,    # an overtake is confirmed ~3 s after the move, a contact
