@@ -224,6 +224,25 @@ jitters out stays on for `GONE_GRACE_S` 3 s; the class leader becomes due
 car AHEAD in a shown battle counts as on screen (both pair cars go into
 last_shown, which also spreads screen time). Simulated tight pack (seed 9):
 median shot 9 s → 28 s, cuts in 10 min 43 → 22. Test 13 (fails on old code).
+THIRD (Thomas, same evening — events): contacts / spins are ALWAYS shown, as
+a REPLAY, unless they were in the live picture already; overtakes are ignored
+in the first 2 laps after the green (`OVERTAKE_SKIP_LAPS`, leader progress vs
+the first racing tick), afterwards replayed the same way. "In the picture" =
+camera car, both cars of the battle on air, or within `VISIBLE_S` 1.5 s of
+the camera car, looked up over `SEEN_WINDOW_S` (overtake 10 s, collision 15 s
+— detection lags the event). Seen live → only a "seen" log line. Replays at
+most every `REPLAY_GAP_S` (incident 15 s, overtake 45 s; a blocked incident is
+cut to LIVE instead, a blocked overtake dropped). Overtakes are no longer cut
+to live at all. The director returns a Shot kind "replay" → dashboard
+`_director_replay()` → the existing `replay_5s_of_car` (same rewind/buildup
+as auto-replay, marks the feed entry replayed); the shot on air gets
+`REPLAY_HOLD_S` 16 s afresh afterwards. While REGIE is on the dashboard's own
+auto-replay toggles do nothing (`_try_auto_replay` returns). `replay_5s_of_car`
+now returns to WHERE IT WAS (+ elapsed) when started from a recording
+(ReplayFrameNumEnd > 60 = behind the live tip) instead of jumping to the end
+of the recording — matters for REGIE practice on replays; live unchanged.
+test_race_director.py 33/33; scratchpad integ2.py (real poller + fake SDK:
+replay call, mark replayed, auto-replay off, return path) 7/7.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

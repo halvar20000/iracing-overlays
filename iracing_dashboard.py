@@ -622,6 +622,8 @@ class TelemetryPoller:
         """
         now = time.time()
         priority = REPLAY_PRIORITY.get(inc_type, 1)
+        if self.director_enabled:
+            return      # REGIE decides about replays itself (seen live or not)
 
         # Cooldown: don't fire more often than every N seconds — UNLESS
         # this event outranks the one that started the cooldown (an
@@ -1759,6 +1761,9 @@ class TelemetryPoller:
                                   current_cam_idx, events, racing)
         if shot is None:
             return
+        if shot.kind == "replay":
+            self._director_replay(shot)
+            return
         try:
             gid = int(shot.group["id"])
             self.ir.cam_switch_num(shot.car["number"], gid, 0)
@@ -1767,6 +1772,22 @@ class TelemetryPoller:
             print(f"[regie] {shot.group['name']:<9s} {shot.reason}")
         except Exception as e:
             print(f"[regie] switch failed: {e}")
+
+    def _director_replay(self, shot):
+        """REGIE asked for a replay of an incident / overtake the viewers did
+        not see live. Same seek + auto-return as the feed's replay button."""
+        info = shot.info
+        is_ot = info.get("event") == "overtake"
+        ok, msg = self.replay_5s_of_car(
+            shot.car["number"],
+            t_session=info.get("t_session"),
+            session_num=info.get("session_num"),
+            rewind_seconds=15.0 if info.get("event") == "collision" else 10.0,
+            buildup_seconds=8.0 if is_ot else 5.0,
+        )
+        if ok and info.get("event_id") is not None:
+            self.mark_incident_replayed(info["event_id"])
+        print(f"[regie] REPLAY    {shot.reason}" + ("" if ok else f"  (failed: {msg})"))
 
     def _director_progress(self, d: dict) -> float:
         """lap + pct, with iRacing's S/F lag removed: the pct wraps to 0 a few
@@ -2374,6 +2395,12 @@ class TelemetryPoller:
             before_frame = self.ir["ReplayFrameNum"]
             before_sess_t = self.ir["SessionTime"]
             before_is_replay = self.ir["IsReplayPlaying"]
+            # watching a recorded race (REGIE practice) rather than live:
+            # come back to the same spot + the time the replay took, not to
+            # the end of the recording
+            started_wall = time.time()
+            behind = self.ir["ReplayFrameNumEnd"]
+            from_recording = behind is not None and behind > 60 and before_sess_t is not None
 
             # 2) PAUSE first. Going from live playback directly to a
             #    `replay_search_session_time` call is unreliable — iRacing
@@ -2430,7 +2457,12 @@ class TelemetryPoller:
                 if not self.connected:
                     return
                 try:
-                    self.ir.replay_search(irsdk.RpySrchMode.to_end)
+                    if from_recording:
+                        back_to = float(before_sess_t) + (time.time() - started_wall)
+                        self.ir.replay_search_session_time(sess_num, int(back_to * 1000))
+                        time.sleep(0.3)
+                    else:
+                        self.ir.replay_search(irsdk.RpySrchMode.to_end)
                     self.ir.replay_set_play_speed(1, False)
                     # ALWAYS make an explicit camera switch after going
                     # back to live — without one iRacing can fall back to

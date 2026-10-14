@@ -45,8 +45,9 @@ class Sim:
             ev = events_at.pop(round(self.t, 1), [])
             shot = self.d.tick(self.t, cars_fn(self.t), GROUPS, self.cam, ev, racing)
             if shot:
-                self.cam, self.group = shot.car["idx"], shot.group["name"]
-                self.cuts.append((self.t, shot.kind, shot.car["idx"], self.group))
+                self.cuts.append((self.t, shot.kind, shot.car["idx"], shot.group["name"]))
+                if shot.kind != "replay":   # a replay returns to the car on air
+                    self.cam, self.group = shot.car["idx"], shot.group["name"]
             self.t = round(self.t + 0.5, 1)
         return self
 
@@ -79,24 +80,43 @@ check("long battle shot changes camera", len(groups_used) >= 2, groups_used)
 check("battle held until MAX_SHOT, then something else",
       s.cuts[-1][1] != "battle" or s.t - bt[0][0] <= rd.MAX_SHOT["battle"] + 1, s.cuts[-3:])
 
-# 3) incident during the battle interrupts at once, then the director moves on
+# 3) contact during the battle, car NOT on screen -> replay at once, then
+#    back to the battle (which gets its full length again)
 inc = {"id": 1, "type": "collision", "car_idx": 6, "details": "contact"}
 s = Sim().run(20, battle)
 t_inc = s.t + 3.0
 s.run(30, battle, {round(t_inc, 1): [inc]})
 after = [c for c in s.cuts if c[0] >= t_inc]
-check("incident cuts in immediately", after and after[0][1] == "incident" and after[0][0] == t_inc, after[:2])
-check("incident uses a TV camera", after and after[0][3].startswith("TV"), after[:1])
-nxt = [c for c in after[1:] if c[1] != "incident"]
-check("after the incident shot the director moves on (~10 s)",
-      nxt and 8 <= nxt[0][0] - t_inc <= 11, nxt[:1])
+check("unseen contact -> replay immediately", after and after[0][1] == "replay" and after[0][0] == t_inc, after[:2])
+check("replay uses a TV camera", after and after[0][3].startswith("TV"), after[:1])
+check("after the replay the battle continues (no cut to another car for 16 s)",
+      all(c[2] == 3 for c in after[1:] if c[0] < t_inc + rd.REPLAY_HOLD_S), after[:4])
 check("an already-seen incident id is not shown twice",
-      sum(1 for c in s.cuts if c[1] == "incident") == 1)
+      sum(1 for c in s.cuts if c[1] == "replay") == 1)
 
-# 4) overtake at the front beats the leader shot (after MIN_SHOT)
-ot = {"id": 2, "type": "overtake", "car_idx": 2, "passed_name": "Driver 1", "passed_number": "11"}
-s = Sim().run(10, spread, {1009.0: [ot]})
-check("overtake for P2 is shown", any(c[1] == "overtake" and c[2] == 2 for c in s.cuts), s.cuts)
+# 3b) contact of a car that WAS on screen -> no replay
+s = Sim().run(20, battle)                       # camera on #3, battle with #2
+s.run(10, battle, {round(s.t + 2, 1): [{"id": 7, "type": "collision", "car_idx": 2}]})
+check("contact seen live (car in the battle on air) -> no replay",
+      not any(c[1] == "replay" for c in s.cuts), s.cuts[-3:])
+check("...and the log says why", any(e["kind"] == "seen" for e in s.d.log))
+
+# 4) overtakes: ignored in the first 2 laps after the green, then replayed
+#    when they were not on screen
+def moving(t):          # whole field moves, 4 s apart, lap 107 s... EST 100
+    return [dict(car(i, i * 4.0), progress=5.0 - i * 0.04 + (t - 1000) / EST) for i in range(8)]
+ot = lambda k, t: {"id": 100 + k, "type": "overtake", "car_idx": 6, "passed_idx": 5,
+                   "passed_name": "Driver 5", "passed_number": "15", "position": 6}
+s = Sim().run(150, moving, {1100.0: [ot(1, 1100)]})          # lap 1-2 after the green
+check("overtake in the first 2 laps is ignored", not any(c[1] == "replay" for c in s.cuts), s.cuts)
+s.run(100, moving, {1210.0: [ot(2, 1210)]})                    # lap 3
+rp = [c for c in s.cuts if c[1] == "replay"]
+check("overtake after lap 2, not on screen -> replay", rp and rp[0][2] == 6, s.cuts[-4:])
+check("replay reason names both cars", "passes #15" in s.d.log[-1]["reason"] or
+      any("replay overtake" in e["reason"] and "#15" in e["reason"] for e in s.d.log))
+s.run(60, moving, {1240.0: [ot(3, 1240)]})                     # within REPLAY_GAP_S
+check("no second overtake replay within REPLAY_GAP_S",
+      sum(1 for c in s.cuts if c[1] == "replay") == 1, [c for c in s.cuts if c[1] == "replay"])
 
 # 5) multiclass: a car of another class 0.3 s behind is NOT a battle
 def mixed(t):
