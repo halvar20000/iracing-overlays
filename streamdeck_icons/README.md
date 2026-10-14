@@ -117,6 +117,7 @@ URL wie unten. Das Dashboard (Port 5000) muss laufen.
 | `auto_follow.png` | `http://localhost:5000/streamdeck/toggle_auto_follow` |
 | `auto_replay.png` | `http://localhost:5000/streamdeck/toggle_auto_replay` |
 | `auto_replay_ot.png` | `http://localhost:5000/streamdeck/toggle_auto_replay_overtakes` |
+| (noch kein Bild) | `http://localhost:5000/streamdeck/toggle_director` — REGIE an/aus |
 
 ## Seiten als Fenster öffnen (z. B. auf dem Hochkant-Monitor)
 

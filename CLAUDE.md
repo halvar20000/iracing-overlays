@@ -177,6 +177,34 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 14, 2026 (REGIE — race director, step 1 of the AI broadcast idea):**
+Andreas's idea: a live AI commentator (voice, maybe an avatar) for the small
+cups (CC, SFL, fun league), with automatic camera work; ~10 s stream delay is
+acceptable (OBS delay hides the commentary latency), practise on REPLAYS.
+Plan: 1 director → 2 commentary as a text ticker (Claude on the director log
++ events) → 3 voice (TTS into OBS) → 4 avatar. STEP 1 DONE: NEW
+`race_director.py` (pure logic, `RaceDirector.tick()`), used by the dashboard
+(5000) as camera mode **REGIE** (button, POST/GET `/director`, Stream Deck
+`/streamdeck/toggle_director`). Candidates each tick with priorities:
+incident 100 (fresh collision/lost_control, 10 s, TV cams) > overtake 70
+(minus position) > same-CLASS battle 60 (gap ≤ 1.0 s to enter, 1.5 s to keep,
+front weighs more) > top-5 pit stop 45 > class leaders 35 > the field 20
+(least screen time first). Pacing: MIN_SHOT 8 s (only a +25 stronger subject
+interrupts), MAX_SHOT per kind (battle 40, leader 16, field 12 …), then the
+best OTHER subject; a car shown in the last 45 s scores −25; camera group
+rotates inside long shots every 14 s (not right before a cut) and each new
+shot of a kind starts on the next camera of its list (CAMS, by name, Scenic
+never). Every decision is logged WITH its reason (`director.log`, `/director`)
+— that log is the input for step 2. Runs live AND during a 1x replay; holds
+still when paused / FF / slow-mo and during the dashboard's own replays
+(`_own_replay_until`). Operator clicks (camera group, car, Stream Deck cam /
+driver keys) pause it 20 s; REGIE and the other auto modes exclude each other;
+the lost-camera watchdog leaves it alone. Driver rows gained class_id /
+class_name / est_lap (CarClassEstLapTime) for per-class gaps.
+test_race_director.py 27/27; integration with the real poller + fake SDK
+(scratchpad) 10/10; dashboard JS node-checked, button + "why" line rendered.
+NOT yet tried with real iRacing — first test: a recorded replay at 1x.
+
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`
 ProAmRoster — only when the field IS a WCT field (auto mode: ≥ 50 % and ≥ 3

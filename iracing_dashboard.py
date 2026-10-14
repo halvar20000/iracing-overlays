@@ -17,6 +17,7 @@ import threading
 import time
 from collections import deque
 from flask import Flask, jsonify, render_template_string, request
+from race_director import RaceDirector
 
 # Windows cp1252 stdout + Unicode in prints = UnicodeEncodeError that can
 # kill the poller thread silently. Force UTF-8 like the other overlays do.
@@ -193,6 +194,12 @@ class TelemetryPoller:
         # a multi-car pile-up (we follow the first crash for a moment).
         self.focus_crashes = False
         self._focus_crash_until = 0.0
+        # Race director ("REGIE", 2026-10-14): plans whole shots — incidents,
+        # overtakes, battles, leaders, the field — see race_director.py.
+        # Mutually exclusive with the other auto camera modes.
+        self.director = RaceDirector()
+        self.director_enabled = False
+        self._own_replay_until = 0.0      # director keeps still during OUR replays
         self._focus_crash_hold_seconds = 12.0
 
         # HUD-hidden state. iRacing re-shows its broadcast HUD every time
@@ -1595,6 +1602,9 @@ class TelemetryPoller:
                 "starred":     idx in self._starred_car_idxs,
                 "in_world":    surf_v != SURFACE_NOT_IN_WORLD,
                 "progress":    (lap_v or 0) + max(pct_v or 0.0, 0.0),
+                "class_id":    d.get("CarClassID"),
+                "class_name":  d.get("CarClassShortName") or "",
+                "est_lap":     float(d.get("CarClassEstLapTime") or 0.0) or est_lap_time,
             })
         if is_race:
             # Sort by LIVE track progress (lap + lap pct) — iRacing's own
@@ -1712,6 +1722,50 @@ class TelemetryPoller:
         except Exception as e:
             print(f"[focus-leader] switch failed: {e}")
 
+    # --- race director ("REGIE") --------------------------------------------
+    def _maybe_direct(self, drivers: list, current_cam_idx, pb: dict):
+        """Let the race director pick the shot. Works live AND while a
+        replay plays at 1x (practising on a recorded race); keeps still while
+        paused / fast-forwarding / in slow motion and during the dashboard's
+        own incident replays."""
+        if not self.director_enabled:
+            return
+        if pb.get("speed") != 1 or pb.get("slow") or time.time() < self._own_replay_until:
+            return
+        racing = (self.ir["SessionState"] == 4) and self._cur_is_race
+        cars = [{"idx": d["car_idx"], "number": str(d["car_number"]), "name": d["name"],
+                 "class_id": d.get("class_id"), "class_name": d.get("class_name"),
+                 "progress": d["progress"], "on_pit": d["on_pit_road"],
+                 "in_world": d["in_world"], "est_lap": d.get("est_lap") or 100.0}
+                for d in drivers]
+        events = list(self._incidents) + list(self._overtakes)
+        shot = self.director.tick(time.time(), cars, self._camera_groups,
+                                  current_cam_idx, events, racing)
+        if shot is None:
+            return
+        try:
+            gid = int(shot.group["id"])
+            self.ir.cam_switch_num(shot.car["number"], gid, 0)
+            self._current_cam_group = gid
+            self._reassert_ui_hide()
+            print(f"[regie] {shot.group['name']:<9s} {shot.reason}")
+        except Exception as e:
+            print(f"[regie] switch failed: {e}")
+
+    def set_director(self, enabled: bool):
+        self.director_enabled = bool(enabled)
+        if self.director_enabled:
+            self.auto_follow = False
+            self.focus_leader = False
+            self.focus_crashes = False
+            self.set_auto_camera(False)
+            self.director.reset()
+            # events already in the feeds are history, not news
+            for e in list(self._incidents) + list(self._overtakes):
+                if e.get("id") is not None:
+                    self.director.seen_events.add(e["id"])
+        print(f"[regie] {'ENABLED' if self.director_enabled else 'disabled'}")
+
     # --- camera disconnect watchdog ----------------------------------------
     def _maybe_recover_lost_cam_target(self, drivers: list, current_cam_idx):
         """If the camera target has been out-of-world for more than the
@@ -1736,7 +1790,7 @@ class TelemetryPoller:
 
         # If focus_leader or auto_follow is active they'll re-pick on
         # their own; don't fight them either.
-        if self.focus_leader or self.auto_follow:
+        if self.focus_leader or self.auto_follow or self.director_enabled:
             self._cam_lost_since = None
             return
 
@@ -1953,6 +2007,7 @@ class TelemetryPoller:
 
         pb = self._playback_status()
         self._track_lap_starts(driver_list, pb["is_live"], ir["SessionTime"] or 0.0)
+        self._maybe_direct(driver_list, cam_car_idx, pb)
 
         snap = {
             "connected": True,
@@ -1966,6 +2021,7 @@ class TelemetryPoller:
             "auto_camera_active": self.is_auto_camera_active(),
             "focus_leader": self.focus_leader,
             "focus_crashes": self.focus_crashes,
+            "director": dict(self.director.status(), enabled=self.director_enabled),
             "drivers": driver_list,
             "sectors": self._sector_snapshot(cam_car_idx),
             "incidents": list(self._incidents),   # newest first
@@ -2087,6 +2143,7 @@ class TelemetryPoller:
         if not self.connected:
             return False
         self._manual_override_until = time.time() + 10.0
+        self.director.manual_override()
         if group is None:
             group = self._current_cam_group
         self.ir.cam_switch_num(str(car_number), int(group), 0)
@@ -2134,6 +2191,7 @@ class TelemetryPoller:
         self.set_auto_camera(False)
         self.focus_leader = False
         self.focus_crashes = False
+        self.director.manual_override()   # REGIE stays on, pauses ~20 s
         self._current_cam_group = int(group)
         cam_car_idx = self.ir["CamCarIdx"]
         drivers     = self.ir["DriverInfo"]["Drivers"] if self.ir["DriverInfo"] else []
@@ -2260,6 +2318,8 @@ class TelemetryPoller:
                         break
             # NEVER Scenic — neither for the replay itself nor the return.
             cam_group = self._safe_cam_group()
+            # the REGIE keeps its hands off until we are back live
+            self._own_replay_until = time.time() + rewind_seconds + 4.0
 
             # 1) Compute the absolute target session time.
             if t_session is not None:
@@ -2466,6 +2526,7 @@ class TelemetryPoller:
     def set_auto_follow(self, enabled: bool):
         self.auto_follow = bool(enabled)
         if self.auto_follow:
+            self.director_enabled = False
             # Other automatic camera modes are mutually exclusive — they'd
             # fight each other over the camera otherwise.
             self.focus_leader = False
@@ -2485,6 +2546,7 @@ class TelemetryPoller:
     def set_focus_leader(self, enabled: bool):
         self.focus_leader = bool(enabled)
         if self.focus_leader:
+            self.director_enabled = False
             # Radio-button style: turning on focus-leader disables the
             # other automatic camera modes so they don't fight.
             self.auto_follow = False
@@ -2498,6 +2560,7 @@ class TelemetryPoller:
     def set_focus_crashes(self, enabled: bool):
         self.focus_crashes = bool(enabled)
         if self.focus_crashes:
+            self.director_enabled = False
             self.auto_follow = False
             self.focus_leader = False
             self.set_auto_camera(False)
@@ -2883,6 +2946,17 @@ DASHBOARD_HTML = """
         box-shadow: 0 0 12px rgba(255, 209, 102, 0.55);
     }
 
+    /* REGIE (race director) — cyan accent */
+    .cam-btn-regie {
+        letter-spacing: 1px; text-transform: uppercase;
+        background: #0a1a1f; border-color: #1a3e4a; color: #7dd3fc;
+    }
+    .cam-btn-regie:hover { background: #0f2a33; color: #bae6fd; border-color: #38bdf8; }
+    .cam-btn-regie.active {
+        background: #0e7490; border-color: #38bdf8; color: #fff;
+        box-shadow: 0 0 12px rgba(56, 189, 248, 0.55);
+    }
+
     /* Focus on Crashes — red accent, evokes incident / danger */
     .cam-btn-crashes {
         letter-spacing: 1px;
@@ -3118,6 +3192,7 @@ DASHBOARD_HTML = """
             <div class="cam-bar">
                 <div id="cam-buttons" style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;"></div>
             </div>
+            <div id="regie-line" style="display:none; margin-top:6px; font-size:13px; color:#7dd3fc;"></div>
         </div>
 
         <!-- Sector Times card removed -->
@@ -3571,9 +3646,12 @@ function renderDrivers(drivers, activeIdx) {
 
 // renderSectors() removed — sector times card is no longer shown.
 
-function renderCameraButtons(groups, activeGroupId, autoCamActive, focusLeader, focusCrashes) {
+function renderCameraButtons(groups, activeGroupId, autoCamActive, focusLeader, focusCrashes, director) {
     const host = document.getElementById("cam-buttons");
+    const regie = !!(director && director.enabled);
+    renderDirectorLine(director);
     const sig = groups.map(g => g.id + ":" + g.name).join("|")
+              + "|regie=" + (regie ? 1 : 0)
               + "|active=" + activeGroupId
               + "|auto=" + (autoCamActive ? 1 : 0)
               + "|lead=" + (focusLeader ? 1 : 0)
@@ -3587,6 +3665,13 @@ function renderCameraButtons(groups, activeGroupId, autoCamActive, focusLeader, 
     }
     // Auto-mode toggles first — these are camera STATES, not groups.
     // Mutually exclusive with each other; each turns the others off.
+    const regieBtn = document.createElement("div");
+    regieBtn.className = "cam-btn cam-btn-regie" + (regie ? " active" : "");
+    regieBtn.textContent = "REGIE";
+    regieBtn.title = "Race director: picks car + camera by itself (incidents, overtakes, battles, leaders, field). A manual click pauses it for 20 s.";
+    regieBtn.onclick = () => toggleDirector(!regie);
+    host.appendChild(regieBtn);
+
     const autoBtn = document.createElement("div");
     autoBtn.className = "cam-btn cam-btn-auto" + (autoCamActive ? " active" : "");
     autoBtn.textContent = "MOST EXCITING";
@@ -3615,7 +3700,7 @@ function renderCameraButtons(groups, activeGroupId, autoCamActive, focusLeader, 
 
     for (const g of groups) {
         const btn = document.createElement("div");
-        const anyAuto = autoCamActive || focusLeader || focusCrashes;
+        const anyAuto = autoCamActive || focusLeader || focusCrashes || regie;
         const isActive = (!anyAuto) && (g.id === activeGroupId);
         btn.className = "cam-btn" + (isActive ? " active" : "");
         btn.textContent = g.name;
@@ -3630,6 +3715,29 @@ async function toggleAutoCamera(enable) {
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({enabled: !!enable}) });
     } catch (e) { console.error(e); }
+}
+
+async function toggleDirector(enable) {
+    try {
+        await fetch("/director", { method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({enabled: !!enable}) });
+    } catch (e) { console.error(e); }
+}
+
+// "why is this on screen" line under the camera buttons (REGIE only)
+function renderDirectorLine(director) {
+    const el = document.getElementById("regie-line");
+    if (!el) return;
+    let txt = "";
+    if (director && director.enabled) {
+        const c = director.current;
+        txt = director.paused_for > 0 ? `REGIE pausiert (Handbetrieb) – noch ${Math.ceil(director.paused_for)} s`
+            : c ? `REGIE: ${c.reason} · ${c.group || ""} · ${Math.round(c.since)} s`
+            : "REGIE: wartet (nur im Rennen, bei grüner Flagge)";
+    }
+    if (el.textContent !== txt) el.textContent = txt;
+    el.style.display = txt ? "" : "none";
 }
 
 async function toggleFocusLeader(enable) {
@@ -3746,7 +3854,7 @@ async function tick() {
         cameraGroups    = d.camera_groups || [];
         currentCamGroup = d.current_cam_group || 0;
         renderCameraButtons(cameraGroups, currentCamGroup, !!d.auto_camera_active,
-                            !!d.focus_leader, !!d.focus_crashes);
+                            !!d.focus_leader, !!d.focus_crashes, d.director);
 
         currentDrivers = d.drivers || [];
         renderDrivers(currentDrivers, activeCarIdx);
@@ -4115,6 +4223,16 @@ def auto_camera():
     return jsonify({"ok": ok, "enabled": enabled})
 
 
+@app.route("/director", methods=["GET", "POST"])
+def director():
+    """REGIE: POST {enabled} switches it; GET = current shot + decision log
+    (why each car was shown — the input for a later commentary step)."""
+    if request.method == "POST":
+        payload = request.get_json(silent=True) or {}
+        poller.set_director(bool(payload.get("enabled", True)))
+    return jsonify(dict(poller.director.status(), enabled=poller.director_enabled))
+
+
 @app.route("/focus_leader", methods=["POST"])
 def focus_leader():
     payload = request.get_json(silent=True) or {}
@@ -4402,6 +4520,10 @@ def streamdeck(action, param=None):
         poller.set_auto_follow(not poller.auto_follow)
         ok, msg = True, f"auto_follow={'on' if poller.auto_follow else 'off'}"
 
+    elif action == "toggle_director":
+        poller.set_director(not poller.director_enabled)
+        ok, msg = True, f"director={'on' if poller.director_enabled else 'off'}"
+
     elif action == "toggle_auto_replay":
         poller.set_auto_replay(not poller.auto_replay)
         ok, msg = True, f"auto_replay={'on' if poller.auto_replay else 'off'}"
@@ -4512,6 +4634,9 @@ def streamdeck(action, param=None):
             msg = f"camera -> #{target['car_number']} {target['name']}"
 
     print(f"[streamdeck] {action}/{param or ''} -> ok={ok}  {msg}")
+    # a camera / driver key pressed by hand: the REGIE pauses ~20 s
+    if ok and action in ("cam_next", "cam_prev", "cam", "cam_name", "driver_next", "driver_prev"):
+        poller.director.manual_override()
     return jsonify({"ok": ok, "message": msg, "action": action})
 
 # -----------------------------------------------------------------------------
@@ -4533,6 +4658,7 @@ if __name__ == "__main__":
     print("  Cam next/prev     http://localhost:5000/streamdeck/cam_next")
     print("  Cam by id         http://localhost:5000/streamdeck/cam/4")
     print("  Cam by name       http://localhost:5000/streamdeck/cam_name/TV1")
+    print("  REGIE on/off      http://localhost:5000/streamdeck/toggle_director")
     print("  List cameras      http://localhost:5000/cameras?format=text")
     print("  Driver next/prev  http://localhost:5000/streamdeck/driver_next")
     print("  Toggle follow     http://localhost:5000/streamdeck/toggle_auto_follow")
