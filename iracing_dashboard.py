@@ -212,7 +212,7 @@ class TelemetryPoller:
         self.director = RaceDirector()
         self.director_enabled = False
         self._own_replay_until = 0.0      # director keeps still during OUR replays
-        self._dir_laps: dict = {}         # car_idx -> (lap, pct, fixed lap) for the director
+        self._dir_laps: dict = {}         # car_idx -> last progress handed to the director
         self._focus_crash_hold_seconds = 12.0
 
         # HUD-hidden state. iRacing re-shows its broadcast HUD every time
@@ -1790,19 +1790,24 @@ class TelemetryPoller:
         print(f"[regie] REPLAY    {shot.reason}" + ("" if ok else f"  (failed: {msg})"))
 
     def _director_progress(self, d: dict) -> float:
-        """lap + pct, with iRacing's S/F lag removed: the pct wraps to 0 a few
-        ticks BEFORE CarIdxLap counts up, so a car crossing the line would
-        drop a whole lap for a moment (seen at the green, Motegi replay
-        2026-10-14 — the director cut every 0.3 s)."""
+        """lap + pct, with iRacing's S/F glitches removed. At the line the
+        pct and CarIdxLap do not change on the same tick — in either order:
+        the pct can wrap to 0 before the lap counts up (car drops a lap for a
+        moment: the director cut every 0.3 s at the green) or the lap can
+        count up while the pct still reads 0.99 (car jumps a lap AHEAD: random
+        back-markers became "the leader") — Motegi replay 2026-10-14. Of
+        lap-1 / lap / lap+1 (+ pct) take the one closest to where the car
+        was; only near the line, so a replay seek is still followed."""
         idx, lap, pct = d["car_idx"], d.get("lap") or 0, max(d.get("lap_pct") or 0.0, 0.0)
+        raw = lap + pct
         prev = self._dir_laps.get(idx)
-        fixed = lap
-        if prev:
-            p_lap, p_pct, p_fixed = prev
-            if lap == p_lap and pct < 0.1 and (p_pct > 0.9 or p_fixed > p_lap):
-                fixed = lap + 1                     # wrapped, counter not yet
-        self._dir_laps[idx] = (lap, pct, fixed)
-        return fixed + pct
+        prog = raw
+        if prev is not None and (pct < 0.1 or pct > 0.9):
+            best = min((raw - 1, raw, raw + 1), key=lambda v: abs(v - prev))
+            if abs(best - prev) < 0.05:       # a real move, not a replay seek
+                prog = best
+        self._dir_laps[idx] = prog
+        return prog
 
     def set_director(self, enabled: bool):
         self.director_enabled = bool(enabled)

@@ -243,6 +243,14 @@ now returns to WHERE IT WAS (+ elapsed) when started from a recording
 of the recording — matters for REGIE practice on replays; live unchanged.
 test_race_director.py 36/36; scratchpad integ2.py (real poller + fake SDK:
 replay call, mark replayed, auto-replay off, return path) 7/7.
+FOURTH run: random back-markers shown as "leader: … (P1)" and NO overtake
+replay at all. iRacing's S/F glitch goes BOTH ways — besides the pct-wraps-
+first lag, the lap can count up while the pct still reads 0.99 (car jumps a
+lap AHEAD → leader for a tick → "leader due" cut to it; at the green it also
+set `green_lead` a lap too high, so laps 1-3 were skipped instead of 1-2).
+`_director_progress()` now takes, near the line (pct < 0.1 or > 0.9), whichever
+of lap-1 / lap / lap+1 (+pct) is within 0.05 of the car's previous progress;
+anything farther is a replay seek and is taken as is.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`
