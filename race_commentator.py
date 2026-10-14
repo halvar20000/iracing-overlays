@@ -183,6 +183,7 @@ class Commentator:
         self._worker = None
         self.last_error = ""
         self.last_info = ""
+        self._thinking_off_ok = True
 
     # -- public ---------------------------------------------------------------
     @property
@@ -282,12 +283,36 @@ class Commentator:
 
     def _call_claude(self, f: dict, ctx: dict, recent: list) -> str | None:
         user = json.dumps({"bild": f, "rennen": ctx, "letzte_saetze": recent}, ensure_ascii=False)
-        body = json.dumps({
+        payload = {
             "model": self.cfg.get("model") or DEFAULT_CONFIG["model"],
             "max_tokens": 400,
             "system": SYSTEM_PROMPT,
             "messages": [{"role": "user", "content": user}],
-        }).encode("utf-8")
+        }
+        # Haiku 5.5 thinks by default and used the whole budget before writing
+        # (stop_reason max_tokens, only a thinking block) -> switch it off; a
+        # model that rejects the switch gets a big budget instead
+        if self._thinking_off_ok:
+            payload["thinking"] = {"type": "disabled"}
+        else:
+            payload["max_tokens"] = 3000
+        try:
+            data = self._post(payload)
+        except RuntimeError as e:
+            if self._thinking_off_ok and "HTTP 400" in str(e) and "thinking" in str(e).lower():
+                self._thinking_off_ok = False
+                payload.pop("thinking", None)
+                payload["max_tokens"] = 3000
+                data = self._post(payload)
+            else:
+                raise
+        self.last_info = (f"stop_reason={data.get('stop_reason')}, "
+                          f"blocks={[b.get('type') for b in data.get('content', [])]}")
+        parts = [b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"]
+        text = " ".join(p.strip() for p in parts).strip().strip('"„“')
+        return text[:220] or None
+
+    def _post(self, payload: dict) -> dict:
         headers = {
             "content-type": "application/json",
             "x-api-key": self.cfg["api_key"],
@@ -295,10 +320,11 @@ class Commentator:
         }
         if self.cfg.get("workspace_id"):
             headers["anthropic-workspace-id"] = self.cfg["workspace_id"]
-        req = urllib.request.Request(API_URL, data=body, method="POST", headers=headers)
+        req = urllib.request.Request(API_URL, data=json.dumps(payload).encode("utf-8"),
+                                     method="POST", headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=float(self.cfg.get("timeout_s") or 6.0)) as r:
-                data = json.loads(r.read().decode("utf-8"))
+                return json.loads(r.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             # Anthropic says WHY in the body (credit balance, model, key …)
             try:
@@ -306,8 +332,3 @@ class Commentator:
             except Exception:
                 msg = ""
             raise RuntimeError(f"HTTP {e.code}: {msg or e.reason}") from None
-        self.last_info = (f"stop_reason={data.get('stop_reason')}, "
-                          f"blocks={[b.get('type') for b in data.get('content', [])]}")
-        parts = [b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"]
-        text = " ".join(p.strip() for p in parts).strip().strip('"„“')
-        return text[:220] or None
