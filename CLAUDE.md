@@ -262,6 +262,16 @@ events (wall_clock inside `_own_replay_from`.._until) are not handed to the
 director, and the director drops a re-report of the same (type, car, passed
 car) within `SAME_EVENT_S` 90 s. (The feed wipe itself is old behaviour of
 every replay, also the manual button — not changed.)
+SIXTH (Thomas: return from a replay not smooth — driver / camera changed too
+soon after it): the return went to the car iRacing showed when the replay
+STARTED (could differ from the director's shot → instant re-assert cut) and
+the director resumed 2.5 s later with its shot clock already run down.
+Now `replay_5s_of_car(return_car=, return_group=, on_return=)`: REGIE replays
+return to the director's current car + camera group; `_after_director_replay`
+keeps the director still `REPLAY_SETTLE_S` 5 s more (events reported in that
+window are ignored too) and `director.after_replay(resume)` restarts the shot
+on air at the resume moment (full MIN before a cut, CAM_VARY_EVERY before a
+camera change; the replay gap counts from there). integ2.py 10/10.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

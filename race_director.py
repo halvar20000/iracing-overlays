@@ -148,6 +148,14 @@ class RaceDirector:
         self.last_replay_at = -1e9
         self.event_keys.clear()
 
+    def after_replay(self, resume_at: float):
+        """The dashboard is back from a replay; the shot on air (where it
+        returned to) counts as starting at `resume_at` — a full MIN_SHOT before
+        any cut, CAM_VARY_EVERY before a camera change."""
+        if self.current is not None:
+            self.current.started = self.current.cam_changed = resume_at
+        self.last_replay_at = max(self.last_replay_at, resume_at)
+
     def manual_override(self, now: float | None = None):
         """Operator picked a car / camera by hand: hands off for a while."""
         self.paused_until = (now if now is not None else time.time()) + MANUAL_PAUSE_S

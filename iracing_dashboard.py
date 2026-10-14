@@ -148,6 +148,7 @@ REPLAY_PRIORITY = {"overtake": 2, "collision": 1, "lost_control": 1}
 # -----------------------------------------------------------------------------
 # Telemetry poller
 # -----------------------------------------------------------------------------
+REPLAY_SETTLE_S = 5.0        # REGIE keeps still this long after returning from a replay
 MIN_PLAUSIBLE_LAP_S = 20.0   # anything shorter is not a real lap estimate
 
 
@@ -1782,16 +1783,29 @@ class TelemetryPoller:
         not see live. Same seek + auto-return as the feed's replay button."""
         info = shot.info
         is_ot = info.get("event") == "overtake"
+        cur = self.director.current
         ok, msg = self.replay_5s_of_car(
             shot.car["number"],
             t_session=info.get("t_session"),
             session_num=info.get("session_num"),
             rewind_seconds=15.0 if info.get("event") == "collision" else 10.0,
             buildup_seconds=8.0 if is_ot else 5.0,
+            return_car=cur.car["number"] if cur else None,
+            return_group=int(cur.group["id"]) if cur and cur.group else None,
+            on_return=self._after_director_replay,
         )
         if ok and info.get("event_id") is not None:
             self.mark_incident_replayed(info["event_id"])
         print(f"[regie] REPLAY    {shot.reason}" + ("" if ok else f"  (failed: {msg})"))
+
+    def _after_director_replay(self):
+        """Back from a REGIE replay: let the picture settle. The director stays
+        still a few more seconds (what the detectors report right after the
+        jump back is the jump, not news) and the shot on air then starts
+        afresh — full minimum length, no camera change straight away."""
+        resume = time.time() + REPLAY_SETTLE_S
+        self._own_replay_until = resume
+        self.director.after_replay(resume)
 
     def _director_progress(self, d: dict) -> float:
         """lap + pct, with iRacing's S/F glitches removed. At the line the
@@ -2344,7 +2358,10 @@ class TelemetryPoller:
                          t_session: float | None = None,
                          session_num: int | None = None,
                          rewind_seconds: float = 10.0,
-                         buildup_seconds: float = 5.0):
+                         buildup_seconds: float = 5.0,
+                         return_car: str | None = None,
+                         return_group: int | None = None,
+                         on_return=None):
         """
         Show a replay of an incident: switch camera to `car_number`, seek the
         replay playhead to BEFORE the incident, play at 1x, then auto-return
@@ -2479,7 +2496,9 @@ class TelemetryPoller:
                     # its Scenic view, which must never appear on stream.
                     # If we don't know the previously-watched car, target
                     # the live leader instead.
-                    target_car = original_car_number
+                    # REGIE: back to the shot IT has on air (not whatever
+                    # iRacing showed when the replay started), same camera
+                    target_car = return_car or original_car_number
                     if not target_car:
                         positions = self.ir["CarIdxPosition"] or []
                         drivers = (self.ir["DriverInfo"] or {}) \
@@ -2491,12 +2510,14 @@ class TelemetryPoller:
                                 target_car = str(d.get("CarNumber", "")) or None
                                 break
                     if target_car:
-                        self.ir.cam_switch_num(
-                            target_car, self._safe_cam_group(), 0)
+                        grp = return_group if return_group is not None else self._safe_cam_group()
+                        self.ir.cam_switch_num(target_car, grp, 0)
                         self._reassert_ui_hide()
                         print(f"[replay] back to live, camera on #{target_car}")
                     else:
                         print("[replay] back to live (no camera target found)")
+                    if on_return:
+                        on_return()
                 except Exception as e:
                     print(f"[replay] auto-return failed: {e}")
 
