@@ -182,6 +182,7 @@ class Commentator:
         self._q: queue.Queue = queue.Queue()
         self._worker = None
         self.last_error = ""
+        self.last_info = ""
 
     # -- public ---------------------------------------------------------------
     @property
@@ -261,6 +262,7 @@ class Commentator:
             while not self._q.empty():
                 t0, f, ctx = self._q.get_nowait()
             text = None
+            t_call = time.time()
             try:
                 with self._lock:
                     recent = [ln["text"] for ln in list(self.lines)[:5]]
@@ -268,16 +270,21 @@ class Commentator:
                 self.last_error = ""
             except Exception as e:          # network, key, quota … -> template
                 self.last_error = str(e)[:400]
+            took = time.time() - t_call
             if text and time.time() - t0 <= AI_STALE_S:
                 self._publish(text, f, time.time(), "claude")
             else:
+                if text:
+                    self.last_error = f"Claude zu langsam ({took:.1f} s), Vorlage benutzt"
+                elif not self.last_error:
+                    self.last_error = f"Claude ohne Text ({took:.1f} s): {self.last_info}"
                 self._publish_template(f, time.time())
 
     def _call_claude(self, f: dict, ctx: dict, recent: list) -> str | None:
         user = json.dumps({"bild": f, "rennen": ctx, "letzte_saetze": recent}, ensure_ascii=False)
         body = json.dumps({
             "model": self.cfg.get("model") or DEFAULT_CONFIG["model"],
-            "max_tokens": 80,
+            "max_tokens": 400,
             "system": SYSTEM_PROMPT,
             "messages": [{"role": "user", "content": user}],
         }).encode("utf-8")
@@ -299,6 +306,8 @@ class Commentator:
             except Exception:
                 msg = ""
             raise RuntimeError(f"HTTP {e.code}: {msg or e.reason}") from None
+        self.last_info = (f"stop_reason={data.get('stop_reason')}, "
+                          f"blocks={[b.get('type') for b in data.get('content', [])]}")
         parts = [b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"]
         text = " ".join(p.strip() for p in parts).strip().strip('"„“')
         return text[:220] or None
