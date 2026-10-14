@@ -115,6 +115,13 @@ check("overtake in lap 2, not on screen -> replay", rp and rp[0][2] == 6, s.cuts
 check("replay reason names both cars", "passes #15" in s.d.log[-1]["reason"] or
       any("replay overtake" in e["reason"] and "#15" in e["reason"] for e in s.d.log))
 s.run(60, moving, {1180.0: [ot(3, 1180)]})                     # within REPLAY_GAP_S
+s.run(40, moving, {1215.0: [dict(ot(9, 1215), id=555)]})         # same pass, new id, 65 s later
+s2 = [c for c in s.cuts if c[1] == "replay"]
+check("same pass re-reported later is not replayed again (SAME_EVENT_S)", len(s2) == 1, s2)
+d4 = rd.RaceDirector()
+d4.vis_hist.append((1000.0, frozenset({5, 4})))            # passed car on screen, overtaker not
+check("overtake: only ONE of the two cars on screen is not 'seen'",
+      not d4._was_visible(1001.0, (6, 5), 10.0) and d4._was_visible(1001.0, (4, 5), 10.0))
 check("no second overtake replay within REPLAY_GAP_S",
       sum(1 for c in s.cuts if c[1] == "replay") == 1, [c for c in s.cuts if c[1] == "replay"])
 

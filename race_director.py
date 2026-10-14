@@ -57,7 +57,9 @@ EVENT_FRESH_S = 4.0      # incidents / overtakes older than this are not cut to
 # the live picture already. Overtakes: ignored in the first OVERTAKE_SKIP_LAPS
 # lap(s) after the green (start chaos), afterwards replayed the same way.
 OVERTAKE_SKIP_LAPS = 1.0   # = from lap 2 on (Thomas: "ab Runde 2")
-VISIBLE_S = 1.5          # cars this close (s) to the camera car are in the picture
+VISIBLE_S = 0.8          # cars this close (s) to the camera car are in the picture
+                         # (1.5 counted a pass 1-2 s ahead of a P5 battle on the
+                         # Chase cam as "seen" — Thomas wasn't sure he saw it)
 SEEN_WINDOW_S = {        # look back this far for "was it on screen" (detection delay:
     "overtake": 10.0,    # an overtake is confirmed ~3 s after the move, a contact
     "collision": 15.0,   # can be reported when the car stops / is towed)
@@ -65,6 +67,8 @@ SEEN_WINDOW_S = {        # look back this far for "was it on screen" (detection 
 }
 REPLAY_GAP_S = {"incident": 15.0, "overtake": 45.0}   # min. time since the last replay
 EVENT_MAX_AGE_S = 20.0   # events older than this (wall clock) are history
+SAME_EVENT_S = 90.0      # same pass (same two cars) / same car's contact again within
+                         # this = the detector re-reporting it (e.g. after a seek)
 REPLAY_HOLD_S = 16.0     # after a replay the shot on air gets a fresh MIN_SHOT
 PIT_TOP_N = 5            # pit stops worth showing: top N of a class
 
@@ -126,6 +130,7 @@ class RaceDirector:
         self.vis_hist: deque = deque()            # (t, cars in the picture)
         self.green_lead: float | None = None      # leader progress at the green
         self.last_replay_at = -1e9
+        self.event_keys: dict = {}                # (type, car, passed) -> last time handled
         self.started_at = None                    # first racing tick (leader-due clock)
         self.log: deque = deque(maxlen=60)
         self.kind_cuts: dict[str, int] = {}      # cuts per kind -> camera rotation
@@ -141,6 +146,7 @@ class RaceDirector:
         self.vis_hist.clear()
         self.green_lead = None
         self.last_replay_at = -1e9
+        self.event_keys.clear()
 
     def manual_override(self, now: float | None = None):
         """Operator picked a car / camera by hand: hands off for a while."""
@@ -252,8 +258,10 @@ class RaceDirector:
             self.vis_hist.popleft()
 
     def _was_visible(self, now, idxs, window):
+        """True if ALL given cars were in the picture together at some point
+        of the window — for an overtake both cars, not just one of them."""
         idxs = {i for i in idxs if i is not None}
-        return any(now - t <= window and idxs & vis for t, vis in self.vis_hist)
+        return bool(idxs) and any(now - t <= window and idxs <= vis for t, vis in self.vis_hist)
 
     def _event_replay(self, now, fresh, by_idx, groups, lead):
         """-> (replay Shot or None, events still to be shown LIVE)."""
@@ -269,6 +277,10 @@ class RaceDirector:
             c = by_idx.get(e.get("car_idx"))
             if c is None:
                 continue
+            ekey = (typ, e.get("car_idx"), e.get("passed_idx"))
+            if now - self.event_keys.get(ekey, -1e9) < SAME_EVENT_S:
+                continue                                  # already handled
+            self.event_keys[ekey] = now
             kind = "overtake" if typ == "overtake" else "incident"
             if kind == "overtake" and lead - self.green_lead < OVERTAKE_SKIP_LAPS:
                 continue                                  # start chaos: ignored

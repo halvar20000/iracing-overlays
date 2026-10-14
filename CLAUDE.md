@@ -241,7 +241,7 @@ auto-replay toggles do nothing (`_try_auto_replay` returns). `replay_5s_of_car`
 now returns to WHERE IT WAS (+ elapsed) when started from a recording
 (ReplayFrameNumEnd > 60 = behind the live tip) instead of jumping to the end
 of the recording — matters for REGIE practice on replays; live unchanged.
-test_race_director.py 36/36; scratchpad integ2.py (real poller + fake SDK:
+test_race_director.py 38/38; scratchpad integ2.py (real poller + fake SDK:
 replay call, mark replayed, auto-replay off, return path) 7/7.
 FOURTH run: random back-markers shown as "leader: … (P1)" and NO overtake
 replay at all. iRacing's S/F glitch goes BOTH ways — besides the pct-wraps-
@@ -252,6 +252,16 @@ set `green_lead` a lap too high, so laps 1-3 were skipped instead of 1-2).
 of lap-1 / lap / lap+1 (+pct) is within 0.05 of the car's previous progress;
 anything farther is a replay seek and is taken as is.
 Then Thomas: overtakes from LAP 2 on → `OVERTAKE_SKIP_LAPS` 2.0 → 1.0.
+FIFTH run: two overtake replays worked. Thomas unsure he SAW the Zocher /
+Richter pass that REGIE logged as "seen" — the camera was on the P5 battle
+(Chase cam), the pass 1-2 s ahead. Now `VISIBLE_S` 0.8 and an overtake counts
+as seen only if BOTH cars were in the picture together. Also: every replay
+seeks back > 5 s → the dashboard's `_reset_detection_state` wipes the feeds
+and the detectors then re-report what happens in the replayed footage; such
+events (wall_clock inside `_own_replay_from`.._until) are not handed to the
+director, and the director drops a re-report of the same (type, car, passed
+car) within `SAME_EVENT_S` 90 s. (The feed wipe itself is old behaviour of
+every replay, also the manual button — not changed.)
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

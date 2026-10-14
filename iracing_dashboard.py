@@ -212,6 +212,7 @@ class TelemetryPoller:
         self.director = RaceDirector()
         self.director_enabled = False
         self._own_replay_until = 0.0      # director keeps still during OUR replays
+        self._own_replay_from = 0.0       # ...and ignores what the detectors report from that footage
         self._dir_laps: dict = {}         # car_idx -> last progress handed to the director
         self._focus_crash_hold_seconds = 12.0
 
@@ -1756,7 +1757,10 @@ class TelemetryPoller:
                  "progress": self._director_progress(d), "on_pit": d["on_pit_road"],
                  "in_world": d["in_world"], "est_lap": d.get("est_lap") or 100.0}
                 for d in drivers]
-        events = list(self._incidents) + list(self._overtakes)
+        # events detected while OUR replay was playing come from the replayed
+        # footage (the same pass / contact again) — never news
+        events = [e for e in list(self._incidents) + list(self._overtakes)
+                  if not (self._own_replay_from <= (e.get("wall_clock") or 0) <= self._own_replay_until)]
         shot = self.director.tick(time.time(), cars, self._camera_groups,
                                   current_cam_idx, events, racing)
         if shot is None:
@@ -2376,6 +2380,7 @@ class TelemetryPoller:
             # NEVER Scenic — neither for the replay itself nor the return.
             cam_group = self._safe_cam_group()
             # the REGIE keeps its hands off until we are back live
+            self._own_replay_from = time.time()
             self._own_replay_until = time.time() + rewind_seconds + 4.0
 
             # 1) Compute the absolute target session time.
