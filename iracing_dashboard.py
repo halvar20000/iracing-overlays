@@ -4463,6 +4463,13 @@ def commentary():
     st = poller.commentator.status()
     if request.args.get("voice") == "1":
         poller.voice.listening()          # a voice page is open -> make audio
+        pid = request.args.get("pid")
+        if pid:                           # what each open voice page is doing (diagnosis from afar)
+            try:
+                rep = json.loads(request.args.get("st") or "{}")
+            except ValueError:
+                rep = {}
+            VOICE_PAGES[pid[:16]] = dict(rep, at=time.time(), ip=request.remote_addr)
         # moderation said while nobody listened (voice source reloaded): make it now
         for ln in reversed(st["lines"]):
             if (ln.get("queue") and not ln.get("played") and not ln.get("cancelled")
@@ -4470,8 +4477,15 @@ def commentary():
                 poller.voice.say(ln["id"], ln["text"], keep=True)
     for ln in st["lines"]:
         ln["audio"] = poller.voice.has(ln["id"])
+    now = time.time()
+    for k in [k for k, v in VOICE_PAGES.items() if now - v["at"] > 60]:
+        del VOICE_PAGES[k]
     return jsonify(dict(st, enabled=poller.director_enabled, voice=poller.voice.status(),
-                        now=time.time()))
+                        now=now, pages=[dict(v, pid=k, age=round(now - v["at"], 1))
+                                        for k, v in VOICE_PAGES.items()]))
+
+
+VOICE_PAGES: dict = {}    # pid -> last state reported by a voice page
 
 
 @app.route("/commentary/played/<int:line_id>", methods=["POST"])
@@ -4611,6 +4625,8 @@ const QWAIT = 25, QMAXAGE = 300;          // moderation: waits longer, never "to
 const audio = new Audio();
 audio.volume = Math.max(0, Math.min(1, parseFloat(qs.get('vol') || '1')));
 let lastId = null, playing = null, said = '', blocked = false, info = {};
+const PID = Math.random().toString(36).slice(2, 10);
+let lastErr = '', progAt = 0, progT = -1, tries = {};
 const doneQ = new Set();                  // queue lines played / skipped here
 function finish() {
     if (playing && playing.queue) ack(playing.id);
@@ -4632,18 +4648,40 @@ function render() {
         '<br>Avatar (VTube Studio): ' + esc(vtsState) + ' <span id="mouth"><i id="mi"></i></span>' +
         (blocked ? '<br><span class="err">Browser blockiert Ton – einmal in die Seite klicken (in OBS nicht nötig)</span>' : '') +
         (v.last_error ? '<br><span class="err">' + esc(v.last_error) + '</span>' : '') +
+        (lastErr ? '<br><span class="err">Seite: ' + esc(lastErr) + '</span>' : '') +
+        ((info.pages || []).length > 1 ? '<br><span class="err">' + info.pages.length +
+            ' Stimmen-Seiten offen – nur eine (in OBS) sollte laufen</span>' : '') +
         (said ? '<br>zuletzt: ' + esc(said) : '');
 }
 async function play(line) {
     audio.src = '/commentary/audio/' + line.id;
-    playing = line; said = line.text;
+    playing = line; said = line.text; progAt = Date.now(); progT = -1;
+    tries[line.id] = (tries[line.id] || 0) + 1;
     try { ensureGraph(); await audio.play(); blocked = false; }
-    catch (e) { playing = null; blocked = true; }
+    catch (e) { playing = null; blocked = e && e.name === 'NotAllowedError'; lastErr = String(e && (e.name + ': ' + e.message)); }
     render();
+}
+// a clip that stops moving (no 'ended', no 'error') must not hold the queue:
+// try it again, after 3 tries skip it
+setInterval(() => {
+    if (!playing) return;
+    if (audio.currentTime !== progT) { progT = audio.currentTime; progAt = Date.now(); return; }
+    if (Date.now() - progAt < 6000) return;
+    lastErr = 'Clip ' + playing.id + ' hängt (' + (audio.paused ? 'pausiert' : 'steht') + ', readyState ' + audio.readyState + ')';
+    const l = playing; playing = null; audio.pause();
+    if (l.queue && tries[l.id] >= 3) ack(l.id);
+    else if (!l.queue) lastId = Math.max(lastId || 0, l.id);
+}, 1000);
+function pageState() {
+    return JSON.stringify({p: playing ? playing.id : null, b: blocked, e: lastErr.slice(0, 160),
+        ac: ac ? ac.state : '-', vis: document.visibilityState, obs: !!window.obsstudio,
+        pa: audio.paused, ct: Math.round(audio.currentTime * 10) / 10, rs: audio.readyState,
+        vts: vtsState, n: doneQ.size, v: 2});
 }
 async function tick() {
     let d;
-    try { d = await (await fetch('/commentary?voice=1', { cache: 'no-store' })).json(); } catch (e) { return; }
+    try { d = await (await fetch('/commentary?voice=1&pid=' + PID + '&st=' + encodeURIComponent(pageState()),
+                                 { cache: 'no-store' })).json(); } catch (e) { return; }
     info = d; render();
     const lines = d.lines || [], now = d.now || 0;
     // a moderation line cut short by the operator ("next" / "stop")
@@ -4677,9 +4715,7 @@ async function tick() {
 }
 document.addEventListener('click', () => {      // unlock sound in a normal browser
     if (ac) ac.resume();
-    if (!blocked) return;
-    blocked = false;
-    audio.play().catch(() => { blocked = true; });
+    blocked = false;                            // the next tick plays the line again
 });
 
 // --- avatar: VTube Studio mouth from the loudness of the voice ---------------
