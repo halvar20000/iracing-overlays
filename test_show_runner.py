@@ -74,7 +74,7 @@ check("no CLS at all still gives a show", sr.available_segments(cfg, sr.build_fa
 
 # --- Pro/Am season (WCT GT3): everything per class -------------------------------
 PA = json.loads(json.dumps(ROUNDINFO))
-PA["info"]["season"]["proAmEnabled"] = True
+PA["standings"]["season"] = {"proAmEnabled": True}   # like CLS: round-info's season has no flag
 for r, c in zip(PA["info"]["lastRound"]["races"][0]["results"], ("PRO", "AM", "AM")):
     r["proAmClass"] = c
 PA["standings"]["standings"] = [

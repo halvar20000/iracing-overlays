@@ -167,12 +167,14 @@ def build_facts(roundinfo: dict | None, track: dict, notes: str | None, video_s:
     }
     lr = info.get("lastRound") or {}
     rows = st.get("standings") or []
-    # Pro/Am season: CLS points are CLASS points, so one mixed list would put
+    # Pro/Am season (the flag is only on the STANDINGS season, not round-info's):
+    # CLS points are CLASS points, so one mixed list would put
     # an AM driver "in the lead" — everything is split by class instead.
     classes = [c for c in ("PRO", "AM")
                if any(r.get("proAmClass") == c for r in rows)
                or any(x.get("proAmClass") == c for race in lr.get("races") or []
-                      for x in race.get("results") or [])] if season.get("proAmEnabled") else []
+                      for x in race.get("results") or [])] \
+        if (season.get("proAmEnabled") or (st.get("season") or {}).get("proAmEnabled")) else []
     if classes:
         facts["pro_am"] = classes
 
