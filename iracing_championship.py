@@ -809,15 +809,21 @@ class RoundInfoFetcher:
         self._lock = threading.Lock()
         self._data: dict | None = None
         self._error: str | None = None
+        self._key: tuple | None = None   # (league, season) the data is for
 
     def get(self) -> dict:
         with self._lock:
-            return {"data": self._data, "error": self._error}
+            return {"data": self._data, "error": self._error, "key": self._key}
+
+    @staticmethod
+    def _cfg_key(cfg: dict) -> tuple:
+        return (cfg.get("league_slug") or "", cfg.get("season_id") or "")
 
     def run(self) -> None:
         while True:
             try:
                 cfg = self._champ.get()["config"]
+                key = self._cfg_key(cfg)
                 base = (cfg.get("api_base") or DEFAULT_API).rstrip("/")
                 params = {"league": cfg.get("league_slug") or ""}
                 if cfg.get("season_id"):
@@ -828,12 +834,19 @@ class RoundInfoFetcher:
                 if not body.get("ok"):
                     raise RuntimeError(body.get("error") or "API returned ok=false")
                 with self._lock:
-                    self._data, self._error = body, None
+                    self._data, self._error, self._key = body, None, key
             except Exception as e:
                 with self._lock:
                     self._error = f"{type(e).__name__}: {e}"
                 print(f"[championship] round-info fetch failed: {self._error}")
-            time.sleep(self.REFRESH_S)
+            # A league switch (auto-detect from the grid) refetches at once,
+            # not after up to a minute of the old series' data.
+            start_key = self._cfg_key(self._champ.get()["config"])
+            end = time.time() + self.REFRESH_S
+            while time.time() < end:
+                time.sleep(1.0)
+                if self._cfg_key(self._champ.get()["config"]) != start_key:
+                    break
 
 
 round_info = RoundInfoFetcher(fetcher)
@@ -2106,10 +2119,16 @@ def prerace_page():
 
 @app.route("/api/roundinfo")
 def api_roundinfo():
+    # Detect the series here too: the AI moderation (dashboard /show) reads
+    # only this route, often with no championship page open that would
+    # otherwise trigger the switch (2026-10-15: IEC facts over an SFL replay).
+    _apply_detected_league(poller.get())
     info = round_info.get()
     champ = fetcher.get()
     if not info["data"]:
         return jsonify({"ok": False, "error": info["error"] or "Loading CLS data…"})
+    if info["key"] != RoundInfoFetcher._cfg_key(champ.get("config") or {}):
+        return jsonify({"ok": False, "error": "Switching league — loading CLS data…"})
     return jsonify({"ok": True, "info": info["data"], "standings": champ.get("data"),
                     "error": info["error"]})
 

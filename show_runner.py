@@ -90,13 +90,21 @@ def _ms(ms) -> str | None:
     return f"{int(m)}:{s:06.3f}".replace(".", ",")
 
 
-def fetch_roundinfo(url: str, timeout: float = 5.0) -> dict | None:
-    try:
-        with urllib.request.urlopen(url, timeout=timeout) as r:
-            d = json.loads(r.read().decode("utf-8"))
-        return d if d.get("ok") else None
-    except Exception:
-        return None
+def fetch_roundinfo(url: str, timeout: float = 5.0, tries: int = 6, wait_s: float = 1.5) -> dict | None:
+    """CLS round info via the championship overlay. While it is switching to
+    the series it just detected on the grid (or still loading), wait a few
+    seconds rather than writing the script from no / the old league's data."""
+    for i in range(tries):
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as r:
+                d = json.loads(r.read().decode("utf-8"))
+        except Exception:
+            return None
+        if d.get("ok"):
+            return d
+        if i + 1 < tries:
+            time.sleep(wait_s)
+    return None
 
 
 def find_notes(notes_dir: Path, track: str, track_cfg: str = "") -> str | None:
