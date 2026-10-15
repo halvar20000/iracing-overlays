@@ -123,11 +123,24 @@ def _num(v, default: float) -> float:
         return default
 
 
+def _two(n: int) -> str:
+    return f"null {n}" if n < 10 else str(n)
+
+
+def _say_lap(m) -> str:
+    """1:49,300 -> 'eins 49 30' = "eins neunundvierzig dreißig" (minutes,
+    seconds, hundredths — how a commentator reads a lap time)."""
+    mins, secs = int(m.group(1)), int(m.group(2))
+    hund = min(99, round(int(m.group(3).ljust(3, "0")) / 10))
+    return f"{'eins' if mins == 1 else mins} {_two(secs)} {_two(hund)}"
+
+
 def speakable(text: str) -> str:
     """Numbers the way a commentator says them: lap time 1:39,512 ->
-    '1 39 Komma 5 1 2' (not 'ein Uhr neununddreißig'), 0,44 -> '0 Komma 4 4',
+    'eins 39 51' = "eins neununddreißig einundfünfzig" (not 'ein Uhr
+    neununddreißig'), 0,44 -> '0 Komma 4 4',
     the class AM -> 'A M', PRO -> 'Pro'."""
-    text = _LAP.sub(lambda m: f"{int(m.group(1))} {m.group(2)} Komma {' '.join(m.group(3))}", text)
+    text = _LAP.sub(_say_lap, text)
     text = _DEC.sub(lambda m: f"{m.group(1)} Komma {' '.join(m.group(2))}", text)
     # Pro/Am classes: "AM" spelled A M (not the German word "am"), "PRO" as the word Pro
     text = re.sub(r"\bAM\b", "A M", text)

@@ -158,7 +158,8 @@ check("requested ids tracked", {2, 4, 6} <= v8.requested)
 v9 = rv.Voice({"tts": "edge"}, {"edge": edge_rec})
 v9.say(7, "nobody listens", keep=True)
 check("not requested while nobody listens", 7 not in v9.requested)
-check("speakable lap time", rv.speakable("Pole mit 1:39,512!") == "Pole mit 1 39 Komma 5 1 2!"
+check("speakable lap time", rv.speakable("Pole mit 1:39,512!") == "Pole mit eins 39 51!"
+      and rv.speakable("1:49.30 und 2:05,048") == "eins 49 30 und 2 null 5 null 5"
       and rv.speakable("0,44 Sekunden") == "0 Komma 4 4 Sekunden")
 check("speakable classes", rv.speakable("Die AM-Klasse, am Ende PRO und AM.") == "Die A M-Klasse, am Ende Pro und A M.",
       rv.speakable("Die AM-Klasse, am Ende PRO und AM."))
