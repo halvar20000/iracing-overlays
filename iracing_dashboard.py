@@ -1807,7 +1807,7 @@ class TelemetryPoller:
                 video_s = self.show_obs.media_status(vid).get("duration_s")
             except Exception:
                 pass
-        facts = show_runner.build_facts(ri, track, notes, video_s)
+        facts = show_runner.build_facts(ri, track, notes, video_s, notes_dir)
         if ri is None:
             self.show.last_error = "CLS-Daten nicht erreichbar (läuft die Meisterschaft auf 5010?)"
         return facts
@@ -4936,7 +4936,7 @@ SHOW_HTML = r"""<!DOCTYPE html>
 <script>
 const NAMES = {intro: 'Begrüßung', last_race: 'Letztes Rennen', standings: 'Tabelle', track: 'Strecke', outro: 'Übergabe',
                last_race_pro: 'Letztes Rennen · PRO', last_race_am: 'Letztes Rennen · AM',
-               standings_pro: 'Tabelle · PRO', standings_am: 'Tabelle · AM'};
+               standings_pro: 'Tabelle · PRO', standings_am: 'Tabelle · AM', schedule: 'Saisonplan'};
 // The script is editable until the show runs: a text field per segment,
 // saved with "Skript speichern" (an empty field drops that segment). An
 // edited script is never rewritten automatically; "neu schreiben" asks first.
@@ -4957,7 +4957,7 @@ async function check() {
     el.innerHTML = '<div class="dim">OBS: ' + (d.streaming ? '<span class="ok">streamt</span>' : 'streamt nicht') +
         ' · Szene jetzt: ' + esc(d.current) + '</div><ul>' +
         d.items.map(i => '<li class="' + (i.found ? 'ok' : i.optional ? 'dim' : 'err') + '">' +
-                    (i.found ? '✓ ' : i.optional ? '– nicht da (nur für Pro/Am-Ligen; sonst zeigt die normale Quelle die Klasse): ' : '✗ fehlt: ') +
+                    (i.found ? '✓ ' : i.optional ? '– nicht da (optional: Pro/Am-Klasse bzw. Saisonplan einer Liga): ' : '✗ fehlt: ') +
                     esc(i.what) + ' „' + esc(i.name) + '“' +
                     (!i.found && i.near && i.near.length ? ' <span class="dim">– in OBS gibt es: ' +
                         i.near.map(n => '„' + esc(n) + '“').join(', ') + '</span>' : '') + '</li>').join('') + '</ul>';
@@ -5047,11 +5047,14 @@ def show_check():
             items.append({"what": "Szene", "name": name, "found": name in scenes})
         mod = cfg["scenes"].get("moderator")
         srcs = poller.show_obs.scene_items(mod) if mod in scenes else {}
-        for key, name in (cfg.get("sources") or {}).items():
+        srcs_cfg = dict(cfg.get("sources") or {})
+        for slug, name in (cfg.get("schedule_sources") or {}).items():
+            srcs_cfg[f"schedule:{slug}"] = name                 # season schedule picture per league
+        for key, name in srcs_cfg.items():
             if name:
                 real = show_runner.match_name(name, srcs)
                 items.append({"what": f"Quelle in {mod}", "name": real or name, "found": bool(real),
-                              "optional": key in show_runner.CLASS_SOURCE_FALLBACK,
+                              "optional": key in show_runner.CLASS_SOURCE_FALLBACK or key.startswith("schedule:"),
                               "near": [] if real else [h for h in srcs if h and any(
                                   w in h.casefold() for w in name.casefold().split() if len(w) >= 4)][:4]})
         return jsonify({"ok": True, "items": items, "current": poller.show_obs.current_scene(),

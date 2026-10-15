@@ -41,6 +41,12 @@ Ablauf nur einmal.
      wird. Fehlen sie, nimmt der Ablauf die normalen Quellen und stellt dort
      die Klasse um.
 
+   - **Saisonplan:** pro Liga eine Quelle mit dem Plan, z. B. `WCT` für die
+     WCT GT3 (`"schedule_sources": {"cas-gt3-wct": "WCT"}` in
+     `show_config.json`, für weitere Ligen ergänzen). Die Termine kommen aus
+     CLS, die Strecken späterer Runden aus `show_notes/schedule-<liga>.md`
+     (eine Zeile pro Runde: `20.10.26 Indianapolis Motor Speedway - GP`).
+
    Diese Quellen blendet der Ablauf selbst ein und aus.
 4. **Stimme:** die Browserquelle `obs_loaders\commentary_voice.html` mit
    **„Audio über OBS steuern“**. Sie muss in **beiden** Szenen liegen, in

@@ -362,6 +362,41 @@ wait_for(lambda: r10.state == "done", 20, tick=w10)
 check("class sources found despite other spelling", ("standings_pro", "Tabelle Pro ") in seen10
       and ("last_race_am", "letztes rennen AM") in seen10 and not any(k == "Tabelle" for _, k in seen10), seen10)
 
+# season schedule: own segment with the league's picture, tracks from show_notes/schedule-<slug>.md
+SCH = json.loads(json.dumps(ROUNDINFO))
+SCH["info"]["rounds"] = [{"number": n, "name": f"Round {n}", "startsAt": f"2026-10-{6 + 7 * (n - 1):02d}T18:00:00.000Z",
+                          "status": "COMPLETED" if n < 5 else "UPCOMING"} for n in range(1, 4)] + \
+    [{"number": n, "name": f"Round {n}", "startsAt": "2026-11-0%dT18:00:00.000Z" % (n - 3), "status": "UPCOMING"}
+     for n in range(4, 7)]
+SCH["info"]["rounds"][2]["status"] = "COMPLETED"
+SCH["info"]["nextRound"] = {"number": 4, "track": "Spa"}
+with tempfile.TemporaryDirectory() as td:
+    (Path(td) / "schedule-cas-gt3-wct.md").write_text("# x\n02.11.26 Monza - GP\n03.11.26 Fuji - GP\n", encoding="utf-8")
+    sf = sr.build_facts(SCH, {"name": "Spa"}, None, None, Path(td))
+sp_ = sf.get("saisonplan") or {}
+check("schedule facts: today, next, tracks by date, spoken dates",
+      sp_.get("heute", {}).get("runde") == 4 and sp_["heute"]["strecke"] == "Spa"
+      and sp_["naechste_termine"][0]["strecke"] == "Monza - GP" and sp_["finale"]["strecke"] == "Fuji - GP" and sp_["naechste_termine"][0]["datum"] == "2. November"
+      and sp_["runden_gesamt"] == 6 and sp_["danach_noch"] == 2, sp_)
+csch = sr.load_config()
+check("schedule segment only with a source for the league", "schedule" in sr.available_segments(csch, sf)
+      and "schedule" not in sr.available_segments(dict(csch, schedule_sources={}), sf))
+check("schedule template", "Runde 4 von 6" in sr.template_script(csch, sf, ["schedule"])["schedule"])
+obs11 = FakeObs({"Moderator": {"Letztes Rennen": False, "Tabelle": False, "Streckenvideo": False, "WCT": False},
+                 "iRacing": {}}, media={"Streckenvideo": 0.2})
+c11 = sr.load_config(); c11["obs"] = {"host": "127.0.0.1", "port": obs11.port}
+r11 = sr.ShowRunner(c11, ObsClient(port=obs11.port), Speaker(), facts_fn=lambda: sf,
+                    script_fn=lambda f, s: (sr.template_script(c11, f, s), "template"), director_on=lambda: None)
+seen11 = set()
+def w11():
+    r11.tick()
+    if r11.seg:
+        seen11.update((r11.seg["id"], k) for k, x in obs11.scenes["Moderator"].items() if x)
+r11.start()
+wait_for(lambda: r11.state == "done", 20, tick=w11)
+check("schedule picture only during the schedule segment", ("schedule", "WCT") in seen11
+      and all(sid == "schedule" for sid, k in seen11 if k == "WCT") and not obs11.scenes["Moderator"]["WCT"], seen11)
+
 # hand edits: kept, empty segment skipped, survive a restart, never rewritten automatically
 with tempfile.TemporaryDirectory() as td:
     store = Path(td) / "show_script.json"

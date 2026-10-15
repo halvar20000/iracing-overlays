@@ -60,7 +60,10 @@ DEFAULT_CONFIG = {
         "standings_pro": "Tabelle PRO",
         "standings_am": "Tabelle AM",
     },
-    "segments": ["intro", "last_race", "standings", "track", "outro"],
+    "segments": ["intro", "last_race", "standings", "schedule", "track", "outro"],
+    # season schedule picture per league (CLS slug -> OBS source in the
+    # Moderator scene); a league without one skips the schedule segment
+    "schedule_sources": {"cas-gt3-wct": "WCT"},
     "auto_start": True,
     "start_at": "19:40",              # local time
     "start_window_min": 20,           # auto start only within this many minutes after start_at
@@ -74,7 +77,8 @@ DEFAULT_CONFIG = {
 }
 SEGMENT_SOURCES = {"last_race": "last_race", "standings": "standings",
                    "last_race_pro": "last_race_pro", "last_race_am": "last_race_am",
-                   "standings_pro": "standings_pro", "standings_am": "standings_am"}
+                   "standings_pro": "standings_pro", "standings_am": "standings_am",
+                   "schedule": "schedule"}
 CLASS_SOURCE_FALLBACK = {"last_race_pro": "last_race", "last_race_am": "last_race",
                          "standings_pro": "standings", "standings_am": "standings"}
 # Pro/Am seasons (WCT GT3): results and table are talked about per class, and
@@ -157,7 +161,7 @@ def find_notes(notes_dir: Path, track: str, track_cfg: str = "") -> str | None:
     words = {w for w in re.findall(r"[a-zäöüß]+", (track + " " + track_cfg).lower()) if len(w) >= 4}
     best, score = None, 0
     for p in notes_dir.iterdir():
-        if p.suffix.lower() not in (".md", ".txt"):
+        if p.suffix.lower() not in (".md", ".txt") or p.name.lower().startswith(("schedule-", "readme")):
             continue
         name = set(re.findall(r"[a-zäöüß]+", p.stem.lower()))
         sc = sum(len(w) for w in words & name)
@@ -171,7 +175,8 @@ def find_notes(notes_dir: Path, track: str, track_cfg: str = "") -> str | None:
         return None
 
 
-def build_facts(roundinfo: dict | None, track: dict, notes: str | None, video_s: float | None) -> dict:
+def build_facts(roundinfo: dict | None, track: dict, notes: str | None, video_s: float | None,
+                notes_dir: Path | None = None) -> dict:
     """Everything the moderation may say — and nothing else."""
     info = (roundinfo or {}).get("info") or {}
     st = (roundinfo or {}).get("standings") or {}
@@ -180,6 +185,7 @@ def build_facts(roundinfo: dict | None, track: dict, notes: str | None, video_s:
     nxt = info.get("nextRound") or {}
     facts = {
         "liga": league.get("name"),
+        "liga_slug": league.get("slug"),
         "saison": season.get("name"),
         "runde": nxt.get("number"),
         "runden_gesamt": season.get("totalRounds"),
@@ -189,6 +195,9 @@ def build_facts(roundinfo: dict | None, track: dict, notes: str | None, video_s:
         "streckennotizen": notes,
         "video_sekunden": round(video_s) if video_s else None,
     }
+    sched = _schedule(info, schedule_tracks(notes_dir or HERE / "show_notes", league.get("slug")))
+    if sched:
+        facts["saisonplan"] = sched
     from race_commentator import quali_format
     qf = quali_format(league.get("slug"))
     if qf:
@@ -264,6 +273,71 @@ def build_facts(roundinfo: dict | None, track: dict, notes: str | None, video_s:
     return facts
 
 
+_MONTHS = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September",
+           "Oktober", "November", "Dezember"]
+
+
+def _date(iso: str | None, spoken: bool = False) -> str | None:
+    """CLS UTC time -> local date (the stream PC's own time zone): '20.10.'
+    or, to be read out, '20. Oktober'."""
+    if not iso:
+        return None
+    try:
+        d = _dt.datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone()
+    except ValueError:
+        return None
+    return f"{d.day}. {_MONTHS[d.month - 1]}" if spoken else d.strftime("%d.%m.")
+
+
+def schedule_tracks(notes_dir: Path, slug: str | None) -> dict:
+    """show_notes/schedule-<league slug>.md: lines 'dd.mm.yy Track' -> {'dd.mm.': track}."""
+    if not slug:
+        return {}
+    try:
+        text = (notes_dir / f"schedule-{slug.split('/')[0]}.md").read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    out = {}
+    for line in text.splitlines():
+        m = re.match(r"\s*(\d{1,2})\.(\d{1,2})\.(?:\d{2,4})?\s+(.+?)\s*$", line)
+        if m:
+            out[f"{int(m.group(1)):02d}.{int(m.group(2)):02d}."] = m.group(3)
+    return out
+
+
+def _schedule(info: dict, tracks: dict | None = None) -> dict | None:
+    """The season's rounds from CLS round-info: today's round, what is left,
+    the next dates and the final. CLS has no tracks for later rounds — only
+    the next one — so nothing else may be said about them."""
+    rounds = sorted(info.get("rounds") or [], key=lambda r: r.get("number") or 0)
+    if not rounds:
+        return None
+    nxt = info.get("nextRound") or {}
+    open_ = [r for r in rounds if r.get("status") != "COMPLETED"]
+    today = next((r for r in open_ if r.get("number") == nxt.get("number")), open_[0] if open_ else None)
+    later = [r for r in open_ if today is None or (r.get("number") or 0) > (today.get("number") or 0)]
+    tracks = tracks or {}
+
+    def item(r):
+        d = _date(r.get("startsAt"))
+        it = {"runde": r.get("number"), "name": r.get("name"), "datum": _date(r.get("startsAt"), spoken=True)}
+        if tracks.get(d):
+            it["strecke"] = tracks[d]
+        return it
+    out = {"runden_gesamt": len(rounds),
+           "gefahren": sum(1 for r in rounds if r.get("status") == "COMPLETED"),
+           "heute": dict(item(today), strecke=nxt.get("track") or item(today).get("strecke")) if today else None,
+           "danach_noch": len(later),
+           "naechste_termine": [item(r) for r in later[:3]],
+           "finale": item(rounds[-1]) if later else None}
+    return out
+
+
+def schedule_source(cfg: dict, facts: dict) -> str | None:
+    slug = (facts.get("liga_slug") or "").split("/")[0]
+    return (cfg.get("schedule_sources") or {}).get(slug) or (cfg.get("sources") or {}).get("schedule")
+
+
 def available_segments(cfg: dict, facts: dict) -> list[str]:
     out = []
     classes = [c.lower() for c in facts.get("pro_am") or []]
@@ -271,6 +345,8 @@ def available_segments(cfg: dict, facts: dict) -> list[str]:
         if s == "last_race" and not facts.get("letzte_runde"):
             continue
         if s == "standings" and not facts.get("tabelle"):
+            continue
+        if s == "schedule" and not (facts.get("saisonplan") and schedule_source(cfg, facts)):
             continue
         if s in PROAM_SPLIT and classes:
             out += [x for x in PROAM_SPLIT[s] if SEGMENT_CLASS[x] in classes]
@@ -303,6 +379,9 @@ SEGMENT_BRIEF = {
     "standings": "Meisterschaftsstand: wer führt, Abstand, wer dahinter lauert, bei Pro/Am beide "
                  "Klassen kurz. 50-80 Wörter. Die Tabelle ist im Bild.",
     "track": "Die Strecke vorstellen: Charakter, Schlüsselkurven, wo man überholen kann. {words}.",
+    "schedule": "Der Saisonplan der Liga ist im Bild (daten.saisonplan): welche Runde heute ist, "
+                "wie viele noch folgen, die nächsten Termine mit Datum, das Finale bzw. Special Event. "
+                "Strecken späterer Runden nur, wenn sie bei der Runde stehen (strecke). 35-60 Wörter.",
     "outro": "Überleitung: gleich geht es live zum Qualifying, viel Spaß. Steht 'qualifying_format' "
              "in den Daten, erkläre es kurz. 20-45 Wörter.",
     # Pro/Am seasons: one segment per class, the page shows only that class
@@ -447,6 +526,21 @@ def template_script(cfg: dict, facts: dict, segments: list[str]) -> dict:
         if len(t) > 2:
             s += f" Auf Platz drei liegt {t[2]['name']}."
         out["standings"] = s
+    sp = facts.get("saisonplan")
+    if "schedule" in segments and sp:
+        t = sp.get("heute") or {}
+        parts = [f"Ein Blick auf den Saisonplan: heute steht Runde {t.get('runde')} von {sp['runden_gesamt']} an."
+                 if t.get("runde") else f"Ein Blick auf den Saisonplan mit {sp['runden_gesamt']} Runden."]
+        nt = sp.get("naechste_termine") or []
+        if nt and nt[0].get("datum"):
+            parts.append(f"Weiter geht es am {nt[0]['datum']} mit Runde {nt[0]['runde']}"
+                         + (f" in {nt[0]['strecke']}." if nt[0].get("strecke") else "."))
+        fin = sp.get("finale")
+        if fin and fin.get("datum") and fin.get("runde") != (nt[0].get("runde") if nt else None):
+            parts.append(f"Das Saisonfinale steigt am {fin['datum']}"
+                         + (" mit einem Special Event." if "special" in (fin.get("strecke") or fin.get("name") or "").lower()
+                            else "."))
+        out["schedule"] = " ".join(parts)
     if "track" in segments:
         out["track"] = (f"Jetzt ein Blick auf die Strecke: {strecke}"
                         + (f", gefahren wird das Layout {facts['layout']}." if facts.get("layout") else ".")
@@ -732,7 +826,8 @@ class ShowRunner:
     def _name(self, key):
         """OBS source name for a key — matched to the scene without caring about
         upper / lower case or extra spaces ("Tabelle Pro" = "Tabelle PRO")."""
-        name = (self.cfg.get("sources") or {}).get(key)
+        name = (schedule_source(self.cfg, self.facts) if key == "schedule"
+                else (self.cfg.get("sources") or {}).get(key))
         if name and self._items:
             return match_name(name, self._items) or name
         return name

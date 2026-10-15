@@ -538,7 +538,12 @@ the grid from 5010 /api/detect (thread, 60 s); in quali the commentary
 context carries quali_format + quali_abschnitt, and it SAYS the start ("the
 first 15 minutes belong to the AM drivers…", only if seen in the first 3 min)
 and the switch to PRO once per session (say_show line). The moderation's
-facts carry qualifying_format; the outro explains it. Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
+facts carry qualifying_format; the outro explains it.
+SCHEDULE segment (after the table): OBS source per league
+(`schedule_sources` {"cas-gt3-wct": "WCT"}), facts `saisonplan` from CLS
+round-info `rounds` (dates, today, next 3, final; dates spoken "27. Oktober")
++ tracks from show_notes/schedule-<slug>.md matched by date (CLS only knows
+the next round's track); skipped for a league without a source. Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`
