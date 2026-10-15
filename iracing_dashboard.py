@@ -244,7 +244,8 @@ class TelemetryPoller:
         self.show = show_runner.ShowRunner(
             scfg, self.show_obs, _ShowSpeaker(self.commentator),
             facts_fn=self._show_facts, script_fn=self._show_script,
-            director_on=lambda: self.set_director(True))
+            director_on=lambda: self.set_director(True),
+            pin=lambda cls: show_runner.pin_class(scfg, cls))
         self.commentator.on_line = lambda ln: self.voice.say(ln["id"], ln["text"],
                                                              keep=bool(ln.get("queue")))
         self.director_enabled = False

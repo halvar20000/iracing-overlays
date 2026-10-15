@@ -47,9 +47,9 @@ ROUNDINFO = {"ok": True, "info": {
         {"position": 3, "name": "Gregor Micewski", "teamName": None, "car": "BMW", "startPosition": 9}]}],
         "driverOfTheDay": {"winnerName": "Gregor Micewski"}}},
     "standings": {"standings": [
-        {"rank": 1, "name": "Andreas Bastian", "points": 144, "teamName": "NEON", "proAmClass": "AM"},
-        {"rank": 2, "name": "Maurice Becker", "points": 131, "teamName": "REVORYX", "proAmClass": "PRO"},
-        {"rank": 3, "name": "Mike Zocher", "points": 120, "teamName": None, "proAmClass": "PRO"}]}}
+        {"rank": 1, "name": "Andreas Bastian", "points": 144, "teamName": "NEON"},
+        {"rank": 2, "name": "Maurice Becker", "points": 131, "teamName": "REVORYX"},
+        {"rank": 3, "name": "Mike Zocher", "points": 120, "teamName": None}]}}
 
 # --- facts ---------------------------------------------------------------------
 facts = sr.build_facts(ROUNDINFO, {"name": "Circuit de Spa-Francorchamps", "config": "Grand Prix",
@@ -60,8 +60,8 @@ lr = facts["letzte_runde"]["rennen"][0]
 check("facts: last race top + fastest lap", lr["top5"][0]["name"] == "Maurice Becker"
       and lr["schnellste_runde"]["name"] == "Elias Schleich" and lr["schnellste_runde"]["zeit"] == "1:49,595", lr)
 check("facts: DotD", facts["letzte_runde"]["fahrer_des_tages"] == "Gregor Micewski")
-check("facts: table + gap + Pro/Am", facts["tabelle"]["abstand_p1_p2"] == 13
-      and facts["tabelle"]["top3_pro"][0]["name"] == "Maurice Becker", facts["tabelle"])
+check("facts: table + gap", facts["tabelle"]["abstand_p1_p2"] == 13
+      and facts["tabelle"]["top5"][0]["name"] == "Andreas Bastian" and "pro_am" not in facts, facts["tabelle"])
 check("facts: notes + video", facts["streckennotizen"] and facts["video_sekunden"] == 95)
 
 empty = sr.build_facts({"ok": True, "info": {"season": {"completedRounds": 0}, "nextRound": {"track": "Road Atlanta"}},
@@ -71,6 +71,36 @@ check("season start: no last race / table segments",
       sr.available_segments(cfg, empty) == ["intro", "track", "outro"], sr.available_segments(cfg, empty))
 check("no CLS at all still gives a show", sr.available_segments(cfg, sr.build_facts(None, {"name": "X"}, None, None))
       == ["intro", "track", "outro"])
+
+# --- Pro/Am season (WCT GT3): everything per class -------------------------------
+PA = json.loads(json.dumps(ROUNDINFO))
+PA["info"]["season"]["proAmEnabled"] = True
+for r, c in zip(PA["info"]["lastRound"]["races"][0]["results"], ("PRO", "AM", "AM")):
+    r["proAmClass"] = c
+PA["standings"]["standings"] = [
+    {"rank": 1, "name": "Andreas Bastian", "points": 144, "proAmClass": "AM"},
+    {"rank": 2, "name": "Maurice Becker", "points": 131, "proAmClass": "PRO"},
+    {"rank": 3, "name": "Mike Zocher", "points": 120, "proAmClass": "PRO"},
+    {"rank": 4, "name": "Gregor Micewski", "points": 100, "proAmClass": "AM"}]
+pa = sr.build_facts(PA, {"name": "Motegi"}, None, None)
+pk = pa["letzte_runde"]["rennen"][0]["klassen"]
+check("pro/am: classes", pa.get("pro_am") == ["PRO", "AM"])
+check("pro/am: class winners + class positions", pk["PRO"]["top3"][0]["name"] == "Maurice Becker"
+      and pk["AM"]["top3"][0]["name"] == "Elias Schleich" and pk["AM"]["top3"][1]["platz"] == 2
+      and pk["AM"]["top3"][1]["gesamtplatz"] == 3, pk)
+check("pro/am: class fastest lap by time", pk["AM"]["schnellste_runde"]["name"] == "Elias Schleich"
+      and pk["PRO"]["schnellste_runde"]["name"] == "Maurice Becker", pk)
+tk = pa["tabelle"]["klassen"]
+check("pro/am: table per class, no mixed list", "top5" not in pa["tabelle"]
+      and tk["PRO"]["top5"][0]["name"] == "Maurice Becker" and tk["PRO"]["abstand_p1_p2"] == 11
+      and tk["AM"]["top5"][0]["name"] == "Andreas Bastian" and tk["AM"]["top5"][1]["rang"] == 2, tk)
+pseg = sr.available_segments(sr.load_config(), pa)
+check("pro/am: segments split", pseg == ["intro", "last_race_pro", "last_race_am", "standings_pro",
+                                          "standings_am", "track", "outro"], pseg)
+ptpl = sr.template_script(sr.load_config(), pa, pseg)
+check("pro/am: template per class", set(ptpl) == set(pseg) and "Maurice Becker" in ptpl["standings_pro"]
+      and "Andreas Bastian" in ptpl["standings_am"] and "Andreas Bastian" not in ptpl["standings_pro"]
+      and "Elias Schleich" in ptpl["last_race_am"], ptpl)
 
 # --- scripts -------------------------------------------------------------------
 segs = sr.available_segments(cfg, facts)
@@ -250,6 +280,28 @@ r5b, _ = make(obs5, Speaker(), start_at="19:40")
 r5b.local_now = lambda: clock["now"]
 r5b.tick()
 check("after the window: no start", r5b.state == "idle")
+
+# Pro/Am run: the page is pinned per class, the source stays up from PRO to AM
+pins = []
+obs7 = FakeObs(SCENES, media={"Streckenvideo": 0.2})
+c7 = sr.load_config()
+c7["obs"] = {"host": "127.0.0.1", "port": obs7.port}
+r7 = sr.ShowRunner(c7, ObsClient(port=obs7.port), Speaker(), facts_fn=lambda: pa,
+                   script_fn=lambda f, s: (sr.template_script(c7, f, s), "template"),
+                   director_on=lambda: None, pin=pins.append)
+hides = []
+r7.start()
+def w7():
+    r7.tick()
+    hides.append((r7.seg["id"] if r7.seg else None, obs7.scenes["Moderator"]["Letztes Rennen"],
+                  obs7.scenes["Moderator"]["Tabelle"]))
+check("pro/am run completes", wait_for(lambda: r7.state == "done", 20, tick=w7), r7.status()["log"])
+check("pro/am: pins pro, am, released", [p for p in pins if p] == ["pro", "am", "pro", "am"]
+      and pins[-1] is None and pins[0] is None, pins)
+check("pro/am: results stay visible through both classes",
+      all(lr_vis for sid, lr_vis, _ in hides if sid in ("last_race_pro", "last_race_am")), hides)
+shows = [c[1] for c in obs7.calls if c[0] == "SetSceneItemEnabled" and c[1].get("sceneItemEnabled")]
+check("pro/am: each page shown once", len(shows) == 3, shows)   # results, table, video
 
 # missing OBS source: show goes on, error visible
 obs6 = FakeObs({"Moderator": {}, "iRacing": {}}, media={})

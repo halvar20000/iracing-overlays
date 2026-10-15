@@ -1845,8 +1845,14 @@ if (zoom > 0 && zoom !== 1) document.body.style.zoom = zoom;
 document.addEventListener('keydown', e => { if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('debug-mode'); });
 const MODE = location.pathname.replace(/^\/+|\/+$/g, '') || 'lastrace';
 const TOP = parseInt(qs.get('top') || '0', 10);
-const RACE_P = (qs.get('race') || '').toLowerCase();   // '1' | '2' | 'combined' | '' (cycle)
-const CLASS_P = (qs.get('class') || '').toLowerCase(); // /table: 'pro' | 'am' | 'all' | '' (cycle)
+const RACE_Q = (qs.get('race') || '').toLowerCase();   // '1' | '2' | 'combined' | '' (cycle)
+const CLASS_Q = (qs.get('class') || '').toLowerCase(); // /table: 'pro' | 'am' | 'all' | '' (cycle)
+// The AI moderation pins the class it is talking about (/api/prerace_pin,
+// polled every second): that class only and, on /lastrace, the round's
+// combined result when there is one. ?class= on the source still wins.
+let PIN = null;
+const classP = () => CLASS_Q || PIN || '';
+const raceP = () => RACE_Q || (PIN ? 'auto' : '');
 const OPTOUT_P = qs.get('optout') || '';                 // /rsvp: '1' | '0' | '' (by league)
 const OPTOUT_LEAGUES = ['cas-gt3-wct'];                  // only declines count — no answer = racing
 // seconds per view: /lastrace races 15 s, Pro/Am pages (/table, /lastrace in
@@ -1889,13 +1895,14 @@ function renderLastRace(d) {
     const st = d.standings;
     const all = lr.races.flatMap(r => r.results);
     const present = ['PRO', 'AM'].filter(c => all.some(x => x.proAmClass === c));
-    const proAm = !!(st && st.season && st.season.proAmEnabled) && present.length > 0 && CLASS_P !== 'all';
-    const classes = !proAm ? [null] : (CLASS_P === 'pro' || CLASS_P === 'am')
-        ? [present.find(c => c === CLASS_P.toUpperCase()) || present[0]] : present;
+    const proAm = !!(st && st.season && st.season.proAmEnabled) && present.length > 0 && classP() !== 'all';
+    const classes = !proAm ? [null] : (classP() === 'pro' || classP() === 'am')
+        ? [present.find(c => c === classP().toUpperCase()) || present[0]] : present;
     let base = lr.races.map(r => ({ kind: 'race', race: r, label: `RACE ${r.raceNumber}` }));
     if ((lr.combined || []).length && lr.races.length > 1) base.push({ kind: 'combined', label: 'COMBINED' });
-    if (RACE_P === 'combined' || RACE_P === 'c') base = [base.find(v => v.kind === 'combined') || base[0]];
-    else if (RACE_P) base = [base.find(v => v.race && String(v.race.raceNumber) === RACE_P) || base[0]];
+    if (raceP() === 'auto') base = [base.find(v => v.kind === 'combined') || base[0]];
+    else if (raceP() === 'combined' || raceP() === 'c') base = [base.find(v => v.kind === 'combined') || base[0]];
+    else if (raceP()) base = [base.find(v => v.race && String(v.race.raceNumber) === raceP()) || base[0]];
     const views = base.flatMap(v => classes.map(cls => ({ ...v, cls,
         label: cls ? (base.length > 1 ? `${v.label} · ${cls}` : cls) : v.label })));
     if (Date.now() - lastSwitch > cycleSec(proAm) * 1000) { raceIdx = (raceIdx + 1) % views.length; lastSwitch = Date.now(); }
@@ -2026,11 +2033,11 @@ function renderTable(d) {
     // shown. Ranks renumbered inside the class; CLS order (its tie-breaks)
     // kept. ?class=pro|am pins one, ?class=all = the old mixed list.
     const classes = ['PRO', 'AM'].filter(c => st.standings.some(x => x.proAmClass === c));
-    const proAm = !!(st.season && st.season.proAmEnabled) && classes.length > 0 && CLASS_P !== 'all';
+    const proAm = !!(st.season && st.season.proAmEnabled) && classes.length > 0 && classP() !== 'all';
     let list = st.standings, label = '', tabs = '';
     if (proAm) {
         let cls;
-        if (CLASS_P === 'pro' || CLASS_P === 'am') cls = classes.find(c => c === CLASS_P.toUpperCase()) || classes[0];
+        if (classP() === 'pro' || classP() === 'am') cls = classes.find(c => c === classP().toUpperCase()) || classes[0];
         else {
             if (Date.now() - lastSwitch > cycleSec(true) * 1000) { raceIdx = (raceIdx + 1) % classes.length; lastSwitch = Date.now(); }
             cls = classes[raceIdx % classes.length];
@@ -2103,7 +2110,13 @@ async function load() {
     try { data = await (await fetch('/api/roundinfo', { cache: 'no-store' })).json(); } catch (e) { /* keep last */ }
     draw();
 }
-load(); setInterval(load, 15000); setInterval(draw, 1000);
+async function loadPin() {
+    if (MODE !== 'lastrace' && MODE !== 'table') return;
+    let p = PIN;
+    try { p = (await (await fetch('/api/prerace_pin', { cache: 'no-store' })).json()).cls || null; } catch (e) { return; }
+    if (p !== PIN) { PIN = p; restartCycle(); }
+}
+load(); setInterval(load, 15000); setInterval(draw, 1000); setInterval(loadPin, 1000); loadPin();
 </script></body></html>
 """
 
@@ -2115,6 +2128,26 @@ load(); setInterval(load, 15000); setInterval(draw, 1000);
 @app.route("/lastdotd")
 def prerace_page():
     return Response(PRERACE_HTML, mimetype="text/html")
+
+
+# The AI moderation (dashboard show_runner) pins /lastrace and /table to the
+# Pro/Am class it is talking about; the pages poll this every second. A pin
+# expires on its own so a crashed show never freezes the pages.
+prerace_pin = {"cls": None, "until": 0.0}
+PIN_MAX_S = 600
+
+
+@app.route("/api/prerace_pin", methods=["GET", "POST"])
+def api_prerace_pin():
+    from flask import request
+    if request.method == "POST" or "cls" in request.args:
+        cls = (request.values.get("cls") or (request.get_json(silent=True) or {}).get("cls") or "").lower()
+        if cls in ("pro", "am"):
+            prerace_pin.update(cls=cls, until=time.time() + PIN_MAX_S)
+        else:
+            prerace_pin.update(cls=None, until=0.0)
+    on = prerace_pin["cls"] if time.time() < prerace_pin["until"] else None
+    return jsonify({"cls": on})
 
 
 @app.route("/api/roundinfo")
