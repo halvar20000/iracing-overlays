@@ -22,6 +22,7 @@ from flask import Flask, jsonify, render_template_string, request
 from race_director import RaceDirector
 from race_commentator import Commentator
 import race_commentator
+from race_graphics import GraphicsDirector, weather_line, dotd_line
 from race_voice import Voice
 import show_runner
 from obs_ws import ObsClient
@@ -251,6 +252,10 @@ class TelemetryPoller:
         self.commentator.on_line = lambda ln: self.voice.say(ln["id"], ln["text"],
                                                              keep=bool(ln.get("queue")))
         self.director_enabled = False
+        self.graphics = GraphicsDirector(scfg.get("graphics"))   # overlays brought up during REGIE
+        self._gfx_key = None              # session the graphics state belongs to
+        self._gfx_dotd = None             # provisional DotD line (5013), refreshed in the background
+        self._gfx_dotd_at = 0.0
         self._league_slug = None          # CLS league on the grid (5010), for league quali rules
         self._qphase = None               # ((session), "AM"/"PRO") last announced
         self._own_replay_until = 0.0      # director keeps still during OUR replays
@@ -1942,6 +1947,76 @@ class TelemetryPoller:
             self.commentator.say_show(text, "quali")
             print(f"[regie] QUALI     {text}")
 
+    # --- GRAFIK: overlays brought up while REGIE runs (race_graphics.py) ------
+    def _race_fraction(self):
+        rp = self._race_progress()
+        if rp.get("total_laps") and rp.get("laps_done") is not None and not rp.get("total_time"):
+            return min(1.0, rp["laps_done"] / rp["total_laps"])
+        if rp.get("total_time") and rp.get("time_remaining") is not None:
+            return min(1.0, max(0.0, 1.0 - rp["time_remaining"] / rp["total_time"]))
+        if rp.get("total_laps") and rp.get("laps_done") is not None:
+            return min(1.0, rp["laps_done"] / rp["total_laps"])
+        return None
+
+    def _tick_graphics(self):
+        g = self.graphics
+        key = (self.ir["SessionUniqueID"], self.ir["SessionNum"])
+        if key != self._gfx_key:
+            self._gfx_key, self._gfx_dotd = key, None
+            if g.on:
+                self._gfx_obs(g.on["key"], False)
+            g.reset()
+        now = time.time()
+        cur = self.director.current
+        prog = self._race_fraction() if self._cur_is_race else None
+        marks = (g.cfg.get("dotd") or {}).get("at") or []
+        if (prog is not None and marks and prog >= min(marks) - 0.05
+                and now - self._gfx_dotd_at > 30):
+            self._gfx_dotd_at = now
+            threading.Thread(target=self._fetch_dotd, daemon=True).start()
+        state = {"session": "race" if self._cur_is_race else "quali" if self._cur_is_quali else "other",
+                 "racing": self.ir["SessionState"] == 4, "replay": now < self._own_replay_until,
+                 "shot": cur.kind if cur else None, "shot_since": cur.started if cur else None,
+                 "progress": prog, "dotd_ready": bool(self._gfx_dotd)}
+        for act, k in g.tick(now, state):
+            self._gfx_obs(k, act == "show")
+            if act == "show":
+                print(f"[grafik] {k} -> {g.source(k)}")
+                threading.Thread(target=self._gfx_say, args=(k,), daemon=True).start()
+
+    def _gfx_obs(self, key, visible):
+        def run():
+            try:
+                self.show_obs.set_visible(self.graphics.cfg.get("scene") or "iRacing",
+                                          self.graphics.source(key), visible)
+            except Exception as e:
+                if visible:
+                    self.graphics.mark_missing(key)      # not in OBS: no more tries this session
+                    if self.graphics.on and self.graphics.on["key"] == key:
+                        self.graphics.on["until"] = 0
+                print(f"[grafik] OBS {self.graphics.source(key)}: {e}")
+        threading.Thread(target=run, daemon=True).start()
+
+    def _gfx_say(self, key):
+        text = None
+        try:
+            if key == "weather":
+                with urllib.request.urlopen("http://127.0.0.1:5016/status", timeout=3) as r:
+                    text = weather_line(json.loads(r.read().decode("utf-8")))
+            elif key == "dotd":
+                text = self._gfx_dotd
+        except Exception as e:
+            print(f"[grafik] {key}: {e}")
+        if text:
+            self.commentator.say_show(text, "grafik")
+
+    def _fetch_dotd(self):
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:5013/data", timeout=8) as r:
+                self._gfx_dotd = dotd_line(json.loads(r.read().decode("utf-8")))
+        except Exception:
+            pass
+
     def _watch_league(self):
         """Which CLS league is on the grid (5010 /api/detect), for league
         rules like the WCT quali split. Polled once a minute."""
@@ -2030,6 +2105,9 @@ class TelemetryPoller:
             for e in list(self._incidents) + list(self._overtakes):
                 if e.get("id") is not None:
                     self.director.seen_events.add(e["id"])
+        elif self.graphics.on:              # REGIE off: no graphic left hanging on screen
+            self._gfx_obs(self.graphics.on["key"], False)
+            self.graphics.on = None
         print(f"[regie] {'ENABLED' if self.director_enabled else 'disabled'}")
 
     # --- camera disconnect watchdog ----------------------------------------
@@ -2282,6 +2360,10 @@ class TelemetryPoller:
                 self._director_err_at = time.time()
                 print(f"[regie] ERROR {self._director_error}")
         if self.director_enabled:
+            try:
+                self._tick_graphics()
+            except Exception as e:
+                print(f"[grafik] {type(e).__name__}: {e}")
             try:
                 self._announce_quali_phase()
             except Exception as e:
@@ -4983,7 +5065,7 @@ async function check() {
     el.innerHTML = '<div class="dim">OBS: ' + (d.streaming ? '<span class="ok">streamt</span>' : 'streamt nicht') +
         ' · Szene jetzt: ' + esc(d.current) + '</div><ul>' +
         d.items.map(i => '<li class="' + (i.found ? 'ok' : i.optional ? 'dim' : 'err') + '">' +
-                    (i.found ? '✓ ' : i.optional ? '– nicht da (optional: Pro/Am-Klasse bzw. Saisonplan einer Liga): ' : '✗ fehlt: ') +
+                    (i.found ? '✓ ' : i.optional ? '– nicht da (optional: Pro/Am-Klasse, Saisonplan, Grafik während der REGIE): ' : '✗ fehlt: ') +
                     esc(i.what) + ' „' + esc(i.name) + '“' +
                     (!i.found && i.near && i.near.length ? ' <span class="dim">– in OBS gibt es: ' +
                         i.near.map(n => '„' + esc(n) + '“').join(', ') + '</span>' : '') + '</li>').join('') + '</ul>';
@@ -5084,6 +5166,15 @@ def show_check():
                               "optional": key in show_runner.CLASS_SOURCE_FALLBACK or key.startswith("schedule:"),
                               "near": [] if real else [h for h in srcs if h and any(
                                   w in h.casefold() for w in name.casefold().split() if len(w) >= 4)][:4]})
+        gcfg = poller.graphics.cfg                       # GRAFIK sources on the iRacing scene
+        gscene = gcfg.get("scene") or cfg["scenes"].get("iracing")
+        gsrcs = poller.show_obs.scene_items(gscene) if gscene in scenes else {}
+        for key in ("weather", "battle", "dotd"):
+            name = (gcfg.get(key) or {}).get("source")
+            if name:
+                real = show_runner.match_name(name, gsrcs)
+                items.append({"what": f"Grafik in {gscene}", "name": real or name, "found": bool(real),
+                              "optional": True, "near": []})
         return jsonify({"ok": True, "items": items, "current": poller.show_obs.current_scene(),
                         "streaming": poller.show_obs.streaming()})
     except Exception as e:

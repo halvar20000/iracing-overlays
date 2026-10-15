@@ -564,7 +564,17 @@ Thomas's OK; round-info rounds now carry `track`). FOLLOW-UP: the OBS pages
 plain /api/roundinfo itself serves the before-N data whenever iRacing runs an
 earlier round's track (`_replay_round_now`, its own poller's track_name), so
 every pre-race page and the show agree. Checked against live CLS: Motegi →
-R3 Zandvoort / table after 3 / AM leader Kuebler 108; Indianapolis → live. Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
+R3 Zandvoort / table after 3 / AM leader Kuebler 108; Indianapolis → live.
+GRAFIK (race_graphics.py, `GraphicsDirector`, pure logic): while REGIE runs
+in a RACE the dashboard brings up OBS sources on the iRacing scene — one at
+a time, `gap_s` 45 between, never during our replay, hidden after `secs`:
+"Wetter" once 40 s after the green (+ spoken weather_line from 5016
+/status), "Duell" when REGIE's shot has been a battle for 6 s (≤ every
+180 s; the catch-up graphic follows the camera car = the chaser), "Fahrer
+des Tages" once at 2/3 of the race (`at` marks; provisional winner from 5013
+/data, spoken dotd_line). Missing source → skipped for the session; REGIE
+off hides it; show_config "graphics" overrides. test_race_graphics.py 17/17;
+integ/integ2 (real poller) run with it. Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

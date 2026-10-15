@@ -64,6 +64,23 @@ Ablauf nur einmal.
 5. Zum Prüfen öffnest du `http://localhost:5000/show` → **„OBS prüfen“**. Dort
    bekommt jede Szene und Quelle einen Haken, oder es steht da, was fehlt.
 
+## 1b. Grafiken während der REGIE (Szene iRacing, optional)
+
+Läuft die REGIE, blendet sie im Rennen passende Overlays kurz ein, immer nur
+eines, mit Pause dazwischen und nie während eines Replays:
+
+| Quelle in der Szene iRacing | Datei | Wann |
+|---|---|---|
+| `Wetter` | `obs_loaders\weather.html` | einmal ~40 s nach dem Start, 12 s, mit Satz zum Wetter |
+| `Duell` | `obs_loaders\catch.html` (oder gap.html) | wenn die REGIE ein Duell zeigt, 10 s, höchstens alle 3 Min. |
+| `Fahrer des Tages` | `obs_loaders\dotd.html` | im letzten Drittel des Rennens, 14 s, mit Zwischenstand |
+
+Die Quellen bleiben in OBS ausgeblendet, die REGIE blendet sie selbst ein.
+Fehlt eine, wird sie einfach übersprungen. Andere Namen oder Zeiten:
+`"graphics"` in `show_config.json`, z. B.
+`{"graphics": {"battle": {"source": "Catch-Up", "every_s": 240}}}`,
+`{"graphics": {"enabled": false}}` schaltet alles ab.
+
 ## 2. Moderation
 
 - Die Seite **`http://localhost:5000/show`** zeigt das Skript, sobald es
