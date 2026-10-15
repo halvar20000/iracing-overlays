@@ -2201,8 +2201,34 @@ def api_roundinfo():
         return jsonify({"ok": False, "error": info["error"] or "Loading CLS data…"})
     if info["key"] != RoundInfoFetcher._cfg_key(champ.get("config") or {}):
         return jsonify({"ok": False, "error": "Switching league — loading CLS data…"})
+    # A replay of an EARLIER round in iRacing (e.g. Motegi = round 4 while
+    # round 5 is next): every pre-race page and the AI moderation show the
+    # season as it stood before that round (2026-10-15 — the pages kept
+    # showing the results after Motegi over the Motegi replay).
+    n = _replay_round_now(info["data"])
+    if n:
+        try:
+            return jsonify(_roundinfo_before(n))
+        except Exception as e:
+            return jsonify({"ok": True, "info": info["data"], "standings": champ.get("data"),
+                            "error": f"Replay von Runde {n}: Stand vor der Runde nicht abrufbar ({e})"})
     return jsonify({"ok": True, "info": info["data"], "standings": champ.get("data"),
                     "error": info["error"]})
+
+
+def _replay_round_now(cls_info: dict) -> int | None:
+    """Round number when iRacing runs an earlier round's track, else None.
+    show_config.json "as_of_round": N forces it, 0 switches it off."""
+    try:
+        import show_runner
+        forced = show_runner.load_config().get("as_of_round")
+        if forced is not None:
+            return int(forced) or None
+        track = (poller.get() or {}).get("track_name") or ""
+        return show_runner.replay_round({"info": cls_info}, track)
+    except Exception as e:
+        print(f"[championship] replay round: {e}")
+        return None
 
 
 @app.route("/flag/<code>.svg")

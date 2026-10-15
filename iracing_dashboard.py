@@ -1807,8 +1807,10 @@ class TelemetryPoller:
         as_of = cfg.get("as_of_round")
         if as_of is None:
             as_of = show_runner.replay_round(ri, track.get("name") or "", notes_dir)
-        self.show.as_of_round = as_of or None
-        if as_of:
+        # 5010 already serves the "before" data when it sees the replay itself
+        served = (((ri or {}).get("info") or {}).get("season") or {}).get("asOfBeforeRound")
+        self.show.as_of_round = served or as_of or None
+        if as_of and not served:
             ri_before = show_runner.fetch_roundinfo(f"{champ_url}?before={int(as_of)}", tries=1)
             if ri_before:
                 ri = ri_before

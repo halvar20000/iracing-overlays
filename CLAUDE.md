@@ -558,8 +558,13 @@ iRacing track matches a COMPLETED round (CLS round tracks, else
 show_notes/schedule-<slug>.md by date; generic words like circuit / speedway
 ignored) and not the next round's → N; show_config "as_of_round": N forces,
 0 disables. 5010 `/api/roundinfo?before=N` → CLS round-info + standings with
-`?beforeRound=N` (league-manager change, needs that deploy; without it the
-show says so and uses today's data). Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
+`?beforeRound=N` (league-manager v2.44.0, DEPLOYED 2026-10-15 with
+Thomas's OK; round-info rounds now carry `track`). FOLLOW-UP: the OBS pages
+(/lastrace, /table …) still showed the results after Motegi — now 5010's
+plain /api/roundinfo itself serves the before-N data whenever iRacing runs an
+earlier round's track (`_replay_round_now`, its own poller's track_name), so
+every pre-race page and the show agree. Checked against live CLS: Motegi →
+R3 Zandvoort / table after 3 / AM leader Kuebler 108; Indianapolis → live. Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`
