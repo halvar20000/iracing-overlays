@@ -119,8 +119,12 @@ out = sr.claude_script(cfg, {"api_key": "k"}, facts, ["intro", "track", "outro"]
 check("claude script parsed (only asked segments)", out == {"intro": "Hallo!", "track": "Spa."}, out)
 check("thinking fallback retried without it", len(calls) == 2 and "thinking" not in calls[1])
 brief = json.loads(calls[0]["messages"][0]["content"])
-check("track brief sized to the video (95 s -> 190-205 words)", "190-205 Wörter" in brief["segmente"]["track"],
-      brief["segmente"]["track"])
+check("track brief: spoken before the video", "70-110 Wörter" in brief["segmente"]["track"]
+      and "danach" in brief["segmente"]["track"], brief["segmente"]["track"])
+calls.clear()
+sr.claude_script(dict(cfg, video_after_speech=False), {"api_key": "k"}, facts, ["track"], post=fake_post)
+check("track brief over the video sized to it (95 s -> 190-205 words)",
+      "190-205 Wörter" in json.loads(calls[-1]["messages"][0]["content"])["segmente"]["track"])
 check("facts go to Claude", brief["daten"]["letzte_runde"]["fahrer_des_tages"] == "Gregor Micewski")
 
 check("split sentences", sr.split_sentences("Eins. Zwei! Drei?", 8) == ["Eins.", "Zwei!", "Drei?"]
@@ -181,11 +185,14 @@ obs = FakeObs(SCENES, media={"Streckenvideo": 0.8})
 sp = Speaker()
 r, ev = make(obs, sp)
 seen = []   # (segment, visible sources)
+vid_at = []  # track lines done when the video came up
 def watch():
     r.tick()
     s = r.seg["id"] if r.seg else None
     vis = tuple(sorted(k for k, v in obs.scenes["Moderator"].items() if v and k != "Avatar"))
     if not seen or seen[-1] != (s, vis):
+        if s == "track" and "Streckenvideo" in vis and not vid_at:
+            vid_at.append([sp.is_done(i) for i, sg, _ in sp.lines if sg == "track"])
         seen.append((s, vis))
 r.start()
 check("moderator scene on start", obs.current == "Moderator")
@@ -198,7 +205,11 @@ check("segment order", [s for s, _ in seen if s][:1] == ["intro"] and
       == ["intro", "last_race", "standings", "track", "outro"], seen)
 check("results only during last_race", all(("Letztes Rennen" in v) == (s == "last_race") for s, v in seen if s), seen)
 check("table only during standings", all(("Tabelle" in v) == (s == "standings") for s, v in seen if s), seen)
-check("video only during track", all(("Streckenvideo" in v) == (s == "track") for s, v in seen if s), seen)
+check("video never outside track", all(s == "track" for s, v in seen if "Streckenvideo" in v), seen)
+trk = [v for s, v in seen if s == "track"]
+check("track: text first, then the video", len(trk) == 2 and "Streckenvideo" not in trk[0]
+      and "Streckenvideo" in trk[1], trk)
+check("track: all its lines spoken before the video", vid_at and all(vid_at[0]), vid_at)
 check("video was restarted", any(c[0] == "TriggerMediaInputAction" and c[1]["mediaAction"].endswith("RESTART")
                                   for c in obs.calls))
 check("hand-over: iRacing scene + REGIE", obs.current == "iRacing" and ev == ["regie"])

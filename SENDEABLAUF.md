@@ -7,7 +7,7 @@ Was ab **19:40** automatisch passiert (bei Rennstart um 20:00):
 | 19:30 | Stream startet auf **Intro** (CAS-Song + Diashow) | du |
 | ~19:40 | **Practice** zeigen | du |
 | 19:35 | Moderationsskript wird geschrieben (Claude) | automatisch |
-| **19:40** | OBS → **Moderator**: Begrüßung → letztes Rennen (Ergebnisse im Bild) → Tabelle (im Bild) → Strecke (Streckenvideo läuft) → Übergabe | automatisch |
+| **19:40** | OBS → **Moderator**: Begrüßung → letztes Rennen (Ergebnisse im Bild) → Tabelle (im Bild) → Strecke (erst Text, dann Streckenvideo) → Übergabe | automatisch |
 | danach | OBS → **iRacing**, **REGIE an** | automatisch |
 | Quali | REGIE zeigt schnellste Runden, den Pole-Fahrer und die Verfolger, mit Kommentar | automatisch |
 | Rennen | REGIE + Kommentar wie getestet | automatisch |
@@ -65,8 +65,10 @@ Ablauf nur einmal.
 - Ohne API-Schlüssel spricht der Ablauf einfache Sätze aus Vorlagen.
 - Am Saisonanfang gibt es noch kein letztes Rennen und keine Tabelle. Diese
   Abschnitte fallen dann einfach weg.
-- Das Streckenvideo läuft ganz durch. Die Moderation spricht darüber und ist
-  auf die Länge des Videos zugeschnitten.
+- Strecke: erst spricht die Moderation über die Strecke, danach läuft das
+  Streckenvideo ganz durch, dann geht es weiter. Wer lieber über das Video
+  sprechen lassen will: `"video_after_speech": false` in `show_config.json`
+  (dann ist der Text auf die Länge des Videos zugeschnitten).
 
 **Stream Deck** (Website-Aktion, „Im Hintergrund aufrufen“; Bilder in
 `streamdeck_icons/dashboard/`):

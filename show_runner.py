@@ -59,6 +59,7 @@ DEFAULT_CONFIG = {
     "start_window_min": 20,           # auto start only within this many minutes after start_at
     "only_while_streaming": True,     # auto start only while OBS streams
     "director_after": True,           # REGIE on after the hand-over
+    "video_after_speech": True,       # track: speak first, then play the video (False = talk over it)
     "model": "claude-sonnet-5-5",
     "host_name": "",                  # name the AI host introduces itself with ("" = none)
     "notes_dir": "show_notes",
@@ -276,8 +277,7 @@ SEGMENT_BRIEF = {
                  "Dabei ist die Ergebnisliste im Bild.",
     "standings": "Meisterschaftsstand: wer führt, Abstand, wer dahinter lauert, bei Pro/Am beide "
                  "Klassen kurz. 50-80 Wörter. Die Tabelle ist im Bild.",
-    "track": "Die Strecke vorstellen, während ein Streckenvideo läuft: Charakter, Schlüsselkurven, "
-             "wo man überholen kann. {words} Wörter.",
+    "track": "Die Strecke vorstellen: Charakter, Schlüsselkurven, wo man überholen kann. {words}.",
     "outro": "Überleitung: gleich geht es live zum Qualifying, viel Spaß. 20-35 Wörter.",
     # Pro/Am seasons: one segment per class, the page shows only that class
     "last_race_pro": "Rückblick auf die letzte Runde, Klasse PRO (daten.letzte_runde, jeweils "
@@ -296,19 +296,21 @@ SEGMENT_BRIEF = {
 }
 
 
-def _track_words(facts):
+def _track_words(facts, cfg=None):
+    if (cfg or {}).get("video_after_speech", True):
+        return "70-110 Wörter. Zum Schluss auf das Streckenvideo überleiten, das direkt danach läuft"
     v = facts.get("video_sekunden")
     if v:
         n = int(min(220, max(50, v * WORDS_PER_S * 0.9)))
-        return f"{n - 15}-{n}"
-    return "80-120"
+        return f"{n - 15}-{n} Wörter, gesprochen während das Streckenvideo läuft"
+    return "80-120 Wörter, gesprochen während das Streckenvideo läuft"
 
 
 def claude_script(cfg: dict, api_cfg: dict, facts: dict, segments: list[str], post=None) -> dict:
     """{segment: text} from Claude. Raises on any failure (caller falls back)."""
     host = cfg.get("host_name") or ""
     host_desc = f"{host}, die KI-Moderation" if host else "die KI-Moderation"
-    brief = {s: SEGMENT_BRIEF[s].format(words=_track_words(facts)) for s in segments if s in SEGMENT_BRIEF}
+    brief = {s: SEGMENT_BRIEF[s].format(words=_track_words(facts, cfg)) for s in segments if s in SEGMENT_BRIEF}
     user = json.dumps({"segmente": brief, "daten": facts}, ensure_ascii=False)
     payload = {"model": cfg.get("model") or DEFAULT_CONFIG["model"], "max_tokens": 3000,
                "thinking": {"type": "disabled"},
@@ -686,7 +688,10 @@ class ShowRunner:
             if self._shown != SEGMENT_SOURCES[sid]:
                 self._source(SEGMENT_SOURCES[sid], True)
                 self._shown = SEGMENT_SOURCES[sid]
-        if sid == "track" and (self.cfg.get("sources") or {}).get("track_video"):
+        if sid == "track" and (self.cfg.get("sources") or {}).get("track_video") \
+                and self.cfg.get("video_after_speech", True):
+            seg["video_pending"] = self.cfg["sources"]["track_video"]   # started once the text is spoken
+        elif sid == "track" and (self.cfg.get("sources") or {}).get("track_video"):
             vid = self.cfg["sources"]["track_video"]
             self._source("track_video", True)
             if self._obs(lambda: self.obs.media_restart(vid), f"Video {vid}"):
@@ -705,13 +710,26 @@ class ShowRunner:
         if seg is None:
             return
         spoken = all(self.speaker.is_done(i) for i in seg["ids"])
+        if seg.get("video_pending"):
+            if not (spoken or self.clock() > seg["deadline"]):
+                return
+            if not spoken:
+                self._note(f"Segment {seg['id']}: Stimme nicht fertig gemeldet – Video startet")
+                self.speaker.cancel(seg["ids"])
+            vid, seg["video_pending"] = seg["video_pending"], None
+            self._source("track_video", True)
+            if self._obs(lambda: self.obs.media_restart(vid), f"Video {vid}"):
+                seg["media"], seg["video_at"] = vid, self.clock()
+                self._note(f"Video {vid} läuft")
+            seg["deadline"] = self.clock() + DEADLINE_PAD_S
+            return
         media_done = True
         if seg["media"]:
             try:
                 st = self.obs.media_status(seg["media"])
                 media_done = st["state"] in ("OBS_MEDIA_STATE_ENDED", "OBS_MEDIA_STATE_STOPPED",
                                              "OBS_MEDIA_STATE_ERROR", "OBS_MEDIA_STATE_NONE")
-                if st.get("duration_s") and self.clock() - seg["started"] > st["duration_s"] + 3:
+                if st.get("duration_s") and self.clock() - seg.get("video_at", seg["started"]) > st["duration_s"] + 3:
                     media_done = True
             except Exception:
                 media_done = True
