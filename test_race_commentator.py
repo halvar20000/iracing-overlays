@@ -121,5 +121,25 @@ c8.skip_existing([battle, leader])
 c8.feed([battle, leader], now=300.0)
 check("skip_existing: old log stays silent", not c8.lines)
 
+# 10) qualifying lines (quali_director.py log entries)
+cq = rc.Commentator(random.Random(9), dict(TEMPLATE_CFG))
+def q(t, kind, name, info, idx=1):
+    cq.feed([entry(t, kind, name, info, idx=idx)], now=t)
+    return cq.lines[0]["text"] if cq.lines and cq.lines[0]["t"] == t else None
+ln = q(10.0, "quali_lap", "Mike Zocher", {"lap_time_str": "1:39.512", "position": 1, "new_pole": True})
+check("new pole line with German lap time", ln and "Zocher" in ln and "1:39,512" in ln, ln)
+ln = q(20.0, "quali_lap", "Mike Zocher", {"lap_time_str": "1:39.400", "position": 1, "new_pole": True,
+                                          "kept_pole": True}, idx=2)
+check("own pole improved is not 'new leader'", ln and ("verbessert" in ln or "legt noch einmal nach" in ln), ln)
+ln = q(30.0, "quali_lap", "Dennis Richter", {"lap_time_str": "1:40.112", "position": 3, "gap_to_pole": 0.71},
+       idx=3)
+check("lap result with position and gap", ln and "Platz 3" in ln and "Richter" in ln, ln)
+ln = q(40.0, "attack", "Andreas Bastian", {"delta": -0.23, "predicted_position": 1}, idx=4)
+check("attack under pole pace", ln and "Bastian" in ln and "0,2" in ln, ln)
+ln = q(50.0, "attack", "Andreas Bastian", {"delta": 0.4, "predicted_position": 4}, idx=5)
+check("attack slower: predicted, not final", ln and ("auf Kurs zu Platz 4" in ln or "Platz 4" in ln)
+      and "reicht" not in ln, ln)
+check("finished attack is silent", rc.facts_from(entry(60.0, "attack", "X", {"finished": True})) is None)
+
 print(f"\n{'ALL PASS' if not fails else f'{fails} FAILED'}")
 raise SystemExit(1 if fails else 0)

@@ -328,6 +328,37 @@ test_race_voice.py 16/16 (+ --live real edge-tts 1.0 s); end-to-end in the
 scratchpad: real dashboard Flask app + real edge-tts + the voice page in
 headless Chromium over CDP → clips fetched and played to the end in order.
 SAPI path NOT run (no Windows here) — first real test on the stream PC.
+QUALIFYING (2026-10-15, Thomas's show plan: quali is commentated too, "show
+the fastest driver and the chaser"): NEW `quali_director.py` (`QualiState`),
+used by RaceDirector when the dashboard ticks it with `mode="quali"`
+(session type / name contains "qualify"; `t_session` = SessionTime; rows now
+carry `best` = CarIdxBestLapTime and `surface`). Same pacing / log / camera
+code, no replays; a mode change resets the director. Per car it follows the
+lap in progress: a FLYING lap starts at an S/F crossing on track; pit road /
+out of world / off-track spoil it. Live DELTA to the class pole = elapsed at
+the current pct vs the pole lap's own (pct → time) curve, recorded while it
+was driven (kept when a finished clean lap is within 0.35 s of the new
+official best), scaled to the official time; without a curve pole × pct,
+flagged approx. Candidates: `attack` (clean flying lap predicted top 10 and
+an improvement, ≤ +1.5 s; prio 80 − 40/s slower + 10×pct − 2×pos; +12 for a
+CHALLENGER under pole pace, −5 for the pole sitter's own lap — Driver 0's
+new pole went unseen before that; held 5 s past the line; a car on air going
+straight into its next lap stays), "first flying lap" while nobody has a
+time, `pole` (pole sitter on track; due after 120 s; pole taken from ALL cars
+with a time — a pole sitter in the garage is still on pole), `field` (flying
+laps first), live `incident` only on a promising lap. Best-lap improvements
+→ log kind `quali_lap` (time, position, gap, new_pole, kept_pole = improved
+his own pole) for the top 10 / the car on air; bests seen on the first tick
+are not news. Commentator: facts + German templates for attack (first /
+faster / slower → "auf Kurs zu Platz n" / pole sitter / next lap), pole,
+quali_lap (new / kept / position + gap); prompt explains delta sign and that
+predicted_position is a projection; context = Qualifying, minutes left, cars
+with a time. test_quali_director.py 20/20 (simulated quali with a non-linear
+lap shape: pole + margin, lap shown to the line + hold, slow car never an
+attack, curve-based delta = true gap ±0.15 s, pit-spoiled lap, challenger
+over pole sitter, mode reset, no news at switch-on); commentator 23/23;
+scratchpad integ3.py = real dashboard poller in a fake "Lone Qualify"
+session: quali mode, results, attack shots, quali lines.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

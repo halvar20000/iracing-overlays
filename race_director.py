@@ -21,6 +21,9 @@ Inputs per tick (`tick()`):
   events     new incidents / overtakes (dashboard feed dicts, any order;
              already-seen ids are ignored)
   racing     True while the race is green (SessionState 4)
+  mode       "race" (default) or "quali" — qualifying logic in quali_director.py
+             (fastest driver + flying laps that threaten the front, lap results)
+  t_session  session clock (s) — quali lap timing; falls back to `now`
 """
 
 from __future__ import annotations
@@ -29,10 +32,13 @@ import random
 import time
 from collections import deque
 
+from quali_director import QualiState
+
 # --- pacing (seconds) ---------------------------------------------------------
 MIN_SHOT = 8.0           # a shot is never cut earlier — except for a higher-priority event
 MIN_BY_KIND = {          # ...longer for the subjects that need time to read
     "battle": 15.0, "leader": 10.0,
+    "attack": 12.0, "pole": 10.0,     # qualifying
 }
 SWITCH_MARGIN = 10       # after MIN: another subject must be clearly better, not just
                          # "a battle one place further up" (first test: cut every 8 s,
@@ -43,6 +49,7 @@ CAM_VARY_EVERY = 14.0    # long shots change camera group this often
 MAX_SHOT = {             # after this a shot loses its claim, something else gets a turn
     "incident": 10.0, "overtake": 9.0, "battle": 40.0, "pit": 12.0,
     "leader": 16.0, "field": 12.0,
+    "attack": 200.0, "pole": 16.0,    # an attack runs to the end of its lap
 }
 REVISIT_PENALTY_S = 45.0  # a car shown within this window scores lower
 MANUAL_PAUSE_S = 20.0     # after an operator click the director keeps its hands off
@@ -88,6 +95,8 @@ CAMS = {
     "pit":      ["Pit Lane", "TV1", "TV2"],
     "leader":   ["TV1", "Chase", "TV2", "Cockpit", "TV3"],
     "field":    ["TV2", "TV1", "Chase", "TV3"],
+    "attack":   ["TV1", "Chase", "Cockpit", "TV2", "TV3"],
+    "pole":     ["TV1", "Chase", "TV2", "TV3"],
 }
 
 
@@ -134,6 +143,8 @@ class RaceDirector:
         self.started_at = None                    # first racing tick (leader-due clock)
         self.log: deque = deque(maxlen=60)
         self.kind_cuts: dict[str, int] = {}      # cuts per kind -> camera rotation
+        self.mode = "race"
+        self.quali = QualiState()
 
     # -- public ---------------------------------------------------------------
     def reset(self):
@@ -147,6 +158,7 @@ class RaceDirector:
         self.green_lead = None
         self.last_replay_at = -1e9
         self.event_keys.clear()
+        self.quali.reset()
 
     def after_replay(self, resume_at: float):
         """The dashboard is back from a replay; the shot on air (where it
@@ -170,8 +182,12 @@ class RaceDirector:
             "log": list(self.log),
         }
 
-    def tick(self, now, cars, groups, cam_idx, events, racing=True):
+    def tick(self, now, cars, groups, cam_idx, events, racing=True, mode="race", t_session=None):
         """Returns a Shot to cut to (with .group set), or None."""
+        if mode != self.mode:                    # quali -> race: a fresh start
+            self.reset()
+            self.current = None
+            self.mode = mode
         fresh = self._new_events(events)
         if not racing:
             self.green_lead = None               # next green restarts the lap count
@@ -184,12 +200,18 @@ class RaceDirector:
         if self.green_lead is None:
             self.green_lead = lead
         self._note_visible(now, cam_idx, by_idx)
+        t = now if t_session is None else t_session
+        if mode == "quali":
+            self.quali.update(now, t, cars, self)    # lap tracking runs even while paused
         if now < self.paused_until:
             return None
-        replay, live_events = self._event_replay(now, fresh, by_idx, groups, lead)
-        if replay is not None:
-            return replay
-        cands = self._candidates(now, live, by_idx, live_events)
+        if mode == "quali":                      # no replays in quali
+            cands = self.quali.candidates(self, now, t, live, by_idx, fresh, cars)
+        else:
+            replay, live_events = self._event_replay(now, fresh, by_idx, groups, lead)
+            if replay is not None:
+                return replay
+            cands = self._candidates(now, live, by_idx, live_events)
         cur = self.current
         if cur is not None and cur.car["idx"] not in by_idx:
             cur = self.current = None            # car left the world: re-pick now

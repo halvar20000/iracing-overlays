@@ -53,7 +53,9 @@ SYSTEM_PROMPT = (
     "(höchstens 18 Wörter) zum aktuellen Bild. Regeln: Nutze nur die gegebenen Fakten. "
     "Erfinde nichts – keine Gründe, keine Schäden, keine Rundenzeiten, keine Strafen, keine "
     "Vorgeschichte. Nenne Fahrer mit Vor- und Nachnamen oder nur Nachnamen. Abstände mit "
-    "Komma (0,4 Sekunden). Wiederhole nicht Formulierungen der letzten Sätze. Keine Emojis, "
+    "Komma (0,4 Sekunden). Im Qualifying (session = Qualifying): delta_to_pole_s < 0 heißt "
+    "schneller als die aktuelle Pole, > 0 langsamer; predicted_position ist eine Hochrechnung "
+    "(sag \"auf Kurs zu Platz …\"), lap_time ist offiziell. Wiederhole nicht Formulierungen der letzten Sätze. Keine Emojis, "
     "keine Anführungszeichen, keine Startnummern mit #, kein Vorspann – nur der Satz."
 )
 
@@ -90,12 +92,65 @@ def facts_from(entry: dict) -> dict | None:
         f.update(event=info.get("event"), passed=info.get("passed"), position=info.get("position"))
     elif kind == "seen":
         f.update(event=info.get("event"), passed=info.get("passed"), position=info.get("position"))
+    # qualifying (quali_director.py)
+    elif kind == "attack":
+        if info.get("finished"):
+            return None                       # the lap result (quali_lap) says it
+        f.update(session="Qualifying", first_lap=bool(info.get("first_lap")),
+                 next_lap=bool(info.get("next_lap")), delta_to_pole_s=info.get("delta"),
+                 predicted_position=info.get("predicted_position"),
+                 pole_sitter=bool(info.get("pole_sitter")), pole=info.get("pole"),
+                 pole_time=info.get("pole_time"))
+    elif kind == "pole":
+        f.update(session="Qualifying", position=1, lap_time=info.get("lap_time_str"))
+    elif kind == "quali_lap":
+        f.update(session="Qualifying", lap_time=info.get("lap_time_str"), position=info.get("position"),
+                 gap_to_pole_s=info.get("gap_to_pole"), new_pole=bool(info.get("new_pole")),
+                 margin_s=info.get("margin"), kept_pole=bool(info.get("kept_pole")))
     else:
         return None
     return f
 
 
 TEMPLATES = {
+    # qualifying
+    "attack_first": [
+        "{driver} ist auf der ersten schnellen Runde unterwegs.",
+        "Die erste gezeitete Runde: {driver} legt vor.",
+    ],
+    "attack_faster": [
+        "{driver} ist {delta} Sekunden schneller als die Pole unterwegs!",
+        "Achtung, {driver} auf Pole-Kurs – {delta} Sekunden unter der Bestzeit.",
+        "{driver} greift die Pole an, aktuell {delta} Sekunden schneller.",
+    ],
+    "attack_slower": [
+        "{driver} auf schneller Runde, {delta} Sekunden hinter der Pole – auf Kurs zu Platz {predicted_position}.",
+        "{driver} ist auf einer guten Runde, auf Kurs zu Platz {predicted_position}.",
+    ],
+    "attack_pole_sitter": [
+        "{driver} versucht, die eigene Pole-Zeit noch zu verbessern.",
+        "Der Mann auf Pole legt nach: {driver} auf schneller Runde.",
+    ],
+    "attack_next": [
+        "{driver} hängt direkt die nächste schnelle Runde an.",
+    ],
+    "pole": [
+        "{driver} steht mit {lap_time} auf der Pole.",
+        "Die Zeit, die es zu schlagen gilt: {lap_time} von {driver}.",
+    ],
+    "quali_lap_pole": [
+        "Neue Pole! {driver} mit {lap_time}.",
+        "{driver} setzt sich an die Spitze – {lap_time}!",
+        "Bestzeit für {driver}: {lap_time}, das ist die Pole.",
+    ],
+    "quali_lap_kept": [
+        "{driver} verbessert die eigene Pole-Zeit auf {lap_time}.",
+        "{driver} legt noch einmal nach: {lap_time}, die Pole wird schneller.",
+    ],
+    "quali_lap": [
+        "{driver} mit {lap_time} – Platz {position}, {gap} Sekunden hinter der Pole.",
+        "{lap_time} für {driver}, das ist Platz {position}.",
+    ],
     "battle": [
         "Kampf um Platz {position}: {driver} liegt nur {gap} Sekunden hinter {ahead}.",
         "{driver} macht Druck auf {ahead} – {gap} Sekunden, es geht um Platz {position}.",
@@ -153,15 +208,29 @@ def template_line(f: dict, rng: random.Random, avoid: set | None = None) -> str 
     key = f["kind"]
     if key in ("incident", "replay", "seen"):
         key = f"{key}_{f.get('event')}"
+    elif key == "attack":
+        d = f.get("delta_to_pole_s")
+        key = ("attack_first" if f.get("first_lap") else "attack_next" if f.get("next_lap")
+               else "attack_pole_sitter" if f.get("pole_sitter")
+               else "attack_faster" if d is not None and d < 0 else "attack_slower")
+    elif key == "quali_lap":
+        key = ("quali_lap_kept" if f.get("kept_pole") else
+               "quali_lap_pole" if f.get("new_pole") else "quali_lap")
     options = TEMPLATES.get(key)
     if not options:
         return None
     vals = {k: ("" if v is None else v) for k, v in f.items()}
     vals["gap"] = _gap(f["gap_s"]) if f.get("gap_s") is not None else ""
+    if f.get("gap_to_pole_s") is not None:
+        vals["gap"] = _gap(f["gap_to_pole_s"])
+    vals["delta"] = _gap(abs(f["delta_to_pole_s"])) if f.get("delta_to_pole_s") is not None else ""
+    if f.get("lap_time"):
+        vals["lap_time"] = f["lap_time"].replace(".", ",")
     # a template needing a fact we do not have is skipped
     usable = [t for t in options
               if all(vals.get(n) not in ("", None) for n in
-                     ("position", "ahead", "passed", "gap", "driver") if "{" + n + "}" in t)]
+                     ("position", "ahead", "passed", "gap", "driver", "delta", "lap_time",
+                      "predicted_position") if "{" + n + "}" in t)]
     if not usable:
         return None
     fresh = [t for t in usable if t not in (avoid or set())] or usable

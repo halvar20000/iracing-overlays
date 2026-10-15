@@ -305,6 +305,7 @@ class TelemetryPoller:
         self._lap_start_times = {}        # lap_no -> SessionTime (seconds)
         self._leader_max_lap = 0          # highest leader lap observed live
         self._cur_is_race = False         # set each tick by _build_driver_list
+        self._cur_is_quali = False        # ...qualifying (REGIE quali mode)
 
         # Overtake feed (separate panel from incidents)
         self._overtakes = deque(maxlen=30)
@@ -1590,17 +1591,20 @@ class TelemetryPoller:
 
         # Live-progress ordering only makes sense in a RACE — in practice /
         # qualifying iRacing's position (best-lap rank) is the right order.
-        is_race = False
+        is_race = is_quali = False
         try:
             sessions = (ir["SessionInfo"] or {}).get("Sessions", []) or []
             sess_num = ir["SessionNum"] or 0
             for s in sessions:
                 if s.get("SessionNum") == sess_num:
                     is_race = "race" in (s.get("SessionType") or "").lower()
+                    is_quali = ("qualify" in (s.get("SessionType") or "").lower()
+                                or "qualify" in (s.get("SessionName") or "").lower())
                     break
         except Exception:
             pass
         self._cur_is_race = is_race
+        self._cur_is_quali = is_quali and not is_race
         surfaces = ir["CarIdxTrackSurface"] or []
 
         rows = []
@@ -1626,6 +1630,7 @@ class TelemetryPoller:
                 "gap_to_leader": f2_time[idx] if idx < len(f2_time) else 0.0,
                 "starred":     idx in self._starred_car_idxs,
                 "in_world":    surf_v != SURFACE_NOT_IN_WORLD,
+                "surface":     surf_v,
                 "progress":    (lap_v or 0) + max(pct_v or 0.0, 0.0),
                 "class_id":    d.get("CarClassID"),
                 "class_name":  d.get("CarClassShortName") or "",
@@ -1757,11 +1762,15 @@ class TelemetryPoller:
             return
         if pb.get("speed") != 1 or pb.get("slow") or time.time() < self._own_replay_until:
             return
-        racing = (self.ir["SessionState"] == 4) and self._cur_is_race
+        # qualifying: REGIE follows the fastest driver and the flying laps that
+        # threaten the front (quali_director.py); race as before
+        mode = "quali" if self._cur_is_quali else "race"
+        racing = (self.ir["SessionState"] == 4) and (self._cur_is_race or self._cur_is_quali)
         cars = [{"idx": d["car_idx"], "number": str(d["car_number"]), "name": d["name"],
                  "class_id": d.get("class_id"), "class_name": d.get("class_name"),
                  "progress": self._director_progress(d), "on_pit": d["on_pit_road"],
-                 "in_world": d["in_world"], "est_lap": d.get("est_lap") or 100.0}
+                 "in_world": d["in_world"], "est_lap": d.get("est_lap") or 100.0,
+                 "best": d.get("best_lap") or 0.0, "surface": d.get("surface")}
                 for d in drivers]
         # events detected while OUR replay was playing come from the replayed
         # footage (the same pass / contact again) — never news
@@ -1772,8 +1781,12 @@ class TelemetryPoller:
                     self.director.seen_events.add(e["id"])
                 continue
             events.append(e)
+        try:
+            t_sess = float(self.ir["SessionTime"] or 0.0)
+        except Exception:
+            t_sess = None
         shot = self.director.tick(time.time(), cars, self._camera_groups,
-                                  current_cam_idx, events, racing)
+                                  current_cam_idx, events, racing, mode=mode, t_session=t_sess)
         if shot is None:
             return
         if shot.kind == "replay":
@@ -1811,6 +1824,16 @@ class TelemetryPoller:
     def _commentary_context(self, drivers: list, track: str) -> dict:
         """Race facts the commentator may use besides the shot itself."""
         ctx = {"strecke": track or ""}
+        if self._cur_is_quali:
+            ctx["session"] = "Qualifying"
+            try:
+                rp = self._race_progress()
+                if rp.get("time_remaining") is not None:
+                    ctx["minuten_uebrig"] = int(rp["time_remaining"] // 60)
+                ctx["fahrer_mit_zeit"] = sum(1 for d in drivers if (d.get("best_lap") or 0) > 0)
+            except Exception:
+                pass
+            return ctx
         try:
             rp = self._race_progress()
             lead = max((d.get("lap") or 0 for d in drivers), default=0)
