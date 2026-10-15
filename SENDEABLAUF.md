@@ -36,6 +36,10 @@ Ablauf nur einmal.
    **„Audio über OBS steuern“**. Sie muss in **beiden** Szenen liegen, in
    Moderator **und** iRacing, denn OBS gibt nur den Ton der Szene aus, die
    gerade läuft. Am einfachsten über „Bestehende hinzufügen“.
+   Damit **du** die Stimme auch hörst (nicht nur der Stream): Mixer → Zahnrad →
+   „Erweiterte Audioeigenschaften“ → bei der Quelle „Audioüberwachung“ auf
+   **„Überwachen und ausgeben“**; das Monitoring-Gerät (Einstellungen → Audio)
+   ist dein Kopfhörer.
 5. Zum Prüfen öffnest du `http://localhost:5000/show` → **„OBS prüfen“**. Dort
    bekommt jede Szene und Quelle einen Haken, oder es steht da, was fehlt.
 
