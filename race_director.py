@@ -88,14 +88,16 @@ INTERRUPT_MARGIN = 25    # a candidate this much stronger may cut a shot before 
 # Camera groups per shot kind, by name (exact, case/space-insensitive),
 # tried in order and rotated inside long shots. Missing names are skipped;
 # Scenic is never used. Track cameras (TV) show incidents and battles best.
+# In-car view = Gyro only, never Cockpit (Thomas, 2026-10-15).
+NEVER_CAMS = ("SCENIC", "COCKPIT")
 CAMS = {
     "incident": ["TV1", "TV2", "TV3"],
     "overtake": ["TV1", "TV2", "TV3"],
     "battle":   ["TV1", "Chase", "TV2", "Far Chase", "TV3"],
     "pit":      ["Pit Lane", "TV1", "TV2"],
-    "leader":   ["TV1", "Chase", "TV2", "Cockpit", "TV3"],
+    "leader":   ["TV1", "Chase", "TV2", "Gyro", "TV3"],
     "field":    ["TV2", "TV1", "Chase", "TV3"],
-    "attack":   ["TV1", "Chase", "Cockpit", "TV2", "TV3"],
+    "attack":   ["TV1", "Chase", "Gyro", "TV2", "TV3"],
     "pole":     ["TV1", "Chase", "TV2", "TV3"],
 }
 
@@ -387,7 +389,7 @@ class RaceDirector:
         by_name = {}
         for g in groups or []:
             n = _norm(g.get("name"))
-            if n and "SCENIC" not in n:
+            if n and not any(x in n for x in NEVER_CAMS):
                 by_name.setdefault(n, g)
         names = [n for n in CAMS.get(kind, ["TV1"]) if _norm(n) in by_name]
         if not names:   # nothing from the plan exists: any non-Scenic group

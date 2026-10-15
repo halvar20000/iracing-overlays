@@ -522,7 +522,16 @@ plain source + pin (CLASS_SOURCE_FALLBACK). speakable(): "AM" → "A M",
 the recent loudness (peak, ~1 s) so syllable dips close it (~3-4 closes/s
 instead of open all sentence); mouth_gain = how wide (1 → 76 %, 2.5 → 100 %). Voice page resets its
 played set when the dashboard restarts (/commentary `boot`).
-test_show_runner.py 69/69. Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
+test_show_runner.py 69/69.
+QUALI first real replay (same evening): (1) commentary said "noch ohne
+gemessene Zeit" for every field shot — quali `field` shots now carry car /
+team / flying / class position, own templates (quali_field, _flying, _time)
+and the prompt says to introduce a driver without a time; (2) the tower
+(5005) showed END-of-quali times at the start of a quali REPLAY — in a
+recorded replay (IsReplayPlaying and ReplayFrameNumEnd > 600) it now ranks
+by telemetry bests, not ResultsPositions (which already holds the final
+result), and skips the quali memory; (3) REGIE in-car camera = "Gyro", never
+"Cockpit" (`NEVER_CAMS` with Scenic, also for the any-group fallback). Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

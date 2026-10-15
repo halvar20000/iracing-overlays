@@ -55,7 +55,9 @@ SYSTEM_PROMPT = (
     "Vorgeschichte. Nenne Fahrer mit Vor- und Nachnamen oder nur Nachnamen. Abstände mit "
     "Komma (0,4 Sekunden). Im Qualifying (session = Qualifying): delta_to_pole_s < 0 heißt "
     "schneller als die aktuelle Pole, > 0 langsamer; predicted_position ist eine Hochrechnung "
-    "(sag \"auf Kurs zu Platz …\"), lap_time ist offiziell. Wiederhole nicht Formulierungen der letzten Sätze. Keine Emojis, "
+    "(sag \"auf Kurs zu Platz …\"), lap_time ist offiziell. Fährt ein Fahrer noch ohne Zeit "
+    "(kein lap_time), stell ihn vor – Auto, Team, Aufwärmrunde oder schnelle Runde – und sag "
+    "NICHT, dass er noch keine Zeit hat. Wiederhole nicht Formulierungen der letzten Sätze. Keine Emojis, "
     "keine Anführungszeichen, keine Startnummern mit #, kein Vorspann – nur der Satz."
 )
 
@@ -84,6 +86,10 @@ def facts_from(entry: dict) -> dict | None:
     f = {"kind": kind, "driver": entry.get("name") or "", "number": entry.get("car_number")}
     if kind == "battle":
         f.update(position=info.get("position"), ahead=info.get("ahead"), gap_s=info.get("gap"))
+    elif kind == "field" and info.get("quali"):
+        f.update(session="Qualifying", car=info.get("car"), team=info.get("team"),
+                 on_flying_lap=bool(info.get("flying")), lap_time=info.get("lap_time_str"),
+                 position=info.get("position"), cars_with_time=info.get("times_set"))
     elif kind in ("leader", "field", "pit"):
         f.update(position=info.get("position"))
     elif kind == "incident":
@@ -162,6 +168,24 @@ TEMPLATES = {
         "Ganz vorne fährt {driver}.",
         "{driver} an der Spitze des Feldes.",
     ],
+    # qualifying, a car the director shows "from the field"
+    "quali_field_time": [
+        "{driver} steht bisher auf Platz {position} mit {lap_time}.",
+        "Wir schauen auf {driver}, aktuell P{position} in der Zeitenliste.",
+        "{driver} im {car}, bislang Platz {position}.",
+    ],
+    "quali_field_flying": [
+        "{driver} im {car} ist auf seiner schnellen Runde.",
+        "Schnelle Runde für {driver}.",
+        "{driver} startet in eine gezeitete Runde.",
+    ],
+    "quali_field": [
+        "{driver} im {car} bringt die Reifen auf Temperatur.",
+        "Hier ist {driver} im {car} unterwegs.",
+        "{driver} fährt für {team}.",
+        "{driver} ist auf der Aufwärmrunde.",
+        "Wir sehen {driver} im {car}.",
+    ],
     "field": [
         "Blick ins Feld: {driver} auf Position {position}.",
         "Wir schauen auf {driver}, aktuell P{position}.",
@@ -213,6 +237,9 @@ def template_line(f: dict, rng: random.Random, avoid: set | None = None) -> str 
         key = ("attack_first" if f.get("first_lap") else "attack_next" if f.get("next_lap")
                else "attack_pole_sitter" if f.get("pole_sitter")
                else "attack_faster" if d is not None and d < 0 else "attack_slower")
+    elif key == "field" and f.get("session") == "Qualifying":
+        key = ("quali_field_time" if f.get("lap_time") and f.get("position") else
+               "quali_field_flying" if f.get("on_flying_lap") else "quali_field")
     elif key == "quali_lap":
         key = ("quali_lap_kept" if f.get("kept_pole") else
                "quali_lap_pole" if f.get("new_pole") else "quali_lap")
@@ -230,7 +257,7 @@ def template_line(f: dict, rng: random.Random, avoid: set | None = None) -> str 
     usable = [t for t in options
               if all(vals.get(n) not in ("", None) for n in
                      ("position", "ahead", "passed", "gap", "driver", "delta", "lap_time",
-                      "predicted_position") if "{" + n + "}" in t)]
+                      "predicted_position", "car", "team") if "{" + n + "}" in t)]
     if not usable:
         return None
     fresh = [t for t in usable if t not in (avoid or set())] or usable

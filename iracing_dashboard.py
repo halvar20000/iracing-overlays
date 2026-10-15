@@ -1654,6 +1654,7 @@ class TelemetryPoller:
                 "name":        d.get("UserName", "") or "",
                 "car_number":  d.get("CarNumber", "") or "",
                 "car":         d.get("CarScreenNameShort") or d.get("CarScreenName", ""),
+                "team":        (d.get("TeamName") or "") if (d.get("TeamName") or "") != (d.get("UserName") or "") else "",
                 "position":    positions[idx] if idx < len(positions) else 0,
                 "lap":         lap_v,
                 "lap_pct":     pct_v,
@@ -1833,7 +1834,8 @@ class TelemetryPoller:
                  "class_id": d.get("class_id"), "class_name": d.get("class_name"),
                  "progress": self._director_progress(d), "on_pit": d["on_pit_road"],
                  "in_world": d["in_world"], "est_lap": d.get("est_lap") or 100.0,
-                 "best": d.get("best_lap") or 0.0, "surface": d.get("surface")}
+                 "best": d.get("best_lap") or 0.0, "surface": d.get("surface"),
+                 "car": d.get("car") or "", "team": d.get("team") or ""}
                 for d in drivers]
         # events detected while OUR replay was playing come from the replayed
         # footage (the same pass / contact again) — never news

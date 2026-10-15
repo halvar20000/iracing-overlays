@@ -280,14 +280,24 @@ class QualiState:
             oldest = min(director.last_shown.get(c["idx"], -1e9) for c in pool)
             picks.append(director.rng.choice([c for c in pool
                                               if director.last_shown.get(c["idx"], -1e9) == oldest]))
+        all_cars = cars or live
+
+        def class_bests(c):          # the car's class, fastest first (quali position)
+            return sorted((x.get("best") or 0) for x in all_cars
+                          if (x.get("best") or 0) > 0 and x.get("class_id") == c.get("class_id"))
         for c in picks:
             fl = (self.lap.get(c["idx"]) or {}).get("flying")
             best = c.get("best") or 0
+            # the commentary needs something to say about a car without a time
+            # too (2026-10-15: "noch ohne gemessene Zeit" over and over)
             out.append(Shot("field", c, FIELD_PRIO + (5 if fl else 0),
                             f"on track: #{c['number']} {c['name']}"
                             + (f" (best {fmt_lap(best)})" if best else "")
                             + (" — flying lap" if fl else ""),
-                            {"lap_time_str": fmt_lap(best), "flying": bool(fl)}))
+                            {"lap_time_str": fmt_lap(best) if best else None, "flying": bool(fl),
+                             "quali": True, "car": c.get("car") or None, "team": c.get("team") or None,
+                             "position": (class_bests(c).index(best) + 1) if best else None,
+                             "times_set": len(class_bests(c))}))
         return out
 
 

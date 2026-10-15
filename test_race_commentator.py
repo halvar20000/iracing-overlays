@@ -141,5 +141,24 @@ check("attack slower: predicted, not final", ln and ("auf Kurs zu Platz 4" in ln
       and "reicht" not in ln, ln)
 check("finished attack is silent", rc.facts_from(entry(60.0, "attack", "X", {"finished": True})) is None)
 
+# quali, a car from the field before anyone has a time: introduce him, never "no time yet"
+qr = random.Random(3)
+nt = rc.facts_from(entry(61.0, "field", "Bastian Krumpschmied",
+                         {"quali": True, "car": "Corvette Z06 GT3.R", "team": "CAS Tech", "flying": False,
+                          "lap_time_str": None, "position": None, "times_set": 0}))
+lines = {rc.template_line(nt, qr) for _ in range(40)}
+check("quali field without a time: varied intros", len(lines) >= 3
+      and all("Krumpschmied" in l and "Zeit" not in l and "None" not in l for l in lines), lines)
+check("quali field facts carry car + team", nt["car"] == "Corvette Z06 GT3.R" and nt["team"] == "CAS Tech"
+      and nt["session"] == "Qualifying")
+fl = rc.facts_from(entry(62.0, "field", "Mike Zocher", {"quali": True, "car": "Porsche", "flying": True}))
+check("quali field on a flying lap", "schnelle" in rc.template_line(fl, qr).lower() or "gezeitete" in rc.template_line(fl, qr))
+wt = rc.facts_from(entry(63.0, "field", "Mike Zocher", {"quali": True, "car": "Porsche", "lap_time_str": "1:49.311",
+                                                      "position": 5, "times_set": 9}))
+l = rc.template_line(wt, random.Random(1))
+check("quali field with a time: position", "Zocher" in l and ("5" in l), l)
+nt2 = rc.facts_from(entry(64.0, "field", "Ohne Team", {"quali": True, "car": "BMW", "team": None}))
+check("team template skipped without a team", all("fährt für" not in rc.template_line(nt2, random.Random(i)) for i in range(30)))
+
 print(f"\n{'ALL PASS' if not fails else f'{fails} FAILED'}")
 raise SystemExit(1 if fails else 0)

@@ -216,5 +216,13 @@ lead = [c[0] for c in s.cuts if c[1] == "leader" or (c[1] == "battle" and c[2] =
 check("tight pack: leader shown at least every ~2.5 min",
       lead and all(b - a <= 150 for a, b in zip([1000.0] + lead, lead + [s.t])), lead)
 
+# in-car: Gyro, never Cockpit (also not as the "anything" fallback)
+dcam = rd.RaceDirector(random.Random(1))
+gy = GROUPS + [{"id": 99, "name": "Gyro"}]
+picked = {dcam._pick_group(k, gy, i)["name"] for k in rd.CAMS for i in range(8)}
+check("never Cockpit, Gyro used", "Cockpit" not in picked and "Gyro" in picked, picked)
+check("fallback never Cockpit", dcam._pick_group("leader", [{"id": 1, "name": "Cockpit"}, {"id": 2, "name": "Scenic"},
+                                                            {"id": 3, "name": "Blimp"}], 0)["name"] == "Blimp")
+
 print(f"\n{'ALL PASS' if not fails else f'{fails} FAILED'}")
 raise SystemExit(1 if fails else 0)

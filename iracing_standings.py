@@ -747,9 +747,17 @@ class StandingsPoller(SDKPoller):
         if session_type == "Race":
             rows = self._build_race_standings(drivers, ir, sess)
         else:
+            # A recorded replay (well behind the live tip): SessionInfo's
+            # ResultsPositions already holds the FINAL results of the session,
+            # so at the start of a quali replay the tower showed everyone's end
+            # times (2026-10-15). There the moment's telemetry bests are right.
+            try:
+                behind = bool(ir["IsReplayPlaying"]) and (ir["ReplayFrameNumEnd"] or 0) > 600
+            except Exception:
+                behind = False
             memory = (self._quali_memory_for(ir)
-                      if session_type == "Qualifying" else None)
-            rows = self._build_timed_standings(drivers, ir, sess, memory)
+                      if session_type == "Qualifying" and not behind else None)
+            rows = self._build_timed_standings(drivers, ir, None if behind else sess, memory)
 
         # WCT GT3 Pro/Am bar (red PRO / green AM in front of the name).
         # Only switched on when the field is a WCT field — see cls_proam.py.
@@ -2582,7 +2590,7 @@ def standings():
 # Bump on every change: http://localhost:5005/version shows which code the
 # running process actually loaded (the stream PC gets this folder through
 # Nextcloud, so a restart can still pick up the previous file).
-CODE_VERSION = "2026-10-15 pittires"
+CODE_VERSION = "2026-10-15 replay-quali-times"
 
 
 @app.route("/version")
