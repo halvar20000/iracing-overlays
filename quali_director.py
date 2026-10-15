@@ -288,6 +288,7 @@ class QualiState:
         for c in picks:
             fl = (self.lap.get(c["idx"]) or {}).get("flying")
             best = c.get("best") or 0
+            best = best if best > 0 else 0      # iRacing reports -1 for "no time yet"
             # the commentary needs something to say about a car without a time
             # too (2026-10-15: "noch ohne gemessene Zeit" over and over)
             out.append(Shot("field", c, FIELD_PRIO + (5 if fl else 0),
@@ -296,7 +297,8 @@ class QualiState:
                             + (" — flying lap" if fl else ""),
                             {"lap_time_str": fmt_lap(best) if best else None, "flying": bool(fl),
                              "quali": True, "car": c.get("car") or None, "team": c.get("team") or None,
-                             "position": (class_bests(c).index(best) + 1) if best else None,
+                             "position": (class_bests(c).index(best) + 1)
+                                         if best and best in class_bests(c) else None,
                              "times_set": len(class_bests(c))}))
         return out
 

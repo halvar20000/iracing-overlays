@@ -1839,7 +1839,8 @@ class TelemetryPoller:
                  "class_id": d.get("class_id"), "class_name": d.get("class_name"),
                  "progress": self._director_progress(d), "on_pit": d["on_pit_road"],
                  "in_world": d["in_world"], "est_lap": d.get("est_lap") or 100.0,
-                 "best": d.get("best_lap") or 0.0, "surface": d.get("surface"),
+                 # iRacing: -1 = no time yet; the director treats every best <= 0 as none
+                 "best": max(d.get("best_lap") or 0.0, 0.0), "surface": d.get("surface"),
                  "car": d.get("car") or "", "team": d.get("team") or ""}
                 for d in drivers]
         # events detected while OUR replay was playing come from the replayed
@@ -2256,7 +2257,13 @@ class TelemetryPoller:
 
         pb = self._playback_status()
         self._track_lap_starts(driver_list, pb["is_live"], ir["SessionTime"] or 0.0)
-        self._maybe_direct(driver_list, cam_car_idx, pb)
+        try:
+            self._maybe_direct(driver_list, cam_car_idx, pb)
+        except Exception as e:              # REGIE must never take the dashboard down
+            self._director_error = f"{type(e).__name__}: {e}"
+            if time.time() - getattr(self, "_director_err_at", 0) > 30:
+                self._director_err_at = time.time()
+                print(f"[regie] ERROR {self._director_error}")
         if self.director_enabled:
             try:
                 self._announce_quali_phase()
@@ -4515,7 +4522,8 @@ def director():
     if request.method == "POST":
         payload = request.get_json(silent=True) or {}
         poller.set_director(bool(payload.get("enabled", True)))
-    return jsonify(dict(poller.director.status(), enabled=poller.director_enabled))
+    return jsonify(dict(poller.director.status(), enabled=poller.director_enabled,
+                        error=getattr(poller, "_director_error", "")))
 
 
 @app.route("/commentary")
