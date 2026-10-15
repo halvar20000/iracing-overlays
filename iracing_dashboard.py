@@ -4727,7 +4727,7 @@ document.addEventListener('click', () => {      // unlock sound in a normal brow
 });
 
 // --- avatar: VTube Studio mouth from the loudness of the voice ---------------
-let ac = null, analyser = null, buf = null, mouth = 0, lastSend = 0, idleSent = 0;
+let ac = null, analyser = null, buf = null, mouth = 0, peak = 0.02, lastSend = 0, idleSent = 0;
 function ensureGraph() {
     if (ac) { ac.resume(); return; }
     try {
@@ -4781,19 +4781,24 @@ setInterval(() => {
         analyser.getFloatTimeDomainData(buf);
         let sum = 0; for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
         const rms = Math.sqrt(sum / buf.length);
-        // gain: ?mouth= on the page, else "mouth_gain" in commentary_config.json
-        // (models with a small mouth: 2-3 opens it wider at the same loudness)
-        const gain = parseFloat(qs.get('mouth')) || (info.voice || {}).mouth_gain || 1;
-        level = Math.max(0, Math.min(1, (rms - 0.01) * 9 * gain));
+        // Relative to the recent loudness (~1 s memory), not absolute: the dips
+        // between syllables close the mouth, so it moves ~3x a second instead of
+        // staying open for a whole sentence (2026-10-15, tuned on a real clip:
+        // open > 80 % of the time 71 % -> 32 %, closes 1.0 -> 3.2 per second).
+        peak = Math.max(rms, peak * 0.95, 0.02);
+        level = Math.pow(Math.max(0, Math.min(1, (rms - 0.3 * peak) / (0.7 * peak))), 0.7);
     }
-    mouth = level > mouth ? mouth * 0.3 + level * 0.7 : mouth * 0.6 + level * 0.4;   // quick open, softer close
-    const mi = document.getElementById('mi'); if (mi) mi.style.width = Math.round(mouth * 100) + '%';
+    mouth = level > mouth ? mouth * 0.25 + level * 0.75 : mouth * 0.4 + level * 0.6;   // quick open, quick close
+    // mouth_gain (commentary_config.json) / ?mouth= = how wide: 1 -> 76 %, 2.5 -> fully open
+    const gain = parseFloat(qs.get('mouth')) || (info.voice || {}).mouth_gain || 1;
+    const out = Math.min(1, mouth * Math.min(1, 0.6 + 0.16 * gain));
+    const mi = document.getElementById('mi'); if (mi) mi.style.width = Math.round(out * 100) + '%';
     const t = Date.now();
     if (!vtsOk) return;
     // VTS keeps an injected value ~1 s: send while speaking, then zeros for a moment
     if (playing || mouth > 0.02) { if (t - lastSend >= 40) { lastSend = t; idleSent = 0;
         vtsSend('InjectParameterDataRequest', {faceFound: false, mode: 'set',
-                parameterValues: [{id: 'MouthOpen', value: mouth}]}); } }
+                parameterValues: [{id: 'MouthOpen', value: out}]}); } }
     else if (idleSent < 3 && t - lastSend >= 300) { lastSend = t; idleSent++;
         vtsSend('InjectParameterDataRequest', {faceFound: false, mode: 'set',
                 parameterValues: [{id: 'MouthOpen', value: 0}]}); }
