@@ -2155,12 +2155,46 @@ def api_prerace_pin():
     return jsonify({"cls": on})
 
 
+_before_cache: dict = {}     # (league, season, N) -> (fetched_at, payload)
+
+
+def _roundinfo_before(n: int) -> dict:
+    """CLS round-info + standings as they stood BEFORE round n (CLS
+    ?beforeRound=N) — for a broadcast made later from a replay of round n.
+    Same league/season as the live data; cached 60 s."""
+    cfg = fetcher.get().get("config") or {}
+    base = (cfg.get("api_base") or DEFAULT_API).rstrip("/")
+    params = {"league": cfg.get("league_slug") or "", "beforeRound": str(n)}
+    if cfg.get("season_id"):
+        params["season"] = cfg["season_id"]
+    key = (params["league"], params.get("season"), n)
+    hit = _before_cache.get(key)
+    if hit and time.time() - hit[0] < 60:
+        return hit[1]
+    info = requests.get(f"{base}/api/overlay/round-info", params=params, timeout=10).json()
+    st = requests.get(f"{base}/api/overlay/standings", params=params, timeout=10).json()
+    if not info.get("ok") or not st.get("ok"):
+        raise RuntimeError(info.get("error") or st.get("error") or "CLS: ok=false")
+    if (info.get("season") or {}).get("asOfBeforeRound") != n:
+        raise RuntimeError("CLS kennt beforeRound noch nicht (CLS-Update fehlt)")
+    out = {"ok": True, "info": info, "standings": st, "error": None, "before_round": n}
+    _before_cache[key] = (time.time(), out)
+    return out
+
+
 @app.route("/api/roundinfo")
 def api_roundinfo():
     # Detect the series here too: the AI moderation (dashboard /show) reads
     # only this route, often with no championship page open that would
     # otherwise trigger the switch (2026-10-15: IEC facts over an SFL replay).
     _apply_detected_league(poller.get())
+    from flask import request
+    before = request.args.get("before", type=int)
+    if before:                       # ?before=N: the season before round N (replays)
+        try:
+            return jsonify(_roundinfo_before(before))
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"Stand vor Runde {before}: {e}"})
     info = round_info.get()
     champ = fetcher.get()
     if not info["data"]:

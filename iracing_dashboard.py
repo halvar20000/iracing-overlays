@@ -1798,8 +1798,23 @@ class TelemetryPoller:
                  "weather": {k: v for k, v in (("luft", wk.get("TrackAirTemp")),
                                                ("asphalt", wk.get("TrackSurfaceTemp")),
                                                ("himmel", wk.get("TrackSkies"))) if v}}
-        ri = show_runner.fetch_roundinfo(cfg.get("champ_url") or show_runner.DEFAULT_CONFIG["champ_url"])
+        champ_url = cfg.get("champ_url") or show_runner.DEFAULT_CONFIG["champ_url"]
+        ri = show_runner.fetch_roundinfo(champ_url)
         notes_dir = Path(__file__).resolve().parent / (cfg.get("notes_dir") or "show_notes")
+        # A replay of an earlier round (e.g. Motegi = round 4 while round 5 is
+        # next): results, table and schedule as they stood BEFORE that round.
+        # show_config.json "as_of_round": N forces it, 0 switches it off.
+        as_of = cfg.get("as_of_round")
+        if as_of is None:
+            as_of = show_runner.replay_round(ri, track.get("name") or "", notes_dir)
+        self.show.as_of_round = as_of or None
+        if as_of:
+            ri_before = show_runner.fetch_roundinfo(f"{champ_url}?before={int(as_of)}", tries=1)
+            if ri_before:
+                ri = ri_before
+            else:
+                self.show.last_error = (f"Replay von Runde {as_of}: Stand vor der Runde nicht abrufbar "
+                                        "(CLS-Update fehlt?) – es wird der aktuelle Stand benutzt")
         notes = show_runner.find_notes(notes_dir, track.get("name") or "", track.get("config") or "")
         video_s = None
         vid = (cfg.get("sources") or {}).get("track_video")
@@ -4984,6 +4999,7 @@ async function tick() {
     document.getElementById('src').textContent = d.script_source
         ? 'Skript: ' + (d.script_source === 'claude' ? 'von Claude' : 'Vorlagen (kein API-Key / Fehler)') +
           (d.edited ? ' · von Hand geändert' : '') +
+          (d.as_of_round ? ' · Replay von Runde ' + d.as_of_round + ': Stand vor dieser Runde' : '') +
           (d.state !== 'running' ? ' · zum Ändern einfach in den Text klicken, leerer Abschnitt = wird übersprungen' : '')
         : 'Noch kein Skript – wird 5 Min. vor dem Start geschrieben';
     draw(d, false);

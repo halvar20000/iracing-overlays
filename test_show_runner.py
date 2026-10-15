@@ -423,6 +423,23 @@ check("map during the track talk, then the video, never both", ("track", True, F
 check("place in the facts", sr.build_facts(None, {"name": "Motegi", "place": "Motegi, Japan"}, None, None)["ort"]
       == "Motegi, Japan")
 
+# replay of an earlier round: which round is it (tracks from CLS or the schedule file)
+RR = {"info": {"league": {"slug": "cas-gt3-wct"}, "nextRound": {"number": 5, "track": "Indianapolis Motor Speedway"},
+               "rounds": [{"number": 1, "status": "COMPLETED", "track": "Silverstone Circuit"},
+                          {"number": 3, "status": "COMPLETED", "track": "Circuit Zandvoort"},
+                          {"number": 4, "status": "COMPLETED", "track": "Mobility Resort Motegi"},
+                          {"number": 7, "status": "UPCOMING", "track": "Circuit of the Americas"}]}}
+check("replay round: Motegi = 4, Zandvoort = 3", sr.replay_round(RR, "Mobility Resort Motegi") == 4
+      and sr.replay_round(RR, "Circuit Zandvoort") == 3)
+check("replay round: today's track / future / unknown / generic words -> live",
+      sr.replay_round(RR, "Indianapolis Motor Speedway") is None and sr.replay_round(RR, "Circuit of the Americas") is None
+      and sr.replay_round(RR, "Okayama International Circuit") is None and sr.replay_round(None, "Motegi") is None)
+RR2 = {"info": {"league": {"slug": "cas-gt3-wct"}, "nextRound": {"number": 5, "track": "Indy"},
+                "rounds": [{"number": 4, "status": "COMPLETED", "startsAt": "2026-10-13T18:00:00.000Z"}]}}
+with tempfile.TemporaryDirectory() as td:
+    (Path(td) / "schedule-cas-gt3-wct.md").write_text("13.10.26 Mobility Resort Motegi - GP\n", encoding="utf-8")
+    check("replay round from the schedule file when CLS has no tracks", sr.replay_round(RR2, "Mobility Resort Motegi", Path(td)) == 4)
+
 # hand edits: kept, empty segment skipped, survive a restart, never rewritten automatically
 with tempfile.TemporaryDirectory() as td:
     store = Path(td) / "show_script.json"

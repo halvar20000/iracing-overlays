@@ -551,7 +551,15 @@ coordinates WeekendInfo.TrackLatitude/-Longitude ("36.53 m" strings), track
 JSON centre as fallback; `/state` carries `location`; replays the flight on
 obsSourceVisibleChanged (redirect loader location.html). Show: source
 "Streckenort" up during the track talk, down before the video; facts `ort`
-= TrackCity, TrackCountry. Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
+= TrackCity, TrackCountry.
+REPLAY OF AN EARLIER ROUND (the usual way videos get made): the moderation
+uses the season as it stood BEFORE that round. show_runner.replay_round():
+iRacing track matches a COMPLETED round (CLS round tracks, else
+show_notes/schedule-<slug>.md by date; generic words like circuit / speedway
+ignored) and not the next round's → N; show_config "as_of_round": N forces,
+0 disables. 5010 `/api/roundinfo?before=N` → CLS round-info + standings with
+`?beforeRound=N` (league-manager change, needs that deploy; without it the
+show says so and uses today's data). Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

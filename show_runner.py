@@ -156,6 +156,40 @@ def pin_class(cfg: dict, cls: str | None, timeout: float = 2.0) -> None:
         r.read()
 
 
+_GENERIC = {"circuit", "international", "internacional", "speedway", "raceway", "motor", "motorsport",
+            "park", "autodromo", "autódromo", "course", "road", "grand", "prix", "track", "full", "resort",
+            "world", "shell", "power", "national", "gp"}
+
+
+def _words(name: str) -> set:
+    """Distinctive words of a track name ("Mobility Resort Motegi" -> motegi,
+    mobility) — not the ones half the calendar shares (circuit, speedway …)."""
+    return {w for w in re.findall(r"[a-zäöüßó]+", (name or "").lower()) if len(w) >= 4 and w not in _GENERIC}
+
+
+def replay_round(roundinfo: dict | None, track_name: str, notes_dir: Path | None = None) -> int | None:
+    """A replay of an EARLIER round is running: the iRacing track is not the
+    next round's but matches a completed one -> that round's number (the show
+    then uses the season as it stood before it). Tracks per round from CLS,
+    else from show_notes/schedule-<league>.md by date. None = live / unknown."""
+    info = (roundinfo or {}).get("info") or {}
+    want = _words(track_name)
+    if not want:
+        return None
+    nxt = info.get("nextRound") or {}
+    if _words(nxt.get("track") or "") & want:
+        return None                                   # today's track: live
+    sched = schedule_tracks(notes_dir or HERE / "show_notes", (info.get("league") or {}).get("slug"))
+    hits = []
+    for r in info.get("rounds") or []:
+        if r.get("status") != "COMPLETED":
+            continue
+        track = r.get("track") or sched.get(_date(r.get("startsAt")) or "", "")
+        if _words(track) & want:
+            hits.append(r.get("number"))
+    return max(hits) if hits else None
+
+
 def find_notes(notes_dir: Path, track: str, track_cfg: str = "") -> str | None:
     """Prepared notes for the track: show_notes/<file>.md|.txt whose name
     shares a word (>= 4 letters) with the track name. Longest match wins."""
@@ -606,6 +640,7 @@ class ShowRunner:
         self._thread = None
         self._preparing = False
         self._shown = None             # source kept up across PRO -> AM segments
+        self.as_of_round = None        # replay of an earlier round: data as before it
         self._items = None             # source names in the Moderator scene (read at start)
         self.order: list = []          # all segments the script was written for (an emptied one is skipped)
         self.edited = False            # changed by hand on /show -> no automatic rewrite
@@ -622,6 +657,7 @@ class ShowRunner:
                     "ran_today": self.ran_on == self.local_now().date(),
                     "log": self.log[-30:], "last_error": self.last_error,
                     "facts": self.facts, "order": self.order or self.segments,
+                    "as_of_round": self.as_of_round,
                     "edited": self.edited}
 
     def set_script(self, texts: dict) -> str | None:
