@@ -440,6 +440,37 @@ with tempfile.TemporaryDirectory() as td:
     (Path(td) / "schedule-cas-gt3-wct.md").write_text("13.10.26 Mobility Resort Motegi - GP\n", encoding="utf-8")
     check("replay round from the schedule file when CLS has no tracks", sr.replay_round(RR2, "Mobility Resort Motegi", Path(td)) == 4)
 
+# talking points: templates from the facts, Claude JSON, spoken once each, editable, kept
+tp = sr.template_points(pa)
+check("template points: per class leaders, winners, no None", len(tp) >= 4
+      and any("Klasse PRO" in x and "Maurice Becker" in x for x in tp)
+      and any("Klasse AM" in x and "Andreas Bastian" in x for x in tp) and not any("None" in x for x in tp), tp)
+pcalls = []
+def ppost(payload):
+    pcalls.append(payload)
+    return {"content": [{"type": "text", "text": '```json\n{"points": ["Eins.", " ", "Zwei."]}\n```'}]}
+check("claude points parsed", sr.claude_points(cfg, {"api_key": "k"}, pa, 12, post=ppost) == ["Eins.", "Zwei."]
+      and "12 Talking Points" in pcalls[0]["system"])
+with tempfile.TemporaryDirectory() as td:
+    store = Path(td) / "s.json"
+    rp = sr.ShowRunner(cfg, None, Speaker(), facts_fn=lambda: pa,
+                       script_fn=lambda f, s_: (sr.template_script(cfg, f, s_), "template"),
+                       director_on=lambda: None, store=store, points_fn=lambda f: ["A.", "B.", "C."])
+    rp.prepare()
+    got = [rp.next_point(), rp.next_point()]
+    rp2 = sr.ShowRunner(cfg, None, Speaker(), facts_fn=lambda: pa, script_fn=lambda f, s_: ({}, "t"),
+                        director_on=lambda: None, store=store)
+    check("points spoken in order, once; remembered across a restart", got == ["A.", "B."]
+          and rp2.next_point() == "C." and rp2.next_point() is None, (got, rp2.points_used))
+    rp2.set_script({}, ["Neu 1.", "", "Neu 2."])
+    check("edited points replace the list and start over", rp2.points == ["Neu 1.", "Neu 2."]
+          and rp2.next_point() == "Neu 1.")
+    rp3 = sr.ShowRunner(cfg, None, Speaker(), facts_fn=lambda: pa,
+                        script_fn=lambda f, s_: (sr.template_script(cfg, f, s_), "template"),
+                        director_on=lambda: None, points_fn=lambda f: (_ for _ in ()).throw(RuntimeError("down")))
+    rp3.prepare()
+    check("points failure does not stop the script", rp3.script and rp3.points == [])
+
 # hand edits: kept, empty segment skipped, survive a restart, never rewritten automatically
 with tempfile.TemporaryDirectory() as td:
     store = Path(td) / "show_script.json"

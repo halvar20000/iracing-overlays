@@ -501,6 +501,96 @@ def _parse_segments(text: str) -> dict | None:
     return segs if isinstance(segs, dict) else None
 
 
+POINTS_PROMPT = (
+    "Du bereitest Talking Points für den Live-Kommentar eines deutschsprachigen Twitch-Streams "
+    "(iRacing-Liga der Community CAS) vor. Sie werden während Qualifying und Rennen in ruhigen "
+    "Momenten von einer Sprachausgabe vorgelesen. Schreibe {n} Talking Points, jeder 1 bis 2 kurze "
+    "Sätze, höchstens 30 Wörter, gut vorlesbar, keine Aufzählungszeichen, keine Emojis. Themen: "
+    "Meisterschaftsstand und was auf dem Spiel steht (bei Pro/Am beide Klassen getrennt), Abstände, "
+    "das letzte Rennen, der Fahrer des Tages, die Saison und die nächsten Termine, das Quali-Format, "
+    "die Strecke. Nutze AUSSCHLIESSLICH die gegebenen Daten; konkrete Zahlen zur Strecke nur aus "
+    "'streckennotizen'. Formuliere zeitlos (kein 'gleich', kein 'heute Abend startet'), denn der "
+    "Zeitpunkt im Rennen ist offen, und nichts, was das aktuelle Rennen vorwegnimmt. Jeder Punkt "
+    "muss für sich verständlich sein und ein anderes Thema haben. "
+    "Antworte NUR mit JSON: {{\"points\": [\"…\", …]}}"
+)
+
+
+def claude_points(cfg: dict, api_cfg: dict, facts: dict, n: int = 15, post=None) -> list[str]:
+    """10-20 talking points for quiet moments in quali and race. Raises on failure."""
+    payload = {"model": cfg.get("model") or DEFAULT_CONFIG["model"], "max_tokens": 6000,
+               "thinking": {"type": "disabled"}, "system": POINTS_PROMPT.format(n=n),
+               "messages": [{"role": "user", "content": json.dumps({"daten": facts}, ensure_ascii=False)}]}
+    if post is None:
+        from race_commentator import Commentator
+        post = Commentator(config=dict(api_cfg, timeout_s=120))._post
+    try:
+        data = post(payload)
+    except RuntimeError as e:
+        if "thinking" not in str(e).lower():
+            raise
+        payload.pop("thinking")
+        payload["max_tokens"] = 16000
+        data = post(payload)
+    text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
+    t = re.sub(r"```(?:json)?", "", text)
+    a, b = t.find("{"), t.rfind("}")
+    pts = json.loads(t[a:b + 1]).get("points") if a >= 0 and b > a else None
+    pts = [str(p).strip() for p in (pts or []) if str(p).strip()]
+    if not pts:
+        raise RuntimeError("Claude: keine Talking Points")
+    return pts[:20]
+
+
+def template_points(facts: dict) -> list[str]:
+    """Talking points from the facts alone (no Claude)."""
+    out = []
+    tab = facts.get("tabelle") or {}
+    classes = tab.get("klassen") or ({"": tab} if tab.get("top5") else {})
+    for c, k in classes.items():
+        t = k.get("top5") or []
+        cl = f" der Klasse {c}" if c else ""
+        if len(t) >= 2:
+            gap = k.get("abstand_p1_p2")
+            out.append(f"In der Meisterschaft{cl} führt {t[0]['name']} mit {t[0]['punkte']} Punkten"
+                       + (f", {gap} Punkte vor {t[1]['name']}." if gap is not None else f" vor {t[1]['name']}."))
+        if len(t) >= 5:
+            out.append(f"In den Top fünf{cl} liegen außerdem {t[2]['name']}, {t[3]['name']} und {t[4]['name']}.")
+    lr = facts.get("letzte_runde") or {}
+    for race in lr.get("rennen") or []:
+        nr = f" in Rennen {race['rennen']}" if len(lr.get("rennen") or []) > 1 else ""
+        if race.get("klassen"):
+            for c, k in race["klassen"].items():
+                if k.get("top3"):
+                    out.append(f"In {lr.get('strecke') or 'der letzten Runde'} gewann{nr} in der Klasse {c} "
+                               f"{k['top3'][0]['name']}.")
+                fk = k.get("schnellste_runde")
+                if fk and fk.get("zeit"):
+                    out.append(f"Die schnellste Runde der Klasse {c} in {lr.get('strecke') or 'der letzten Runde'} "
+                               f"fuhr {fk['name']} mit {fk['zeit']}.")
+        elif race.get("top5"):
+            out.append(f"In {lr.get('strecke') or 'der letzten Runde'} gewann{nr} {race['top5'][0]['name']}.")
+        fl = race.get("schnellste_runde")
+        if fl and fl.get("zeit"):
+            out.append(f"Die schnellste Runde in {lr.get('strecke') or 'der letzten Runde'} fuhr {fl['name']} "
+                       f"mit {fl['zeit']}.")
+    if lr.get("fahrer_des_tages"):
+        out.append(f"Fahrer des Tages in der letzten Runde war {lr['fahrer_des_tages']}.")
+    sp = facts.get("saisonplan") or {}
+    if sp.get("runden_gesamt") and (sp.get("heute") or {}).get("runde"):
+        out.append(f"Wir sind in Runde {sp['heute']['runde']} von {sp['runden_gesamt']}, danach folgen noch "
+                   f"{sp.get('danach_noch', 0)} Runden.")
+    nt = sp.get("naechste_termine") or []
+    if nt and nt[0].get("datum"):
+        out.append(f"Die nächste Runde steigt am {nt[0]['datum']}"
+                   + (f" in {nt[0]['strecke']}." if nt[0].get("strecke") else "."))
+    if facts.get("qualifying_format"):
+        out.append(facts["qualifying_format"])
+    if facts.get("ort") and facts.get("strecke"):
+        out.append(f"Gefahren wird heute in {facts['strecke']}, {facts['ort']}.")
+    return out[:20]
+
+
 def template_script(cfg: dict, facts: dict, segments: list[str]) -> dict:
     out = {}
     liga, strecke = facts.get("liga") or "unserer Liga", facts.get("strecke") or "der heutigen Strecke"
@@ -614,7 +704,8 @@ class ShowRunner:
     director_on() switches REGIE on."""
 
     def __init__(self, cfg, obs, speaker, facts_fn, script_fn, director_on,
-                 clock=time.time, local_now=None, listening=lambda: True, pin=None, store=None):
+                 clock=time.time, local_now=None, listening=lambda: True, pin=None, store=None,
+                 points_fn=None):
         self.cfg = cfg
         self.obs = obs
         self.speaker = speaker
@@ -645,6 +736,9 @@ class ShowRunner:
         self.order: list = []          # all segments the script was written for (an emptied one is skipped)
         self.edited = False            # changed by hand on /show -> no automatic rewrite
         self.store = store             # Path to keep the script across restarts (None = memory only)
+        self.points_fn = points_fn     # facts -> (talking points, source)
+        self.points: list = []         # talking points for quiet moments in quali / race
+        self.points_used: list = []    # their indices, in the order they were spoken
         self._load()
 
     # -- public ---------------------------------------------------------------
@@ -658,9 +752,20 @@ class ShowRunner:
                     "log": self.log[-30:], "last_error": self.last_error,
                     "facts": self.facts, "order": self.order or self.segments,
                     "as_of_round": self.as_of_round,
+                    "points": self.points, "points_used": self.points_used,
                     "edited": self.edited}
 
-    def set_script(self, texts: dict) -> str | None:
+    def next_point(self) -> str | None:
+        """The next talking point not spoken yet (marked as spoken)."""
+        with self._lock:
+            for i, p in enumerate(self.points):
+                if i not in self.points_used:
+                    self.points_used.append(i)
+                    self._save()
+                    return p
+        return None
+
+    def set_script(self, texts: dict, points: list | None = None) -> str | None:
         """Hand edits from /show: {segment: text}. An empty text drops the
         segment. Returns an error text or None."""
         with self._lock:
@@ -672,6 +777,10 @@ class ShowRunner:
             for sid, text in (texts or {}).items():
                 if sid in order:
                     self.script[sid] = str(text or "").strip()
+            if points is not None:
+                new = [str(p).strip() for p in points if str(p).strip()]
+                if new != self.points:
+                    self.points, self.points_used = new, []
             self.segments = [s for s in order if self.script.get(s)]
             self.edited = True
             self.script_at = self.clock()
@@ -689,7 +798,8 @@ class ShowRunner:
             self.store.write_text(json.dumps({
                 "script": self.script, "order": self.order, "segments": self.segments,
                 "source": self.script_source, "at": self.script_at, "edited": self.edited,
-                "facts": self.facts}, ensure_ascii=False, indent=1), encoding="utf-8")
+                "facts": self.facts, "points": self.points, "points_used": self.points_used},
+                ensure_ascii=False, indent=1), encoding="utf-8")
         except OSError as e:
             self._note(f"Skript nicht gespeichert: {e}")
 
@@ -705,6 +815,7 @@ class ShowRunner:
         self.script, self.order, self.segments = d.get("script") or {}, d.get("order") or [], d.get("segments") or []
         self.script_source, self.script_at = d.get("source") or "", d["at"]
         self.edited, self.facts = bool(d.get("edited")), d.get("facts") or {}
+        self.points, self.points_used = d.get("points") or [], d.get("points_used") or []
 
     def prepare(self):
         """Collect the facts and write the script (blocking: a few seconds with Claude)."""
@@ -717,7 +828,14 @@ class ShowRunner:
             facts = self.facts_fn()
             segs = available_segments(self.cfg, facts)
             script, source = self.script_fn(facts, segs)
+            points = []
+            if self.points_fn:
+                try:
+                    points = self.points_fn(facts) or []
+                except Exception as e:
+                    self._note(f"Talking Points: {e}")
             with self._lock:
+                self.points, self.points_used = list(points), []
                 self.facts, self.segments, self.script, self.script_source = facts, \
                     [s for s in segs if script.get(s)], script, source
                 self.order = list(segs)

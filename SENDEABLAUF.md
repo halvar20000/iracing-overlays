@@ -92,6 +92,11 @@ Fehlt eine, wird sie einfach übersprungen. Andere Namen oder Zeiten:
   automatisch neu geschrieben, auch nicht 5 Minuten vor dem Start, und es
   übersteht einen Neustart (`show_script.json`, 12 Stunden gültig). Nur „Skript
   neu schreiben“ ersetzt es, nach einer Rückfrage.
+- **Talking Points:** Mit dem Skript entstehen 10–20 kurze Talking Points
+  (Tabelle, Abstände, letztes Rennen, Saison, Strecke). Sie stehen auf `/show`
+  unter dem Skript, einer pro Zeile, und lassen sich genauso ändern. Im
+  Qualifying und im Rennen liest die Stimme den nächsten, wenn der Kommentar
+  30 Sekunden still war, höchstens alle 2½ Minuten, jeden nur einmal.
 - **Pro/Am-Ligen (WCT GT3):** letztes Rennen und Tabelle werden je Klasse
   besprochen, erst PRO, dann AM; die Seiten im Bild zeigen dabei genau diese
   Klasse.

@@ -248,7 +248,9 @@ class TelemetryPoller:
             scfg, self.show_obs, _ShowSpeaker(self.commentator),
             facts_fn=self._show_facts, script_fn=self._show_script,
             director_on=lambda: self.set_director(True),
-            pin=lambda cls: show_runner.pin_class(scfg, cls), store=show_runner.SCRIPT_FILE)
+            pin=lambda cls: show_runner.pin_class(scfg, cls), store=show_runner.SCRIPT_FILE,
+            points_fn=self._show_points)
+        self._point_at = 0.0              # last talking point spoken (quiet moments in quali / race)
         self.commentator.on_line = lambda ln: self.voice.say(ln["id"], ln["text"],
                                                              keep=bool(ln.get("queue")))
         self.director_enabled = False
@@ -1835,6 +1837,34 @@ class TelemetryPoller:
             self.show.last_error = "CLS-Daten nicht erreichbar (läuft die Meisterschaft auf 5010?)"
         return facts
 
+    def _show_points(self, facts: dict) -> list:
+        n = int(self.show.cfg.get("points_count") or 15)
+        if self.commentator.ai_enabled:
+            try:
+                return show_runner.claude_points(self.show.cfg, self.commentator.cfg, facts, n)
+            except Exception as e:
+                self.show.last_error = f"Talking Points: {e} – Vorlagen benutzt"
+        return show_runner.template_points(facts)
+
+    def _maybe_talking_point(self):
+        """A prepared talking point (/show) when the commentary has been quiet
+        for a while — qualifying and race, at most every points_every_s."""
+        if not (self._cur_is_quali or self._cur_is_race) or self.ir["SessionState"] != 4:
+            return
+        now = time.time()
+        cfg = self.show.cfg
+        if now < self._own_replay_until or now - self._point_at < float(cfg.get("points_every_s") or 150):
+            return
+        lines = self.commentator.lines
+        last = lines[0]["t"] if lines else 0.0
+        if now - last < float(cfg.get("points_quiet_s") or 30):
+            return
+        text = self.show.next_point()
+        self._point_at = now
+        if text:
+            self.commentator.say_show(text, "talking_point")
+            print(f"[regie] POINT     {text}")
+
     def _show_script(self, facts: dict, segments: list):
         if self.commentator.ai_enabled:
             try:
@@ -2364,6 +2394,10 @@ class TelemetryPoller:
                 self._tick_graphics()
             except Exception as e:
                 print(f"[grafik] {type(e).__name__}: {e}")
+            try:
+                self._maybe_talking_point()
+            except Exception as e:
+                print(f"[regie] talking point: {e}")
             try:
                 self._announce_quali_phase()
             except Exception as e:
@@ -5038,7 +5072,12 @@ SHOW_HTML = r"""<!DOCTYPE html>
     <button class="go" onclick="save()">💾 Skript speichern</button>
     <button onclick="dirty=false;draw(last,true)">Verwerfen</button>
   </div>
-  <div id="script"></div></div>
+  <div id="script"></div>
+  <div class="seg" id="pointsbox" style="display:none"><b>Talking Points</b>
+    <span class="words" id="pinfo"></span>
+    <div class="dim" style="font-size:13px">Einer pro Zeile. Die Stimme liest im Qualifying und im Rennen den
+      nächsten, wenn der Kommentar eine Weile still war (höchstens alle 2½ Minuten, jeden einmal).</div>
+    <textarea id="points" rows="10"></textarea></div></div>
 <div class="card"><div class="dim">Protokoll</div><ul id="log"></ul></div>
 <div class="card"><details><summary class="dim">Fakten für das Skript</summary><pre id="facts"></pre></details></div>
 <script>
@@ -5104,9 +5143,15 @@ function draw(d, force) {
     } else {
         // rebuild the text fields only when the script changed on the server and
         // nothing is being edited here — never under the operator's cursor
-        const key = JSON.stringify([order, d.script, d.script_at]);
+        const key = JSON.stringify([order, d.script, d.script_at, d.points]);
+    document.getElementById('pinfo').textContent = (d.points || []).length
+        ? (d.points_used || []).length + ' von ' + d.points.length + ' gesprochen' : '';
         if (!force && (dirty || key === shownKey)) { document.getElementById('edit').className = 'row' + (dirty ? ' dirty' : ''); return; }
         shownKey = key;
+        const pb = document.getElementById('pointsbox'), pt = document.getElementById('points');
+        pb.style.display = (d.points || []).length || order.length ? 'block' : 'none';
+        pt.value = (d.points || []).join('\n');
+        pt.oninput = () => { dirty = true; document.getElementById('edit').className = 'row dirty'; };
         el.innerHTML = order.map(s => {
             const t = d.script[s] || '';
             return '<div class="seg' + (t ? '' : ' off') + '"><b>' + esc(NAMES[s] || s) + '</b>' +
@@ -5123,8 +5168,9 @@ function draw(d, force) {
 async function save() {
     const script = {};
     document.querySelectorAll('#script textarea').forEach(ta => { script[ta.dataset.seg] = ta.value; });
+    const points = document.getElementById('points').value.split('\n').map(x => x.trim()).filter(Boolean);
     const d = await (await fetch('/show/script', {method: 'POST', headers: {'Content-Type': 'application/json'},
-                                                    body: JSON.stringify({script})})).json();
+                                                    body: JSON.stringify({script, points})})).json();
     if (!d.ok) { document.getElementById('err').textContent = d.error || 'Fehler'; return; }
     dirty = false; shownKey = ''; tick();
 }
@@ -5185,7 +5231,8 @@ def show_check():
 @app.route("/show/script", methods=["POST"])
 def show_script_edit():
     """Hand edits of the moderation script from /show: {"script": {segment: text}}."""
-    err = poller.show.set_script((request.get_json(silent=True) or {}).get("script") or {})
+    body = request.get_json(silent=True) or {}
+    err = poller.show.set_script(body.get("script") or {}, body.get("points"))
     return jsonify({"ok": not err, "error": err})
 
 

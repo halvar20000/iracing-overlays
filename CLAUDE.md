@@ -574,7 +574,14 @@ a time, `gap_s` 45 between, never during our replay, hidden after `secs`:
 des Tages" once at 2/3 of the race (`at` marks; provisional winner from 5013
 /data, spoken dotd_line). Missing source → skipped for the session; REGIE
 off hides it; show_config "graphics" overrides. test_race_graphics.py 17/17;
-integ/integ2 (real poller) run with it. Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
+integ/integ2 (real poller) run with it.
+TALKING POINTS: written with the show script (prepare): claude_points()
+(POINTS_PROMPT, JSON {points}, `points_count` 15) or template_points() from
+the facts; editable on /show (one per line, saved with the script, kept in
+show_script.json with points_used). During REGIE in quali / race (SessionState
+racing) the dashboard speaks the next unused one when the commentary has
+been quiet `points_quiet_s` 30 s, at most every `points_every_s` 150 s, never
+during our replay (say_show line, kind talking_point). Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`
