@@ -57,9 +57,29 @@ SYSTEM_PROMPT = (
     "schneller als die aktuelle Pole, > 0 langsamer; predicted_position ist eine Hochrechnung "
     "(sag \"auf Kurs zu Platz …\"), lap_time ist offiziell. Fährt ein Fahrer noch ohne Zeit "
     "(kein lap_time), stell ihn vor – Auto, Team, Aufwärmrunde oder schnelle Runde – und sag "
-    "NICHT, dass er noch keine Zeit hat. Wiederhole nicht Formulierungen der letzten Sätze. Keine Emojis, "
+    "NICHT, dass er noch keine Zeit hat. Steht quali_abschnitt im Kontext, ist gerade nur diese "
+    "Klasse (AM oder PRO) auf der Strecke – du kannst es erwähnen. Wiederhole nicht Formulierungen der letzten Sätze. Keine Emojis, "
     "keine Anführungszeichen, keine Startnummern mit #, kein Vorspann – nur der Satz."
 )
+
+
+# Qualifying formats of a league (CLS league slug) that moderation and
+# commentary should know about. WCT GT3: the first 15 minutes belong to the
+# AM drivers, the last 15 to the PRO drivers (Thomas, 2026-10-15).
+QUALI_FORMATS = {
+    "cas-gt3-wct": {"split_min": 15, "first": "AM", "second": "PRO",
+                    "text": "Im Qualifying gehören die ersten 15 Minuten den AM-Fahrern, "
+                            "die letzten 15 Minuten den PRO-Fahrern."},
+}
+
+
+def quali_format(league_slug: str | None) -> dict | None:
+    return QUALI_FORMATS.get((league_slug or "").split("/")[0])
+
+
+def quali_phase(fmt: dict, elapsed_s: float) -> str:
+    """Which class has the track: 'AM' / 'PRO'."""
+    return fmt["first"] if elapsed_s < fmt["split_min"] * 60 else fmt["second"]
 
 
 def load_config() -> dict:

@@ -16,10 +16,12 @@ import json
 import sys
 import threading
 import time
+import urllib.request
 from collections import deque
 from flask import Flask, jsonify, render_template_string, request
 from race_director import RaceDirector
 from race_commentator import Commentator
+import race_commentator
 from race_voice import Voice
 import show_runner
 from obs_ws import ObsClient
@@ -249,6 +251,8 @@ class TelemetryPoller:
         self.commentator.on_line = lambda ln: self.voice.say(ln["id"], ln["text"],
                                                              keep=bool(ln.get("queue")))
         self.director_enabled = False
+        self._league_slug = None          # CLS league on the grid (5010), for league quali rules
+        self._qphase = None               # ((session), "AM"/"PRO") last announced
         self._own_replay_until = 0.0      # director keeps still during OUR replays
         self._own_replay_from = 0.0       # ...and ignores what the detectors report from that footage
         self._dir_laps: dict = {}         # car_idx -> last progress handed to the director
@@ -1886,6 +1890,52 @@ class TelemetryPoller:
             self.mark_incident_replayed(info["event_id"])
         print(f"[regie] REPLAY    {shot.reason}" + ("" if ok else f"  (failed: {msg})"))
 
+    @staticmethod
+    def _quali_elapsed(rp: dict):
+        if rp.get("total_time") is None or rp.get("time_remaining") is None:
+            return None
+        return max(0.0, rp["total_time"] - rp["time_remaining"])
+
+    def _announce_quali_phase(self):
+        """WCT GT3 qualifying: AM drivers first, then PRO — say when it starts
+        and when the track goes over to the PRO drivers (once per session)."""
+        if not (self.director_enabled and self._cur_is_quali):
+            return
+        fmt = race_commentator.quali_format(self._league_slug)
+        if not fmt:
+            return
+        rp = self._race_progress()
+        el = self._quali_elapsed(rp)
+        if el is None:
+            return
+        key = (self.ir["SessionUniqueID"], self.ir["SessionNum"])
+        phase = race_commentator.quali_phase(fmt, el)
+        prev = self._qphase if self._qphase and self._qphase[0] == key else None
+        self._qphase = (key, phase)
+        text = None
+        if prev is None and phase == fmt["first"] and el < 180:
+            text = (f"Das Qualifying läuft. Die ersten {fmt['split_min']} Minuten gehören den "
+                    f"{fmt['first']}-Fahrern, danach sind die {fmt['second']}-Fahrer dran.")
+        elif prev is not None and prev[1] != phase and phase == fmt["second"]:
+            text = (f"Die {fmt['split_min']} Minuten der {fmt['first']}-Fahrer sind um. Jetzt gehen "
+                    f"die {fmt['second']}-Fahrer auf die Jagd nach der Pole.")
+        if text:
+            self.commentator.say_show(text, "quali")
+            print(f"[regie] QUALI     {text}")
+
+    def _watch_league(self):
+        """Which CLS league is on the grid (5010 /api/detect), for league
+        rules like the WCT quali split. Polled once a minute."""
+        while True:
+            try:
+                with urllib.request.urlopen("http://127.0.0.1:5010/api/detect", timeout=3) as r:
+                    d = json.loads(r.read().decode("utf-8"))
+                slug = (d.get("detected") or {}).get("league_slug") or (d.get("applied") or "").split("/")[0]
+                self._league_slug = slug or self._league_slug
+            except Exception:
+                pass
+            time.sleep(60)
+
     def _commentary_context(self, drivers: list, track: str) -> dict:
         """Race facts the commentator may use besides the shot itself."""
         ctx = {"strecke": track or ""}
@@ -1895,6 +1945,11 @@ class TelemetryPoller:
                 rp = self._race_progress()
                 if rp.get("time_remaining") is not None:
                     ctx["minuten_uebrig"] = int(rp["time_remaining"] // 60)
+                fmt = race_commentator.quali_format(self._league_slug)
+                el = self._quali_elapsed(rp)
+                if fmt and el is not None:
+                    ctx["quali_format"] = fmt["text"]
+                    ctx["quali_abschnitt"] = race_commentator.quali_phase(fmt, el)
                 ctx["fahrer_mit_zeit"] = sum(1 for d in drivers if (d.get("best_lap") or 0) > 0)
             except Exception:
                 pass
@@ -2202,6 +2257,10 @@ class TelemetryPoller:
         self._track_lap_starts(driver_list, pb["is_live"], ir["SessionTime"] or 0.0)
         self._maybe_direct(driver_list, cam_car_idx, pb)
         if self.director_enabled:
+            try:
+                self._announce_quali_phase()
+            except Exception as e:
+                print(f"[regie] quali phase: {e}")
             self.commentator.feed(self.director.log,
                                   lambda: self._commentary_context(driver_list, track_name))
 
@@ -5448,6 +5507,7 @@ def streamdeck(action, param=None):
 if __name__ == "__main__":
     t = threading.Thread(target=poller.run, daemon=True)
     t.start()
+    threading.Thread(target=poller._watch_league, daemon=True, name="LeagueWatch").start()
     poller.show.run_forever()          # SENDEABLAUF: auto start at start_at while OBS streams
 
     print("\n" + "=" * 60)

@@ -189,6 +189,10 @@ def build_facts(roundinfo: dict | None, track: dict, notes: str | None, video_s:
         "streckennotizen": notes,
         "video_sekunden": round(video_s) if video_s else None,
     }
+    from race_commentator import quali_format
+    qf = quali_format(league.get("slug"))
+    if qf:
+        facts["qualifying_format"] = qf["text"]          # WCT: AM first, then PRO
     lr = info.get("lastRound") or {}
     rows = st.get("standings") or []
     # Pro/Am season (the flag is only on the STANDINGS season, not round-info's):
@@ -299,7 +303,8 @@ SEGMENT_BRIEF = {
     "standings": "Meisterschaftsstand: wer führt, Abstand, wer dahinter lauert, bei Pro/Am beide "
                  "Klassen kurz. 50-80 Wörter. Die Tabelle ist im Bild.",
     "track": "Die Strecke vorstellen: Charakter, Schlüsselkurven, wo man überholen kann. {words}.",
-    "outro": "Überleitung: gleich geht es live zum Qualifying, viel Spaß. 20-35 Wörter.",
+    "outro": "Überleitung: gleich geht es live zum Qualifying, viel Spaß. Steht 'qualifying_format' "
+             "in den Daten, erkläre es kurz. 20-45 Wörter.",
     # Pro/Am seasons: one segment per class, the page shows only that class
     "last_race_pro": "Rückblick auf die letzte Runde, Klasse PRO (daten.letzte_runde, jeweils "
                      "klassen.PRO): Klassensieger und Podium, schnellste Runde der Klasse; Gesamtsieger "
@@ -447,7 +452,9 @@ def template_script(cfg: dict, facts: dict, segments: list[str]) -> dict:
                         + (f", gefahren wird das Layout {facts['layout']}." if facts.get("layout") else ".")
                         + " Schauen wir uns eine Runde an.")
     if "outro" in segments:
-        out["outro"] = "Das war der Überblick. Jetzt geht es live ins Qualifying, viel Spaß beim Zuschauen!"
+        out["outro"] = ("Das war der Überblick. Jetzt geht es live ins Qualifying. "
+                        + (facts["qualifying_format"] + " " if facts.get("qualifying_format") else "")
+                        + "Viel Spaß beim Zuschauen!")
     return out
 
 

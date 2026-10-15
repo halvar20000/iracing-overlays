@@ -62,6 +62,10 @@ check("facts: last race top + fastest lap", lr["top5"][0]["name"] == "Maurice Be
 check("facts: DotD", facts["letzte_runde"]["fahrer_des_tages"] == "Gregor Micewski")
 check("facts: table + gap", facts["tabelle"]["abstand_p1_p2"] == 13
       and facts["tabelle"]["top5"][0]["name"] == "Andreas Bastian" and "pro_am" not in facts, facts["tabelle"])
+check("facts: WCT quali format (AM first, then PRO)", "AM-Fahrern" in facts.get("qualifying_format", "")
+      and "PRO" in sr.template_script(sr.load_config(), facts, ["outro"])["outro"])
+check("facts: no quali format for other leagues", "qualifying_format" not in sr.build_facts(
+      {"ok": True, "info": {"league": {"slug": "cas-pccd"}, "season": {}}, "standings": {}}, {}, None, None))
 check("facts: notes + video", facts["streckennotizen"] and facts["video_sekunden"] == 95)
 
 empty = sr.build_facts({"ok": True, "info": {"season": {"completedRounds": 0}, "nextRound": {"track": "Road Atlanta"}},

@@ -531,7 +531,14 @@ and the prompt says to introduce a driver without a time; (2) the tower
 recorded replay (IsReplayPlaying and ReplayFrameNumEnd > 600) it now ranks
 by telemetry bests, not ResultsPositions (which already holds the final
 result), and skips the quali memory; (3) REGIE in-car camera = "Gyro", never
-"Cockpit" (`NEVER_CAMS` with Scenic, also for the any-group fallback). Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
+"Cockpit" (`NEVER_CAMS` with Scenic, also for the any-group fallback).
+WCT QUALI FORMAT (first 15 min AM drivers, last 15 min PRO): `QUALI_FORMATS`
+in race_commentator.py (by CLS league slug). Dashboard learns the league on
+the grid from 5010 /api/detect (thread, 60 s); in quali the commentary
+context carries quali_format + quali_abschnitt, and it SAYS the start ("the
+first 15 minutes belong to the AM drivers…", only if seen in the first 3 min)
+and the switch to PRO once per session (say_show line). The moderation's
+facts carry qualifying_format; the outro explains it. Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`
