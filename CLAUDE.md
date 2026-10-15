@@ -177,6 +177,52 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 15, 2026 (race logger — tire condition, setup name, fresh-or-used,
+for Johann):** Johann Solowej asked whether the logger could record the tire
+condition ("available when the car is in the box"), the name of the setup being
+driven, and whether the car left the box on fresh or used rubber. All three are
+in the SDK, all three are LOCAL-CAR-ONLY (no CarIdx array, same limitation as
+tire temps and fuel) — which is fine now that drivers run `RaceLogger.exe`
+themselves.
+
+- **Tread**: `LFwearL/M/R` & co, fraction remaining → logged as percent. iRacing
+  only REFRESHES these while the car sits in the pit box, so there is nothing to
+  sample per lap; `_sample_local_pit_state()` runs every tick, clears its buffers
+  on pit entry and keeps every CHANGED reading of the stop in a
+  `deque(maxlen=WEAR_SAMPLES_MAX)`.
+- **Fresh or used**: the most-worn reading of a stop is what came off, the last
+  reading is what went out; a corner whose tread JUMPED UP got a different set
+  (`tires_changed`), and `left_on_fresh` is true when every changed corner is at
+  `WEAR_FRESH_MIN` (98 %) or above — a remounted scuffed set shows as changed but
+  not fresh, which is exactly the distinction Johann wanted. When iRacing
+  published only one reading we emit `changed: null` instead of guessing, and
+  `service` (from `PitSvFlags`, sampled DURING the stop because iRacing clears
+  the flags as the crew works) still says what was ordered. The raw
+  `tire_wear_samples` go into the event so the rule can be sharpened later
+  without shipping a new .exe.
+- **Setup**: `DriverInfo.DriverSetupName` / `DriverSetupIsModified` /
+  `DriverSetupLoadTypeName` / `DriverSetupPassedTech` + `CarSetup.UpdateCount` —
+  session string, not telemetry. New `setup` event on first sight and on every
+  change (`modified` matters: the file name lies the moment someone turns a click
+  in the garage). One event per race, one per iteration in practice.
+- **Found on the way**: the per-lap `tire_temps` were reading `LFtempL/M/R`,
+  which is the PIT-BOX measurement — frozen during a run, so every lap of a stint
+  carried the same numbers. Left in place (the live monitor's colour thresholds
+  are tuned for it) but now tagged `source: "pit_box"`, with the live carcass
+  temps added alongside as `tire_temps_live` (`LFtempCL/CM/CR`). Decide later
+  whether the lap field should switch over — the first uploaded log will have
+  both side by side.
+- CLS needs no change to keep accepting the logs: `dotd-log.ts` and
+  `race-log-field.ts` read named keys and ignore unknown event types.
+- **Unverifiable here**: no sim and no pyirsdk on Unraid, and no log in `logs/`
+  has local-car data (Thomas always spectates). So the var NAMES are from the
+  SDK docs, every read is guarded, and `check_sdk.py` got a "Tire condition +
+  setup" section that prints each variable and `MISSING` where nothing comes —
+  run it FROM THE PIT STALL to confirm.
+- Test: `python3 test_tire_capture.py` — 44 checks, stubbed irsdk/flask, scripted
+  stops (four new tires / scuffed set / fuel only / nothing changed / spectated
+  car / pit-lane noise / two stops in one race / setup changes).
+
 **October 14, 2026 (REGIE — race director, step 1 of the AI broadcast idea):**
 Andreas's idea: a live AI commentator (voice, maybe an avatar) for the small
 cups (CC, SFL, fun league), with automatic camera work; ~10 s stream delay is

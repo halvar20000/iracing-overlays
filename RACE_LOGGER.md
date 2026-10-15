@@ -84,6 +84,50 @@ wenn das Dashboard nicht mitläuft. `inc` braucht nur iRacing selbst.
 
 Test: `python3 test_inc_points.py` (29 Checks, gestubbtes irsdk + Fake-Uhr).
 
+### Reifenzustand, Setup und frisch/gebraucht (`pit` / `setup`)
+
+Seit 15.10.2026, auf Johanns Vorschlag. iRacing liefert diese Daten **nur für
+das eigene Auto** (es gibt kein CarIdx-Array dafür) und die Reifenabnutzung
+**nur, während das Auto in der Box steht** — auf der Strecke bleibt der Wert
+auf dem Stand des letzten Stopps stehen. Genau deshalb hängt alles am
+Boxenstopp und nicht an der Runde.
+
+Das `pit`-Event des eigenen Autos trägt zusätzlich:
+
+| Feld | Bedeutung |
+|---|---|
+| `tire_wear_in` | Restprofil je Reifen **vor** dem Stopp, drei Streifen (innen/mitte/außen) in % — das, was heruntergekommen ist |
+| `tire_wear_out` | Restprofil **nach** dem Stopp — das, was rausgefahren ist |
+| `tire_wear_samples` | alle unterschiedlichen Messungen des Stopps mit `t`; die Rohdaten, aus denen die Felder oben abgeleitet sind |
+| `tires` | je Ecke `{wear_in, wear_out, changed, fresh}` |
+| `tires_changed` | Ecken, deren Profil nach oben gesprungen ist → neuer Satz montiert |
+| `left_on_fresh` | `true` = alle gewechselten Ecken ≥ 98 % (ungebrauchter Satz), `false` = gebrauchter Satz aufgezogen |
+| `service` | was in der Box **angefordert** war: `requested` (`lf_tire`…`rr_tire`, `fuel`, `windshield_tearoff`, `fast_repair`), `flags`, `fuel_l`, `compound` |
+
+`changed: null` heißt: iRacing hat während des Stopps nur **eine** Messung
+veröffentlicht, also ist nicht belegbar, ob gewechselt wurde — dann sagt
+`service.requested`, was der Fahrer bestellt hatte, und `tire_wear_out` trotzdem
+den Zustand. Geraten wird nicht.
+
+Das `setup`-Event kommt beim ersten Mal und bei **jeder Änderung**:
+`name` (Datei aus der Garage), `modified` (seit dem Laden verstellt — ein Name
+allein lügt, sobald jemand einen Klick dreht), `load_type`, `passed_tech`,
+`update_count`, `first`. Im Rennen also genau eins, in der Practice eines pro
+Iteration. Quelle ist `DriverInfo` im Session-String, **nicht** die Telemetrie.
+
+Reifentemperaturen: `tire_temps` am Runden-Event ist die **in der Box gemessene**
+Oberflächentemperatur (`LFtempL/M/R`) — sie steht während eines Stints still,
+deshalb trägt sie jetzt `source: "pit_box"`. Neu daneben: `tire_temps_live`
+(`LFtempCL/CM/CR`, Karkasse, aktualisiert live) — das ist der Wert, den eine
+Stint-Auswertung pro Runde plotten will.
+
+Prüfen, ob iRacing die Variablen auf einem PC überhaupt liefert:
+`python check_sdk.py` **aus der Box heraus** — der Abschnitt „Tire condition +
+setup“ zeigt jede Variable und schreibt `MISSING`, wo nichts kommt.
+
+Test: `python3 test_tire_capture.py` (44 Checks, gestubbtes irsdk/flask,
+Stopp-Szenarien: vier neue Reifen, gebrauchter Satz, nur Tanken, Spectator).
+
 ### Upload-Protokoll
 
 `POST <liga>/api/race-log` mit `Authorization: Bearer <key>` und dem Log als

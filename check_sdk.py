@@ -255,6 +255,47 @@ def main() -> int:
             t2 = g("SessionTime")
             out(f"Live data   : SessionTime {t1} -> {t2}  "
                 f"({'MOVING' if t1 != t2 else 'FROZEN — telemetry not updating'})")
+
+            # --- tire condition + setup (local car only) ----------------
+            # The race logger records these around a pit stop (Johann's
+            # request). They exist only for the car running this PC, and
+            # iRacing refreshes the WEAR values only while that car sits
+            # in the box — so run this check from the pit stall if you
+            # want to see real tread numbers rather than the ones left
+            # over from the last stop.
+            head("Tire condition + setup (local car only)")
+            info = g("DriverInfo") or {}
+            out(f"Setup       : name={info.get('DriverSetupName')!r}  "
+                f"modified={info.get('DriverSetupIsModified')}  "
+                f"load_type={info.get('DriverSetupLoadTypeName')!r}  "
+                f"passed_tech={info.get('DriverSetupPassedTech')}")
+            cs = g("CarSetup")
+            out(f"CarSetup    : {'present' if isinstance(cs, dict) else 'MISSING'}"
+                + (f"  UpdateCount={cs.get('UpdateCount')}" if isinstance(cs, dict) else ""))
+            out(f"In pits     : OnPitRoad={g('OnPitRoad')}  "
+                f"InPitStall={g('PlayerCarInPitStall')}")
+            for fam, label in (("wear", "tread remaining (0..1, refreshed in the box)"),
+                               ("temp", "surface temp as last measured in the box"),
+                               ("tempC", "carcass temp (live)")):
+                out(f"{fam:<12}: {label}")
+                for prefix in ("LF", "RF", "LR", "RR"):
+                    vals = [g(prefix + fam + s) for s in ("L", "M", "R")]
+                    state = "MISSING" if any(v is None for v in vals) else str(vals)
+                    out(f"  {prefix}{fam}L/M/R = {state}")
+            out(f"Pit service : PitSvFlags={g('PitSvFlags')}  "
+                f"PitSvFuel={g('PitSvFuel')}  "
+                f"PitSvTireCompound={g('PitSvTireCompound')}  "
+                f"PlayerTireCompound={g('PlayerTireCompound')}")
+            out("Tire sets   : " + "  ".join(
+                f"{v}={g(v)}" for v in ("TireSetsUsed", "TireSetsAvailable",
+                                        "LFTiresUsed", "LFTiresAvailable",
+                                        "RFTiresUsed", "RRTiresUsed")))
+            out("")
+            out("MISSING above is the answer to 'can the logger record this':")
+            out("  wear  -> tire condition + fresh-or-used after a stop")
+            out("  tempC -> live tire temps per lap (temp without C is the box value)")
+            out("  Setup name empty -> iRacing is not publishing it in this session")
+
             ir.shutdown()
 
     head("Overlay ports")

@@ -21,6 +21,21 @@ What's captured per session:
                      avg_per_lap, laps_remaining_est, use_per_hour).
                      iRacing only broadcasts tire/fuel telemetry for the
                      local car, so these are absent for spectated drivers.
+  - setup          — the setup file the LOCAL car is running (name,
+                     whether it was edited in the garage since loading,
+                     load type, UpdateCount). Written once at the start
+                     and again on every change, so a practice evening
+                     shows which setup produced which run.
+  - pit            — every pit-road visit per driver (entry lap,
+                     duration, running stop count). For the LOCAL car it
+                     also carries what iRacing only publishes in the box:
+                     `tire_wear_in` / `tire_wear_out` (percent tread
+                     remaining per tire, three strips each), the raw
+                     `tire_wear_samples` of the stop, a per-corner
+                     `tires` block (changed / fresh / wear in+out),
+                     `tires_changed`, `left_on_fresh`, and the queued
+                     `service` (tire corners, fuel, tearoff, fast repair,
+                     compound).
   - incident       — DETECTED spins / contacts, fetched from the
                      dashboard's /incidents feed (port 5000); deduped,
                      so the same incident is never written twice. Absent
@@ -141,6 +156,47 @@ SLOW_LAP_HISTORY   = 5
 # how many laps of fuel remain.
 FUEL_AVG_WINDOW = 5
 
+# --- Tire condition, pit service and setup (LOCAL PLAYER ONLY) ---
+# Johann Solowej asked for the three things a stint de-briefing cannot
+# know today: what state the tires were in, which setup was driven, and
+# whether the car left the box on fresh or on used rubber.
+#
+# iRacing publishes tread depth per tire ("LFwearL/M/R", fraction
+# remaining) but only REFRESHES those values while the car sits in the
+# pit box — on track they keep whatever was last measured. That is why
+# this block can only be collected around a stop, and why every CHANGED
+# reading during the stop is kept instead of a single snapshot: the
+# SEQUENCE is what separates "worn set came off" from "fresh set went
+# on". Same local-car-only limitation as tire temps and fuel: there is no
+# CarIdx array for any of it, so this only ever describes the car running
+# this PC.
+TIRE_CORNERS = ("lf", "rf", "lr", "rr")
+# A corner counts as newly fitted when its tread JUMPS UP by more than
+# this many percentage points. Wear never increases on its own.
+WEAR_CHANGE_EPS = 1.5
+# Tread at or above this percentage is an unused set.
+WEAR_FRESH_MIN = 98.0
+# Distinct wear readings kept per stop. A real stop produces two or
+# three; the cap is a bloat guard and keeps the LAST readings, which are
+# the ones describing what went back out.
+WEAR_SAMPLES_MAX = 8
+
+# PitSvFlags bitfield — the service the driver has QUEUED in the pit box.
+# Sampled DURING the stop because iRacing clears the flags again as the
+# crew works, so a read at pit exit alone usually returns 0. Logged
+# alongside the wear readings on purpose: the flags are the intent, the
+# wear is the outcome, and they disagree whenever a tire set runs out or
+# service is cut short.
+PIT_SV_FLAG_BITS = {
+    0x01: "lf_tire",
+    0x02: "rf_tire",
+    0x04: "lr_tire",
+    0x08: "rr_tire",
+    0x10: "fuel",
+    0x20: "windshield_tearoff",
+    0x40: "fast_repair",
+}
+
 # --- Live charts ---
 # Stable per-driver palette used by the chart-render endpoint. Indexed
 # by the driver's position in the field when sorted by car_number, so a
@@ -155,6 +211,33 @@ CHART_PALETTE = [
 # Cap how many drivers the operator can pin to the chart at once.
 # More than this gets visually crowded and the legend overflows.
 CHART_MAX_SELECTED = 5
+
+
+def _pct(v) -> float:
+    """iRacing's percentage telemetry is a 0..1 fraction, so tread
+    remaining comes back as 0.94 for 94 %. Scale it, but pass a value
+    that is already a percentage through unchanged — a build that ever
+    switches convention should not silently report 9400 %. (A tire with
+    1.2 % tread left is indistinguishable from a 1.2 fraction and will be
+    read as 120 %; at that point the tire is gone anyway.)
+    """
+    f = float(v)
+    return round(f * 100.0, 1) if f <= 1.5 else round(f, 1)
+
+
+def _mean(triple) -> float:
+    """Average of a tire's inner / middle / outer strip."""
+    return sum(triple) / len(triple)
+
+
+def _wear_mean(sample: dict) -> float:
+    """Average tread across every corner present in a wear sample. Used
+    to pick the most-worn reading of a stop, i.e. what came off the car.
+    """
+    vals = [v for c in TIRE_CORNERS if (v := sample.get(c))]
+    if not vals:
+        return 1e9   # no corners -> never the "most worn" reading
+    return sum(_mean(v) for v in vals) / len(vals)
 
 
 def _safe_filename(s: str) -> str:
@@ -253,6 +336,19 @@ class RaceLogger(SDKPoller):
         # page to show "last pit time" without parsing the JSONL log.
         self._last_pit_duration: dict[int, float] = {}
 
+        # Tire condition + pit service for the LOCAL car (see the
+        # TIRE_CORNERS block above). Sampled every tick while the car is
+        # on pit road and consumed by the pit event on exit.
+        self._wear_samples: deque[dict] = deque(maxlen=WEAR_SAMPLES_MAX)
+        self._wear_latest: dict | None = None   # last reading iRacing published
+        self._pit_sv_seen: int = 0              # last non-zero PitSvFlags this stop
+        self._pit_sv_compound: int | None = None
+        self._pit_sv_fuel: float | None = None
+        self._local_on_pit: bool = False
+        # Setup identity of the local car (name / edited / UpdateCount),
+        # so a change mid-practice emits a fresh `setup` event.
+        self._setup_sig: tuple | None = None
+
         # Flag (session-wide) tracking. Watch SessionFlags for newly-set
         # bits we care about; emit a flag event on each transition.
         # Curated whitelist below filters out the spammy / internal bits
@@ -334,6 +430,13 @@ class RaceLogger(SDKPoller):
         self._pit_entry_lap.clear()
         self._pit_count.clear()
         self._last_pit_duration.clear()
+        self._wear_samples.clear()
+        self._wear_latest = None
+        self._pit_sv_seen = 0
+        self._pit_sv_compound = None
+        self._pit_sv_fuel = None
+        self._local_on_pit = False
+        self._setup_sig = None
         self._prev_session_flags = 0
         self._prev_car_session_flags.clear()
         self._lap_history.clear()
@@ -568,7 +671,7 @@ class RaceLogger(SDKPoller):
                     continue  # noise — car barely brushed pit lane
                 self._pit_count[idx] = self._pit_count.get(idx, 0) + 1
                 self._last_pit_duration[idx] = duration
-                self._emit({
+                event = {
                     "type":        "pit",
                     "t_session":   round(t_session, 2),
                     "car_idx":     idx,
@@ -577,7 +680,15 @@ class RaceLogger(SDKPoller):
                     "entry_lap":   entry_lap,
                     "duration":    round(duration, 2),
                     "stop_count":  self._pit_count[idx],
-                })
+                }
+                # Tread remaining and what the crew did — local car only,
+                # collected while it stood in the box by
+                # _sample_local_pit_state(). Absent for every other car,
+                # so the event shape is unchanged for spectated drivers.
+                if (self._wear_latest
+                        and self._wear_latest.get("local_car_idx") == idx):
+                    event.update(self._pit_tire_block())
+                self._emit(event)
 
     # ----- session flag transitions --------------------------------------
     def _maybe_emit_flag_events(self) -> None:
@@ -727,37 +838,247 @@ class RaceLogger(SDKPoller):
                 "totals":    {str(k): v for k, v in sorted(self._inc_points.items())},
             })
 
-    # ----- tire temperature reader (LOCAL PLAYER ONLY) -------------------
-    def _read_tire_temps(self) -> dict | None:
-        """Return tire surface temperatures for the local player's car,
-        or None if not available. iRacing only broadcasts these for the
-        local player — there's no per-car array we can use.
+    # ----- tire readers (LOCAL PLAYER ONLY) ------------------------------
+    def _read_tri(self, suffixes: tuple[str, str, str], scale_pct: bool = False):
+        """Read one of iRacing's three-strip-per-tire variable families
+        and return {"lf": [inner, middle, outer], ...} for the local car.
 
-        Each tire returns three values: inner / middle / outer surface
-        temperature in °C. Matches what the iRacing F-keys black box
-        shows.
+        `suffixes` are appended to the corner prefix, e.g. ("L","M","R")
+        for LFtempL/LFtempM/LFtempR. A corner whose variables the build
+        does not expose comes back absent rather than zeroed, so a
+        missing family degrades to None instead of lying.
         """
         ir = self.ir
         info = ir["DriverInfo"] or {}
         local_idx = info.get("DriverCarIdx")
         if local_idx is None:
             return None
-
-        def _tri(prefix):
-            l = ir[prefix + "L"]
-            m = ir[prefix + "M"]
-            r = ir[prefix + "R"]
-            if l is None or m is None or r is None:
-                return None
-            return [round(float(l), 1), round(float(m), 1), round(float(r), 1)]
-
-        lf = _tri("LFtemp")
-        rf = _tri("RFtemp")
-        lr = _tri("LRtemp")
-        rr = _tri("RRtemp")
-        if not (lf or rf or lr or rr):
+        out: dict = {}
+        for corner, prefix in zip(TIRE_CORNERS, ("LF", "RF", "LR", "RR")):
+            vals = [ir[prefix + s] for s in suffixes]
+            if any(v is None for v in vals):
+                continue
+            if scale_pct:
+                out[corner] = [_pct(v) for v in vals]
+            else:
+                out[corner] = [round(float(v), 1) for v in vals]
+        if not out:
             return None
-        return {"local_car_idx": int(local_idx), "lf": lf, "rf": rf, "lr": lr, "rr": rr}
+        out["local_car_idx"] = int(local_idx)
+        return out
+
+    def _read_tire_temps(self) -> dict | None:
+        """Tire temperatures AS LAST MEASURED IN THE PIT BOX, for the
+        local player's car, or None if not available.
+
+        These are iRacing's LFtempL/M/R family — inner / middle / outer
+        surface temperature in °C, the numbers the garage black box
+        shows. iRacing only refreshes them while the car is in the box,
+        so during a run they do NOT move: a lap event late in a stint
+        still carries the values from the last stop. That is useful (it
+        is the measurement Johann asked for) but it is not live data —
+        for that see _read_tire_temps_live().
+
+        Local player only: there is no per-car array for tire data.
+        """
+        rec = self._read_tri(("tempL", "tempM", "tempR"))
+        if rec is None:
+            return None
+        rec["source"] = "pit_box"
+        return rec
+
+    def _read_tire_temps_live(self) -> dict | None:
+        """LIVE tire carcass temperatures (LFtempCL/CM/CR) for the local
+        car, or None. Unlike _read_tire_temps() these update every tick
+        on track, so they are what a stint analysis should plot per lap.
+        Kept as a separate field rather than replacing the pit-box values
+        in `tire_temps`: the two mean different things and the live
+        monitor's colour thresholds were tuned for the pit-box numbers.
+        """
+        rec = self._read_tri(("tempCL", "tempCM", "tempCR"))
+        if rec is None:
+            return None
+        rec["source"] = "carcass_live"
+        return rec
+
+    def _read_tire_wear(self) -> dict | None:
+        """Percent tread remaining per tire for the local car, or None.
+
+        iRacing refreshes LFwearL/M/R only while the car is in the pit
+        box, so a reading taken on track is the measurement from the last
+        stop. 100 = unused. Three strips per corner, inner to outer —
+        the spread is what tells camber and pressure apart.
+        """
+        return self._read_tri(("wearL", "wearM", "wearR"), scale_pct=True)
+
+    def _read_setup(self) -> dict | None:
+        """The setup the LOCAL car is running, or None.
+
+        This is NOT telemetry: iRacing puts it in the session string's
+        DriverInfo block as the garage file name plus whether it has been
+        edited since loading. `modified` matters because the name alone
+        lies as soon as someone turns a click in the garage, which is
+        exactly what happens during a practice evening.
+        """
+        info = self.ir["DriverInfo"] or {}
+        name = info.get("DriverSetupName")
+        if not name:
+            return None
+        rec: dict = {"name": str(name)}
+        mod = info.get("DriverSetupIsModified")
+        if mod is not None:
+            rec["modified"] = bool(mod)
+        load_type = info.get("DriverSetupLoadTypeName")
+        if load_type:
+            rec["load_type"] = str(load_type)
+        passed = info.get("DriverSetupPassedTech")
+        if passed is not None:
+            rec["passed_tech"] = bool(passed)
+        car_setup = self.ir["CarSetup"]
+        if isinstance(car_setup, dict):
+            uc = car_setup.get("UpdateCount")
+            if uc is not None:
+                rec["update_count"] = int(uc)
+        return rec
+
+    # ----- in-box sampling (LOCAL PLAYER ONLY) ---------------------------
+    def _sample_local_pit_state(self) -> None:
+        """Collect what iRacing only publishes while the car is in the
+        box, so the pit event can report it on exit.
+
+        Costs four telemetry reads per tick and does nothing at all for a
+        spectator (no local car). On pit ENTRY the per-stop buffers are
+        cleared; during the stop every CHANGED wear reading is kept (the
+        sequence worn -> fresh is the evidence that a set was fitted) and
+        the queued service flags are remembered, because iRacing clears
+        them again as the crew works.
+        """
+        wear = self._read_tire_wear()
+        if wear is None:
+            return
+        idx = wear["local_car_idx"]
+        on_pit_arr = self.ir["CarIdxOnPitRoad"] or []
+        on_pit = bool(on_pit_arr[idx]) if idx < len(on_pit_arr) else False
+        self._wear_latest = wear
+        if not on_pit:
+            self._local_on_pit = False
+            return
+        if not self._local_on_pit:
+            # Just arrived — anything buffered belongs to the last stop.
+            self._local_on_pit = True
+            self._wear_samples.clear()
+            self._pit_sv_seen = 0
+            self._pit_sv_compound = None
+            self._pit_sv_fuel = None
+
+        sample = {"t": round(float(self.ir["SessionTime"] or 0.0), 2)}
+        for corner in TIRE_CORNERS:
+            if wear.get(corner):
+                sample[corner] = wear[corner]
+        prev = self._wear_samples[-1] if self._wear_samples else None
+        if prev is None or any(prev.get(c) != sample.get(c) for c in TIRE_CORNERS):
+            self._wear_samples.append(sample)
+
+        flags = self.ir["PitSvFlags"]
+        if flags:
+            self._pit_sv_seen = int(flags)
+        compound = self.ir["PitSvTireCompound"]
+        if compound is None:
+            compound = self.ir["PlayerTireCompound"]
+        if compound is not None:
+            self._pit_sv_compound = int(compound)
+        fuel = self.ir["PitSvFuel"]
+        if fuel is not None:
+            self._pit_sv_fuel = round(float(fuel), 1)
+
+    def _pit_tire_block(self) -> dict:
+        """Build the tire + service part of the LOCAL car's pit event.
+
+        Returns {} for a spectator or when iRacing published nothing, so
+        the pit event keeps its old shape for every other car.
+
+        What came off vs what went out: the most-worn reading of the stop
+        is what the car arrived on, the last reading is what it left on,
+        and a corner whose tread JUMPED UP got a different set. Whether
+        that set is unused is the `fresh` flag (tread >= WEAR_FRESH_MIN),
+        which is the fresh-or-scuffed answer Johann asked for. When
+        iRacing published only ONE reading we report `changed: null`
+        rather than guessing — the queued `service` flags still say what
+        the driver asked for, and `tire_wear_samples` keeps the raw
+        readings so the rule can be sharpened later without a new
+        logger build.
+        """
+        out: dict = {}
+        service: dict = {}
+        if self._pit_sv_seen:
+            service["flags"] = self._pit_sv_seen
+            service["requested"] = [
+                name for bit, name in sorted(PIT_SV_FLAG_BITS.items())
+                if self._pit_sv_seen & bit
+            ]
+        if self._pit_sv_fuel is not None:
+            service["fuel_l"] = self._pit_sv_fuel
+        if self._pit_sv_compound is not None:
+            service["compound"] = self._pit_sv_compound
+        if service:
+            out["service"] = service
+
+        samples = [dict(s) for s in self._wear_samples]
+        if not samples:
+            return out
+        out["tire_wear_samples"] = samples
+        last = samples[-1]
+        worn = min(samples, key=_wear_mean)   # most-worn reading = what came off
+        out["tire_wear_out"] = {c: last[c] for c in TIRE_CORNERS if last.get(c)}
+        if worn is not last:
+            out["tire_wear_in"] = {c: worn[c] for c in TIRE_CORNERS if worn.get(c)}
+
+        tires: dict = {}
+        for corner in TIRE_CORNERS:
+            after = last.get(corner)
+            if not after:
+                continue
+            rec: dict = {"wear_out": after, "fresh": min(after) >= WEAR_FRESH_MIN}
+            before = worn.get(corner) if worn is not last else None
+            if before:
+                rec["wear_in"] = before
+                rec["changed"] = _mean(after) > _mean(before) + WEAR_CHANGE_EPS
+            else:
+                rec["changed"] = None
+            tires[corner] = rec
+        if tires:
+            out["tires"] = tires
+            changed = [c for c, r in tires.items() if r.get("changed")]
+            if changed:
+                out["tires_changed"] = changed
+                out["left_on_fresh"] = all(tires[c]["fresh"] for c in changed)
+        return out
+
+    def _maybe_emit_setup(self) -> None:
+        """Emit a `setup` event the first time the local car's setup is
+        visible and on every change afterwards (different file, edited in
+        the garage, new UpdateCount). A race normally produces exactly
+        one event; a practice session produces one per iteration, which
+        is the point.
+        """
+        if self._log_fp is None:
+            return
+        setup = self._read_setup()
+        if not setup:
+            return
+        sig = (setup.get("name"), setup.get("modified"), setup.get("update_count"))
+        if sig == self._setup_sig:
+            return
+        first = self._setup_sig is None
+        self._setup_sig = sig
+        info = self.ir["DriverInfo"] or {}
+        self._emit({
+            "type":      "setup",
+            "t_session": round(float(self.ir["SessionTime"] or 0.0), 2),
+            "car_idx":   info.get("DriverCarIdx"),
+            "first":     first,
+            **setup,
+        })
 
     # ----- fuel reader (LOCAL PLAYER ONLY) -------------------------------
     def _read_fuel(self) -> dict | None:
@@ -910,8 +1231,16 @@ class RaceLogger(SDKPoller):
                 tire = self._read_tire_temps()
                 if tire and tire.get("local_car_idx") == idx:
                     event["tire_temps"] = {
-                        "lf": tire["lf"], "rf": tire["rf"],
-                        "lr": tire["lr"], "rr": tire["rr"],
+                        c: tire[c] for c in TIRE_CORNERS if tire.get(c)
+                    }
+                    # Measured in the pit box, NOT live — see
+                    # _read_tire_temps(). Named so a reader of the log
+                    # cannot mistake a frozen value for a hot lap.
+                    event["tire_temps"]["source"] = tire.get("source")
+                live = self._read_tire_temps_live()
+                if live and live.get("local_car_idx") == idx:
+                    event["tire_temps_live"] = {
+                        c: live[c] for c in TIRE_CORNERS if live.get(c)
                     }
 
                 # Fuel — only present when this driver IS the local
@@ -1312,6 +1641,10 @@ class RaceLogger(SDKPoller):
         # cumulative positions-gained / -lost values.
         self._update_overtake_counters()
         self._maybe_emit_position()
+        self._maybe_emit_setup()
+        # Must run BEFORE the pit events: it is what fills the in-box
+        # tire readings that _maybe_emit_pit_events() attaches on exit.
+        self._sample_local_pit_state()
         self._maybe_emit_pit_events()
         self._maybe_emit_flag_events()
         self._maybe_emit_penalty_events()
@@ -1350,8 +1683,14 @@ class RaceLogger(SDKPoller):
             "skies":        ir["Skies"],
         }
 
-        # Tire temps for the local player (None if spectating).
+        # Tire temps for the local player (None if spectating). The
+        # pit-box measurement plus the live carcass temps, see the two
+        # readers. `tire_wear` is the tread remaining as last published
+        # by iRacing, i.e. measured at the most recent stop.
         tire_temps = self._read_tire_temps()
+        tire_temps_live = self._read_tire_temps_live()
+        tire_wear = self._wear_latest
+        setup = self._read_setup()
 
         return {
             "connected":         True,
@@ -1376,6 +1715,9 @@ class RaceLogger(SDKPoller):
             "laps_remaining":    int(lap_total) if (lap_total is not None and 0 <= lap_total < 99999) else None,
             "weather":           weather,
             "tire_temps":        tire_temps,
+            "tire_temps_live":   tire_temps_live,
+            "tire_wear":         tire_wear,
+            "setup":             setup,
             "counts": {
                 "on_track": on_track,
                 "in_pits":  in_pits,
@@ -2018,6 +2360,19 @@ STATUS_HTML = """
   .tire-corner .vals span {
     flex: 1; text-align: center;
   }
+  /* Tread remaining, under the temps. Muted on purpose: iRacing only
+     refreshes it in the box, so it is a measurement, not a live value. */
+  .tire-corner .tread {
+    display: flex; gap: 10px;
+    font-size: 11px; color: #8a8aa0;
+    font-variant-numeric: tabular-nums;
+  }
+  .tire-corner .tread span { flex: 1; text-align: center; }
+  .tire-corner .tread .worn { color: #ffd166; }
+  .tire-corner .tread .gone { color: #ff8888; }
+  .tires .head .setup { font-size: 11px; color: #8a8aa0; }
+  .tires .head .setup b { color: #c9c9d6; font-weight: 700; }
+  .tires .head .setup .edited { color: #ffd166; }
   /* Tire temp color coding: cool (blue) / warm (green) / hot (red).
      Sim-racing-friendly thresholds for slick tires (~80–105°C optimal). */
   .t-cool { color: #61b4ff; }
@@ -2163,25 +2518,31 @@ STATUS_HTML = """
   <!-- TIRE TEMPS (only visible when local player data is available) -->
   <div class="tires" id="tires">
     <div class="head">
-      <h3>Your car — tire temperatures</h3>
-      <span class="note">surface temps — inner / middle / outer (°C)</span>
+      <h3>Your car — tires &amp; setup</h3>
+      <span class="note">inner / middle / outer — temps (°C) as measured in
+        the box, tread remaining (%) below</span>
+      <span class="setup" id="t-setup"></span>
     </div>
     <div class="grid">
       <div class="tire-corner">
         <span class="lbl">FRONT LEFT</span>
         <div class="vals" id="t-lf"><span>—</span><span>—</span><span>—</span></div>
+        <div class="tread" id="w-lf"></div>
       </div>
       <div class="tire-corner">
         <span class="lbl">FRONT RIGHT</span>
         <div class="vals" id="t-rf"><span>—</span><span>—</span><span>—</span></div>
+        <div class="tread" id="w-rf"></div>
       </div>
       <div class="tire-corner">
         <span class="lbl">REAR LEFT</span>
         <div class="vals" id="t-lr"><span>—</span><span>—</span><span>—</span></div>
+        <div class="tread" id="w-lr"></div>
       </div>
       <div class="tire-corner">
         <span class="lbl">REAR RIGHT</span>
         <div class="vals" id="t-rr"><span>—</span><span>—</span><span>—</span></div>
+        <div class="tread" id="w-rr"></div>
       </div>
     </div>
   </div>
@@ -2287,6 +2648,18 @@ function renderTireCorner(id, vals) {
   el.innerHTML = vals.map(v =>
     `<span class="${tireClass(v)}">${v == null ? '—' : v.toFixed(1)}°</span>`
   ).join('');
+}
+// Tread remaining per strip. Amber under 40 %, red under 20 % — a hint
+// while sitting in the box, not a live gauge: iRacing refreshes these
+// values only during a stop.
+function renderTread(id, vals) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (!vals) { el.innerHTML = ''; return; }
+  el.innerHTML = vals.map(v => {
+    const cls = v == null ? '' : (v < 20 ? 'gone' : (v < 40 ? 'worn' : ''));
+    return `<span class="${cls}">${v == null ? '—' : v.toFixed(0) + '%'}</span>`;
+  }).join('');
 }
 
 // --- Chart control: pin/unpin drivers, switch chart type ---
@@ -2431,12 +2804,23 @@ function render(d) {
   // Tire temps — only visible when iRacing broadcasts them (= local
   // player is in-car). Pure spectators see no panel at all.
   const tirePanel = document.getElementById('tires');
-  if (d.tire_temps && d.tire_temps.lf) {
+  const temps = d.tire_temps || {};
+  const wear  = d.tire_wear  || {};
+  if (temps.lf || wear.lf) {
     tirePanel.classList.add('visible');
-    renderTireCorner('t-lf', d.tire_temps.lf);
-    renderTireCorner('t-rf', d.tire_temps.rf);
-    renderTireCorner('t-lr', d.tire_temps.lr);
-    renderTireCorner('t-rr', d.tire_temps.rr);
+    ['lf', 'rf', 'lr', 'rr'].forEach(c => {
+      renderTireCorner('t-' + c, temps[c]);
+      renderTread('w-' + c, wear[c]);
+    });
+    // Setup line: the file name alone lies once a click has been turned
+    // in the garage, so say when it has been.
+    const su = document.getElementById('t-setup');
+    if (d.setup && d.setup.name) {
+      su.innerHTML = 'Setup: <b>' + esc(d.setup.name) + '</b>'
+        + (d.setup.modified ? ' <span class="edited">(edited in garage)</span>' : '');
+    } else {
+      su.innerHTML = '';
+    }
   } else {
     tirePanel.classList.remove('visible');
   }
