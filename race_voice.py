@@ -116,6 +116,13 @@ _LAP = re.compile(r"\b(\d{1,2}):(\d{2})[,.](\d{1,3})\b")
 _DEC = re.compile(r"\b(\d+),(\d+)\b")
 
 
+def _num(v, default: float) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
 def speakable(text: str) -> str:
     """Numbers the way a commentator says them: lap time 1:39,512 ->
     '1 39 Komma 5 1 2' (not 'ein Uhr neununddreißig'), 0,44 -> '0 Komma 4 4'."""
@@ -171,7 +178,8 @@ class Voice:
     def status(self) -> dict:
         return {"mode": self.mode, "listening": time.time() <= self._listen_until,
                 "engine": self.last_engine, "last_error": self.last_error,
-                "voice": self.cfg.get("tts_voice") or DEFAULT_VOICE}
+                "voice": self.cfg.get("tts_voice") or DEFAULT_VOICE,
+                "mouth_gain": _num(self.cfg.get("mouth_gain"), 1.0)}
 
     # -- internals ------------------------------------------------------------
     def _order(self, now: float) -> list:

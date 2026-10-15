@@ -4586,6 +4586,8 @@ VOICE_HTML = r"""<!DOCTYPE html>
        Avatar: drives VTube Studio's MouthOpen from the loudness of what is
        playing (VTS → Settings → "Start API", port ?vts_port=8001; the first
        time VTS asks to allow the plugin "CAS Regie"). ?vts=0 switches it off.
+       ?mouth=2 (or "mouth_gain" in commentary_config.json) opens the mouth
+       wider at the same loudness.
        ?vol=0..1, ?debug=1 / H shows the status. */
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { background: rgba(0,0,0,0); overflow: hidden; }
@@ -4734,7 +4736,10 @@ setInterval(() => {
         analyser.getFloatTimeDomainData(buf);
         let sum = 0; for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
         const rms = Math.sqrt(sum / buf.length);
-        level = Math.max(0, Math.min(1, (rms - 0.01) * 9));
+        // gain: ?mouth= on the page, else "mouth_gain" in commentary_config.json
+        // (models with a small mouth: 2-3 opens it wider at the same loudness)
+        const gain = parseFloat(qs.get('mouth')) || (info.voice || {}).mouth_gain || 1;
+        level = Math.max(0, Math.min(1, (rms - 0.01) * 9 * gain));
     }
     mouth = level > mouth ? mouth * 0.3 + level * 0.7 : mouth * 0.6 + level * 0.4;   // quick open, softer close
     const mi = document.getElementById('mi'); if (mi) mi.style.width = Math.round(mouth * 100) + '%';
