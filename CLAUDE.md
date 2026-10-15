@@ -543,7 +543,15 @@ SCHEDULE segment (after the table): OBS source per league
 (`schedule_sources` {"cas-gt3-wct": "WCT"}), facts `saisonplan` from CLS
 round-info `rounds` (dates, today, next 3, final; dates spoken "27. Oktober")
 + tracks from show_notes/schedule-<slug>.md matched by date (CLS only knows
-the next round's track); skipped for a league without a source. Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
+the next round's track); skipped for a league without a source.
+TRACK LOCATION: 5007 `/location` (LOCATION_HTML, Leaflet 1.9.4 from cdnjs +
+Esri World Imagery / boundaries tiles — a keyless Google Maps embed loaded
+unreliably): pin on the country, then flyTo onto the circuit, name card;
+coordinates WeekendInfo.TrackLatitude/-Longitude ("36.53 m" strings), track
+JSON centre as fallback; `/state` carries `location`; replays the flight on
+obsSourceVisibleChanged (redirect loader location.html). Show: source
+"Streckenort" up during the track talk, down before the video; facts `ort`
+= TrackCity, TrackCountry. Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

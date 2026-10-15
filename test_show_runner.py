@@ -397,6 +397,32 @@ wait_for(lambda: r11.state == "done", 20, tick=w11)
 check("schedule picture only during the schedule segment", ("schedule", "WCT") in seen11
       and all(sid == "schedule" for sid, k in seen11 if k == "WCT") and not obs11.scenes["Moderator"]["WCT"], seen11)
 
+# track map: up while the track is talked about, down before the video
+obs12 = FakeObs({"Moderator": {"Streckenvideo": False, "Streckenort": True}, "iRacing": {}}, media={"Streckenvideo": 0.3})
+c12 = sr.load_config(); c12["obs"] = {"host": "127.0.0.1", "port": obs12.port}
+sp12 = Speaker()
+r12 = sr.ShowRunner(c12, ObsClient(port=obs12.port), sp12, facts_fn=lambda: facts,
+                    script_fn=lambda f, s: ({"intro": "Hallo.", "track": "Motegi liegt in Japan. Eine Runde.",
+                                             "outro": "Tschüss."}, "template"), director_on=lambda: None)
+r12.segments, r12.script, r12.script_at = ["intro", "track", "outro"], {"intro": "Hallo.",
+    "track": "Motegi liegt in Japan. Eine Runde.", "outro": "Tschüss."}, time.time()
+st12 = []
+def w12():
+    r12.tick()
+    v = (r12.seg["id"] if r12.seg else None, obs12.scenes["Moderator"]["Streckenort"],
+         obs12.scenes["Moderator"]["Streckenvideo"])
+    if not st12 or st12[-1] != v:
+        st12.append(v)
+r12.start()
+check("map: hidden at the start (left on from a rehearsal)", obs12.scenes["Moderator"]["Streckenort"] is False)
+wait_for(lambda: r12.state == "done", 20, tick=w12)
+check("map during the track talk, then the video, never both", ("track", True, False) in st12
+      and ("track", False, True) in st12 and not any(m and v for _, m, v in st12)
+      and st12.index(("track", True, False)) < st12.index(("track", False, True))
+      and all(not m for s_, m, _ in st12 if s_ != "track"), st12)
+check("place in the facts", sr.build_facts(None, {"name": "Motegi", "place": "Motegi, Japan"}, None, None)["ort"]
+      == "Motegi, Japan")
+
 # hand edits: kept, empty segment skipped, survive a restart, never rewritten automatically
 with tempfile.TemporaryDirectory() as td:
     store = Path(td) / "show_script.json"

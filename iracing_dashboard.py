@@ -1794,6 +1794,7 @@ class TelemetryPoller:
         cfg = self.show.cfg
         wk = dict(self._weekend or {})
         track = {"name": wk.get("TrackDisplayName"), "config": wk.get("TrackConfigName"),
+                 "place": ", ".join(x for x in (wk.get("TrackCity"), wk.get("TrackCountry")) if x),
                  "weather": {k: v for k, v in (("luft", wk.get("TrackAirTemp")),
                                                ("asphalt", wk.get("TrackSurfaceTemp")),
                                                ("himmel", wk.get("TrackSkies"))) if v}}

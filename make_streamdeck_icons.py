@@ -147,6 +147,7 @@ OVERLAY_ICONS = [
     ("driver_simple", "live",   "card",      "Driver Card simpel"),
     ("livery",        "live",   "car",       "Livery"),
     ("trackmap",      "live",   "map",       "Track Map"),
+    ("location",      "pre",    "map",       "Streckenort"),
     ("flag",          "live",   "flag",      "Flaggen"),
     ("leader",        "live",   "crown",     "Neuer Führender"),
     ("weather",       "live",   "cloud",     "Wetter"),

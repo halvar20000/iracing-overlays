@@ -52,6 +52,9 @@ DEFAULT_CONFIG = {
         "last_race": "Letztes Rennen",
         "standings": "Tabelle",
         "track_video": "Streckenvideo",
+        # where the track is (5007 /location, loader location.html): shown while
+        # the track is talked about, before the video (optional)
+        "track_location": "Streckenort",
         # Pro/Am seasons: one source per class (5010 /lastrace/pro, /lastrace/am,
         # /table/pro, /table/am). Missing in OBS -> the plain source above,
         # pinned to the class.
@@ -191,6 +194,7 @@ def build_facts(roundinfo: dict | None, track: dict, notes: str | None, video_s:
         "runden_gesamt": season.get("totalRounds"),
         "strecke": track.get("name") or nxt.get("track"),
         "layout": track.get("config") or nxt.get("trackConfig"),
+        "ort": track.get("place") or None,              # iRacing: city, country
         "wetter": track.get("weather"),
         "streckennotizen": notes,
         "video_sekunden": round(video_s) if video_s else None,
@@ -378,7 +382,7 @@ SEGMENT_BRIEF = {
                  "Dabei ist die Ergebnisliste im Bild.",
     "standings": "Meisterschaftsstand: wer führt, Abstand, wer dahinter lauert, bei Pro/Am beide "
                  "Klassen kurz. 50-80 Wörter. Die Tabelle ist im Bild.",
-    "track": "Die Strecke vorstellen: Charakter, Schlüsselkurven, wo man überholen kann. {words}.",
+    "track": "Die Strecke vorstellen: wo sie liegt (ort; dabei ist eine Karte im Bild), Charakter, Schlüsselkurven, wo man überholen kann. {words}.",
     "schedule": "Der Saisonplan der Liga ist im Bild (daten.saisonplan): welche Runde heute ist, "
                 "wie viele noch folgen, die nächsten Termine mit Datum, das Finale bzw. Special Event. "
                 "Strecken späterer Runden nur, wenn sie bei der Runde stehen (strecke). 35-60 Wörter.",
@@ -543,6 +547,7 @@ def template_script(cfg: dict, facts: dict, segments: list[str]) -> dict:
         out["schedule"] = " ".join(parts)
     if "track" in segments:
         out["track"] = (f"Jetzt ein Blick auf die Strecke: {strecke}"
+                        + (f" in {facts['ort']}" if facts.get("ort") else "")
                         + (f", gefahren wird das Layout {facts['layout']}." if facts.get("layout") else ".")
                         + " Schauen wir uns eine Runde an.")
     if "outro" in segments:
@@ -714,7 +719,7 @@ class ShowRunner:
                 self._items = set(self.obs.scene_items(self.cfg["scenes"]["moderator"]))
             except Exception:
                 self._items = None             # unknown: try the class sources
-            for key in set(SEGMENT_SOURCES.values()) | {"track_video"}:   # nothing left on from a rehearsal
+            for key in set(SEGMENT_SOURCES.values()) | {"track_video", "track_location"}:   # nothing left on from a rehearsal
                 name = self._name(key)
                 if name and (self._items is None or name in self._items):
                     self._source(key, False)
@@ -823,6 +828,11 @@ class ShowRunner:
                 return fb
         return key
 
+    def _has(self, key) -> bool:
+        """An optional source: configured and (when the scene is known) in it."""
+        name = self._name(key)
+        return bool(name) and (self._items is None or name in self._items)
+
     def _name(self, key):
         """OBS source name for a key — matched to the scene without caring about
         upper / lower case or extra spaces ("Tabelle Pro" = "Tabelle PRO")."""
@@ -860,6 +870,9 @@ class ShowRunner:
                     self._source(self._shown, False)
                 self._source(key, True)
                 self._shown = key
+        if sid == "track" and self._has("track_location"):
+            self._source("track_location", True)              # the map while the track is talked about
+            seg["map"] = True
         if sid == "track" and (self.cfg.get("sources") or {}).get("track_video") \
                 and self.cfg.get("video_after_speech", True):
             seg["video_pending"] = self.cfg["sources"]["track_video"]   # started once the text is spoken
@@ -889,6 +902,9 @@ class ShowRunner:
                 self._note(f"Segment {seg['id']}: Stimme nicht fertig gemeldet – Video startet")
                 self.speaker.cancel(seg["ids"])
             vid, seg["video_pending"] = seg["video_pending"], None
+            if seg.get("map"):
+                self._source("track_location", False)
+                seg["map"] = False
             self._source("track_video", True)
             if self._obs(lambda: self.obs.media_restart(vid), f"Video {vid}"):
                 seg["media"], seg["video_at"] = vid, self.clock()
@@ -925,6 +941,8 @@ class ShowRunner:
                 self._source(src, False)
                 self._shown = None
                 self._pin(None)
+        if seg.get("map"):
+            self._source("track_location", False)
         if seg["media"]:
             self._obs(lambda: self.obs.media_stop(seg["media"]), "Video stoppen")
             self._source("track_video", False)

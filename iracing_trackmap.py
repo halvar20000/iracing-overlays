@@ -454,8 +454,33 @@ class TrackmapPoller(SDKPoller):
             "view_w":         track["view_w"] if track else SVG_VIEW_W,
             "view_h":         track["view_h"] if track else SVG_VIEW_H,
             "cars":           cars,
+            "location":       _track_location(weekend, track_file),
         }
 
+
+
+def _deg(v):
+    """WeekendInfo 'TrackLatitude: 36.532902 m' -> 36.532902."""
+    try:
+        return float(str(v).split()[0])
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def _track_location(weekend: dict, track_file: str) -> dict:
+    """Where the track is (for /location): iRacing's own coordinates, the
+    bundled track JSON's centre as a fallback."""
+    lat, lon = _deg(weekend.get("TrackLatitude")), _deg(weekend.get("TrackLongitude"))
+    if lat is None or lon is None or (lat == 0 and lon == 0):
+        try:
+            raw = json.loads((TRACKS_DIR / f"{track_file}.json").read_text(encoding="utf-8"))
+            lat, lon = float(raw["latitude"]), float(raw["longitude"])
+        except Exception:
+            lat = lon = None
+    return {"lat": lat, "lon": lon, "city": weekend.get("TrackCity") or "",
+            "country": weekend.get("TrackCountry") or "",
+            "name": weekend.get("TrackDisplayName") or weekend.get("TrackName") or "",
+            "config": weekend.get("TrackConfigName") or ""}
 
 
 # ---------------------------------------------------------------------------
@@ -487,6 +512,90 @@ def index():
 @app.route("/state")
 def state():
     return jsonify(poller.get())
+
+
+LOCATION_HTML = r"""<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><title>Streckenort</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+    /* WHERE IS THE TRACK (2026-10-15, for the AI moderation): satellite map,
+       starts on the country with a pin, then flies down onto the circuit.
+       Coordinates from iRacing (WeekendInfo.TrackLatitude/-Longitude).
+       Replays the flight whenever the OBS source is shown or the track changes.
+       ?start=5 (zoom of the overview) ?zoom=15 (close-up) ?delay=2.5 ?fly=7 (s)
+       ?label=0 hides the name card, ?demo=1 Motegi. Tiles: Esri World Imagery. */
+    html, body { margin: 0; height: 100%; background: #0b0d12; overflow: hidden; }
+    #m { position: absolute; inset: 0; background: #0b0d12; }
+    .card { position: absolute; left: 32px; bottom: 36px; z-index: 1000; background: rgba(12,14,20,.92);
+            border-left: 6px solid #2f7ff0; padding: 14px 22px 16px; color: #f2f2f4;
+            font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; border-radius: 4px;
+            box-shadow: 0 6px 24px rgba(0,0,0,.45); max-width: 70%; transition: opacity .6s; }
+    .card .tag { font-size: 15px; letter-spacing: 3px; font-weight: 800; color: #2f7ff0; }
+    .card .nm { font-size: 40px; font-weight: 800; line-height: 1.15; margin-top: 2px; }
+    .card .cf { font-size: 22px; color: #c9c9d2; margin-top: 2px; }
+    .card .loc { font-size: 24px; margin-top: 8px; font-weight: 600; }
+    .msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+           color: #9aa0ab; font: 22px 'Segoe UI', Arial, sans-serif; z-index: 1001; }
+    .leaflet-control-attribution { font-size: 10px; opacity: .7; }
+</style></head>
+<body><div id="m"></div>
+<div class="card" id="card" style="opacity:0"><div class="tag">STRECKE</div><div class="nm" id="nm"></div>
+  <div class="cf" id="cf"></div><div class="loc" id="loc"></div></div>
+<div class="msg" id="msg">Warte auf iRacing …</div>
+<script>
+const qs = new URLSearchParams(location.search);
+const START = parseFloat(qs.get('start') || '5'), ZOOM = parseFloat(qs.get('zoom') || '15');
+const DELAY = parseFloat(qs.get('delay') || '2.5'), FLY = parseFloat(qs.get('fly') || '7');
+if (qs.get('label') === '0') document.getElementById('card').style.display = 'none';
+const map = L.map('m', {zoomControl: false, attributionControl: true, zoomSnap: 0.25, fadeAnimation: true});
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+            {maxZoom: 18, attribution: 'Esri, Maxar, Earthstar Geographics'}).addTo(map);
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+            {maxZoom: 18}).addTo(map);
+map.setView([30, 10], 2);
+let loc = null, key = '', marker = null, timer = null;
+function esc(t) { return String(t || '').replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[c])); }
+function play() {
+    if (!loc) return;
+    clearTimeout(timer);
+    const p = [loc.lat, loc.lon];
+    map.stop(); map.setView(p, START, {animate: false});
+    if (marker) marker.remove();
+    marker = L.marker(p).addTo(map);
+    document.getElementById('nm').textContent = loc.name || '';
+    document.getElementById('cf').textContent = loc.config || '';
+    document.getElementById('loc').innerHTML = esc([loc.city, loc.country].filter(Boolean).join(', '));
+    document.getElementById('card').style.opacity = 1;
+    timer = setTimeout(() => map.flyTo(p, ZOOM, {duration: FLY}), DELAY * 1000);
+}
+async function load() {
+    let d;
+    if (qs.get('demo') === '1') d = {location: {lat: 36.5329, lon: 140.2272, name: 'Mobility Resort Motegi',
+                                                 config: 'Grand Prix', city: 'Motegi', country: 'Japan'}};
+    else { try { d = await (await fetch('/state', {cache: 'no-store'})).json(); } catch (e) { return; } }
+    const l = d && d.location;
+    const msg = document.getElementById('msg');
+    if (!l || l.lat == null || l.lon == null) { msg.style.display = 'flex';
+        msg.textContent = d && d.connected ? 'Für diese Strecke sind keine Koordinaten bekannt.' : 'Warte auf iRacing …'; return; }
+    msg.style.display = 'none';
+    const k = [l.lat, l.lon, l.name, l.config].join('|');
+    loc = l;
+    if (k !== key) { key = k; play(); }
+}
+// fly again every time the source is shown (OBS keeps hidden sources running)
+window.addEventListener('obsSourceVisibleChanged', e => { if (e.detail && e.detail.visible) play(); });
+window.addEventListener('obsSourceActiveChanged', e => { if (e.detail && e.detail.active) play(); });
+load(); setInterval(load, 5000);
+</script></body></html>
+"""
+
+
+@app.route("/location")
+def location_page():
+    from flask import Response
+    return Response(LOCATION_HTML, mimetype="text/html")
 
 
 @app.route("/refresh")

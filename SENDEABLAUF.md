@@ -41,6 +41,11 @@ Ablauf nur einmal.
      wird. Fehlen sie, nimmt der Ablauf die normalen Quellen und stellt dort
      die Klasse um.
 
+   - **Streckenort** (optional): Browserquelle `obs_loaders\location.html`,
+     1280 × 720 bzw. bildschirmfüllend. Satellitenkarte: erst das Land mit
+     Markierung, dann Flug hinunter auf die Strecke, mit Name und Ort. Sie ist
+     im Bild, während die Moderation über die Strecke spricht, danach kommt
+     das Streckenvideo. Braucht die Streckenkarte (Port 5007) und Internet.
    - **Saisonplan:** pro Liga eine Quelle mit dem Plan, z. B. `WCT` für die
      WCT GT3 (`"schedule_sources": {"cas-gt3-wct": "WCT"}` in
      `show_config.json`, für weitere Ligen ergänzen). Die Termine kommen aus
