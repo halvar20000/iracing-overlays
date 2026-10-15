@@ -517,7 +517,7 @@ to the video). Pro/Am: own OBS sources per class ("Letztes Rennen PRO/AM",
 "Tabelle PRO/AM" = 5010 /lastrace/pro|am, /table/pro|am, loaders
 lastrace_pro/_am, table_pro/_am → 46 generated loaders); missing in the scene → the
 plain source + pin (CLASS_SOURCE_FALLBACK). speakable(): "AM" → "A M",
-"PRO" → "Pro" (edge-tts read AM as the word "am"), "CAS" → "Kas" (said as a word;
+"PRO" → "Pro" (edge-tts read AM as the word "am"), "CAS" → "Kas" (said as a word), "Pole…" → "Pol…" (not the German "Pole"; "Polen" stays;
 `PRONOUNCE` + commentary_config.json "aussprache": {"WORD": "say as"}). Mouth: level relative to
 the recent loudness (peak, ~1 s) so syllable dips close it (~3-4 closes/s
 instead of open all sentence); mouth_gain = how wide (1 → 76 %, 2.5 → 100 %). Voice page resets its

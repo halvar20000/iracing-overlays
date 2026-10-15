@@ -163,6 +163,9 @@ def speakable(text: str, extra: dict | None = None) -> str:
     # Pro/Am classes: "AM" spelled A M (not the German word "am"), "PRO" as the word Pro
     text = re.sub(r"\bAM\b", "A M", text)
     text = re.sub(r"\bPRO\b", "Pro", text)
+    # "Pole" (position) is English: "Pol", not the German "Pole" — also in
+    # Pole-Position / Polesitter / Pole-Zeit; "Polen" stays
+    text = re.sub(r"\b([Pp])ole(?!n)", r"\1ol", text)
     # names said as a word, not spelled (CAS = "Kas"); more / other in
     # commentary_config.json "aussprache": {"CAS": "Kas", ...}
     for word, say in dict(PRONOUNCE, **(extra or {})).items():

@@ -158,13 +158,15 @@ check("requested ids tracked", {2, 4, 6} <= v8.requested)
 v9 = rv.Voice({"tts": "edge"}, {"edge": edge_rec})
 v9.say(7, "nobody listens", keep=True)
 check("not requested while nobody listens", 7 not in v9.requested)
-check("speakable lap time", rv.speakable("Pole mit 1:39,512!") == "Pole mit eins neununddreißig einundfünfzig!"
+check("speakable lap time", rv.speakable("Pole mit 1:39,512!") == "Pol mit eins neununddreißig einundfünfzig!"
       and rv.speakable("1:49.30 und 2:05,048") == "eins neunundvierzig dreißig und zwei null fünf null fünf"
       and rv.speakable("1:49,382") == "eins neunundvierzig achtunddreißig"
       and rv.speakable("0,44 Sekunden") == "0 Komma 4 4 Sekunden")
 check("speakable CAS as a word + own words", rv.speakable("Willkommen bei der CAS GT3 WCT") == "Willkommen bei der Kas GT3 WCT"
       and rv.speakable("CAS und WCT", {"WCT": "W C T", "CAS": "Kass"}) == "Kass und W C T"
       and rv.speakable("CASTLE") == "CASTLE")
+check("speakable Pole -> Pol", rv.speakable("Die Pole geht an Becker, Pole-Position und Polesitter, aus Polen.")
+      == "Die Pol geht an Becker, Pol-Position und Polsitter, aus Polen.", rv.speakable("Die Pole geht an Becker, Pole-Position und Polesitter, aus Polen."))
 check("speakable classes", rv.speakable("Die AM-Klasse, am Ende PRO und AM.") == "Die A M-Klasse, am Ende Pro und A M.",
       rv.speakable("Die AM-Klasse, am Ende PRO und AM."))
 
