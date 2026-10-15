@@ -4481,11 +4481,15 @@ def commentary():
     for k in [k for k, v in VOICE_PAGES.items() if now - v["at"] > 60]:
         del VOICE_PAGES[k]
     return jsonify(dict(st, enabled=poller.director_enabled, voice=poller.voice.status(),
-                        now=now, pages=[dict(v, pid=k, age=round(now - v["at"], 1))
+                        now=now, boot=BOOT_ID, pages=[dict(v, pid=k, age=round(now - v["at"], 1))
                                         for k, v in VOICE_PAGES.items()]))
 
 
 VOICE_PAGES: dict = {}    # pid -> last state reported by a voice page
+# Line ids start at 1 again after a dashboard restart; a voice page that kept
+# running must forget what it played before (2026-10-15: it skipped lines 1-7
+# of the next show as "already played").
+BOOT_ID = f"{time.time():.3f}"
 
 
 @app.route("/commentary/played/<int:line_id>", methods=["POST"])
@@ -4626,7 +4630,7 @@ const audio = new Audio();
 audio.volume = Math.max(0, Math.min(1, parseFloat(qs.get('vol') || '1')));
 let lastId = null, playing = null, said = '', blocked = false, info = {};
 const PID = Math.random().toString(36).slice(2, 10);
-let lastErr = '', progAt = 0, progT = -1, tries = {};
+let lastErr = '', progAt = 0, progT = -1, tries = {}, boot = null;
 const doneQ = new Set();                  // queue lines played / skipped here
 function finish() {
     if (playing && playing.queue) ack(playing.id);
@@ -4683,6 +4687,10 @@ async function tick() {
     try { d = await (await fetch('/commentary?voice=1&pid=' + PID + '&st=' + encodeURIComponent(pageState()),
                                  { cache: 'no-store' })).json(); } catch (e) { return; }
     info = d; render();
+    if (d.boot && d.boot !== boot) {          // dashboard restarted: ids count from 1 again
+        if (boot !== null) { doneQ.clear(); tries = {}; lastId = null; if (playing) { audio.pause(); playing = null; } }
+        boot = d.boot;
+    }
     const lines = d.lines || [], now = d.now || 0;
     // a moderation line cut short by the operator ("next" / "stop")
     if (playing && playing.queue) {
