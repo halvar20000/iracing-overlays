@@ -30,6 +30,7 @@ setup_utf8_stdout()
 
 from car_brands import detect_brand, resolve_logo
 from cls_proam import ProAmRoster
+from cls_pit_tires import PitTireFeed, join_with_field
 import country_flags
 
 
@@ -827,6 +828,9 @@ class StandingsPoller(SDKPoller):
             # the team name instead of whoever is driving (2026-10-10).
             "team_event":   int(weekend.get("TeamRacing") or 0) == 1,
             "fastest_lap":  fastest_lap,
+            # The hosted race's id, shared by every driver's PC — the key for
+            # the live pit-stop tire feed (/pittires).
+            "subsession_id": weekend.get("SubSessionID"),
         }
 
 
@@ -850,6 +854,7 @@ def _no_cache(resp):
     return resp
 poller = StandingsPoller()
 proam = ProAmRoster()
+pit_tires = PitTireFeed()
 
 
 STANDINGS_HTML = """
@@ -1989,6 +1994,217 @@ setInterval(tick, 1000); tick();
 </script></body></html>
 """
 
+PITTIRES_HTML = r"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Pit Stop Tires</title>
+<style>
+    :root { --bg: rgba(40,40,45,0.97); --bg2: rgba(24,24,28,0.97); --head: rgba(84,84,90,0.97);
+            --text: #f2f2f4; --muted: #c4c4cc; --pit: #ffb020; --pro: #e63946; --am: #2ecc71;
+            --w5: #45f063; --w4: #b6e34a; --w3: #ffd166; --w2: #ff9f43; --w1: #ff5a6a; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: rgba(0,0,0,0); overflow: hidden; }
+    body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; color: var(--text);
+           padding: 8px; font-variant-numeric: tabular-nums; }
+    body.debug-mode { background: #23262b; }
+    .flag { width: 21px; height: 14px; object-fit: cover; box-shadow: 0 0 0 1px rgba(0,0,0,0.35); }
+    .brand { width: 24px; height: 20px; object-fit: contain; filter: drop-shadow(0 0 1px rgba(0,0,0,0.8)); }
+    .pa { display: inline-block; width: 5px; height: 18px; border-radius: 2px; }
+    .pa.pro { background: var(--pro); } .pa.am { background: var(--am); }
+    .top { height: 30px; background: var(--pit); color: #17130a; display: flex; align-items: center;
+           padding: 0 12px; font-size: 15px; font-weight: 800; letter-spacing: 2px; }
+    .top .sub { margin-left: auto; font-size: 14px; font-weight: 700; letter-spacing: .5px; }
+    .chip { padding: 3px 9px; border-radius: 4px; font-size: 13px; font-weight: 800; letter-spacing: 1px;
+            white-space: nowrap; }
+    .chip.new { background: var(--w5); color: #0d2412; }
+    .chip.used { background: var(--w3); color: #2a2208; }
+    .chip.none { background: #5a5a62; color: #f2f2f4; }
+
+    /* ---- card: one stop, after it happened ---- */
+    .card { width: 660px; display: none; transform: translateZ(0); }
+    .card.on { display: block; animation: slide .35s ease-out; }
+    @keyframes slide { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+    .who { height: 44px; background: var(--bg); display: flex; align-items: center; gap: 9px; padding: 0 12px; }
+    .pos { min-width: 38px; height: 28px; background: #f2f2f4; color: #111; border-radius: 4px; font-size: 17px;
+           font-weight: 800; display: flex; align-items: center; justify-content: center; }
+    .num { color: var(--muted); font-size: 16px; font-weight: 700; }
+    .name { font-size: 21px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+    .cls { font-size: 12px; font-weight: 800; padding: 2px 6px; border-radius: 3px; color: #111; }
+    .tires { background: var(--bg2); display: grid; grid-template-columns: 1fr 1fr; gap: 8px 26px; padding: 10px 14px 12px; }
+    .tire { display: grid; grid-template-columns: 34px 54px 1fr; align-items: center; gap: 10px; }
+    .tire .lbl { font-size: 14px; font-weight: 800; color: var(--muted); }
+    .strips { display: flex; gap: 3px; height: 40px; align-items: flex-end; background: rgba(255,255,255,0.06);
+              border-radius: 4px; padding: 3px; }
+    .strip { flex: 1; border-radius: 2px; min-height: 2px; }
+    .val { display: flex; flex-direction: column; line-height: 1.1; }
+    .val .big { font-size: 22px; font-weight: 800; }
+    .val .small { font-size: 13px; font-weight: 700; color: var(--muted); }
+    .val .small.new { color: var(--w5); }
+    .foot { background: var(--bg2); border-top: 1px solid rgba(255,255,255,0.07); padding: 5px 14px 6px;
+            font-size: 12px; color: var(--muted); display: flex; gap: 14px; }
+
+    /* ---- list: every stop of the race ---- */
+    .list { width: 760px; display: none; }
+    .list.on { display: block; }
+    .lh, .lr { display: grid; grid-template-columns: 40px 8px minmax(0,1fr) 46px 62px repeat(4, 50px) 112px;
+               align-items: center; gap: 0 4px; padding: 0 10px; }
+    .lh { height: 24px; background: var(--head); font-size: 12px; font-weight: 700; color: var(--muted);
+          text-transform: lowercase; }
+    .lr { height: 31px; background: var(--bg); border-top: 1px solid rgba(0,0,0,0.35); font-size: 15px; font-weight: 600; }
+    .lr:nth-child(even) { background: rgba(48,48,53,0.97); }
+    .lr .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-left: 4px; }
+    .lr .c { text-align: center; }
+    .w { display: inline-block; min-width: 42px; text-align: center; border-radius: 3px; font-size: 14px;
+         font-weight: 800; padding: 1px 0; color: #111; }
+    .w.kept { background: transparent !important; color: var(--muted); border: 1px solid #5a5a62; }
+    .lr .v { text-align: right; }
+    .empty { padding: 8px 12px; background: var(--bg); color: var(--muted); font-size: 14px; }
+    #dbg { position: fixed; bottom: 4px; left: 8px; font: 12px monospace; color: #9a9aa6; display: none; }
+    body.debug-mode #dbg { display: block; }
+</style></head>
+<body>
+<div class="card" id="card"></div>
+<div class="list" id="list"></div>
+<div id="dbg"></div>
+<script>
+const qs = new URLSearchParams(location.search);
+if (qs.get('debug') === '1') document.body.classList.add('debug-mode');
+const zoom = parseFloat(qs.get('zoom') || '1');
+if (zoom > 0 && zoom !== 1) document.body.style.zoom = zoom;
+document.addEventListener('keydown', e => { if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('debug-mode'); });
+const LIST = location.pathname.endsWith('/list');
+const DEMO = qs.has('demo');
+const SECS = parseFloat(qs.get('secs') || '15');
+const TOP = parseInt(qs.get('top') || '12', 10);
+const PIN_LAST = qs.get('last') === '1';      // card: always show the newest stop
+const CORNERS = [['lf', 'FL'], ['rf', 'FR'], ['lr', 'RL'], ['rr', 'RR']];
+
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function abbrev(full) { const p = String(full || '').trim().split(/\s+/); return p.length < 2 ? (full || '') : `${p[0][0]}. ${p.slice(1).join(' ')}`; }
+function flagImg(c) { return c ? `<img class="flag" src="/flag/${encodeURIComponent(c)}.svg" alt="">` : ''; }
+function brandImg(s) { return s.brand ? `<img class="brand" src="/brand/${encodeURIComponent(s.brand)}" alt="">` : ''; }
+function paBar(p) { return p === 'PRO' ? '<span class="pa pro"></span>' : p === 'AM' ? '<span class="pa am"></span>' : '<span></span>'; }
+function avg(t) { return t && t.length ? t.reduce((a, b) => a + b, 0) / t.length : null; }
+function wcol(p) { return p == null ? '#5a5a62' : p >= 85 ? 'var(--w5)' : p >= 70 ? 'var(--w4)' : p >= 55 ? 'var(--w3)' : p >= 40 ? 'var(--w2)' : 'var(--w1)'; }
+function label(s, teamMode) { return teamMode && s.team_name ? s.team_name : abbrev(s.name_iracing || s.driver); }
+// What the tire looked like when the car came in: the reading of what came OFF,
+// or (iRacing gave only one reading) the current one.
+function cameOff(t) { return t ? (t.wearIn || t.wearOut) : null; }
+function verdictChip(s) {
+    const v = s.verdict || '';
+    if (!v) return '';
+    const cls = v.startsWith('NEW') ? 'new' : v.startsWith('USED') ? 'used' : 'none';
+    return `<span class="chip ${cls}">${esc(v)}</span>`;
+}
+
+function tireCell(t, lbl) {
+    if (!t) return `<div class="tire"><div class="lbl">${lbl}</div><div class="strips"></div><div class="val"><span class="small">—</span></div></div>`;
+    const w = cameOff(t), a = avg(w);
+    const strips = w.map(p => `<div class="strip" style="height:${Math.max(4, p)}%;background:${wcol(p)}"></div>`).join('');
+    let after = '';
+    if (t.changed && t.fresh) after = '<span class="small new">→ NEW</span>';
+    else if (t.changed) after = `<span class="small">→ ${Math.round(avg(t.wearOut))}% set</span>`;
+    else if (t.changed === false) after = '<span class="small">kept</span>';
+    return `<div class="tire"><div class="lbl">${lbl}</div><div class="strips">${strips}</div>
+        <div class="val"><span class="big" style="color:${wcol(a)}">${Math.round(a)}%</span>${after}</div></div>`;
+}
+
+function renderCard(s, teamMode) {
+    const card = document.getElementById('card');
+    if (!s) { card.classList.remove('on'); return; }
+    const pos = s.position ? `P${s.position}` : '';
+    const cls = s.class_name && s.class_color ? `<span class="cls" style="background:${esc(s.class_color)}">${esc(s.class_name)}</span>` : '';
+    const lap = s.entryLap != null ? `LAP ${s.entryLap}` : '';
+    const dur = s.duration != null ? `${s.duration.toFixed(1)} s` : '';
+    const anyIn = CORNERS.some(([c]) => s.tires && s.tires[c] && s.tires[c].wearIn);
+    const html = `
+        <div class="top"><span>PIT STOP · TIRE WEAR</span><span class="sub">${[lap, dur].filter(Boolean).join(' · ')}</span></div>
+        <div class="who">${pos ? `<div class="pos">${pos}</div>` : ''}${paBar(s.proam)}
+            <span class="num">#${esc(s.carNumber)}</span><span class="name">${esc(label(s, teamMode))}</span>
+            ${flagImg(s.country)}${brandImg(s)}${cls}${verdictChip(s)}</div>
+        <div class="tires">${CORNERS.map(([c, l]) => tireCell((s.tires || {})[c], l)).join('')}</div>
+        <div class="foot"><span>${anyIn ? 'tread left when the car came in' : 'tread left'}</span>
+            ${s.fuelL ? `<span>fuel ${Math.round(s.fuelL)} l</span>` : ''}<span style="margin-left:auto">from the driver's race logger</span></div>`;
+    if (card.dataset.sig !== html) {
+        card.innerHTML = html;
+        card.dataset.sig = html;
+        card.classList.remove('on'); void card.offsetWidth;
+    }
+    card.classList.add('on');
+}
+
+function renderList(stops, teamMode) {
+    const el = document.getElementById('list');
+    const rows = stops.slice().reverse().slice(0, TOP);
+    const cell = t => {
+        if (!t) return '<div class="c"></div>';
+        const a = avg(cameOff(t));
+        if (t.changed === false) return `<div class="c"><span class="w kept">${Math.round(a)}</span></div>`;
+        return `<div class="c"><span class="w" style="background:${wcol(a)}">${Math.round(a)}</span></div>`;
+    };
+    el.innerHTML = `<div class="top"><span>PIT STOPS · TIRE WEAR</span><span class="sub">tread % that came off</span></div>
+        <div class="lh"><div>pos</div><div></div><div>driver</div><div>lap</div><div>stop</div>
+            <div class="c">fl</div><div class="c">fr</div><div class="c">rl</div><div class="c">rr</div><div class="v">tires</div></div>` +
+        (rows.length ? rows.map(s => `<div class="lr"><div>${s.position ? 'P' + s.position : ''}</div>${paBar(s.proam)}
+            <div class="n">${esc(label(s, teamMode))}</div><div>${s.entryLap ?? ''}</div>
+            <div>${s.duration != null ? s.duration.toFixed(1) + 's' : ''}</div>
+            ${CORNERS.map(([c]) => cell((s.tires || {})[c])).join('')}
+            <div class="v">${verdictChip(s)}</div></div>`).join('')
+         : '<div class="empty">No pit stops with tire data yet.</div>');
+    el.classList.add('on');
+}
+
+// ---- card queue: each NEW stop is shown once, history on load is skipped ----
+let seen = null, queue = [], showing = null, showUntil = 0;
+function cardTick(d) {
+    const stops = d.stops || [];
+    const key = s => `${s.id}`;
+    if (seen === null) { seen = new Set(stops.map(key)); }
+    for (const s of stops) if (!seen.has(key(s))) { seen.add(key(s)); queue.push(s.id); }
+    const now = Date.now() / 1000;
+    if (PIN_LAST) { renderCard(stops[stops.length - 1], d.team_event); return; }
+    if (showing && now < showUntil) {
+        renderCard(stops.find(s => s.id === showing) || null, d.team_event); return;
+    }
+    if (queue.length) {
+        showing = queue.shift();
+        const secs = queue.length > 2 ? Math.min(SECS, 8) : SECS;   // a pit window: keep up
+        showUntil = now + secs;
+        renderCard(stops.find(s => s.id === showing) || null, d.team_event);
+    } else { showing = null; renderCard(null); }
+}
+
+function demoData() {
+    const t = Math.floor(Date.now() / 1000);
+    const mk = (id, name, num, pos, pa, lap, dur, inn, out, changed, fresh) => ({
+        id, driver: name, carNumber: num, position: pos, proam: pa, entryLap: lap, duration: dur, country: 'de',
+        class_name: 'GT3', class_color: '#ffda59', in_field: true, fuelL: 62,
+        tires: Object.fromEntries(CORNERS.map(([c], i) => [c, { wearIn: inn[i], wearOut: out[i], fresh, changed }])),
+        tiresChanged: changed ? ['lf', 'rf', 'lr', 'rr'] : [], leftOnFresh: changed ? fresh : null,
+        verdict: changed ? (fresh ? 'NEW 4 TIRES' : 'USED 4 TIRES') : 'NO TIRE CHANGE' });
+    const N = [100, 100, 100];
+    const stops = [
+        mk(1, 'Dennis Richter', '7', 4, 'PRO', 18, 51.3, [[62, 58, 55], [44, 47, 52], [71, 69, 66], [64, 66, 69]], [N, N, N, N], true, true),
+        mk(2, 'Mike Zocher', '23', 7, 'AM', 19, 38.9, [[80, 79, 78], [74, 75, 77], [83, 82, 81], [81, 82, 82]], [[80, 79, 78], [74, 75, 77], [83, 82, 81], [81, 82, 82]], false, false),
+        mk(3, 'Maurice Becker', '12', 1, 'PRO', 20, 52.0, [[57, 53, 50], [38, 42, 47], [66, 63, 61], [60, 62, 65]], [N, N, N, N], true, true),
+    ];
+    const k = Math.floor(t / 12) % stops.length;      // a new one every 12 s
+    return { connected: true, session_type: 'Race', stops: stops.slice(0, k + 1).map((s, i) => ({ ...s, id: (Math.floor(t / 36) * 10) + i })) };
+}
+
+async function tick() {
+    let d;
+    if (DEMO) d = demoData();
+    else { try { d = await (await fetch('/pittires/data', { cache: 'no-store' })).json(); } catch (e) { d = null; } }
+    if (!d) return;
+    const dbg = document.getElementById('dbg');
+    if (d.feed) dbg.textContent = `subsession ${d.feed.subsession ?? '—'} · ${d.feed.stops} stops · ${d.feed.last_error || (d.feed.last_ok ? 'ok' : 'waiting')}`;
+    if (LIST) renderList(d.stops || [], d.team_event);
+    else cardTick(d);
+}
+setInterval(tick, 1000); tick();
+</script></body></html>
+"""
+
+
 GAPBAR_HTML = r"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><title>Gap Bar</title>
 <style>
@@ -2162,6 +2378,32 @@ def movers_page():
 @app.route("/gapbar")
 def gapbar_page():
     return Response(GAPBAR_HTML, mimetype="text/html")
+
+
+# -----------------------------------------------------------------------------
+# Pit-stop tire wear (2026-10-15). iRacing shows tread depth to the driver
+# only, so the data comes from each driver's RaceLogger via CLS — see
+# cls_pit_tires.py. /pittires = card after each stop, /pittires/list = all
+# stops of the race. Drivers without the logger never appear.
+# -----------------------------------------------------------------------------
+@app.route("/pittires")
+@app.route("/pittires/list")
+def pittires_page():
+    return Response(PITTIRES_HTML, mimetype="text/html")
+
+
+@app.route("/pittires/data")
+def pittires_data():
+    snap = poller.get() or {}
+    pit_tires.want(snap.get("subsession_id"))
+    stops = join_with_field(pit_tires.stops(), snap.get("standings") or [])
+    return jsonify({
+        "connected":    bool(snap.get("connected")),
+        "session_type": snap.get("session_type"),
+        "team_event":   bool(snap.get("team_event")),
+        "stops":        stops,
+        "feed":         pit_tires.status(),
+    })
 
 
 # -----------------------------------------------------------------------------
@@ -2340,7 +2582,7 @@ def standings():
 # Bump on every change: http://localhost:5005/version shows which code the
 # running process actually loaded (the stream PC gets this folder through
 # Nextcloud, so a restart can still pick up the previous file).
-CODE_VERSION = "2026-10-10 rows"
+CODE_VERSION = "2026-10-15 pittires"
 
 
 @app.route("/version")
@@ -2380,6 +2622,7 @@ def brand_logo(slug: str):
 # -----------------------------------------------------------------------------
 def main():
     proam.start()
+    pit_tires.start()
     t = threading.Thread(target=poller.run, daemon=True)
     t.start()
     try:

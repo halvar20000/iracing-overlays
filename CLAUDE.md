@@ -177,6 +177,50 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 15, 2026 (LIVE pit-stop tire wear for the stream, WCT GT3 — and
+RaceLogger v1.4.0 found broken):** Thomas wants an overlay after a stop
+showing each driver's tire wear. Tread is LOCAL-CAR-ONLY in the SDK, so the
+broadcast PC can't read it → chain (Thomas chose "live"): driver's logger →
+CLS → overlay.
+- **v1.4.0 (released 15.10. 11:42 as "Latest") had LOST the CLS upload.**
+  626c6ff (10.10.) committed an OLD local logger and silently dropped: CLS
+  upload + `/league` page, the frozen-exe `HERE` (logs went to the PyInstaller
+  temp dir!), `weather`, `driver_change`, dashboard-free SDK `incident`s.
+  Restored from 626c6ff^ (v1.3.1) hunk by hunk, keeping `inc` and the tire
+  work; `diff` vs v1.3.1 now shows only the tire/inc changes. LESSON: before
+  committing a big logger diff, `git diff` it against HEAD and read every
+  `-` block — and check `git log -S` for functions that vanish.
+- Logger (LOGGER_VERSION 1.4.1): when the LOCAL car leaves pit road and the
+  pit event has `tires`, `cls_send_live_async()` POSTs `{v, session:
+  {subsession_id, session_id, session_num, session_name, track}, driver:
+  {cust_id}, event}` (no raw samples) to `/api/race-log/live`; 2 tries, 10 s,
+  thread. `league_manager.json` gains `live` (default true), checkbox + last
+  status on `/league`. session meta now carries `subsession_id` /
+  `session_id` (WeekendInfo.SubSessionID = the id ALL PCs of a hosted race
+  share — telemetry SessionUniqueID is not, see Oct 8).
+- CLS (league-manager, `src/lib/live-pit-store.ts`, `api/race-log/live`,
+  `api/overlay/pit-tires?subsession=&after=&hours=`): IN MEMORY (one Next
+  process on Hetzner), 6 h, 3000 stops, 60/driver/hour, validated field by
+  field, a re-sent stop replaces its copy with a new id. No schema change.
+- Overlay on the standings server (5005): `cls_pit_tires.PitTireFeed` polls
+  CLS every 4 s ONLY while a page asked in the last 60 s, per subsession
+  (new race = empty list), `after=` incremental; `join_with_field()` matches
+  stops to tower rows by customer id, car number fallback; `verdict()` →
+  "NEW 4 TIRES" / "USED FRONTS" / "NO TIRE CHANGE" (single reading: label
+  only when no tire was ORDERED, else blank — never "?" on stream).
+  `/pittires` card (newest stop ~15 s, history skipped on load, queue, 8 s
+  each when 3+ wait; `?last=1` pins the newest), `/pittires/list` (all stops,
+  tread that came off per corner), `/pittires/data`. Loaders pittires.html /
+  pittires_list.html (42), icon "tire", OVERLAY_TABLE, OBS_OVERLAYS.md,
+  guide REIFEN_LIVE.md. CODE_VERSION "2026-10-15 pittires".
+- Tests: test_cls_live.py 32 (live send + every restored v1.3.1 feature),
+  test_pit_tires.py 25, CLS store 15 (scratchpad, transpiled TS),
+  test_tire_capture 44, test_inc_points 29. End-to-end in the scratchpad:
+  three simulated driver PCs (real logger code, real requests) → fake CLS
+  running the REAL transpiled store → standings Flask + real urllib feed →
+  Chromium screenshots of card + list; a wrong token is refused.
+  NOT tried: a real stop with the new .exe, the deployed CLS route.
+
 **October 15, 2026 (race logger — tire condition, setup name, fresh-or-used,
 for Johann):** Johann Solowej asked whether the logger could record the tire
 condition ("available when the car is in the box"), the name of the setup being

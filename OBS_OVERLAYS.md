@@ -20,6 +20,8 @@ Loader-Datei verwenden).
 | Schnellste Runde (Banner) | 5005 `/fastest` | `fastest.html` | ✓ 620 × 60 |
 | Biggest Movers | 5005 `/movers` | `movers.html` | ✓ 536 × 145 |
 | Abstandsbalken (Gap Bar) | 5005 `/gapbar` | `gapbar.html` | ✓ frei wählbar × 135 (füllt die Breite) |
+| Reifen nach dem Boxenstopp | 5005 `/pittires` | `pittires.html` | ≈ 680 × 230 — Karte für ~15 s nach jedem Stopp (`?secs=`); Daten aus der RaceLogger.exe der Fahrer, siehe REIFEN_LIVE.md |
+| Reifen aller Boxenstopps (Liste) | 5005 `/pittires/list` | `pittires_list.html` | ≈ 780 × 450 (12 Stopps, `?top=`) |
 | Überhol-Ticker | 5000 `/ticker` | `ticker.html` | ✓ 650 × 56 |
 | Kommentar (REGIE) | 5000 `/commentary/overlay` | `commentary.html` | ≈ 1130 × 110 (zwei Zeilen; `?width=` ändert die Breite) |
 | Kommentar-Stimme (REGIE) | 5000 `/commentary/voice` | `commentary_voice.html` | unsichtbar, nur Ton — in OBS **„Audio über OBS steuern“** anhaken (beliebige Größe, z. B. 400 × 100) |

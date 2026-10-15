@@ -127,6 +127,8 @@ G = {
     "auto_replay": '<path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M3.5 3.5v4.2h4.2"/>'
                    '<text x="12.6" y="15.6" text-anchor="middle" class="T" font-size="8.5">A</text>',
     "auto_ot": '<path d="M3 16h12M11 12l4 4-4 4M9 8h12M17 4l4 4-4 4"/>',
+    "tire": '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.6"/>'
+            '<path d="M12 3v3.2M12 17.8V21M3 12h3.2M17.8 12H21M5.6 5.6l2.3 2.3M16.1 16.1l2.3 2.3M5.6 18.4l2.3-2.3M16.1 7.9l2.3-2.3"/>',
     "crash": '<path d="M12 2.5l2.2 5.6 5.8-1.6-3.3 5 4.8 3.7-6 .6.3 6-3.8-4.6-3.8 4.6.3-6-6-.6 4.8-3.7-3.3-5 5.8 1.6z"/>',
 }
 
@@ -136,6 +138,8 @@ OVERLAY_ICONS = [
     ("fastest",       "live",   "stopwatch", "Schnellste Runde"),
     ("movers",        "live",   "updown",    "Movers"),
     ("gapbar",        "live",   "gapbar",    "Gap Bar"),
+    ("pittires",      "live",   "tire",      "Reifen Stopp"),
+    ("pittires_list", "live",   "tire",      "Reifen Liste"),
     ("ticker",        "live",   "overtake",  "Überhol Ticker"),
     ("commentary",    "live",   "chat",      "Kommentar"),
     ("commentary_voice", "live", "speaker",  "Stimme"),

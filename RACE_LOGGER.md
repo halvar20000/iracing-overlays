@@ -138,4 +138,31 @@ Senden erzeugt keine Dubletten, und mehrere Fahrer dürfen dasselbe Rennen
 hochladen (der Admin nimmt eins davon).
 
 Einstellungen liegen in `league_manager.json` neben dem Programm
-(`url`, `token`, `auto`), der Upload-Status je Datei in `logs\upload_state.json`.
+(`url`, `token`, `auto`, `live`), der Upload-Status je Datei in `logs\upload_state.json`.
+
+### Live-Boxenstopps (ab v1.4.1)
+
+Verlässt das EIGENE Auto die Boxengasse und hat der Stopp Reifenwerte, geht
+genau dieser `pit`-Event sofort per `POST <liga>/api/race-log/live` an die
+Liga (JSON `{v, session:{subsession_id, session_id, session_num, session_name,
+track}, driver:{cust_id, car_idx}, event}`, gleicher Bearer-Schlüssel, ohne
+die rohen `tire_wear_samples`). Zwei Versuche, 10 s Timeout, im Hintergrund;
+ein verlorener Live-Stopp kostet nichts, das Log folgt. Ausschalten:
+`"live": false` bzw. der Haken auf `/league`. Das Overlay dazu:
+REIFEN_LIVE.md. `session_start` trägt dafür jetzt `subsession_id` /
+`session_id`, die Fahrerliste unverändert.
+
+Test: `python3 test_cls_live.py` (32 Checks: Live-Senden, nichts für
+fremde Autos / ohne Schlüssel / bei `live: false`, 401 ohne Wiederholung,
+5xx mit; dazu alles, was v1.4.0 verloren hatte, siehe unten).
+
+### v1.4.0 war kaputt (behoben in v1.4.1)
+
+Commit 626c6ff (10.10.) hat eine ALTE lokale Fassung des Loggers eingecheckt
+und dabei still entfernt: den Liga-Upload samt `/league`-Seite, den
+Log-Ordner neben der .exe (eine eingefrorene .exe schrieb ihre Logs damit in
+ihren Temp-Ordner, der beim Beenden verschwindet), die Temperatur-Proben
+(`weather`), die Fahrerwechsel (`driver_change`) und die Incidents ohne
+Dashboard (`incident` mit `source: "sdk"`). Das am 15.10. gebaute Release
+v1.4.0 hatte nichts davon. v1.4.1 setzt alles wieder ein (aus 626c6ff^,
+Stand v1.3.1) und behält `inc` / `inc_snapshot` und die Reifendaten.

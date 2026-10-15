@@ -51,6 +51,8 @@ OVERLAYS = [
     ("fastest",       "Fastest Lap",      5005, "/fastest"),
     ("movers",        "Biggest Movers",   5005, "/movers"),
     ("gapbar",        "Gap Bar",          5005, "/gapbar"),
+    ("pittires",      "Pit Stop Tires",   5005, "/pittires"),
+    ("pittires_list", "Pit Stops Tire List", 5005, "/pittires/list"),
     ("ticker",        "Overtake Ticker",  5000, "/ticker"),
     ("lastrace",      "Last Round Results", 5010, "/lastrace"),
     ("table",         "Standings Before Round", 5010, "/table"),
