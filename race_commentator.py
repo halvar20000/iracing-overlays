@@ -43,7 +43,7 @@ DEFAULT_CONFIG = {
 }
 API_URL = "https://api.anthropic.com/v1/messages"
 AI_STALE_S = 8.0          # an AI line that took longer than this is dropped (template used)
-KEEP_LINES = 30
+KEEP_LINES = 40
 MIN_GAP_S = 4.0           # lines closer than this: the older one is replaced, not stacked
 
 SYSTEM_PROMPT = (
@@ -254,6 +254,8 @@ class Commentator:
         self.last_info = ""
         self._thinking_off_ok = True
         self.on_line = None            # callback(line dict) for every published line (voice)
+        self.played: set = set()       # line ids the voice page finished (or skipped)
+        self.cancelled: set = set()    # show lines cut short (operator "next")
 
     # -- public ---------------------------------------------------------------
     @property
@@ -262,8 +264,41 @@ class Commentator:
 
     def reset(self):
         with self._lock:
+            # moderation lines survive a REGIE switch (the show turns REGIE on)
+            keep = [ln for ln in self.lines if ln.get("queue")]
             self.lines.clear()
+            self.lines.extend(keep)
             self._seen_log.clear()
+
+    # -- moderation (show_runner.py): spoken in full, in order -----------------
+    def say_show(self, text: str, segment: str = "") -> int:
+        """A moderation sentence: never replaced, never skipped by the voice
+        page (it plays them one after the other and reports each one)."""
+        now = time.time()
+        with self._lock:
+            line = {"id": self._next_id, "t": round(now, 1), "text": text, "kind": "show",
+                    "source": "show", "queue": True, "segment": segment}
+            self.lines.appendleft(line)
+            self._next_id += 1
+        if self.on_line is not None:
+            try:
+                self.on_line(dict(line))
+            except Exception:
+                pass
+        return line["id"]
+
+    def mark_played(self, line_id: int):
+        with self._lock:
+            self.played.add(line_id)
+            if len(self.played) > 400:
+                self.played = set(sorted(self.played)[-200:])
+
+    def is_done(self, line_id: int) -> bool:
+        return line_id in self.played or line_id in self.cancelled
+
+    def cancel(self, ids):
+        with self._lock:
+            self.cancelled.update(ids)
 
     def skip_existing(self, log_entries):
         """Mark entries as already commented (REGIE switched on with an old log)."""
@@ -302,14 +337,17 @@ class Commentator:
 
     def status(self) -> dict:
         with self._lock:
-            return {"lines": list(self.lines), "ai": self.ai_enabled,
+            lines = [dict(ln, played=ln["id"] in self.played, cancelled=ln["id"] in self.cancelled)
+                     if ln.get("queue") else dict(ln) for ln in self.lines]
+            return {"lines": lines, "ai": self.ai_enabled,
                     "model": self.cfg.get("model") if self.ai_enabled else None,
                     "last_error": self.last_error}
 
     # -- internals ------------------------------------------------------------
     def _publish(self, text: str, f: dict, now: float, source: str):
         with self._lock:
-            if self.lines and now - self.lines[0]["t"] < MIN_GAP_S and self.lines[0]["kind"] != "replay":
+            if (self.lines and now - self.lines[0]["t"] < MIN_GAP_S
+                    and self.lines[0]["kind"] not in ("replay", "show")):
                 self.lines.popleft()          # the picture moved on before it was read
             line = {"id": self._next_id, "t": round(now, 1), "text": text,
                     "kind": f["kind"], "source": source}

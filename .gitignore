@@ -52,3 +52,5 @@ youtube_config.json
 .install_info.json
 # KOMMENTAR: Anthropic API key + model (machine-specific, secret)
 commentary_config.json
+show_config.json
+vts_token.json

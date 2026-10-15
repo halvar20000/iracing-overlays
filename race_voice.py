@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import queue
 import tempfile
 import threading
@@ -39,11 +40,12 @@ from race_commentator import load_config
 
 DEFAULT_VOICE = "de-DE-ConradNeural"
 DEFAULT_RATE = "+10%"
-KEEP_CLIPS = 12
+KEEP_CLIPS = 40
 LISTEN_S = 15.0          # a voice page counts as listening this long after its last poll
 EDGE_TIMEOUT_S = 8.0
 EDGE_RETRY_S = 60.0      # after an edge failure, use SAPI for this long before trying again
 MAX_AGE_S = 12.0         # a line still waiting this long in the queue is not spoken any more
+KEEP_MAX_AGE_S = 300.0   # ...a moderation line (keep=True) waits much longer
 
 
 def _edge_synth(text: str, voice: str, rate: str) -> tuple[bytes, str]:
@@ -110,6 +112,18 @@ def _sapi_synth(text: str, want: str, rate: str) -> tuple[bytes, str]:
     return data, "audio/wav"
 
 
+_LAP = re.compile(r"\b(\d{1,2}):(\d{2})[,.](\d{1,3})\b")
+_DEC = re.compile(r"\b(\d+),(\d+)\b")
+
+
+def speakable(text: str) -> str:
+    """Numbers the way a commentator says them: lap time 1:39,512 ->
+    '1 39 Komma 5 1 2' (not 'ein Uhr neununddreißig'), 0,44 -> '0 Komma 4 4'."""
+    text = _LAP.sub(lambda m: f"{int(m.group(1))} {m.group(2)} Komma {' '.join(m.group(3))}", text)
+    text = _DEC.sub(lambda m: f"{m.group(1)} Komma {' '.join(m.group(2))}", text)
+    return text
+
+
 class Voice:
     def __init__(self, config: dict | None = None, engines: dict | None = None):
         self.cfg = config if config is not None else load_config()
@@ -120,6 +134,7 @@ class Voice:
         self._worker = None
         self._listen_until = 0.0
         self._edge_failed_at = None
+        self.requested: set = set()                   # line ids handed to the worker
         self.last_error = ""
         self.last_engine = ""
 
@@ -131,14 +146,18 @@ class Voice:
         """A voice page polled — keep making audio for the next LISTEN_S."""
         self._listen_until = (time.time() if now is None else now) + LISTEN_S
 
-    def say(self, line_id, text: str, now: float | None = None) -> None:
+    def say(self, line_id, text: str, now: float | None = None, keep: bool = False) -> None:
+        """keep=True (moderation): made in order, never dropped for a newer line."""
         now = time.time() if now is None else now
         if self.mode == "off" or not text or now > self._listen_until:
             return
         if self._worker is None or not self._worker.is_alive():
             self._worker = threading.Thread(target=self._run, daemon=True)
             self._worker.start()
-        self._q.put((now, line_id, text))
+        self.requested.add(line_id)
+        if len(self.requested) > 500:
+            self.requested = set(sorted(self.requested)[-200:])
+        self._q.put((now, line_id, text, keep))
 
     def get(self, line_id):
         with self._lock:
@@ -168,6 +187,7 @@ class Voice:
     def synth(self, text: str, now: float | None = None):
         """-> (bytes, mime, engine); raises when every engine failed."""
         now = time.time() if now is None else now
+        text = speakable(text)
         errors = []
         for name in self._order(now):
             fn = self.engines.get(name)
@@ -190,18 +210,25 @@ class Voice:
 
     def _run(self):
         while True:
-            item = self._q.get()
-            while not self._q.empty():          # only the newest line matters
-                item = self._q.get_nowait()
-            t0, line_id, text = item
-            if time.time() - t0 > MAX_AGE_S:
-                continue
-            try:
-                data, mime, engine = self.synth(text)
-                self.last_engine, self.last_error = engine, ""
-                with self._lock:
-                    self._clips[line_id] = (data, mime, engine)
-                    while len(self._clips) > KEEP_CLIPS:
-                        self._clips.popitem(last=False)
-            except Exception as e:
-                self.last_error = str(e)[:400]
+            items = [self._q.get()]
+            while not self._q.empty():
+                items.append(self._q.get_nowait())
+            # moderation lines all, in order; of the commentary only the newest
+            last_plain = max((i for i, it in enumerate(items) if not it[3]), default=None)
+            for i, (t0, line_id, text, keep) in enumerate(items):
+                if not keep and i != last_plain:
+                    continue
+                if time.time() - t0 > (KEEP_MAX_AGE_S if keep else MAX_AGE_S):
+                    continue
+                self._make(line_id, text)
+
+    def _make(self, line_id, text):
+        try:
+            data, mime, engine = self.synth(text)
+            self.last_engine, self.last_error = engine, ""
+            with self._lock:
+                self._clips[line_id] = (data, mime, engine)
+                while len(self._clips) > KEEP_CLIPS:
+                    self._clips.popitem(last=False)
+        except Exception as e:
+            self.last_error = str(e)[:400]

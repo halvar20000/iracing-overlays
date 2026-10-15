@@ -136,6 +136,31 @@ c.on_line = got.append
 c.feed([{"t": 1, "kind": "leader", "car_idx": 0, "name": "Maurice Becker", "info": {"position": 1}}], now=1.0)
 check("on_line called with id + text", got and got[0]["id"] == 1 and "Becker" in got[0]["text"], got)
 
+# 11) keep lines: all made, in order, even with commentary in between
+order = []
+def edge_rec(text, voice, rate):
+    order.append(text)
+    time.sleep(0.05)
+    return b"x", "audio/mpeg"
+v8 = rv.Voice({"tts": "edge"}, {"edge": edge_rec})
+v8.listening()
+v8.say(1, "warm")
+time.sleep(0.01)
+v8.say(2, "m1", keep=True)
+v8.say(3, "c1")
+v8.say(4, "m2", keep=True)
+v8.say(5, "c2")
+v8.say(6, "m3", keep=True)
+wait_for(lambda: all(v8.has(i) for i in (2, 4, 6)), 3)
+check("moderation lines all made, in order", [t for t in order if t.startswith("m")] == ["m1", "m2", "m3"], order)
+check("commentary between them collapsed", "c1" not in order and "c2" in order, order)
+check("requested ids tracked", {2, 4, 6} <= v8.requested)
+v9 = rv.Voice({"tts": "edge"}, {"edge": edge_rec})
+v9.say(7, "nobody listens", keep=True)
+check("not requested while nobody listens", 7 not in v9.requested)
+check("speakable lap time", rv.speakable("Pole mit 1:39,512!") == "Pole mit 1 39 Komma 5 1 2!"
+      and rv.speakable("0,44 Sekunden") == "0 Komma 4 4 Sekunden")
+
 if "--live" in sys.argv:
     t = time.time()
     data, mime = rv._edge_synth("Mike Zocher lauert auf Dennis Richter.", rv.DEFAULT_VOICE, rv.DEFAULT_RATE)

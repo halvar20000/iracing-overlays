@@ -29,6 +29,9 @@ imageio-ffmpeg>=0.4.9
 # without internet) the voice falls back to the Windows SAPI voice (pywin32).
 edge-tts>=7.0
 
+# Sendeablauf (show_runner.py / obs_ws.py): talks to OBS over obs-websocket v5.
+websocket-client>=1.6
+
 # Driving Mode (DRIVE.bat / drive.py) — on-top overlay windows while driving.
 # pywebview hosts the Quali Delta / Track Map HTML overlays as always-on-top
 # windows (driving_overlay_window.py); on Windows it uses the Edge WebView2

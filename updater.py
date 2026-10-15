@@ -60,6 +60,8 @@ PROTECTED = {
     "cls_league_cache.json",
     "youtube_config.json",
     "commentary_config.json",
+    "show_config.json",
+    "vts_token.json",
 }
 PROTECTED_DIRS = ("logs/", ".git/")
 

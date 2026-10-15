@@ -110,6 +110,7 @@ G = {
     "chat": '<path d="M4 4.5h16a1.5 1.5 0 0 1 1.5 1.5v9.5a1.5 1.5 0 0 1-1.5 1.5H10l-5 4v-4H4A1.5 1.5 0 0 1 2.5 15.5V6A1.5 1.5 0 0 1 4 4.5z"/>'
             '<path d="M7 9h10M7 12.5h6"/>',
     "speaker": '<path d="M3.5 9.5h4l5-4.5v14l-5-4.5h-4z"/><path d="M16 9a4 4 0 0 1 0 6M18.8 6.2a8 8 0 0 1 0 11.6"/>',
+    "stop": '<rect x="3" y="3" width="18" height="18" rx="4"/><rect x="8.5" y="8.5" width="7" height="7" rx="1" class="F"/>',
     "play": '<rect x="2" y="5" width="20" height="14" rx="4"/><path d="M10 9v6l5-3z" class="F"/>',
     "curve": '<path d="M4 20c0-6 3-8 8-8s8-3 8-8"/><path d="M16.5 4H20v3.5"/>',
     "camera": '<path d="M3 8.5a1.5 1.5 0 0 1 1.5-1.5H7l1.6-2.5h6.8L17 7h2.5A1.5 1.5 0 0 1 21 8.5v10a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/>'
@@ -191,8 +192,14 @@ DASH_ICONS = [
     ("auto_follow",       "auto",   "follow",      "Auto-Follow",       "toggle_auto_follow"),
     ("auto_replay",       "auto",   "auto_replay", "Auto-Replay Unfälle", "toggle_auto_replay"),
     ("auto_replay_ot",    "auto",   "auto_ot",     "Auto-Replay Überholer", "toggle_auto_replay_overtakes"),
-    # a PAGE, not a /streamdeck command: Website action without "background"
+    ("regie",             "auto",   "broadcast",   "REGIE",             "toggle_director"),
+    # Sendeablauf (show_runner.py): the AI moderation before the race
+    ("show_start",        "auto",   "play",        "Moderation Start",  "show_start"),
+    ("show_next",         "auto",   "next",        "Moderation weiter", "show_next"),
+    ("show_stop",         "auto",   "stop",        "Moderation Stopp",  "show_stop"),
+    # PAGES, not /streamdeck commands: Website action without "background"
     ("ot_panel",          "tool",   "overtake",    "Überhol Fenster",   "/overtakes/panel"),
+    ("show_page",         "tool",   "list",        "Sendeablauf",       "/show"),
 ]
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8"><style>
@@ -237,7 +244,7 @@ OFF_COLOR = "#949494"
 BG_ON = ("#262633", "#14141c")
 BG_OFF = ("#202020", "#111111")
 # dashboard commands that toggle something get an off picture too
-DASH_TOGGLES = {"auto_follow", "auto_replay", "auto_replay_ot", "hide_ui"}
+DASH_TOGGLES = {"auto_follow", "auto_replay", "auto_replay_ot", "hide_ui", "regie"}
 
 
 def render_html(cat, glyph, label, off=False):

@@ -353,12 +353,60 @@ are not news. Commentator: facts + German templates for attack (first /
 faster / slower → "auf Kurs zu Platz n" / pole sitter / next lap), pole,
 quali_lap (new / kept / position + gap); prompt explains delta sign and that
 predicted_position is a projection; context = Qualifying, minutes left, cars
-with a time. test_quali_director.py 21/21 (simulated quali with a non-linear
+with a time. test_quali_director.py 20/20 (simulated quali with a non-linear
 lap shape: pole + margin, lap shown to the line + hold, slow car never an
 attack, curve-based delta = true gap ±0.15 s, pit-spoiled lap, challenger
-over pole sitter, mode reset, no news at switch-on); commentator 24/24;
+over pole sitter, mode reset, no news at switch-on); commentator 23/23;
 scratchpad integ3.py = real dashboard poller in a fake "Lone Qualify"
 session: quali mode, results, attack shots, quali lines.
+SENDEABLAUF (2026-10-15, same request — Thomas raced SFL meanwhile, nothing
+tried live yet): stream 19:30 Intro (song + slides, by hand) → practice (by
+hand) → at `start_at` 19:40 the AI takes over. Thomas chose: VTube Studio
+avatar, automatic + Stream Deck, track info "both" (notes, else safe general
+knowledge), track video = existing OBS media source. NEW `obs_ws.py` (minimal
+obs-websocket v5 client on `websocket-client`: Hello/Identify with the
+sha256 auth string, requests, reconnect once; scenes, scene items,
+visibility, media restart/stop/status, stream status), `fake_obs.py` (test
+server on `websockets`), NEW `show_runner.py` (`ShowRunner`, injected OBS /
+speaker / clock): facts from 5010 `/api/roundinfo` (CLS lastRound races top 5
++ fastest lap + DotD, standings top 5 + gap + Pro/Am top 3, next round) +
+iRacing WeekendInfo (track, config, weather) + `show_notes/<word of the track
+name>.md` + the video length from OBS; segments intro / last_race /
+standings / track / outro (no last round / no completed round → those are
+dropped); script by Claude (`model` claude-sonnet-5-5, thinking disabled,
+JSON {segments}, track words sized to the video, facts only, no numbers
+without notes) or templates; written 5 min ahead, readable on `/show`.
+Run: Moderator scene, per segment show its source ("Letztes Rennen" /
+"Tabelle") or restart the "Streckenvideo", speak the sentences, wait until
+all are reported played AND the video ended (deadline = words/2.4 × 1.6 + 15 s
+so a deaf voice page cannot hang it), hide, next; then iRacing scene +
+REGIE on. Auto start only inside start_at + 20 min, only while OBS STREAMS,
+once a day (new day → ready again). `/show` operator page (state, script per
+segment, log, facts, OBS check: scenes + sources found), POST
+/show/start|next|stop|prepare, Stream Deck show_start / show_next /
+show_stop (+ icons regie (on/off), show_*, show_page). show_config.json and
+vts_token.json gitignored + PROTECTED; requirements + websocket-client.
+Moderation speech: `Commentator.say_show()` → line kind "show", `queue`
+(never replaced), `played` / `cancelled` sets, POST /commentary/played/<id>;
+Voice `keep=True` lines are all made in order (commentary still newest-only),
+`speakable()` reads 1:39,512 as "1 39 Komma 5 1 2" and 0,44 as "0 Komma 4 4";
+a listener appearing late gets the open show lines voiced (first e2e run:
+the page loaded 9 s after the start, the intro was never made). Voice page:
+queue lines first, oldest first, ack each, stop on cancel; commentary as
+before. AVATAR: the same page drives VTube Studio (ws://127.0.0.1:8001,
+plugin "CAS Regie", token kept server-side in vts_token.json): WebAudio
+analyser on the playing clip → RMS → MouthOpen via InjectParameterDataRequest
+every 40 ms while speaking, a few zeros after — no virtual audio cable.
+Tests: test_obs_ws.py 15/15, test_show_runner.py 43/43 (facts, segments,
+templates, Claude JSON + thinking fallback, notes match, full run vs fake
+OBS: source visibility per segment, video wait, next/stop, deaf-voice
+deadline, auto start window / streaming / once a day / next day, missing
+sources), test_race_voice.py 21/21. End-to-end in the scratchpad: real
+dashboard Flask app + real edge-tts + the voice page in headless Chromium
++ FakeObs + a fake VTube Studio → all 4 sentences voiced, played in order and
+acked, sources / video / hand-over / REGIE right, VTS token saved, MouthOpen
+0…1 following the real audio. Guide: SENDEABLAUF.md (German). NOT tried:
+real OBS, real VTube Studio, a real Claude script (no key here).
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

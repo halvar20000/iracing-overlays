@@ -1,0 +1,562 @@
+"""
+Show runner ("Sendeablauf") — the pre-race part of the AI broadcast
+(Thomas, 2026-10-15). Stream starts 19:30 on the Intro scene (song + slide
+show, by hand), then practice by hand; at `start_at` (19:40) the AI takes
+over:
+
+  1. OBS → Moderator scene (the VTube Studio avatar sits there)
+  2. moderation, segment by segment, each spoken by the voice
+     (race_voice.py via the commentator's show lines) while OBS shows what
+     it is about:
+        intro      — welcome, league, round, track, format
+        last_race  — results of the last round   (source "Letztes Rennen" on)
+        standings  — championship table           (source "Tabelle" on)
+        track      — background info on the track while the track video
+                     (OBS media source) plays
+        outro      — hand-over to qualifying
+  3. OBS → iRacing scene, REGIE on — it follows qualifying and then the race
+     on its own (race_director.py / quali_director.py).
+
+The script is written by Claude from the facts (CLS round info + standings
+from the championship server on 5010, iRacing track + weather, a prepared
+notes file per track in `show_notes/` if there is one) — or from templates
+without an API key. It is written ahead (`prepare()`), so it can be read on
+the /show page before it is spoken.
+
+Start: automatically at `start_at` when OBS is STREAMING (so a dashboard left
+running on another evening does nothing), or by hand / Stream Deck
+(/streamdeck/show_start). /show/next ends the current segment, /show/stop
+aborts. Config: show_config.json (gitignored, updater-protected).
+
+Pure logic with injected OBS / speaker / clock; tested by test_show_runner.py.
+"""
+
+from __future__ import annotations
+
+import datetime as _dt
+import json
+import re
+import threading
+import time
+import urllib.request
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+CONFIG_FILE = HERE / "show_config.json"
+DEFAULT_CONFIG = {
+    "obs": {"host": "127.0.0.1", "port": 4455, "password": ""},
+    "scenes": {"moderator": "Moderator", "iracing": "iRacing"},
+    "sources": {                      # in the Moderator scene
+        "last_race": "Letztes Rennen",
+        "standings": "Tabelle",
+        "track_video": "Streckenvideo",
+    },
+    "segments": ["intro", "last_race", "standings", "track", "outro"],
+    "auto_start": True,
+    "start_at": "19:40",              # local time
+    "start_window_min": 20,           # auto start only within this many minutes after start_at
+    "only_while_streaming": True,     # auto start only while OBS streams
+    "director_after": True,           # REGIE on after the hand-over
+    "model": "claude-sonnet-5-5",
+    "host_name": "",                  # name the AI host introduces itself with ("" = none)
+    "notes_dir": "show_notes",
+    "champ_url": "http://127.0.0.1:5010/api/roundinfo",
+}
+SEGMENT_SOURCES = {"last_race": "last_race", "standings": "standings"}
+WORDS_PER_S = 2.4                     # edge-tts at +10 %: ~2.4 German words / second
+DEADLINE_PAD_S = 15.0                 # a segment moves on this long after its speech should have ended
+
+
+def load_config() -> dict:
+    cfg = json.loads(json.dumps(DEFAULT_CONFIG))
+    try:
+        user = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        for k, v in user.items():
+            if isinstance(v, dict) and isinstance(cfg.get(k), dict):
+                cfg[k].update(v)
+            else:
+                cfg[k] = v
+    except (OSError, ValueError):
+        pass
+    return cfg
+
+
+# -- facts ---------------------------------------------------------------------
+def _ms(ms) -> str | None:
+    if not ms:
+        return None
+    s = ms / 1000.0
+    m, s = divmod(s, 60)
+    return f"{int(m)}:{s:06.3f}".replace(".", ",")
+
+
+def fetch_roundinfo(url: str, timeout: float = 5.0) -> dict | None:
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            d = json.loads(r.read().decode("utf-8"))
+        return d if d.get("ok") else None
+    except Exception:
+        return None
+
+
+def find_notes(notes_dir: Path, track: str, track_cfg: str = "") -> str | None:
+    """Prepared notes for the track: show_notes/<file>.md|.txt whose name
+    shares a word (>= 4 letters) with the track name. Longest match wins."""
+    if not notes_dir.is_dir() or not track:
+        return None
+    words = {w for w in re.findall(r"[a-zäöüß]+", (track + " " + track_cfg).lower()) if len(w) >= 4}
+    best, score = None, 0
+    for p in notes_dir.iterdir():
+        if p.suffix.lower() not in (".md", ".txt"):
+            continue
+        name = set(re.findall(r"[a-zäöüß]+", p.stem.lower()))
+        sc = sum(len(w) for w in words & name)
+        if sc > score:
+            best, score = p, sc
+    if best is None:
+        return None
+    try:
+        return best.read_text(encoding="utf-8")[:6000]
+    except OSError:
+        return None
+
+
+def build_facts(roundinfo: dict | None, track: dict, notes: str | None, video_s: float | None) -> dict:
+    """Everything the moderation may say — and nothing else."""
+    info = (roundinfo or {}).get("info") or {}
+    st = (roundinfo or {}).get("standings") or {}
+    league = info.get("league") or st.get("league") or {}
+    season = info.get("season") or st.get("season") or {}
+    nxt = info.get("nextRound") or {}
+    facts = {
+        "liga": league.get("name"),
+        "saison": season.get("name"),
+        "runde": nxt.get("number"),
+        "runden_gesamt": season.get("totalRounds"),
+        "strecke": track.get("name") or nxt.get("track"),
+        "layout": track.get("config") or nxt.get("trackConfig"),
+        "wetter": track.get("weather"),
+        "streckennotizen": notes,
+        "video_sekunden": round(video_s) if video_s else None,
+    }
+    lr = info.get("lastRound") or {}
+    races = []
+    for race in lr.get("races") or []:
+        res = race.get("results") or []
+        top = [{"platz": r.get("position"), "name": r.get("name"), "team": r.get("teamName"),
+                "auto": r.get("car"), "start": r.get("startPosition")} for r in res[:5]]
+        fl = next((r for r in res if r.get("fastestLap")), None)
+        races.append({"rennen": race.get("raceNumber"), "top5": top,
+                      "schnellste_runde": ({"name": fl.get("name"), "zeit": _ms(fl.get("bestLapMs"))}
+                                           if fl else None),
+                      "starter": len(res)})
+    if races:
+        dotd = lr.get("driverOfTheDay") or {}
+        facts["letzte_runde"] = {"name": lr.get("name"), "strecke": lr.get("track"),
+                                 "rennen": races,
+                                 "fahrer_des_tages": dotd.get("winnerName")}
+    rows = st.get("standings") or []
+    done = season.get("completedRounds") or 0
+    if rows and done:
+        def row(r):
+            return {"rang": r.get("rank"), "name": r.get("name"), "punkte": r.get("points"),
+                    "team": r.get("teamName")}
+        tab = {"nach_runden": done, "top5": [row(r) for r in rows[:5]]}
+        if len(rows) >= 2 and rows[0].get("points") is not None and rows[1].get("points") is not None:
+            tab["abstand_p1_p2"] = rows[0]["points"] - rows[1]["points"]
+        if season.get("proAmEnabled") or any(r.get("proAmClass") for r in rows):
+            for cls in ("PRO", "AM"):
+                cl = [r for r in rows if r.get("proAmClass") == cls]
+                if cl:
+                    tab[f"top3_{cls.lower()}"] = [dict(row(r), rang=i + 1) for i, r in enumerate(cl[:3])]
+        facts["tabelle"] = tab
+    return facts
+
+
+def available_segments(cfg: dict, facts: dict) -> list[str]:
+    out = []
+    for s in cfg.get("segments") or DEFAULT_CONFIG["segments"]:
+        if s == "last_race" and not facts.get("letzte_runde"):
+            continue
+        if s == "standings" and not facts.get("tabelle"):
+            continue
+        out.append(s)
+    return out
+
+
+# -- script --------------------------------------------------------------------
+SYSTEM_PROMPT = (
+    "Du bist {host} eines deutschsprachigen Twitch-Streams für iRacing-Ligarennen der "
+    "Community CAS. Du sprichst live vor dem Qualifying, deine Texte werden von einer "
+    "Sprachausgabe vorgelesen. Schreibe natürlich, locker, sympathisch, kurze Sätze, keine "
+    "Aufzählungen, keine Emojis, keine Sonderzeichen; Rundenzeiten wie 1:39,5 sind ok. "
+    "Nutze für Fakten zu Liga, Ergebnissen und Tabelle AUSSCHLIESSLICH die gegebenen Daten. "
+    "Zur Strecke: wenn 'streckennotizen' da sind, nutze sie; sonst nur allgemein bekannte, "
+    "sichere Aussagen ohne konkrete Zahlen (keine Rekorde, Baujahre, Längen), lieber kürzer. "
+    "Antworte NUR mit JSON: {{\"segments\": {{\"<id>\": \"<Text>\", ...}}}} für genau die "
+    "verlangten Segment-IDs."
+)
+SEGMENT_BRIEF = {
+    "intro": "Begrüßung: Liga, Saison, welche Runde, welche Strecke, dass gleich Qualifying und "
+             "Rennen kommen. 35-55 Wörter.",
+    "last_race": "Rückblick auf die letzte Runde: Sieger und Podium (pro Rennen), wer überrascht "
+                 "hat (z. B. weit vorgefahren), schnellste Runde, Fahrer des Tages. 60-90 Wörter. "
+                 "Dabei ist die Ergebnisliste im Bild.",
+    "standings": "Meisterschaftsstand: wer führt, Abstand, wer dahinter lauert, bei Pro/Am beide "
+                 "Klassen kurz. 50-80 Wörter. Die Tabelle ist im Bild.",
+    "track": "Die Strecke vorstellen, während ein Streckenvideo läuft: Charakter, Schlüsselkurven, "
+             "wo man überholen kann. {words} Wörter.",
+    "outro": "Überleitung: gleich geht es live zum Qualifying, viel Spaß. 20-35 Wörter.",
+}
+
+
+def _track_words(facts):
+    v = facts.get("video_sekunden")
+    if v:
+        n = int(min(220, max(50, v * WORDS_PER_S * 0.9)))
+        return f"{n - 15}-{n}"
+    return "80-120"
+
+
+def claude_script(cfg: dict, api_cfg: dict, facts: dict, segments: list[str], post=None) -> dict:
+    """{segment: text} from Claude. Raises on any failure (caller falls back)."""
+    host = cfg.get("host_name") or ""
+    host_desc = f"{host}, die KI-Moderation" if host else "die KI-Moderation"
+    brief = {s: SEGMENT_BRIEF[s].format(words=_track_words(facts)) for s in segments if s in SEGMENT_BRIEF}
+    user = json.dumps({"segmente": brief, "daten": facts}, ensure_ascii=False)
+    payload = {"model": cfg.get("model") or DEFAULT_CONFIG["model"], "max_tokens": 3000,
+               "thinking": {"type": "disabled"},
+               "system": SYSTEM_PROMPT.format(host=host_desc),
+               "messages": [{"role": "user", "content": user}]}
+    if post is None:
+        from race_commentator import Commentator
+        c = Commentator(config=dict(api_cfg, timeout_s=60))
+        post = c._post
+    try:
+        data = post(payload)
+    except RuntimeError as e:
+        if "thinking" not in str(e).lower():
+            raise
+        payload.pop("thinking")
+        data = post(payload)
+    text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
+    m = re.search(r"\{.*\}", text, re.S)
+    if not m:
+        raise RuntimeError("Claude: kein JSON im Skript")
+    segs = json.loads(m.group(0)).get("segments") or {}
+    out = {s: str(segs[s]).strip() for s in segments if segs.get(s)}
+    if not out:
+        raise RuntimeError("Claude: leeres Skript")
+    return out
+
+
+def template_script(cfg: dict, facts: dict, segments: list[str]) -> dict:
+    out = {}
+    liga, strecke = facts.get("liga") or "unserer Liga", facts.get("strecke") or "der heutigen Strecke"
+    host = cfg.get("host_name")
+    if "intro" in segments:
+        r = f"Runde {facts['runde']} " if facts.get("runde") else ""
+        out["intro"] = (f"Hallo und herzlich willkommen zur {liga}! "
+                        + (f"Ich bin {host}. " if host else "")
+                        + f"Heute steht {r}auf dem Programm, wir sind in {strecke}. "
+                        "Gleich gibt es das Qualifying und danach das Rennen.")
+    lr = facts.get("letzte_runde")
+    if "last_race" in segments and lr:
+        parts = [f"Ein kurzer Blick zurück auf die letzte Runde in {lr.get('strecke') or 'der letzten Runde'}."]
+        for race in lr["rennen"]:
+            top = race["top5"]
+            nr = f"Rennen {race['rennen']}: " if len(lr["rennen"]) > 1 else ""
+            if top:
+                pod = ", ".join(t["name"] for t in top[1:3])
+                parts.append(f"{nr}Gewonnen hat {top[0]['name']}" + (f", vor {pod}." if pod else "."))
+            if race.get("schnellste_runde"):
+                parts.append(f"Die schnellste Runde fuhr {race['schnellste_runde']['name']}.")
+        if lr.get("fahrer_des_tages"):
+            parts.append(f"Fahrer des Tages wurde {lr['fahrer_des_tages']}.")
+        out["last_race"] = " ".join(parts)
+    tab = facts.get("tabelle")
+    if "standings" in segments and tab:
+        t = tab["top5"]
+        s = f"In der Meisterschaft führt {t[0]['name']} mit {t[0]['punkte']} Punkten."
+        if len(t) > 1:
+            s += f" Dahinter folgt {t[1]['name']}" + (f", {tab['abstand_p1_p2']} Punkte zurück." if tab.get("abstand_p1_p2") is not None else ".")
+        if len(t) > 2:
+            s += f" Auf Platz drei liegt {t[2]['name']}."
+        out["standings"] = s
+    if "track" in segments:
+        out["track"] = (f"Jetzt ein Blick auf die Strecke: {strecke}"
+                        + (f", gefahren wird das Layout {facts['layout']}." if facts.get("layout") else ".")
+                        + " Schauen wir uns eine Runde an.")
+    if "outro" in segments:
+        out["outro"] = "Das war der Überblick. Jetzt geht es live ins Qualifying, viel Spaß beim Zuschauen!"
+    return out
+
+
+def split_sentences(text: str, max_len: int = 220) -> list[str]:
+    """Speakable chunks: whole sentences, short ones joined up to max_len."""
+    sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s.strip()]
+    out, cur = [], ""
+    for s in sents:
+        if cur and len(cur) + 1 + len(s) > max_len:
+            out.append(cur)
+            cur = s
+        else:
+            cur = f"{cur} {s}".strip()
+    if cur:
+        out.append(cur)
+    return out
+
+
+# -- runner --------------------------------------------------------------------
+class ShowRunner:
+    """speaker: say(text, segment) -> id, is_done(id) -> bool, cancel(ids)
+    obs: obs_ws.ObsClient (or a fake with the same methods)
+    facts_fn() -> facts dict; script_fn(facts, segments) -> ({seg: text}, source)
+    director_on() switches REGIE on."""
+
+    def __init__(self, cfg, obs, speaker, facts_fn, script_fn, director_on,
+                 clock=time.time, local_now=None, listening=lambda: True):
+        self.cfg = cfg
+        self.obs = obs
+        self.speaker = speaker
+        self.facts_fn = facts_fn
+        self.script_fn = script_fn
+        self.director_on = director_on
+        self.clock = clock
+        self.local_now = local_now or _dt.datetime.now
+        self.listening = listening
+        self.state = "idle"            # idle | preparing | running | done | stopped
+        self.script: dict = {}
+        self.script_source = ""
+        self.script_at = None
+        self.facts: dict = {}
+        self.segments: list = []
+        self.seg_i = -1
+        self.seg: dict | None = None   # running segment: {id, ids, started, media, sources, deadline}
+        self.ran_on = None             # date of the last (auto) run
+        self.log: list = []
+        self.last_error = ""
+        self._lock = threading.RLock()
+        self._thread = None
+        self._preparing = False
+
+    # -- public ---------------------------------------------------------------
+    def status(self) -> dict:
+        with self._lock:
+            return {"state": self.state, "segment": self.seg["id"] if self.seg else None,
+                    "segments": self.segments, "script": self.script,
+                    "script_source": self.script_source, "script_at": self.script_at,
+                    "start_at": self.cfg.get("start_at"), "auto_start": self.cfg.get("auto_start"),
+                    "ran_today": self.ran_on == self.local_now().date(),
+                    "log": self.log[-30:], "last_error": self.last_error,
+                    "facts": self.facts}
+
+    def prepare(self):
+        """Collect the facts and write the script (blocking: a few seconds with Claude)."""
+        self._preparing = True
+        with self._lock:
+            prev = self.state
+            if prev not in ("running",):
+                self.state = "preparing"
+        try:
+            facts = self.facts_fn()
+            segs = available_segments(self.cfg, facts)
+            script, source = self.script_fn(facts, segs)
+            with self._lock:
+                self.facts, self.segments, self.script, self.script_source = facts, \
+                    [s for s in segs if script.get(s)], script, source
+                self.script_at = self.clock()
+                self._note(f"Skript fertig ({source}): {', '.join(self.segments)}")
+        except Exception as e:
+            self.last_error = f"Skript: {e}"
+            self._note(self.last_error)
+        finally:
+            self._preparing = False
+            with self._lock:
+                if self.state == "preparing":
+                    self.state = prev if prev != "preparing" else "idle"
+
+    def start(self):
+        with self._lock:
+            if self.state == "running":
+                return
+            self.state = "running"
+            self.ran_on = self.local_now().date()
+        if not self.script or (self.script_at and self.clock() - self.script_at > 3 * 3600):
+            self.prepare()
+            with self._lock:
+                self.state = "running"
+        with self._lock:
+            if not self.segments:
+                self._note("kein Skript – Ablauf abgebrochen")
+                self.state = "stopped"
+                return
+            self._obs(lambda: self.obs.set_scene(self.cfg["scenes"]["moderator"]),
+                      "Szene Moderator")
+            for key in list(SEGMENT_SOURCES.values()) + ["track_video"]:   # nothing left on from a rehearsal
+                self._source(key, False)
+            self.seg_i = -1
+            self._next_segment()
+
+    def next(self):
+        with self._lock:
+            if self.state == "running" and self.seg:
+                self.speaker.cancel([i for i in self.seg["ids"] if not self.speaker.is_done(i)])
+                self._end_segment()
+                self._next_segment()
+
+    def stop(self):
+        with self._lock:
+            if self.seg:
+                self.speaker.cancel([i for i in self.seg["ids"] if not self.speaker.is_done(i)])
+                self._end_segment()
+            self.seg = None
+            if self.state in ("running", "preparing"):
+                self.state = "stopped"
+                self._note("gestoppt")
+
+    def tick(self):
+        """Call every ~0.5 s."""
+        with self._lock:
+            if self.state == "running":
+                self._tick_segment()
+                return
+            if self.state in ("done", "stopped") and self.ran_on != self.local_now().date():
+                self.state = "idle"                   # a new day
+            if self.state != "idle" or not self.cfg.get("auto_start"):
+                return
+            now = self.local_now()
+            due = self._due(now)
+            if due is None:
+                return
+        # outside the lock: may block on OBS / Claude
+        if due == "prepare" and not self._preparing and (
+                not self.script or self.clock() - (self.script_at or 0) > 3600):
+            self._preparing = True
+            threading.Thread(target=self.prepare, daemon=True).start()
+        elif due == "start":
+            if self.cfg.get("only_while_streaming"):
+                try:
+                    if not self.obs.streaming():
+                        return
+                except Exception as e:
+                    self.last_error = f"OBS: {e}"
+                    return
+            self._note("Automatischer Start")
+            self.start()
+
+    def run_forever(self, every=0.5):
+        def loop():
+            while True:
+                try:
+                    self.tick()
+                except Exception as e:          # never kill the thread
+                    self.last_error = f"tick: {e}"
+                time.sleep(every)
+        self._thread = threading.Thread(target=loop, daemon=True, name="ShowRunner")
+        self._thread.start()
+
+    # -- internals ------------------------------------------------------------
+    def _due(self, now):
+        try:
+            hh, mm = [int(x) for x in str(self.cfg.get("start_at") or "").split(":")]
+        except ValueError:
+            return None
+        start = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if self.ran_on == now.date():
+            return None
+        if start <= now < start + _dt.timedelta(minutes=int(self.cfg.get("start_window_min") or 20)):
+            return "start"
+        if start - _dt.timedelta(minutes=5) <= now < start:
+            return "prepare"
+        return None
+
+    def _note(self, msg):
+        self.log.append({"t": round(self.clock(), 1), "msg": msg})
+        if len(self.log) > 200:
+            del self.log[:100]
+
+    def _obs(self, fn, what):
+        try:
+            fn()
+            return True
+        except Exception as e:
+            self.last_error = f"OBS {what}: {e}"
+            self._note(self.last_error)
+            return False
+
+    def _source(self, key, visible):
+        name = (self.cfg.get("sources") or {}).get(key)
+        if name:
+            self._obs(lambda: self.obs.set_visible(self.cfg["scenes"]["moderator"], name, visible),
+                      f"{'zeigen' if visible else 'ausblenden'} {name}")
+
+    def _next_segment(self):
+        self.seg_i += 1
+        if self.seg_i >= len(self.segments):
+            self._finish()
+            return
+        sid = self.segments[self.seg_i]
+        text = self.script.get(sid) or ""
+        seg = {"id": sid, "ids": [], "started": self.clock(), "media": None}
+        if sid in SEGMENT_SOURCES:
+            self._source(SEGMENT_SOURCES[sid], True)
+        if sid == "track" and (self.cfg.get("sources") or {}).get("track_video"):
+            vid = self.cfg["sources"]["track_video"]
+            self._source("track_video", True)
+            if self._obs(lambda: self.obs.media_restart(vid), f"Video {vid}"):
+                seg["media"] = vid
+        chunks = split_sentences(text)
+        for ch in chunks:
+            seg["ids"].append(self.speaker.say(ch, sid))
+        words = len(text.split())
+        # safety net: no voice page listening / audio lost -> move on anyway
+        seg["deadline"] = self.clock() + words / WORDS_PER_S * 1.6 + DEADLINE_PAD_S
+        self.seg = seg
+        self._note(f"Segment {sid}: {len(chunks)} Sätze" + (f", Video {seg['media']}" if seg["media"] else ""))
+
+    def _tick_segment(self):
+        seg = self.seg
+        if seg is None:
+            return
+        spoken = all(self.speaker.is_done(i) for i in seg["ids"])
+        media_done = True
+        if seg["media"]:
+            try:
+                st = self.obs.media_status(seg["media"])
+                media_done = st["state"] in ("OBS_MEDIA_STATE_ENDED", "OBS_MEDIA_STATE_STOPPED",
+                                             "OBS_MEDIA_STATE_ERROR", "OBS_MEDIA_STATE_NONE")
+                if st.get("duration_s") and self.clock() - seg["started"] > st["duration_s"] + 3:
+                    media_done = True
+            except Exception:
+                media_done = True
+        late = self.clock() > seg["deadline"] and (not seg["media"] or media_done)
+        if (spoken and media_done) or late:
+            if late and not spoken:
+                self._note(f"Segment {seg['id']}: Stimme nicht fertig gemeldet – weiter")
+                self.speaker.cancel(seg["ids"])
+            self._end_segment()
+            self._next_segment()
+
+    def _end_segment(self):
+        seg = self.seg
+        if not seg:
+            return
+        if seg["id"] in SEGMENT_SOURCES:
+            self._source(SEGMENT_SOURCES[seg["id"]], False)
+        if seg["media"]:
+            self._obs(lambda: self.obs.media_stop(seg["media"]), "Video stoppen")
+            self._source("track_video", False)
+        self.seg = None
+
+    def _finish(self):
+        self._obs(lambda: self.obs.set_scene(self.cfg["scenes"]["iracing"]), "Szene iRacing")
+        if self.cfg.get("director_after"):
+            try:
+                self.director_on()
+                self._note("REGIE an")
+            except Exception as e:
+                self.last_error = f"REGIE: {e}"
+        self.state = "done"
+        self.seg = None
+        self._note("Übergabe an iRacing")

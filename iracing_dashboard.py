@@ -12,6 +12,7 @@ v7 adds:
     replay playhead to the latest frame = live playback.
 """
 
+import json
 import sys
 import threading
 import time
@@ -20,6 +21,26 @@ from flask import Flask, jsonify, render_template_string, request
 from race_director import RaceDirector
 from race_commentator import Commentator
 from race_voice import Voice
+import show_runner
+from obs_ws import ObsClient
+from pathlib import Path
+
+
+class _ShowSpeaker:
+    """The show's voice: moderation sentences go into the commentary lines as
+    queued 'show' lines; the OBS voice page plays them in order and reports
+    each one back (/commentary/played/<id>)."""
+    def __init__(self, commentator):
+        self.c = commentator
+
+    def say(self, text, segment):
+        return self.c.say_show(text, segment)
+
+    def is_done(self, line_id):
+        return self.c.is_done(line_id)
+
+    def cancel(self, ids):
+        self.c.cancel(ids)
 
 # Windows cp1252 stdout + Unicode in prints = UnicodeEncodeError that can
 # kill the poller thread silently. Force UTF-8 like the other overlays do.
@@ -215,7 +236,17 @@ class TelemetryPoller:
         self.director = RaceDirector()
         self.commentator = Commentator()  # KOMMENTAR: REGIE log -> German lines
         self.voice = Voice(self.commentator.cfg)   # STIMME: each line spoken (OBS /commentary/voice)
-        self.commentator.on_line = lambda ln: self.voice.say(ln["id"], ln["text"])
+        self._weekend: dict = {}
+        # SENDEABLAUF (show_runner.py): moderation before the race, then REGIE
+        scfg = show_runner.load_config()
+        self.show_obs = ObsClient(scfg["obs"].get("host", "127.0.0.1"), scfg["obs"].get("port", 4455),
+                                  scfg["obs"].get("password", ""))
+        self.show = show_runner.ShowRunner(
+            scfg, self.show_obs, _ShowSpeaker(self.commentator),
+            facts_fn=self._show_facts, script_fn=self._show_script,
+            director_on=lambda: self.set_director(True))
+        self.commentator.on_line = lambda ln: self.voice.say(ln["id"], ln["text"],
+                                                             keep=bool(ln.get("queue")))
         self.director_enabled = False
         self._own_replay_until = 0.0      # director keeps still during OUR replays
         self._own_replay_from = 0.0       # ...and ignores what the detectors report from that footage
@@ -1752,6 +1783,37 @@ class TelemetryPoller:
         except Exception as e:
             print(f"[focus-leader] switch failed: {e}")
 
+    # --- show runner ("SENDEABLAUF") ------------------------------------------
+    def _show_facts(self) -> dict:
+        cfg = self.show.cfg
+        wk = dict(self._weekend or {})
+        track = {"name": wk.get("TrackDisplayName"), "config": wk.get("TrackConfigName"),
+                 "weather": {k: v for k, v in (("luft", wk.get("TrackAirTemp")),
+                                               ("asphalt", wk.get("TrackSurfaceTemp")),
+                                               ("himmel", wk.get("TrackSkies"))) if v}}
+        ri = show_runner.fetch_roundinfo(cfg.get("champ_url") or show_runner.DEFAULT_CONFIG["champ_url"])
+        notes_dir = Path(__file__).resolve().parent / (cfg.get("notes_dir") or "show_notes")
+        notes = show_runner.find_notes(notes_dir, track.get("name") or "", track.get("config") or "")
+        video_s = None
+        vid = (cfg.get("sources") or {}).get("track_video")
+        if vid:
+            try:
+                video_s = self.show_obs.media_status(vid).get("duration_s")
+            except Exception:
+                pass
+        facts = show_runner.build_facts(ri, track, notes, video_s)
+        if ri is None:
+            self.show.last_error = "CLS-Daten nicht erreichbar (läuft die Meisterschaft auf 5010?)"
+        return facts
+
+    def _show_script(self, facts: dict, segments: list):
+        if self.commentator.ai_enabled:
+            try:
+                return show_runner.claude_script(self.show.cfg, self.commentator.cfg, facts, segments), "claude"
+            except Exception as e:
+                self.show.last_error = f"Claude-Skript: {e} – Vorlagen benutzt"
+        return show_runner.template_script(self.show.cfg, facts, segments), "template"
+
     # --- race director ("REGIE") --------------------------------------------
     def _maybe_direct(self, drivers: list, current_cam_idx, pb: dict):
         """Let the race director pick the shot. Works live AND while a
@@ -2114,6 +2176,7 @@ class TelemetryPoller:
         track_name  = ""
         if ir["WeekendInfo"]:
             track_name = ir["WeekendInfo"].get("TrackDisplayName", "")
+            self._weekend = ir["WeekendInfo"]       # the show's track facts (read off-thread)
 
         active_driver = None
         if cam_car_idx is not None:
@@ -4396,13 +4459,45 @@ def director():
 def commentary():
     """KOMMENTAR: the latest commentary lines (newest first) + whether Claude
     or the templates write them."""
+    st = poller.commentator.status()
     if request.args.get("voice") == "1":
         poller.voice.listening()          # a voice page is open -> make audio
-    st = poller.commentator.status()
+        # moderation said while nobody listened (voice source reloaded): make it now
+        for ln in reversed(st["lines"]):
+            if (ln.get("queue") and not ln.get("played") and not ln.get("cancelled")
+                    and ln["id"] not in poller.voice.requested):
+                poller.voice.say(ln["id"], ln["text"], keep=True)
     for ln in st["lines"]:
         ln["audio"] = poller.voice.has(ln["id"])
     return jsonify(dict(st, enabled=poller.director_enabled, voice=poller.voice.status(),
                         now=time.time()))
+
+
+@app.route("/commentary/played/<int:line_id>", methods=["POST"])
+def commentary_played(line_id):
+    """The voice page finished (or skipped) a line — the show waits for these."""
+    poller.commentator.mark_played(line_id)
+    return jsonify({"ok": True})
+
+
+VTS_TOKEN_FILE = Path(__file__).resolve().parent / "vts_token.json"
+
+
+@app.route("/commentary/vts_token", methods=["GET", "POST"])
+def commentary_vts_token():
+    """VTube Studio plugin token (the voice page drives the avatar's mouth).
+    Kept on disk so OBS's browser cache does not matter; gitignored."""
+    if request.method == "POST":
+        tok = (request.get_json(silent=True) or {}).get("token") or ""
+        try:
+            VTS_TOKEN_FILE.write_text(json.dumps({"token": tok}), encoding="utf-8")
+        except OSError:
+            pass
+        return jsonify({"ok": True})
+    try:
+        return jsonify(json.loads(VTS_TOKEN_FILE.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return jsonify({"token": ""})
 
 
 @app.route("/commentary/audio/<int:line_id>")
@@ -4479,12 +4574,19 @@ def commentary_overlay():
 VOICE_HTML = r"""<!DOCTYPE html>
 <html lang="de"><head><meta charset="UTF-8"><title>Commentary Voice</title>
 <style>
-    /* STIMME (2026-10-14): plays the REGIE commentary as speech (race_voice.py).
-       Invisible on stream — add it in OBS with "Control audio via OBS" and it
-       is its own channel in the audio mixer. One line at a time; a backlog is
-       skipped (only the newest line), a line not ready within ?wait=8 s or
-       older than ?maxage=15 s is skipped. ?vol=0..1, ?debug=1 / H shows the
-       status (engine, voice, errors). */
+    /* STIMME (2026-10-14/15): plays the REGIE commentary and the show's
+       moderation as speech (race_voice.py). Invisible on stream — add it in
+       OBS with "Control audio via OBS"; put the SAME source into every scene
+       where the voice should be heard (Moderator + iRacing), OBS only mixes
+       sources of the scene on air.
+       Commentary: one line at a time, newest only (a line not ready within
+       ?wait=8 s or older than ?maxage=15 s is skipped). Moderation lines
+       ("queue"): all, in order, each reported back (/commentary/played/<id>)
+       — the show waits for that; a cancelled one stops at once.
+       Avatar: drives VTube Studio's MouthOpen from the loudness of what is
+       playing (VTS → Settings → "Start API", port ?vts_port=8001; the first
+       time VTS asks to allow the plugin "CAS Regie"). ?vts=0 switches it off.
+       ?vol=0..1, ?debug=1 / H shows the status. */
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { background: rgba(0,0,0,0); overflow: hidden; }
     body { font-family: 'Segoe UI', Arial, sans-serif; color: #e6e6ea; font-size: 14px; padding: 8px; }
@@ -4492,6 +4594,8 @@ VOICE_HTML = r"""<!DOCTYPE html>
     body.debug-mode #st { display: block; }
     #st b { color: #22d3ee; }
     #st .err { color: #f87171; }
+    #mouth { display: inline-block; width: 60px; height: 8px; background: #333; vertical-align: middle; }
+    #mouth i { display: block; height: 100%; width: 0; background: #22d3ee; }
 </style></head>
 <body>
 <div id="st"></div>
@@ -4500,10 +4604,21 @@ const qs = new URLSearchParams(location.search);
 if (qs.get('debug') === '1') document.body.classList.add('debug-mode');
 document.addEventListener('keydown', e => { if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('debug-mode'); });
 const WAIT = parseFloat(qs.get('wait') || '8'), MAXAGE = parseFloat(qs.get('maxage') || '15');
+const QWAIT = 25, QMAXAGE = 300;          // moderation: waits longer, never "too old" for a show
 const audio = new Audio();
 audio.volume = Math.max(0, Math.min(1, parseFloat(qs.get('vol') || '1')));
-let lastId = null, playing = false, said = '', blocked = false, info = {};
-audio.onended = audio.onerror = () => { playing = false; };
+let lastId = null, playing = null, said = '', blocked = false, info = {};
+const doneQ = new Set();                  // queue lines played / skipped here
+function finish() {
+    if (playing && playing.queue) ack(playing.id);
+    playing = null;
+}
+audio.onended = finish;
+audio.onerror = finish;
+function ack(id) {
+    doneQ.add(id);
+    fetch('/commentary/played/' + id, {method: 'POST'}).catch(() => {});
+}
 function esc(t) { return String(t || '').replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[c])); }
 function render() {
     const v = info.voice || {};
@@ -4511,34 +4626,129 @@ function render() {
         '<b>STIMME</b> · REGIE ' + (info.enabled ? 'an' : 'aus') + ' · Modus ' + esc(v.mode) +
         ' · Engine ' + esc(v.engine || '–') + ' · ' + esc(v.voice) +
         (playing ? ' · <b>spricht</b>' : '') +
+        '<br>Avatar (VTube Studio): ' + esc(vtsState) + ' <span id="mouth"><i id="mi"></i></span>' +
         (blocked ? '<br><span class="err">Browser blockiert Ton – einmal in die Seite klicken (in OBS nicht nötig)</span>' : '') +
         (v.last_error ? '<br><span class="err">' + esc(v.last_error) + '</span>' : '') +
         (said ? '<br>zuletzt: ' + esc(said) : '');
+}
+async function play(line) {
+    audio.src = '/commentary/audio/' + line.id;
+    playing = line; said = line.text;
+    try { ensureGraph(); await audio.play(); blocked = false; }
+    catch (e) { playing = null; blocked = true; }
+    render();
 }
 async function tick() {
     let d;
     try { d = await (await fetch('/commentary?voice=1', { cache: 'no-store' })).json(); } catch (e) { return; }
     info = d; render();
-    const lines = d.lines || [];
-    if (lastId === null) { lastId = lines.length ? lines[0].id : 0; return; }   // skip history on load
-    if (!d.enabled || playing) return;
-    const fresh = lines.filter(l => l.id > lastId);
+    const lines = d.lines || [], now = d.now || 0;
+    // a moderation line cut short by the operator ("next" / "stop")
+    if (playing && playing.queue) {
+        const cur = lines.find(l => l.id === playing.id);
+        if (cur && cur.cancelled) { audio.pause(); playing = null; }
+    }
+    if (lastId === null) {                   // skip commentary history on load (not the show)
+        const plain = lines.filter(l => !l.queue);
+        lastId = plain.length ? plain[0].id : 0;
+    }
+    if (playing) return;
+    // 1) moderation: oldest open line first, all of them, in order
+    const q = lines.filter(l => l.queue && !l.played && !l.cancelled && !doneQ.has(l.id))
+                   .sort((a, b) => a.id - b.id);
+    if (q.length) {
+        const l = q[0], age = now - l.t;
+        if (age > QMAXAGE) { ack(l.id); return; }
+        if (!l.audio) { if (age > QWAIT) ack(l.id); return; }   // no audio coming: let the show go on
+        return play(l);
+    }
+    // 2) commentary: newest only
+    if (!d.enabled) return;
+    const fresh = lines.filter(l => !l.queue && l.id > lastId);
     if (!fresh.length) return;
-    const top = fresh[0];                                   // newest only
-    const age = (d.now || 0) - top.t;
+    const top = fresh[0], age = now - top.t;
     if (age > MAXAGE) { lastId = top.id; return; }
     if (!top.audio) { if (age > WAIT) lastId = top.id; return; }
     lastId = top.id;
-    audio.src = '/commentary/audio/' + top.id;
-    playing = true; said = top.text;
-    try { await audio.play(); blocked = false; } catch (e) { playing = false; blocked = true; }
-    render();
+    play(top);
 }
 document.addEventListener('click', () => {      // unlock sound in a normal browser
+    if (ac) ac.resume();
     if (!blocked) return;
-    blocked = false; playing = true;
-    audio.play().catch(() => { playing = false; blocked = true; });
+    blocked = false;
+    audio.play().catch(() => { blocked = true; });
 });
+
+// --- avatar: VTube Studio mouth from the loudness of the voice ---------------
+let ac = null, analyser = null, buf = null, mouth = 0, lastSend = 0, idleSent = 0;
+function ensureGraph() {
+    if (ac) { ac.resume(); return; }
+    try {
+        ac = new (window.AudioContext || window.webkitAudioContext)();
+        const src = ac.createMediaElementSource(audio);
+        analyser = ac.createAnalyser(); analyser.fftSize = 1024;
+        buf = new Float32Array(analyser.fftSize);
+        src.connect(analyser); analyser.connect(ac.destination);
+        ac.resume();
+    } catch (e) { ac = null; }
+}
+const VTS_ON = qs.get('vts') !== '0', VTS_PORT = qs.get('vts_port') || '8001';
+const PLUGIN = {pluginName: 'CAS Regie', pluginDeveloper: 'CAS iRacing Overlays'};
+let vts = null, vtsOk = false, vtsState = VTS_ON ? 'nicht verbunden' : 'aus', vtsToken = '', reqN = 0;
+function vtsSend(type, data) {
+    if (!vts || vts.readyState !== 1) return;
+    vts.send(JSON.stringify({apiName: 'VTubeStudioPublicAPI', apiVersion: '1.0',
+                             requestID: 'r' + (++reqN), messageType: type, data: data || {}}));
+}
+async function vtsConnect() {
+    if (!VTS_ON || (vts && vts.readyState <= 1)) return;
+    try { vtsToken = (await (await fetch('/commentary/vts_token')).json()).token || ''; } catch (e) {}
+    try { vts = new WebSocket('ws://127.0.0.1:' + VTS_PORT); } catch (e) { return; }
+    vts.onopen = () => {
+        vtsState = 'verbunden, Anmeldung …';
+        if (vtsToken) vtsSend('AuthenticationRequest', Object.assign({authenticationToken: vtsToken}, PLUGIN));
+        else { vtsState = 'in VTube Studio „Erlauben“ klicken'; vtsSend('AuthenticationTokenRequest', PLUGIN); }
+    };
+    vts.onmessage = ev => {
+        let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+        if (m.messageType === 'AuthenticationTokenResponse') {
+            vtsToken = m.data.authenticationToken;
+            fetch('/commentary/vts_token', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                            body: JSON.stringify({token: vtsToken})}).catch(() => {});
+            vtsSend('AuthenticationRequest', Object.assign({authenticationToken: vtsToken}, PLUGIN));
+        } else if (m.messageType === 'AuthenticationResponse') {
+            vtsOk = !!m.data.authenticated;
+            vtsState = vtsOk ? 'verbunden' : 'Anmeldung abgelehnt – neu anfragen';
+            if (!vtsOk) { vtsToken = ''; vtsSend('AuthenticationTokenRequest', PLUGIN); }
+        } else if (m.messageType === 'APIError') {
+            vtsState = 'Fehler: ' + (m.data && m.data.message);
+            if (m.data && (m.data.errorID === 50 || m.data.errorID === 8)) vtsOk = false;   // denied / not authenticated
+        }
+    };
+    vts.onclose = () => { vtsOk = false; if (VTS_ON) vtsState = 'nicht verbunden (VTube Studio offen? API an?)'; };
+    vts.onerror = () => {};
+}
+setInterval(() => {
+    let level = 0;
+    if (analyser && playing && !audio.paused) {
+        analyser.getFloatTimeDomainData(buf);
+        let sum = 0; for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+        const rms = Math.sqrt(sum / buf.length);
+        level = Math.max(0, Math.min(1, (rms - 0.01) * 9));
+    }
+    mouth = level > mouth ? mouth * 0.3 + level * 0.7 : mouth * 0.6 + level * 0.4;   // quick open, softer close
+    const mi = document.getElementById('mi'); if (mi) mi.style.width = Math.round(mouth * 100) + '%';
+    const t = Date.now();
+    if (!vtsOk) return;
+    // VTS keeps an injected value ~1 s: send while speaking, then zeros for a moment
+    if (playing || mouth > 0.02) { if (t - lastSend >= 40) { lastSend = t; idleSent = 0;
+        vtsSend('InjectParameterDataRequest', {faceFound: false, mode: 'set',
+                parameterValues: [{id: 'MouthOpen', value: mouth}]}); } }
+    else if (idleSent < 3 && t - lastSend >= 300) { lastSend = t; idleSent++;
+        vtsSend('InjectParameterDataRequest', {faceFound: false, mode: 'set',
+                parameterValues: [{id: 'MouthOpen', value: 0}]}); }
+}, 33);
+setInterval(vtsConnect, 10000); vtsConnect();
 setInterval(tick, 400); tick();
 </script></body></html>
 """
@@ -4548,6 +4758,140 @@ setInterval(tick, 400); tick();
 def commentary_voice():
     from flask import Response
     return Response(VOICE_HTML, mimetype="text/html")
+
+
+SHOW_HTML = r"""<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><title>Sendeablauf</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+    /* SENDEABLAUF operator page (show_runner.py, 2026-10-15) */
+    :root { --bg: #14161b; --panel: #1d2027; --line: #2c3039; --text: #e8e8ec; --dim: #9aa0ab;
+            --acc: #22d3ee; --ok: #34d399; --bad: #f87171; --warn: #fbbf24; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 'Segoe UI', Arial, sans-serif; }
+    main { max-width: 980px; margin: 0 auto; padding: 16px; }
+    h1 { font-size: 20px; margin: 0 0 12px; } h1 span { color: var(--acc); }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+    button { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+             padding: 9px 14px; font-size: 15px; cursor: pointer; }
+    button.go { border-color: var(--ok); } button.stop { border-color: var(--bad); }
+    button:hover { background: #262a33; }
+    .pill { padding: 3px 10px; border-radius: 99px; background: var(--panel); border: 1px solid var(--line); }
+    .pill.running { border-color: var(--ok); color: var(--ok); } .pill.stopped { border-color: var(--bad); color: var(--bad); }
+    .pill.done { border-color: var(--acc); color: var(--acc); }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; }
+    .seg { border-left: 3px solid var(--line); padding: 6px 10px; margin: 8px 0; }
+    .seg.cur { border-left-color: var(--ok); background: #1f2a26; }
+    .seg b { color: var(--acc); text-transform: uppercase; font-size: 12px; letter-spacing: 1px; }
+    .err { color: var(--bad); } .dim { color: var(--dim); } .ok { color: var(--ok); }
+    pre { white-space: pre-wrap; font-size: 12px; color: var(--dim); max-height: 260px; overflow: auto; }
+    ul { margin: 4px 0; padding-left: 18px; }
+</style></head>
+<body><main>
+<h1>Sendeablauf <span>KI</span></h1>
+<div class="row">
+  <span class="pill" id="state">–</span>
+  <span id="when" class="dim"></span>
+</div>
+<div class="row">
+  <button class="go" onclick="act('start')">▶ Moderation starten</button>
+  <button onclick="act('next')">⏭ Nächster Abschnitt</button>
+  <button class="stop" onclick="act('stop')">■ Stopp</button>
+  <button onclick="act('prepare')">✎ Skript neu schreiben</button>
+  <button onclick="check()">OBS prüfen</button>
+</div>
+<div id="err" class="err"></div>
+<div class="card" id="obs" style="display:none"></div>
+<div class="card"><div class="dim" id="src"></div><div id="script"></div></div>
+<div class="card"><div class="dim">Protokoll</div><ul id="log"></ul></div>
+<div class="card"><details><summary class="dim">Fakten für das Skript</summary><pre id="facts"></pre></details></div>
+<script>
+const NAMES = {intro: 'Begrüßung', last_race: 'Letztes Rennen', standings: 'Tabelle', track: 'Strecke', outro: 'Übergabe'};
+function esc(t) { return String(t ?? '').replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[c])); }
+async function act(a) {
+    const r = await fetch('/show/' + a, {method: 'POST'}); const d = await r.json();
+    if (!d.ok) document.getElementById('err').textContent = d.error || 'Fehler';
+    setTimeout(tick, 300);
+}
+async function check() {
+    const el = document.getElementById('obs'); el.style.display = 'block'; el.textContent = 'prüfe OBS …';
+    const d = await (await fetch('/show/check')).json();
+    if (!d.ok) { el.innerHTML = '<span class="err">' + esc(d.error) + '</span>'; return; }
+    el.innerHTML = '<div class="dim">OBS: ' + (d.streaming ? '<span class="ok">streamt</span>' : 'streamt nicht') +
+        ' · Szene jetzt: ' + esc(d.current) + '</div><ul>' +
+        d.items.map(i => '<li class="' + (i.found ? 'ok' : 'err') + '">' + (i.found ? '✓ ' : '✗ fehlt: ') +
+                    esc(i.what) + ' „' + esc(i.name) + '“</li>').join('') + '</ul>';
+}
+async function tick() {
+    let d; try { d = await (await fetch('/show/status')).json(); } catch (e) { return; }
+    const st = document.getElementById('state');
+    st.textContent = {idle: 'bereit', preparing: 'schreibt Skript …', running: 'läuft', done: 'fertig – REGIE übernimmt',
+                      stopped: 'gestoppt'}[d.state] || d.state;
+    st.className = 'pill ' + d.state;
+    document.getElementById('when').textContent = d.auto_start
+        ? 'Automatischer Start ' + d.start_at + ' Uhr, wenn OBS streamt' + (d.ran_today ? ' (heute schon gelaufen)' : '')
+        : 'Automatischer Start aus';
+    document.getElementById('err').textContent = d.last_error || '';
+    document.getElementById('src').textContent = d.script_source
+        ? 'Skript: ' + (d.script_source === 'claude' ? 'von Claude' : 'Vorlagen (kein API-Key / Fehler)') : 'Noch kein Skript – wird 5 Min. vor dem Start geschrieben';
+    document.getElementById('script').innerHTML = (d.segments || []).map(s =>
+        '<div class="seg' + (s === d.segment ? ' cur' : '') + '"><b>' + esc(NAMES[s] || s) + '</b><br>' +
+        esc(d.script[s]) + '</div>').join('');
+    document.getElementById('log').innerHTML = (d.log || []).slice().reverse().slice(0, 12)
+        .map(l => '<li>' + new Date(l.t * 1000).toLocaleTimeString() + ' ' + esc(l.msg) + '</li>').join('');
+    document.getElementById('facts').textContent = JSON.stringify(d.facts || {}, null, 2);
+}
+setInterval(tick, 1500); tick();
+</script></main></body></html>
+"""
+
+
+@app.route("/show")
+def show_page():
+    from flask import Response
+    return Response(SHOW_HTML, mimetype="text/html")
+
+
+@app.route("/show/status")
+def show_status():
+    return jsonify(poller.show.status())
+
+
+@app.route("/show/check")
+def show_check():
+    """Are the scenes / sources of show_config.json there in OBS?"""
+    cfg = poller.show.cfg
+    try:
+        scenes = poller.show_obs.scenes()
+        items = []
+        for key, name in cfg["scenes"].items():
+            items.append({"what": "Szene", "name": name, "found": name in scenes})
+        mod = cfg["scenes"].get("moderator")
+        srcs = poller.show_obs.scene_items(mod) if mod in scenes else {}
+        for key, name in (cfg.get("sources") or {}).items():
+            if name:
+                items.append({"what": f"Quelle in {mod}", "name": name, "found": name in srcs})
+        return jsonify({"ok": True, "items": items, "current": poller.show_obs.current_scene(),
+                        "streaming": poller.show_obs.streaming()})
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"OBS: {e} – OBS offen? Werkzeuge → WebSocket-Server "
+                                              f"aktiviert (Port {cfg['obs'].get('port')})?"})
+
+
+@app.route("/show/<action>", methods=["POST"])
+def show_action(action):
+    sh = poller.show
+    if action == "start":
+        threading.Thread(target=sh.start, daemon=True).start()
+    elif action == "next":
+        sh.next()
+    elif action == "stop":
+        sh.stop()
+    elif action == "prepare":
+        threading.Thread(target=sh.prepare, daemon=True).start()
+    else:
+        return jsonify({"ok": False, "error": f"unknown action {action}"})
+    return jsonify({"ok": True})
 
 
 @app.route("/focus_leader", methods=["POST"])
@@ -4841,6 +5185,17 @@ def streamdeck(action, param=None):
         poller.set_director(not poller.director_enabled)
         ok, msg = True, f"director={'on' if poller.director_enabled else 'off'}"
 
+    # --- show runner (Sendeablauf) ---
+    elif action == "show_start":
+        threading.Thread(target=poller.show.start, daemon=True).start()
+        ok, msg = True, "show starting"
+    elif action == "show_next":
+        poller.show.next()
+        ok, msg = True, f"show segment={poller.show.seg['id'] if poller.show.seg else None}"
+    elif action == "show_stop":
+        poller.show.stop()
+        ok, msg = True, "show stopped"
+
     elif action == "toggle_auto_replay":
         poller.set_auto_replay(not poller.auto_replay)
         ok, msg = True, f"auto_replay={'on' if poller.auto_replay else 'off'}"
@@ -4962,6 +5317,7 @@ def streamdeck(action, param=None):
 if __name__ == "__main__":
     t = threading.Thread(target=poller.run, daemon=True)
     t.start()
+    poller.show.run_forever()          # SENDEABLAUF: auto start at start_at while OBS streams
 
     print("\n" + "=" * 60)
     print("  iRacing Broadcast Dashboard v8")
@@ -4978,6 +5334,7 @@ if __name__ == "__main__":
     print("  REGIE on/off      http://localhost:5000/streamdeck/toggle_director")
     print("  Commentary (OBS)  http://localhost:5000/commentary/overlay")
     print("  Voice (OBS audio) http://localhost:5000/commentary/voice")
+    print("  Sendeablauf       http://localhost:5000/show   (Stream Deck: /streamdeck/show_start|show_next|show_stop)")
     print("  List cameras      http://localhost:5000/cameras?format=text")
     print("  Driver next/prev  http://localhost:5000/streamdeck/driver_next")
     print("  Toggle follow     http://localhost:5000/streamdeck/toggle_auto_follow")

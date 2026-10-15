@@ -31,7 +31,7 @@ der Taste leer lassen (der Name steht schon im Bild).
   Zustand 2 (versteckt) = gleiches Bild aus `overlays_off/`. Das Stream Deck
   zeigt dann immer an, ob das Overlay gerade im Bild ist.
 - **Dashboard-Schalter** (`auto_follow`, `auto_replay`, `auto_replay_ot`,
-  `hide_ui`): die Website-Aktion hat nur einen Zustand. Für Farbe/Grau die
+  `hide_ui`, `regie`): die Website-Aktion hat nur einen Zustand. Für Farbe/Grau die
   Taste als **Multi-Action-Wechsel** (Multi Action Switch) anlegen, in beide
   Zustände dieselbe Website-URL, Bilder aus `dashboard/` und
   `dashboard_off/`. Achtung: das Stream Deck merkt sich nur seine eigenen
@@ -119,7 +119,10 @@ URL wie unten. Das Dashboard (Port 5000) muss laufen.
 | `auto_follow.png` | `http://localhost:5000/streamdeck/toggle_auto_follow` |
 | `auto_replay.png` | `http://localhost:5000/streamdeck/toggle_auto_replay` |
 | `auto_replay_ot.png` | `http://localhost:5000/streamdeck/toggle_auto_replay_overtakes` |
-| (noch kein Bild) | `http://localhost:5000/streamdeck/toggle_director` — REGIE an/aus |
+| `regie.png` | `http://localhost:5000/streamdeck/toggle_director` — REGIE an/aus (grau: `dashboard_off/regie.png`) |
+| `show_start.png` | `http://localhost:5000/streamdeck/show_start` — KI-Moderation jetzt starten |
+| `show_next.png` | `http://localhost:5000/streamdeck/show_next` — nächster Moderations-Abschnitt |
+| `show_stop.png` | `http://localhost:5000/streamdeck/show_stop` — Moderation abbrechen |
 
 ## Seiten als Fenster öffnen (z. B. auf dem Hochkant-Monitor)
 
@@ -131,6 +134,7 @@ jeweilige Overlay muss im Launcher gestartet sein (das Dashboard für das
 | Datei | URL | Seite |
 |---|---|---|
 | `dashboard/ot_panel.png` | `http://localhost:5000/overtakes/panel` | Überhol-Fenster: Replay 10 s / 20 s, Kamera, Auto-Replay, Go Live |
+| `dashboard/show_page.png` | `http://localhost:5000/show` | Sendeablauf: Skript lesen, starten, weiter, stoppen, OBS prüfen |
 | `overlays/dashboard.png` | `http://localhost:5000` | ganzes Dashboard |
 | `overlays/logger.png` | `http://localhost:5009` | Race Logger Monitor |
 | — | `http://localhost:8080` | Race Control (Stewards) |
