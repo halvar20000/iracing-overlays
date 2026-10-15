@@ -123,8 +123,23 @@ def _num(v, default: float) -> float:
         return default
 
 
+_ONES = ["null", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun",
+         "zehn", "elf", "zwölf", "dreizehn", "vierzehn", "fünfzehn", "sechzehn", "siebzehn",
+         "achtzehn", "neunzehn"]
+_TENS = {2: "zwanzig", 3: "dreißig", 4: "vierzig", 5: "fünfzig", 6: "sechzig", 7: "siebzig",
+         8: "achtzig", 9: "neunzig"}
+
+
+def _de(n: int) -> str:
+    """0..99 as a German word — the voice then cannot read the digits its own way."""
+    if n < 20:
+        return _ONES[n]
+    t, o = divmod(n, 10)
+    return _TENS[t] if not o else ("ein" if o == 1 else _ONES[o]) + "und" + _TENS[t]
+
+
 def _two(n: int) -> str:
-    return f"null {n}" if n < 10 else str(n)
+    return f"null {_ONES[n]}" if n < 10 else _de(n)
 
 
 def _say_lap(m) -> str:
@@ -132,7 +147,7 @@ def _say_lap(m) -> str:
     seconds, hundredths — how a commentator reads a lap time)."""
     mins, secs = int(m.group(1)), int(m.group(2))
     hund = min(99, round(int(m.group(3).ljust(3, "0")) / 10))
-    return f"{'eins' if mins == 1 else mins} {_two(secs)} {_two(hund)}"
+    return f"{_de(mins)} {_two(secs)} {_two(hund)}"
 
 
 PRONOUNCE = {"CAS": "Kas"}

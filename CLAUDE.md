@@ -479,7 +479,7 @@ vts_token.json gitignored + PROTECTED; requirements + websocket-client.
 Moderation speech: `Commentator.say_show()` → line kind "show", `queue`
 (never replaced), `played` / `cancelled` sets, POST /commentary/played/<id>;
 Voice `keep=True` lines are all made in order (commentary still newest-only),
-`speakable()` reads 1:39,512 as "eins 39 51" (commentator style, hundredths; was "1 39 Komma 5 1 2") and 0,44 as "0 Komma 4 4";
+`speakable()` reads 1:39,512 as "eins neununddreißig einundfünfzig" (WORDS — checked with vosk ASR: edge-tts read "eins 49 38" digit by digit) and 0,44 as "0 Komma 4 4";
 a listener appearing late gets the open show lines voiced (first e2e run:
 the page loaded 9 s after the start, the intro was never made). Voice page:
 queue lines first, oldest first, ack each, stop on cancel; commentary as
