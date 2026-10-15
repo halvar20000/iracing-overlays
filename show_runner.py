@@ -52,6 +52,13 @@ DEFAULT_CONFIG = {
         "last_race": "Letztes Rennen",
         "standings": "Tabelle",
         "track_video": "Streckenvideo",
+        # Pro/Am seasons: one source per class (5010 /lastrace/pro, /lastrace/am,
+        # /table/pro, /table/am). Missing in OBS -> the plain source above,
+        # pinned to the class.
+        "last_race_pro": "Letztes Rennen PRO",
+        "last_race_am": "Letztes Rennen AM",
+        "standings_pro": "Tabelle PRO",
+        "standings_am": "Tabelle AM",
     },
     "segments": ["intro", "last_race", "standings", "track", "outro"],
     "auto_start": True,
@@ -66,8 +73,10 @@ DEFAULT_CONFIG = {
     "champ_url": "http://127.0.0.1:5010/api/roundinfo",
 }
 SEGMENT_SOURCES = {"last_race": "last_race", "standings": "standings",
-                   "last_race_pro": "last_race", "last_race_am": "last_race",
-                   "standings_pro": "standings", "standings_am": "standings"}
+                   "last_race_pro": "last_race_pro", "last_race_am": "last_race_am",
+                   "standings_pro": "standings_pro", "standings_am": "standings_am"}
+CLASS_SOURCE_FALLBACK = {"last_race_pro": "last_race", "last_race_am": "last_race",
+                         "standings_pro": "standings", "standings_am": "standings"}
 # Pro/Am seasons (WCT GT3): results and table are talked about per class, and
 # the championship pages (5010) are pinned to that class while it is spoken.
 SEGMENT_CLASS = {"last_race_pro": "pro", "last_race_am": "am",
@@ -479,6 +488,7 @@ class ShowRunner:
         self._thread = None
         self._preparing = False
         self._shown = None             # source kept up across PRO -> AM segments
+        self._items = None             # source names in the Moderator scene (read at start)
         self.order: list = []          # all segments the script was written for (an emptied one is skipped)
         self.edited = False            # changed by hand on /show -> no automatic rewrite
         self.store = store             # Path to keep the script across restarts (None = memory only)
@@ -587,8 +597,14 @@ class ShowRunner:
                 return
             self._obs(lambda: self.obs.set_scene(self.cfg["scenes"]["moderator"]),
                       "Szene Moderator")
+            try:
+                self._items = set(self.obs.scene_items(self.cfg["scenes"]["moderator"]))
+            except Exception:
+                self._items = None             # unknown: try the class sources
             for key in set(SEGMENT_SOURCES.values()) | {"track_video"}:   # nothing left on from a rehearsal
-                self._source(key, False)
+                name = (self.cfg.get("sources") or {}).get(key)
+                if name and (self._items is None or name in self._items):
+                    self._source(key, False)
             self._shown = None
             self._pin(None)
             self.seg_i = -1
@@ -683,6 +699,17 @@ class ShowRunner:
             self._note(self.last_error)
             return False
 
+    def _src_key(self, sid):
+        """Source key for a segment: a class segment uses its own source when it
+        exists in the Moderator scene, else the plain one (pinned to the class)."""
+        key = SEGMENT_SOURCES.get(sid)
+        fb = CLASS_SOURCE_FALLBACK.get(key)
+        if fb:
+            name = (self.cfg.get("sources") or {}).get(key)
+            if not name or (self._items is not None and name not in self._items):
+                return fb
+        return key
+
     def _pin(self, cls):
         try:
             self.pin(cls)
@@ -705,9 +732,12 @@ class ShowRunner:
         seg = {"id": sid, "ids": [], "started": self.clock(), "media": None}
         if sid in SEGMENT_SOURCES:
             self._pin(SEGMENT_CLASS.get(sid))
-            if self._shown != SEGMENT_SOURCES[sid]:
-                self._source(SEGMENT_SOURCES[sid], True)
-                self._shown = SEGMENT_SOURCES[sid]
+            key = self._src_key(sid)
+            if self._shown != key:
+                if self._shown:
+                    self._source(self._shown, False)
+                self._source(key, True)
+                self._shown = key
         if sid == "track" and (self.cfg.get("sources") or {}).get("track_video") \
                 and self.cfg.get("video_after_speech", True):
             seg["video_pending"] = self.cfg["sources"]["track_video"]   # started once the text is spoken
@@ -766,9 +796,10 @@ class ShowRunner:
         if not seg:
             return
         if seg["id"] in SEGMENT_SOURCES:
-            src = SEGMENT_SOURCES[seg["id"]]
+            src = self._src_key(seg["id"])
             nxt = self.segments[self.seg_i + 1] if 0 <= self.seg_i + 1 < len(self.segments) else None
-            if not (self.state == "running" and SEGMENT_SOURCES.get(nxt) == src):   # PRO -> AM: stays up
+            if not (self.state == "running" and nxt in SEGMENT_SOURCES
+                    and self._src_key(nxt) == src):        # one shared page PRO -> AM: stays up
                 self._source(src, False)
                 self._shown = None
                 self._pin(None)

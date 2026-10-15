@@ -314,6 +314,30 @@ check("pro/am: results stay visible through both classes",
 shows = [c[1] for c in obs7.calls if c[0] == "SetSceneItemEnabled" and c[1].get("sceneItemEnabled")]
 check("pro/am: each page shown once", len(shows) == 3, shows)   # results, table, video
 
+# own source per class: PRO page only while PRO is talked about, AM page only for AM
+SC4 = {"Moderator": {"Letztes Rennen": False, "Tabelle": False, "Streckenvideo": False,
+                     "Letztes Rennen PRO": False, "Letztes Rennen AM": True, "Tabelle PRO": False,
+                     "Tabelle AM": False}, "iRacing": {}}
+obs9 = FakeObs(SC4, media={"Streckenvideo": 0.2})
+c9 = sr.load_config(); c9["obs"] = {"host": "127.0.0.1", "port": obs9.port}
+r9 = sr.ShowRunner(c9, ObsClient(port=obs9.port), Speaker(), facts_fn=lambda: pa,
+                   script_fn=lambda f, s: (sr.template_script(c9, f, s), "template"), director_on=lambda: None)
+vis9 = []
+def w9():
+    r9.tick()
+    v = tuple(sorted(k for k, x in obs9.scenes["Moderator"].items() if x))
+    sid = r9.seg["id"] if r9.seg else None
+    if not vis9 or vis9[-1] != (sid, v):
+        vis9.append((sid, v))
+r9.start()
+check("class sources: run completes", wait_for(lambda: r9.state == "done", 20, tick=w9), r9.status()["log"])
+want = {"last_race_pro": "Letztes Rennen PRO", "last_race_am": "Letztes Rennen AM",
+        "standings_pro": "Tabelle PRO", "standings_am": "Tabelle AM"}
+bad = [(sid, v) for sid, v in vis9 if sid in want and v and v != (want[sid],)]
+check("class sources: exactly the class page per segment (stale AM page hidden at start)",
+      not bad and all(any(sid == k and v == (n,) for sid, v in vis9) for k, n in want.items()), vis9)
+check("class sources: plain pages never used", not any("Letztes Rennen" in v or "Tabelle" in v for _, v in vis9))
+
 # hand edits: kept, empty segment skipped, survive a restart, never rewritten automatically
 with tempfile.TemporaryDirectory() as td:
     store = Path(td) / "show_script.json"

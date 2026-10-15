@@ -513,7 +513,13 @@ was a second voice page / stale OBS cache; the next run played every line.
 is never rewritten automatically for 12 h and survives restarts in
 show_script.json — gitignored + PROTECTED). Track segment: text FIRST, then
 the video (`video_after_speech`, default true; false = old talk-over, sized
-to the video). test_show_runner.py 64/64.
+to the video). Pro/Am: own OBS sources per class ("Letztes Rennen PRO/AM",
+"Tabelle PRO/AM" = 5010 /lastrace/pro|am, /table/pro|am, loaders
+lastrace_pro/_am, table_pro/_am → 46 generated loaders); missing in the scene → the
+plain source + pin (CLASS_SOURCE_FALLBACK). speakable(): "AM" → "A M",
+"PRO" → "Pro" (edge-tts read AM as the word "am"). Voice page resets its
+played set when the dashboard restarts (/commentary `boot`).
+test_show_runner.py 67/67.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

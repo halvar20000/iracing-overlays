@@ -1843,10 +1843,11 @@ if (qs.get('glass') === '1') document.body.classList.add('glass');
 const zoom = parseFloat(qs.get('zoom') || '1');
 if (zoom > 0 && zoom !== 1) document.body.style.zoom = zoom;
 document.addEventListener('keydown', e => { if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('debug-mode'); });
-const MODE = location.pathname.replace(/^\/+|\/+$/g, '') || 'lastrace';
+const PATH = location.pathname.replace(/^\/+|\/+$/g, '').split('/');
+const MODE = PATH[0] || 'lastrace';     // /lastrace/pro, /table/am = that class only
 const TOP = parseInt(qs.get('top') || '0', 10);
 const RACE_Q = (qs.get('race') || '').toLowerCase();   // '1' | '2' | 'combined' | '' (cycle)
-const CLASS_Q = (qs.get('class') || '').toLowerCase(); // /table: 'pro' | 'am' | 'all' | '' (cycle)
+const CLASS_Q = (qs.get('class') || PATH[1] || '').toLowerCase(); // 'pro' | 'am' | 'all' | '' (cycle)
 // The AI moderation pins the class it is talking about (/api/prerace_pin,
 // polled every second): that class only and, on /lastrace, the round's
 // combined result when there is one. ?class= on the source still wins.
@@ -2123,10 +2124,14 @@ load(); setInterval(load, 15000); setInterval(draw, 1000); setInterval(loadPin, 
 
 @app.route("/lastrace")
 @app.route("/table")
+@app.route("/lastrace/<cls>")      # /lastrace/pro, /lastrace/am, /table/pro, /table/am:
+@app.route("/table/<cls>")         # one class only (own OBS source per class)
 @app.route("/rsvp")
 @app.route("/stats")
 @app.route("/lastdotd")
-def prerace_page():
+def prerace_page(cls=None):
+    if cls is not None and cls not in ("pro", "am"):
+        return ("", 404)
     return Response(PRERACE_HTML, mimetype="text/html")
 
 

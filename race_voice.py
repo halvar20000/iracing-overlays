@@ -125,9 +125,13 @@ def _num(v, default: float) -> float:
 
 def speakable(text: str) -> str:
     """Numbers the way a commentator says them: lap time 1:39,512 ->
-    '1 39 Komma 5 1 2' (not 'ein Uhr neununddreißig'), 0,44 -> '0 Komma 4 4'."""
+    '1 39 Komma 5 1 2' (not 'ein Uhr neununddreißig'), 0,44 -> '0 Komma 4 4',
+    the class AM -> 'A M', PRO -> 'Pro'."""
     text = _LAP.sub(lambda m: f"{int(m.group(1))} {m.group(2)} Komma {' '.join(m.group(3))}", text)
     text = _DEC.sub(lambda m: f"{m.group(1)} Komma {' '.join(m.group(2))}", text)
+    # Pro/Am classes: "AM" spelled A M (not the German word "am"), "PRO" as the word Pro
+    text = re.sub(r"\bAM\b", "A M", text)
+    text = re.sub(r"\bPRO\b", "Pro", text)
     return text
 
 

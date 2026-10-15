@@ -160,6 +160,8 @@ v9.say(7, "nobody listens", keep=True)
 check("not requested while nobody listens", 7 not in v9.requested)
 check("speakable lap time", rv.speakable("Pole mit 1:39,512!") == "Pole mit 1 39 Komma 5 1 2!"
       and rv.speakable("0,44 Sekunden") == "0 Komma 4 4 Sekunden")
+check("speakable classes", rv.speakable("Die AM-Klasse, am Ende PRO und AM.") == "Die A M-Klasse, am Ende Pro und A M.",
+      rv.speakable("Die AM-Klasse, am Ende PRO und AM."))
 
 if "--live" in sys.argv:
     t = time.time()

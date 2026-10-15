@@ -62,6 +62,7 @@ Loader-Datei verwenden).
 |---|---|---|---|
 | Letzte Runde: Rennen 1 → 2 → Combined | 5010 `/lastrace` | `lastrace.html` | ✓ 576 × 600 (+27 px je Fahrer über 20) |
 | Tabelle vor der Runde | 5010 `/table` | `table.html` | ✓ 576 × 780 |
+| Pro/Am: nur eine Klasse (KI-Moderation) | 5010 `/lastrace/pro`, `/lastrace/am`, `/table/pro`, `/table/am` | `lastrace_pro.html`, `lastrace_am.html`, `table_pro.html`, `table_am.html` | ✓ wie oben |
 | RSVP-Übersicht | 5010 `/rsvp` | `rsvp.html` | ✓ 576 × 170 |
 | Saison-Statistik | 5010 `/stats` | `stats.html` | ✓ 776 × 400 |
 | Driver of the Day der letzten Runde | 5010 `/lastdotd` | `lastdotd.html` | ✓ 776 × 300 |

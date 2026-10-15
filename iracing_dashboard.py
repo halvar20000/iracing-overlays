@@ -4890,7 +4890,8 @@ async function check() {
     if (!d.ok) { el.innerHTML = '<span class="err">' + esc(d.error) + '</span>'; return; }
     el.innerHTML = '<div class="dim">OBS: ' + (d.streaming ? '<span class="ok">streamt</span>' : 'streamt nicht') +
         ' · Szene jetzt: ' + esc(d.current) + '</div><ul>' +
-        d.items.map(i => '<li class="' + (i.found ? 'ok' : 'err') + '">' + (i.found ? '✓ ' : '✗ fehlt: ') +
+        d.items.map(i => '<li class="' + (i.found ? 'ok' : i.optional ? 'dim' : 'err') + '">' +
+                    (i.found ? '✓ ' : i.optional ? '– nicht da (nur für Pro/Am-Ligen; sonst zeigt die normale Quelle die Klasse): ' : '✗ fehlt: ') +
                     esc(i.what) + ' „' + esc(i.name) + '“</li>').join('') + '</ul>';
 }
 async function tick() {
@@ -4980,7 +4981,8 @@ def show_check():
         srcs = poller.show_obs.scene_items(mod) if mod in scenes else {}
         for key, name in (cfg.get("sources") or {}).items():
             if name:
-                items.append({"what": f"Quelle in {mod}", "name": name, "found": name in srcs})
+                items.append({"what": f"Quelle in {mod}", "name": name, "found": name in srcs,
+                              "optional": key in show_runner.CLASS_SOURCE_FALLBACK})
         return jsonify({"ok": True, "items": items, "current": poller.show_obs.current_scene(),
                         "streaming": poller.show_obs.streaming()})
     except Exception as e:

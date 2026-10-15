@@ -31,7 +31,17 @@ Ablauf nur einmal.
      selbst.
    - dazu der Avatar (siehe 3.) und alles, was sonst dauerhaft zu sehen ist.
 
-   Die drei Quellen blendet der Ablauf selbst ein und aus.
+   - **Nur für Pro/Am-Ligen (WCT GT3):** vier weitere Browserquellen, je eine
+     Klasse, die Namen müssen genau stimmen:
+     `Letztes Rennen PRO` → `obs_loaders\lastrace_pro.html`,
+     `Letztes Rennen AM` → `obs_loaders\lastrace_am.html`,
+     `Tabelle PRO` → `obs_loaders\table_pro.html`,
+     `Tabelle AM` → `obs_loaders\table_am.html`.
+     Dann zeigt das Bild immer genau die Klasse, über die gerade gesprochen
+     wird. Fehlen sie, nimmt der Ablauf die normalen Quellen und stellt dort
+     die Klasse um.
+
+   Diese Quellen blendet der Ablauf selbst ein und aus.
 4. **Stimme:** die Browserquelle `obs_loaders\commentary_voice.html` mit
    **„Audio über OBS steuern“**. Sie muss in **beiden** Szenen liegen, in
    Moderator **und** iRacing, denn OBS gibt nur den Ton der Szene aus, die
