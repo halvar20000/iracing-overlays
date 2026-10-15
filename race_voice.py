@@ -135,7 +135,10 @@ def _say_lap(m) -> str:
     return f"{'eins' if mins == 1 else mins} {_two(secs)} {_two(hund)}"
 
 
-def speakable(text: str) -> str:
+PRONOUNCE = {"CAS": "Kas"}
+
+
+def speakable(text: str, extra: dict | None = None) -> str:
     """Numbers the way a commentator says them: lap time 1:39,512 ->
     'eins 39 51' = "eins neununddreißig einundfünfzig" (not 'ein Uhr
     neununddreißig'), 0,44 -> '0 Komma 4 4',
@@ -145,6 +148,10 @@ def speakable(text: str) -> str:
     # Pro/Am classes: "AM" spelled A M (not the German word "am"), "PRO" as the word Pro
     text = re.sub(r"\bAM\b", "A M", text)
     text = re.sub(r"\bPRO\b", "Pro", text)
+    # names said as a word, not spelled (CAS = "Kas"); more / other in
+    # commentary_config.json "aussprache": {"CAS": "Kas", ...}
+    for word, say in dict(PRONOUNCE, **(extra or {})).items():
+        text = re.sub(rf"\b{re.escape(word)}\b", say, text)
     return text
 
 
@@ -212,7 +219,7 @@ class Voice:
     def synth(self, text: str, now: float | None = None):
         """-> (bytes, mime, engine); raises when every engine failed."""
         now = time.time() if now is None else now
-        text = speakable(text)
+        text = speakable(text, self.cfg.get("aussprache"))
         errors = []
         for name in self._order(now):
             fn = self.engines.get(name)

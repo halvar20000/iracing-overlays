@@ -161,6 +161,9 @@ check("not requested while nobody listens", 7 not in v9.requested)
 check("speakable lap time", rv.speakable("Pole mit 1:39,512!") == "Pole mit eins 39 51!"
       and rv.speakable("1:49.30 und 2:05,048") == "eins 49 30 und 2 null 5 null 5"
       and rv.speakable("0,44 Sekunden") == "0 Komma 4 4 Sekunden")
+check("speakable CAS as a word + own words", rv.speakable("Willkommen bei der CAS GT3 WCT") == "Willkommen bei der Kas GT3 WCT"
+      and rv.speakable("CAS und WCT", {"WCT": "W C T", "CAS": "Kass"}) == "Kass und W C T"
+      and rv.speakable("CASTLE") == "CASTLE")
 check("speakable classes", rv.speakable("Die AM-Klasse, am Ende PRO und AM.") == "Die A M-Klasse, am Ende Pro und A M.",
       rv.speakable("Die AM-Klasse, am Ende PRO und AM."))
 
