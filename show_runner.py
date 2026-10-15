@@ -127,6 +127,18 @@ def fetch_roundinfo(url: str, timeout: float = 5.0, tries: int = 6, wait_s: floa
     return None
 
 
+def _norm(name: str) -> str:
+    return " ".join(str(name).split()).casefold()
+
+
+def match_name(want: str, have) -> str | None:
+    """The OBS source in `have` that is `want`, ignoring case and spacing."""
+    if want in have:
+        return want
+    w = _norm(want)
+    return next((h for h in have if h and _norm(h) == w), None)
+
+
 def pin_class(cfg: dict, cls: str | None, timeout: float = 2.0) -> None:
     """Pin the championship pages (/lastrace, /table on 5010) to a Pro/Am
     class while the moderation talks about it; None releases them."""
@@ -602,7 +614,7 @@ class ShowRunner:
             except Exception:
                 self._items = None             # unknown: try the class sources
             for key in set(SEGMENT_SOURCES.values()) | {"track_video"}:   # nothing left on from a rehearsal
-                name = (self.cfg.get("sources") or {}).get(key)
+                name = self._name(key)
                 if name and (self._items is None or name in self._items):
                     self._source(key, False)
             self._shown = None
@@ -705,10 +717,18 @@ class ShowRunner:
         key = SEGMENT_SOURCES.get(sid)
         fb = CLASS_SOURCE_FALLBACK.get(key)
         if fb:
-            name = (self.cfg.get("sources") or {}).get(key)
+            name = self._name(key)
             if not name or (self._items is not None and name not in self._items):
                 return fb
         return key
+
+    def _name(self, key):
+        """OBS source name for a key — matched to the scene without caring about
+        upper / lower case or extra spaces ("Tabelle Pro" = "Tabelle PRO")."""
+        name = (self.cfg.get("sources") or {}).get(key)
+        if name and self._items:
+            return match_name(name, self._items) or name
+        return name
 
     def _pin(self, cls):
         try:
@@ -717,7 +737,7 @@ class ShowRunner:
             self._note(f"Klasse {cls or 'frei'}: {e}")
 
     def _source(self, key, visible):
-        name = (self.cfg.get("sources") or {}).get(key)
+        name = self._name(key)
         if name:
             self._obs(lambda: self.obs.set_visible(self.cfg["scenes"]["moderator"], name, visible),
                       f"{'zeigen' if visible else 'ausblenden'} {name}")

@@ -4897,7 +4897,9 @@ async function check() {
         ' · Szene jetzt: ' + esc(d.current) + '</div><ul>' +
         d.items.map(i => '<li class="' + (i.found ? 'ok' : i.optional ? 'dim' : 'err') + '">' +
                     (i.found ? '✓ ' : i.optional ? '– nicht da (nur für Pro/Am-Ligen; sonst zeigt die normale Quelle die Klasse): ' : '✗ fehlt: ') +
-                    esc(i.what) + ' „' + esc(i.name) + '“</li>').join('') + '</ul>';
+                    esc(i.what) + ' „' + esc(i.name) + '“' +
+                    (!i.found && i.near && i.near.length ? ' <span class="dim">– in OBS gibt es: ' +
+                        i.near.map(n => '„' + esc(n) + '“').join(', ') + '</span>' : '') + '</li>').join('') + '</ul>';
 }
 async function tick() {
     let d; try { d = await (await fetch('/show/status')).json(); } catch (e) { return; }
@@ -4986,8 +4988,11 @@ def show_check():
         srcs = poller.show_obs.scene_items(mod) if mod in scenes else {}
         for key, name in (cfg.get("sources") or {}).items():
             if name:
-                items.append({"what": f"Quelle in {mod}", "name": name, "found": name in srcs,
-                              "optional": key in show_runner.CLASS_SOURCE_FALLBACK})
+                real = show_runner.match_name(name, srcs)
+                items.append({"what": f"Quelle in {mod}", "name": real or name, "found": bool(real),
+                              "optional": key in show_runner.CLASS_SOURCE_FALLBACK,
+                              "near": [] if real else [h for h in srcs if h and any(
+                                  w in h.casefold() for w in name.casefold().split() if len(w) >= 4)][:4]})
         return jsonify({"ok": True, "items": items, "current": poller.show_obs.current_scene(),
                         "streaming": poller.show_obs.streaming()})
     except Exception as e:

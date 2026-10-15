@@ -522,7 +522,7 @@ plain source + pin (CLASS_SOURCE_FALLBACK). speakable(): "AM" → "A M",
 the recent loudness (peak, ~1 s) so syllable dips close it (~3-4 closes/s
 instead of open all sentence); mouth_gain = how wide (1 → 76 %, 2.5 → 100 %). Voice page resets its
 played set when the dashboard restarts (/commentary `boot`).
-test_show_runner.py 67/67.
+test_show_runner.py 69/69. Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

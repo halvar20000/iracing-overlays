@@ -338,6 +338,26 @@ check("class sources: exactly the class page per segment (stale AM page hidden a
       not bad and all(any(sid == k and v == (n,) for sid, v in vis9) for k, n in want.items()), vis9)
 check("class sources: plain pages never used", not any("Letztes Rennen" in v or "Tabelle" in v for _, v in vis9))
 
+check("source names: case / spaces ignored", sr.match_name("Tabelle PRO", {"tabelle  Pro ", "Tabelle"}) == "tabelle  Pro "
+      and sr.match_name("Tabelle PRO", {"Tabelle"}) is None)
+SC5 = {"Moderator": {"Letztes Rennen": False, "Tabelle": False, "Streckenvideo": False,
+                     "Letztes Rennen Pro": False, "letztes rennen AM": False, "Tabelle Pro ": False,
+                     "Tabelle Am": False}, "iRacing": {}}
+obs10 = FakeObs(SC5, media={"Streckenvideo": 0.2})
+c10 = sr.load_config(); c10["obs"] = {"host": "127.0.0.1", "port": obs10.port}
+r10 = sr.ShowRunner(c10, ObsClient(port=obs10.port), Speaker(), facts_fn=lambda: pa,
+                    script_fn=lambda f, s: (sr.template_script(c10, f, s), "template"), director_on=lambda: None)
+seen10 = set()
+def w10():
+    r10.tick()
+    for k, x in obs10.scenes["Moderator"].items():
+        if x:
+            seen10.add((r10.seg["id"] if r10.seg else None, k))
+r10.start()
+wait_for(lambda: r10.state == "done", 20, tick=w10)
+check("class sources found despite other spelling", ("standings_pro", "Tabelle Pro ") in seen10
+      and ("last_race_am", "letztes rennen AM") in seen10 and not any(k == "Tabelle" for _, k in seen10), seen10)
+
 # hand edits: kept, empty segment skipped, survive a restart, never rewritten automatically
 with tempfile.TemporaryDirectory() as td:
     store = Path(td) / "show_script.json"
