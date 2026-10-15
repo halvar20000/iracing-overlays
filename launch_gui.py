@@ -270,12 +270,23 @@ class LauncherApp(tk.Tk):
         header = tk.Frame(self, bg=COLOR_BG)
         header.pack(fill="x", padx=16, pady=(14, 6))
 
-        title = tk.Label(
-            header,
-            text="iRacing Overlays",
-            bg=COLOR_BG, fg=COLOR_TEXT,
-            font=("Segoe UI", 17, "bold"),
-        )
+        # HALVAR TV Overlay logo (img/launcher_logo.png, on the launcher's own
+        # background colour); the plain text title if it is missing / unreadable
+        self._logo = None
+        try:
+            self._logo = tk.PhotoImage(file=os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                         "img", "launcher_logo.png"))
+        except Exception:
+            self._logo = None
+        if self._logo is not None:
+            title = tk.Label(header, image=self._logo, bg=COLOR_BG, bd=0)
+        else:
+            title = tk.Label(
+                header,
+                text="iRacing Overlays",
+                bg=COLOR_BG, fg=COLOR_TEXT,
+                font=("Segoe UI", 17, "bold"),
+            )
         title.pack(side="left")
 
         subtitle = tk.Label(
