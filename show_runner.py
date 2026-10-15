@@ -43,6 +43,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 CONFIG_FILE = HERE / "show_config.json"
+SCRIPT_FILE = HERE / "show_script.json"   # the last script (incl. hand edits), survives a restart
+EDIT_KEEP_S = 12 * 3600                   # an edited script is never rewritten automatically within this
 DEFAULT_CONFIG = {
     "obs": {"host": "127.0.0.1", "port": 4455, "password": ""},
     "scenes": {"moderator": "Moderator", "iracing": "iRacing"},
@@ -429,7 +431,7 @@ class ShowRunner:
     director_on() switches REGIE on."""
 
     def __init__(self, cfg, obs, speaker, facts_fn, script_fn, director_on,
-                 clock=time.time, local_now=None, listening=lambda: True, pin=None):
+                 clock=time.time, local_now=None, listening=lambda: True, pin=None, store=None):
         self.cfg = cfg
         self.obs = obs
         self.speaker = speaker
@@ -455,6 +457,10 @@ class ShowRunner:
         self._thread = None
         self._preparing = False
         self._shown = None             # source kept up across PRO -> AM segments
+        self.order: list = []          # all segments the script was written for (an emptied one is skipped)
+        self.edited = False            # changed by hand on /show -> no automatic rewrite
+        self.store = store             # Path to keep the script across restarts (None = memory only)
+        self._load()
 
     # -- public ---------------------------------------------------------------
     def status(self) -> dict:
@@ -465,7 +471,54 @@ class ShowRunner:
                     "start_at": self.cfg.get("start_at"), "auto_start": self.cfg.get("auto_start"),
                     "ran_today": self.ran_on == self.local_now().date(),
                     "log": self.log[-30:], "last_error": self.last_error,
-                    "facts": self.facts}
+                    "facts": self.facts, "order": self.order or self.segments,
+                    "edited": self.edited}
+
+    def set_script(self, texts: dict) -> str | None:
+        """Hand edits from /show: {segment: text}. An empty text drops the
+        segment. Returns an error text or None."""
+        with self._lock:
+            if self.state == "running":
+                return "Läuft gerade – erst stoppen"
+            order = self.order or self.segments
+            if not order:
+                return "Noch kein Skript"
+            for sid, text in (texts or {}).items():
+                if sid in order:
+                    self.script[sid] = str(text or "").strip()
+            self.segments = [s for s in order if self.script.get(s)]
+            self.edited = True
+            self.script_at = self.clock()
+            self._note("Skript von Hand geändert: " + (", ".join(self.segments) or "leer"))
+            self._save()
+            return None
+
+    def _keep_edit(self) -> bool:
+        return self.edited and self.script_at is not None and self.clock() - self.script_at < EDIT_KEEP_S
+
+    def _save(self):
+        if not self.store:
+            return
+        try:
+            self.store.write_text(json.dumps({
+                "script": self.script, "order": self.order, "segments": self.segments,
+                "source": self.script_source, "at": self.script_at, "edited": self.edited,
+                "facts": self.facts}, ensure_ascii=False, indent=1), encoding="utf-8")
+        except OSError as e:
+            self._note(f"Skript nicht gespeichert: {e}")
+
+    def _load(self):
+        if not self.store:
+            return
+        try:
+            d = json.loads(self.store.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        if not d.get("at") or self.clock() - d["at"] > EDIT_KEEP_S:
+            return
+        self.script, self.order, self.segments = d.get("script") or {}, d.get("order") or [], d.get("segments") or []
+        self.script_source, self.script_at = d.get("source") or "", d["at"]
+        self.edited, self.facts = bool(d.get("edited")), d.get("facts") or {}
 
     def prepare(self):
         """Collect the facts and write the script (blocking: a few seconds with Claude)."""
@@ -481,8 +534,11 @@ class ShowRunner:
             with self._lock:
                 self.facts, self.segments, self.script, self.script_source = facts, \
                     [s for s in segs if script.get(s)], script, source
+                self.order = list(segs)
+                self.edited = False
                 self.script_at = self.clock()
                 self._note(f"Skript fertig ({source}): {', '.join(self.segments)}")
+                self._save()
         except Exception as e:
             self.last_error = f"Skript: {e}"
             self._note(self.last_error)
@@ -498,7 +554,7 @@ class ShowRunner:
                 return
             self.state = "running"
             self.ran_on = self.local_now().date()
-        if not self.script or (self.script_at and self.clock() - self.script_at > 3 * 3600):
+        if not self._keep_edit() and (not self.script or (self.script_at and self.clock() - self.script_at > 3 * 3600)):
             self.prepare()
             with self._lock:
                 self.state = "running"
@@ -550,7 +606,7 @@ class ShowRunner:
             if due is None:
                 return
         # outside the lock: may block on OBS / Claude
-        if due == "prepare" and not self._preparing and (
+        if due == "prepare" and not self._preparing and not self._keep_edit() and (
                 not self.script or self.clock() - (self.script_at or 0) > 3600):
             self._preparing = True
             threading.Thread(target=self.prepare, daemon=True).start()

@@ -303,6 +303,45 @@ check("pro/am: results stay visible through both classes",
 shows = [c[1] for c in obs7.calls if c[0] == "SetSceneItemEnabled" and c[1].get("sceneItemEnabled")]
 check("pro/am: each page shown once", len(shows) == 3, shows)   # results, table, video
 
+# hand edits: kept, empty segment skipped, survive a restart, never rewritten automatically
+with tempfile.TemporaryDirectory() as td:
+    store = Path(td) / "show_script.json"
+    obs8 = FakeObs(SCENES, media={"Streckenvideo": 0.2})
+    c8 = sr.load_config(); c8["obs"] = {"host": "127.0.0.1", "port": obs8.port}
+    writes = []
+    def sfn(f, s):
+        writes.append(1)
+        return sr.template_script(c8, f, s), "claude"
+    sp8 = Speaker()
+    r8 = sr.ShowRunner(c8, ObsClient(port=obs8.port), sp8, facts_fn=lambda: facts, script_fn=sfn,
+                       director_on=lambda: None, store=store)
+    r8.prepare()
+    check("edit: no script before -> error", sr.ShowRunner(c8, None, sp8, lambda: {}, sfn, lambda: None)
+          .set_script({"intro": "x"}) is not None)
+    err = r8.set_script({"intro": "Servus Leute, hier ist die WCT.", "standings": "  "})
+    check("edit saved, emptied segment dropped", err is None and r8.script["intro"].startswith("Servus")
+          and "standings" not in r8.segments and r8.status()["order"][2] == "standings" and r8.edited, r8.segments)
+    r8b = sr.ShowRunner(c8, ObsClient(port=obs8.port), Speaker(), facts_fn=lambda: facts, script_fn=sfn,
+                        director_on=lambda: None, store=store)
+    check("edit survives a restart", r8b.edited and r8b.script["intro"].startswith("Servus")
+          and "standings" not in r8b.segments)
+    n = len(writes)
+    clock8 = {"now": dt.datetime(2026, 10, 15, 19, 36, 0)}
+    r8b.local_now = lambda: clock8["now"]
+    r8b.tick(); time.sleep(0.1)
+    check("edited script not rewritten at 19:35", len(writes) == n)
+    r8b.start()
+    check("start uses the edited script", wait_for(lambda: r8b.state == "done", 20, tick=r8b.tick)
+          and len(writes) == n, r8b.status()["log"])
+    said = [t for _, sg, t in r8b.speaker.lines]
+    check("edited text spoken, dropped segment silent", any("Servus" in t for t in said)
+          and not any(sg == "standings" for _, sg, _ in r8b.speaker.lines), said)
+    r8b.state = "running"
+    check("no edits while running", r8b.set_script({"intro": "x"}) is not None)
+    r8b.state = "idle"
+    r8b.prepare()
+    check("manual rewrite clears the edit flag", not r8b.edited and "standings" in r8b.segments)
+
 # missing OBS source: show goes on, error visible
 obs6 = FakeObs({"Moderator": {}, "iRacing": {}}, media={})
 r6, ev6 = make(obs6, Speaker())

@@ -48,6 +48,15 @@ Ablauf nur einmal.
 - Die Seite **`http://localhost:5000/show`** zeigt das Skript, sobald es
   geschrieben ist (5 Min. vor dem Start; mit „Skript neu schreiben“ jederzeit
   sofort). Hier liest du vorher, was gesagt wird.
+- **Skript anpassen:** Solange die Moderation nicht läuft, ist jeder Abschnitt
+  auf `/show` ein Textfeld. Text ändern → **„💾 Skript speichern“**. Ein leerer
+  Abschnitt wird übersprungen. Ein von Hand geändertes Skript wird nicht mehr
+  automatisch neu geschrieben, auch nicht 5 Minuten vor dem Start, und es
+  übersteht einen Neustart (`show_script.json`, 12 Stunden gültig). Nur „Skript
+  neu schreiben“ ersetzt es, nach einer Rückfrage.
+- **Pro/Am-Ligen (WCT GT3):** letztes Rennen und Tabelle werden je Klasse
+  besprochen, erst PRO, dann AM; die Seiten im Bild zeigen dabei genau diese
+  Klasse.
 - **Die Daten:** die CLS-Ergebnisse der letzten Runde, die Tabelle und der
   Fahrer des Tages kommen vom Meisterschafts-Overlay (Port 5010, muss laufen).
   Strecke und Wetter kommen aus iRacing.

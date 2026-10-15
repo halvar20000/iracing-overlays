@@ -245,7 +245,7 @@ class TelemetryPoller:
             scfg, self.show_obs, _ShowSpeaker(self.commentator),
             facts_fn=self._show_facts, script_fn=self._show_script,
             director_on=lambda: self.set_director(True),
-            pin=lambda cls: show_runner.pin_class(scfg, cls))
+            pin=lambda cls: show_runner.pin_class(scfg, cls), store=show_runner.SCRIPT_FILE)
         self.commentator.on_line = lambda ln: self.voice.say(ln["id"], ln["text"],
                                                              keep=bool(ln.get("queue")))
         self.director_enabled = False
@@ -4825,6 +4825,12 @@ SHOW_HTML = r"""<!DOCTYPE html>
     .seg { border-left: 3px solid var(--line); padding: 6px 10px; margin: 8px 0; }
     .seg.cur { border-left-color: var(--ok); background: #1f2a26; }
     .seg b { color: var(--acc); text-transform: uppercase; font-size: 12px; letter-spacing: 1px; }
+    .seg.off b { color: var(--dim); }
+    textarea { width: 100%; margin-top: 4px; background: #15171c; color: var(--text); border: 1px solid var(--line);
+               border-radius: 6px; padding: 8px; font: 15px/1.45 'Segoe UI', Arial, sans-serif; resize: vertical; }
+    textarea:focus { outline: none; border-color: var(--acc); }
+    .words { font-size: 12px; color: var(--dim); float: right; }
+    #edit { display: none; } #edit.dirty { display: flex; }
     .err { color: var(--bad); } .dim { color: var(--dim); } .ok { color: var(--ok); }
     pre { white-space: pre-wrap; font-size: 12px; color: var(--dim); max-height: 260px; overflow: auto; }
     ul { margin: 4px 0; padding-left: 18px; }
@@ -4844,13 +4850,28 @@ SHOW_HTML = r"""<!DOCTYPE html>
 </div>
 <div id="err" class="err"></div>
 <div class="card" id="obs" style="display:none"></div>
-<div class="card"><div class="dim" id="src"></div><div id="script"></div></div>
+<div class="card"><div class="dim" id="src"></div>
+  <div class="row" id="edit" style="margin-top:8px">
+    <span class="err">Ungespeicherte Änderungen</span>
+    <button class="go" onclick="save()">💾 Skript speichern</button>
+    <button onclick="dirty=false;draw(last,true)">Verwerfen</button>
+  </div>
+  <div id="script"></div></div>
 <div class="card"><div class="dim">Protokoll</div><ul id="log"></ul></div>
 <div class="card"><details><summary class="dim">Fakten für das Skript</summary><pre id="facts"></pre></details></div>
 <script>
-const NAMES = {intro: 'Begrüßung', last_race: 'Letztes Rennen', standings: 'Tabelle', track: 'Strecke', outro: 'Übergabe'};
+const NAMES = {intro: 'Begrüßung', last_race: 'Letztes Rennen', standings: 'Tabelle', track: 'Strecke', outro: 'Übergabe',
+               last_race_pro: 'Letztes Rennen · PRO', last_race_am: 'Letztes Rennen · AM',
+               standings_pro: 'Tabelle · PRO', standings_am: 'Tabelle · AM'};
+// The script is editable until the show runs: a text field per segment,
+// saved with "Skript speichern" (an empty field drops that segment). An
+// edited script is never rewritten automatically; "neu schreiben" asks first.
+let dirty = false, last = null, shownKey = '';
 function esc(t) { return String(t ?? '').replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[c])); }
 async function act(a) {
+    if (a === 'prepare' && last && (last.edited || dirty) &&
+        !confirm('Das Skript wurde von Hand geändert. Wirklich neu schreiben lassen?')) return;
+    if (a === 'start' && dirty && !confirm('Ungespeicherte Änderungen – ohne sie starten?')) return;
     const r = await fetch('/show/' + a, {method: 'POST'}); const d = await r.json();
     if (!d.ok) document.getElementById('err').textContent = d.error || 'Fehler';
     setTimeout(tick, 300);
@@ -4875,14 +4896,53 @@ async function tick() {
         : 'Automatischer Start aus';
     document.getElementById('err').textContent = d.last_error || '';
     document.getElementById('src').textContent = d.script_source
-        ? 'Skript: ' + (d.script_source === 'claude' ? 'von Claude' : 'Vorlagen (kein API-Key / Fehler)') : 'Noch kein Skript – wird 5 Min. vor dem Start geschrieben';
-    document.getElementById('script').innerHTML = (d.segments || []).map(s =>
-        '<div class="seg' + (s === d.segment ? ' cur' : '') + '"><b>' + esc(NAMES[s] || s) + '</b><br>' +
-        esc(d.script[s]) + '</div>').join('');
+        ? 'Skript: ' + (d.script_source === 'claude' ? 'von Claude' : 'Vorlagen (kein API-Key / Fehler)') +
+          (d.edited ? ' · von Hand geändert' : '') +
+          (d.state !== 'running' ? ' · zum Ändern einfach in den Text klicken, leerer Abschnitt = wird übersprungen' : '')
+        : 'Noch kein Skript – wird 5 Min. vor dem Start geschrieben';
+    draw(d, false);
     document.getElementById('log').innerHTML = (d.log || []).slice().reverse().slice(0, 12)
         .map(l => '<li>' + new Date(l.t * 1000).toLocaleTimeString() + ' ' + esc(l.msg) + '</li>').join('');
     document.getElementById('facts').textContent = JSON.stringify(d.facts || {}, null, 2);
 }
+function words(t) { return (String(t || '').trim().match(/\S+/g) || []).length; }
+function draw(d, force) {
+    last = d;
+    const el = document.getElementById('script');
+    const order = d.order && d.order.length ? d.order : (d.segments || []);
+    if (d.state === 'running') {
+        dirty = false; shownKey = '';
+        el.innerHTML = (d.segments || []).map(s =>
+            '<div class="seg' + (s === d.segment ? ' cur' : '') + '"><b>' + esc(NAMES[s] || s) + '</b><br>' +
+            esc(d.script[s]) + '</div>').join('');
+    } else {
+        // rebuild the text fields only when the script changed on the server and
+        // nothing is being edited here — never under the operator's cursor
+        const key = JSON.stringify([order, d.script, d.script_at]);
+        if (!force && (dirty || key === shownKey)) { document.getElementById('edit').className = 'row' + (dirty ? ' dirty' : ''); return; }
+        shownKey = key;
+        el.innerHTML = order.map(s => {
+            const t = d.script[s] || '';
+            return '<div class="seg' + (t ? '' : ' off') + '"><b>' + esc(NAMES[s] || s) + '</b>' +
+                '<span class="words" id="w_' + s + '">' + words(t) + ' Wörter</span>' +
+                '<textarea data-seg="' + s + '" rows="' + Math.max(3, Math.ceil(t.length / 95) + 1) + '">' + esc(t) + '</textarea></div>';
+        }).join('');
+        el.querySelectorAll('textarea').forEach(ta => ta.addEventListener('input', () => {
+            dirty = true; document.getElementById('edit').className = 'row dirty';
+            document.getElementById('w_' + ta.dataset.seg).textContent = words(ta.value) + ' Wörter';
+        }));
+    }
+    document.getElementById('edit').className = 'row' + (dirty ? ' dirty' : '');
+}
+async function save() {
+    const script = {};
+    document.querySelectorAll('#script textarea').forEach(ta => { script[ta.dataset.seg] = ta.value; });
+    const d = await (await fetch('/show/script', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                    body: JSON.stringify({script})})).json();
+    if (!d.ok) { document.getElementById('err').textContent = d.error || 'Fehler'; return; }
+    dirty = false; shownKey = ''; tick();
+}
+window.addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
 setInterval(tick, 1500); tick();
 </script></main></body></html>
 """
@@ -4918,6 +4978,13 @@ def show_check():
     except Exception as e:
         return jsonify({"ok": False, "error": f"OBS: {e} – OBS offen? Werkzeuge → WebSocket-Server "
                                               f"aktiviert (Port {cfg['obs'].get('port')})?"})
+
+
+@app.route("/show/script", methods=["POST"])
+def show_script_edit():
+    """Hand edits of the moderation script from /show: {"script": {segment: text}}."""
+    err = poller.show.set_script((request.get_json(silent=True) or {}).get("script") or {})
+    return jsonify({"ok": not err, "error": err})
 
 
 @app.route("/show/<action>", methods=["POST"])

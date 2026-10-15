@@ -497,6 +497,21 @@ dashboard Flask app + real edge-tts + the voice page in headless Chromium
 acked, sources / video / hand-over / REGIE right, VTS token saved, MouthOpen
 0…1 following the real audio. Guide: SENDEABLAUF.md (German). NOT tried:
 real OBS, real VTube Studio, a real Claude script (no key here).
+FOLLOW-UPS same day (first real runs): /api/roundinfo now runs the league
+auto-detect itself (the show had IEC facts over an SFL replay — detection
+only ran when a championship page polled) and refuses the old league's data
+while switching. PRO/AM: facts per class (class podium / fastest lap, a
+table per class; proAmEnabled is only on the STANDINGS season), segments
+last_race_pro/_am + standings_pro/_am, and 5010 `/api/prerace_pin?cls=` pins
+/lastrace + /table to the class being spoken (polled 1 s, expires 10 min;
+the source stays up PRO → AM). Voice page reports its state each poll
+(`/commentary` → `pages`: playing, blocked, play() error, AudioContext, OBS
+or browser) and skips a clip that stops moving after 3 tries — a silent run
+was a second voice page / stale OBS cache; the next run played every line.
+`mouth_gain` (commentary_config.json, ?mouth=). EDITABLE SCRIPT on /show
+(textarea per segment, POST /show/script; empty = skipped; an edited script
+is never rewritten automatically for 12 h and survives restarts in
+show_script.json — gitignored + PROTECTED). test_show_runner.py 61/61.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

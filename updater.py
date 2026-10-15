@@ -62,6 +62,7 @@ PROTECTED = {
     "commentary_config.json",
     "show_config.json",
     "vts_token.json",
+    "show_script.json",
 }
 PROTECTED_DIRS = ("logs/", ".git/")
 
