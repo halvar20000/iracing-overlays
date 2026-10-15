@@ -353,10 +353,10 @@ are not news. Commentator: facts + German templates for attack (first /
 faster / slower → "auf Kurs zu Platz n" / pole sitter / next lap), pole,
 quali_lap (new / kept / position + gap); prompt explains delta sign and that
 predicted_position is a projection; context = Qualifying, minutes left, cars
-with a time. test_quali_director.py 20/20 (simulated quali with a non-linear
+with a time. test_quali_director.py 21/21 (simulated quali with a non-linear
 lap shape: pole + margin, lap shown to the line + hold, slow car never an
 attack, curve-based delta = true gap ±0.15 s, pit-spoiled lap, challenger
-over pole sitter, mode reset, no news at switch-on); commentator 23/23;
+over pole sitter, mode reset, no news at switch-on); commentator 24/24;
 scratchpad integ3.py = real dashboard poller in a fake "Lone Qualify"
 session: quali mode, results, attack shots, quali lines.
 
