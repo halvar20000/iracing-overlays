@@ -312,13 +312,13 @@ def claude_script(cfg: dict, api_cfg: dict, facts: dict, segments: list[str], po
     host_desc = f"{host}, die KI-Moderation" if host else "die KI-Moderation"
     brief = {s: SEGMENT_BRIEF[s].format(words=_track_words(facts, cfg)) for s in segments if s in SEGMENT_BRIEF}
     user = json.dumps({"segmente": brief, "daten": facts}, ensure_ascii=False)
-    payload = {"model": cfg.get("model") or DEFAULT_CONFIG["model"], "max_tokens": 3000,
+    payload = {"model": cfg.get("model") or DEFAULT_CONFIG["model"], "max_tokens": 6000,
                "thinking": {"type": "disabled"},
                "system": SYSTEM_PROMPT.format(host=host_desc),
                "messages": [{"role": "user", "content": user}]}
     if post is None:
         from race_commentator import Commentator
-        c = Commentator(config=dict(api_cfg, timeout_s=60))
+        c = Commentator(config=dict(api_cfg, timeout_s=120))
         post = c._post
     try:
         data = post(payload)
@@ -326,16 +326,36 @@ def claude_script(cfg: dict, api_cfg: dict, facts: dict, segments: list[str], po
         if "thinking" not in str(e).lower():
             raise
         payload.pop("thinking")
+        payload["max_tokens"] = 16000      # a model that thinks anyway needs room left for the answer
         data = post(payload)
     text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
-    m = re.search(r"\{.*\}", text, re.S)
-    if not m:
-        raise RuntimeError("Claude: kein JSON im Skript")
-    segs = json.loads(m.group(0)).get("segments") or {}
+    segs = _parse_segments(text)
+    if segs is None:
+        kinds = ",".join(b.get("type", "?") for b in data.get("content", [])) or "keine"
+        start = re.sub(r"\s+", " ", text.strip())[:120]
+        raise RuntimeError(f"Claude: kein JSON im Skript (stop_reason {data.get('stop_reason')}, "
+                           f"Blöcke {kinds}, Antwort: „{start or 'leer'}“)")
     out = {s: str(segs[s]).strip() for s in segments if segs.get(s)}
     if not out:
         raise RuntimeError("Claude: leeres Skript")
     return out
+
+
+def _parse_segments(text: str) -> dict | None:
+    """{segment: text} from Claude's reply: plain JSON, in a ``` block, with
+    or without the "segments" wrapper. None if nothing usable."""
+    t = re.sub(r"```(?:json)?", "", text or "")
+    a, b = t.find("{"), t.rfind("}")
+    if a < 0 or b <= a:
+        return None
+    try:
+        d = json.loads(t[a:b + 1])
+    except ValueError:
+        return None
+    if not isinstance(d, dict):
+        return None
+    segs = d.get("segments", d)
+    return segs if isinstance(segs, dict) else None
 
 
 def template_script(cfg: dict, facts: dict, segments: list[str]) -> dict:
