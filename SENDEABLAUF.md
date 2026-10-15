@@ -72,7 +72,7 @@ eines, mit Pause dazwischen und nie während eines Replays:
 | Quelle in der Szene iRacing | Datei | Wann |
 |---|---|---|
 | `Wetter` | `obs_loaders\weather.html` | einmal ~40 s nach dem Start, 12 s, mit Satz zum Wetter |
-| `Duell` | `obs_loaders\catch.html` (oder gap.html) | wenn die REGIE ein Duell zeigt, 10 s, höchstens alle 3 Min. |
+| `Duell` | `obs_loaders\catch.html` (oder battle_gap.html) | wenn die REGIE ein Duell zeigt, 10 s, höchstens alle 3 Min. |
 | `Fahrer des Tages` | `obs_loaders\dotd.html` | im letzten Drittel des Rennens, 14 s, mit Zwischenstand |
 
 Die Quellen bleiben in OBS ausgeblendet, die REGIE blendet sie selbst ein.
