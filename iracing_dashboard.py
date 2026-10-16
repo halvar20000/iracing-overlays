@@ -2074,7 +2074,9 @@ class TelemetryPoller:
                 if fmt and el is not None:
                     ctx["quali_format"] = fmt["text"]
                     ctx["quali_abschnitt"] = race_commentator.quali_phase(fmt, el)
-                ctx["fahrer_mit_zeit"] = sum(1 for d in drivers if (d.get("best_lap") or 0) > 0)
+                timed = sum(1 for d in drivers if (d.get("best_lap") or 0) > 0)
+                if timed:                     # "0 drivers with a time" only invites "no time yet" lines
+                    ctx["fahrer_mit_zeit"] = timed
             except Exception:
                 pass
             return ctx

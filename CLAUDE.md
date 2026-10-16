@@ -581,7 +581,13 @@ the facts; editable on /show (one per line, saved with the script, kept in
 show_script.json with points_used). During REGIE in quali / race (SessionState
 racing) the dashboard speaks the next unused one when the commentary has
 been quiet `points_quiet_s` 30 s, at most every `points_every_s` 150 s, never
-during our replay (say_show line, kind talking_point). Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
+during our replay (say_show line, kind talking_point).
+Quali roll call fix (2026-10-16): Claude still said "noch ohne gezeitete
+Runde" for every field shot — quali field facts now carry only keys that
+have a value (no lap_time / position / cars_with_time = null), the context
+drops fahrer_mit_zeit = 0, the prompt forbids it, and the commentator says at
+most one quali "field" line per QUALI_FIELD_EVERY_S 45 s (REGIE cuts every
+~12 s); the quiet gaps are where talking points come in. Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

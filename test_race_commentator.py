@@ -157,6 +157,17 @@ wt = rc.facts_from(entry(63.0, "field", "Mike Zocher", {"quali": True, "car": "P
                                                       "position": 5, "times_set": 9}))
 l = rc.template_line(wt, random.Random(1))
 check("quali field with a time: position", "Zocher" in l and ("5" in l), l)
+check("no empty facts handed on (no lap_time / position keys without a time)",
+      "lap_time" not in nt and "position" not in nt and "cars_with_time" not in nt, nt)
+cq = rc.Commentator(random.Random(2), {"mode": "template", "api_key": ""})
+qf = lambda t, n: entry(t, "field", n, {"quali": True, "car": "Porsche"})
+cq.feed([qf(100.0, "Fahrer A")], now=100.0)
+cq.feed([qf(112.0, "Fahrer B")], now=112.0)
+cq.feed([qf(124.0, "Fahrer C")], now=124.0)
+cq.feed([qf(150.0, "Fahrer D")], now=150.0)
+said_q = [l["text"] for l in cq.lines]
+check("quali: a car from the field at most every 45 s (no roll call)", len(said_q) == 2
+      and any("Fahrer A" in x for x in said_q) and any("Fahrer D" in x for x in said_q), said_q)
 nt2 = rc.facts_from(entry(64.0, "field", "Ohne Team", {"quali": True, "car": "BMW", "team": None}))
 check("team template skipped without a team", all("fährt für" not in rc.template_line(nt2, random.Random(i)) for i in range(30)))
 

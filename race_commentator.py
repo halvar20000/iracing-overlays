@@ -56,8 +56,8 @@ SYSTEM_PROMPT = (
     "Komma (0,4 Sekunden). Im Qualifying (session = Qualifying): delta_to_pole_s < 0 heißt "
     "schneller als die aktuelle Pole, > 0 langsamer; predicted_position ist eine Hochrechnung "
     "(sag \"auf Kurs zu Platz …\"), lap_time ist offiziell. Fährt ein Fahrer noch ohne Zeit "
-    "(kein lap_time), stell ihn vor – Auto, Team, Aufwärmrunde oder schnelle Runde – und sag "
-    "NICHT, dass er noch keine Zeit hat. Steht quali_abschnitt im Kontext, ist gerade nur diese "
+    "(kein lap_time), stell ihn vor – Auto, Team, Aufwärmrunde oder schnelle Runde. Erwähne NIE, "
+    "dass jemand noch keine Zeit oder keine gezeitete Runde hat, und beginne nicht jeden Satz gleich. Steht quali_abschnitt im Kontext, ist gerade nur diese "
     "Klasse (AM oder PRO) auf der Strecke – du kannst es erwähnen. Wiederhole nicht Formulierungen der letzten Sätze. Keine Emojis, "
     "keine Anführungszeichen, keine Startnummern mit #, kein Vorspann – nur der Satz."
 )
@@ -80,6 +80,9 @@ def quali_format(league_slug: str | None) -> dict | None:
 def quali_phase(fmt: dict, elapsed_s: float) -> str:
     """Which class has the track: 'AM' / 'PRO'."""
     return fmt["first"] if elapsed_s < fmt["split_min"] * 60 else fmt["second"]
+
+
+QUALI_FIELD_EVERY_S = 45.0   # qualifying: at most one "car from the field" line this often
 
 
 def load_config() -> dict:
@@ -107,9 +110,13 @@ def facts_from(entry: dict) -> dict | None:
     if kind == "battle":
         f.update(position=info.get("position"), ahead=info.get("ahead"), gap_s=info.get("gap"))
     elif kind == "field" and info.get("quali"):
-        f.update(session="Qualifying", car=info.get("car"), team=info.get("team"),
-                 on_flying_lap=bool(info.get("flying")), lap_time=info.get("lap_time_str"),
-                 position=info.get("position"), cars_with_time=info.get("times_set"))
+        # only what IS there: an empty lap_time / position made Claude say
+        # "noch ohne gezeitete Runde" about every driver (2026-10-16)
+        f.update(session="Qualifying", on_flying_lap=bool(info.get("flying")))
+        for k, v in (("car", info.get("car")), ("team", info.get("team")),
+                     ("lap_time", info.get("lap_time_str")), ("position", info.get("position"))):
+            if v:
+                f[k] = v
     elif kind in ("leader", "field", "pit"):
         f.update(position=info.get("position"))
     elif kind == "incident":
@@ -292,6 +299,7 @@ class Commentator:
         self.lines: deque = deque(maxlen=KEEP_LINES)   # newest first
         self._seen_log: set = set()
         self._recent_tpl: deque = deque(maxlen=6)
+        self._last_quali_field = -1e9
         self._next_id = 1
         self._lock = threading.Lock()
         self._api_call = api_call or self._call_claude
@@ -374,6 +382,12 @@ class Commentator:
             f = facts_from(e)
             if f is None:
                 continue
+            # qualifying: a car "from the field" only every QUALI_FIELD_EVERY_S —
+            # REGIE cuts every ~12 s, a line for each made a roll call
+            if f["kind"] == "field" and f.get("session") == "Qualifying":
+                if now - self._last_quali_field < QUALI_FIELD_EVERY_S:
+                    continue
+                self._last_quali_field = now
             if self.ai_enabled:
                 self._ensure_worker()
                 self._q.put((now, f, dict(context or {})))
