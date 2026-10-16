@@ -134,11 +134,28 @@ check("own pole improved is not 'new leader'", ln and ("verbessert" in ln or "le
 ln = q(30.0, "quali_lap", "Dennis Richter", {"lap_time_str": "1:40.112", "position": 3, "gap_to_pole": 0.71},
        idx=3)
 check("lap result with position and gap", ln and "Platz 3" in ln and "Richter" in ln, ln)
-ln = q(40.0, "attack", "Andreas Bastian", {"delta": -0.23, "predicted_position": 1}, idx=4)
+ln = q(40.0, "attack", "Andreas Bastian", {"delta": -0.23, "predicted_position": 1, "pct": 0.6}, idx=4)
 check("attack under pole pace", ln and "Bastian" in ln and "0,2" in ln, ln)
-ln = q(50.0, "attack", "Andreas Bastian", {"delta": 0.4, "predicted_position": 4}, idx=5)
+ln = q(80.0, "attack", "Andreas Bastian", {"delta": 0.4, "predicted_position": 4, "pct": 0.7}, idx=5)
 check("attack slower: predicted, not final", ln and ("auf Kurs zu Platz 4" in ln or "Platz 4" in ln)
       and "reicht" not in ln, ln)
+# video 2026-10-16: attack lines every 10 s, three decimals, AM drivers called PRO
+ca = rc.Commentator(random.Random(4), {"mode": "template", "api_key": ""})
+att = lambda t, car, pct: dict(entry(t, "attack", f"Fahrer {car}", {"delta": -0.05, "predicted_position": 1, "pct": pct}),
+                               car_idx=car)
+ca.feed([att(100.0, 1, 0.2)], now=100.0)          # too early in the lap
+ca.feed([att(110.0, 2, 0.6)], now=110.0)          # said
+ca.feed([att(120.0, 3, 0.7)], now=120.0)          # within 25 s of the last attack line
+ca.feed([att(140.0, 2, 0.8)], now=140.0)          # same car again within 100 s
+ca.feed([att(150.0, 4, 0.5)], now=150.0)          # said
+said_a = [l["text"] for l in ca.lines]
+check("attack lines: from 40 % of the lap, every 25 s, once per car", len(said_a) == 2
+      and "Fahrer 2" in said_a[1] and "Fahrer 4" in said_a[0], said_a)
+fq = rc.facts_from(dict(entry(1.0, "quali_lap", "Manfred Baar", {"lap_time_str": "1:49.900", "position": 2,
+                                                                  "gap_to_pole": 0.7351, "margin": None}),
+                        klasse="AM"))
+check("gaps rounded to hundredths, driver's class handed on", fq["gap_to_pole_s"] == 0.74 and fq["klasse"] == "AM", fq)
+check("gaps over a second to tenths", rc.facts_from(entry(1.0, "quali_lap", "X", {"gap_to_pole": 1.664}))["gap_to_pole_s"] == 1.7)
 check("finished attack is silent", rc.facts_from(entry(60.0, "attack", "X", {"finished": True})) is None)
 
 # quali, a car from the field before anyone has a time: introduce him, never "no time yet"

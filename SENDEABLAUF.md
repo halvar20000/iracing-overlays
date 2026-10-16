@@ -41,6 +41,12 @@ Ablauf nur einmal.
      wird. Fehlen sie, nimmt der Ablauf die normalen Quellen und stellt dort
      die Klasse um.
 
+   - **Ein Video pro Strecke:** Lege die Videos in den Ordner
+     `show_notes\videos\` (der Dateiname enthält ein Wort der Strecke, z. B.
+     `motegi.mp4`, `portimao-algarve.mp4`). Der Ablauf setzt dann vor dem Abspielen
+     die passende Datei in die Quelle `Streckenvideo`. Gibt es für die Strecke
+     keins, läuft **kein** Video (statt eines falschen), und die Moderation
+     kündigt keins an. Ohne den Ordner spielt die Quelle wie bisher, was in ihr steckt.
    - **Streckenort** (optional): Browserquelle `obs_loaders\location.html`,
      1280 × 720 bzw. bildschirmfüllend. Satellitenkarte: erst das Land mit
      Markierung, dann Flug hinunter auf die Strecke, mit Name und Ort. Sie ist

@@ -143,7 +143,7 @@ class QualiState:
                    f"best lap: #{c['number']} {c['name']} {fmt_lap(b)} -> P{pos} (+{gap:.3f})")
             director.log.appendleft({"t": round(now, 1), "kind": "quali_lap", "car_idx": idx,
                                      "car_number": c["number"], "name": c["name"], "group": None,
-                                     "reason": why, "info": info})
+                                     "klasse": c.get("proam"), "reason": why, "info": info})
 
     # -- live delta -----------------------------------------------------------
     def delta(self, c, t, pole_idx, pole_best):

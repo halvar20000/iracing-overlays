@@ -82,6 +82,12 @@ DEFAULT_CONFIG = {
     "only_while_streaming": True,     # auto start only while OBS streams
     "director_after": True,           # REGIE on after the hand-over
     "video_after_speech": True,       # track: speak first, then play the video (False = talk over it)
+    # one video per track: files in this folder (name contains a word of the
+    # track, e.g. motegi.mp4, portimao-algarve.mp4). With videos in it, the
+    # one for today's track is put into the "Streckenvideo" source — and NO
+    # video plays when there is none (2026-10-16: the Algarve video ran over
+    # Motegi). Empty / missing folder: the source plays whatever it holds.
+    "track_video_dir": "show_notes/videos",
     "model": "claude-sonnet-5-5",
     "host_name": "",                  # name the AI host introduces itself with ("" = none)
     "notes_dir": "show_notes",
@@ -197,6 +203,26 @@ def replay_round(roundinfo: dict | None, track_name: str, notes_dir: Path | None
         if _words(track) & want:
             hits.append(r.get("number"))
     return max(hits) if hits else None
+
+
+VIDEO_EXT = (".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v", ".flv")
+
+
+def find_track_video(video_dir: Path, track: str, track_cfg: str = "") -> tuple[bool, Path | None]:
+    """(folder has videos?, the one for this track or None) — longest shared
+    distinctive word of the file name and the track name wins."""
+    if not video_dir.is_dir():
+        return False, None
+    vids = [p for p in video_dir.iterdir() if p.suffix.lower() in VIDEO_EXT]
+    if not vids:
+        return False, None
+    want = _words(track + " " + track_cfg)
+    best, score = None, 0
+    for p in vids:
+        sc = sum(len(w) for w in want & set(re.findall(r"[a-zäöüßó]+", p.stem.lower())))
+        if sc > score:
+            best, score = p, sc
+    return True, best
 
 
 def find_notes(notes_dir: Path, track: str, track_cfg: str = "") -> str | None:
@@ -449,6 +475,8 @@ SEGMENT_BRIEF = {
 
 
 def _track_words(facts, cfg=None):
+    if facts.get("streckenvideo") is False:          # no video for this track
+        return "70-110 Wörter. Es läuft kein Streckenvideo, also nicht darauf überleiten"
     if (cfg or {}).get("video_after_speech", True):
         return "70-110 Wörter. Zum Schluss auf das Streckenvideo überleiten, das direkt danach läuft"
     v = facts.get("video_sekunden")
@@ -867,7 +895,7 @@ def template_script(cfg: dict, facts: dict, segments: list[str]) -> dict:
         out["track"] = (f"Jetzt ein Blick auf die Strecke: {strecke}"
                         + (f" in {facts['ort']}" if facts.get("ort") else "")
                         + (f", gefahren wird das Layout {facts['layout']}." if facts.get("layout") else ".")
-                        + " Schauen wir uns eine Runde an.")
+                        + (" Schauen wir uns eine Runde an." if facts.get("streckenvideo") is not False else ""))
     if "outro" in segments:
         out["outro"] = ("Das war der Überblick. Jetzt geht es live ins Qualifying. "
                         + (facts["qualifying_format"] + " " if facts.get("qualifying_format") else "")
@@ -1193,6 +1221,26 @@ class ShowRunner:
                 return fb
         return key
 
+    def _pick_track_video(self) -> bool:
+        """Is there a video to play for today's track? Points the media source
+        at the track's own file when the video folder has any."""
+        vid = (self.cfg.get("sources") or {}).get("track_video")
+        if not vid:
+            return False
+        d = Path(self.cfg.get("track_video_dir") or "")
+        if not d.is_absolute():
+            d = HERE / d
+        has_any, path = find_track_video(d, self.facts.get("strecke") or "", self.facts.get("layout") or "")
+        if not has_any:
+            return True                       # no per-track videos: the source as it is
+        if path is None:
+            self._note(f"Kein Streckenvideo für {self.facts.get('strecke') or 'diese Strecke'} in {d.name}/ – ohne Video")
+            return False
+        if self._obs(lambda: self.obs.set_media_file(vid, str(path)), f"Video-Datei {path.name}"):
+            self._note(f"Streckenvideo: {path.name}")
+            return True
+        return False
+
     def _has(self, key) -> bool:
         """An optional source: configured and (when the scene is known) in it."""
         name = self._name(key)
@@ -1238,10 +1286,10 @@ class ShowRunner:
         if sid == "track" and self._has("track_location"):
             self._source("track_location", True)              # the map while the track is talked about
             seg["map"] = True
-        if sid == "track" and (self.cfg.get("sources") or {}).get("track_video") \
-                and self.cfg.get("video_after_speech", True):
+        video_ok = sid == "track" and self._pick_track_video()
+        if video_ok and self.cfg.get("video_after_speech", True):
             seg["video_pending"] = self.cfg["sources"]["track_video"]   # started once the text is spoken
-        elif sid == "track" and (self.cfg.get("sources") or {}).get("track_video"):
+        elif video_ok:
             vid = self.cfg["sources"]["track_video"]
             self._source("track_video", True)
             if self._obs(lambda: self.obs.media_restart(vid), f"Video {vid}"):

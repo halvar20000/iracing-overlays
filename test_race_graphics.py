@@ -42,7 +42,7 @@ g = rg.GraphicsDirector({"weather": {"source": ""}})
 ev = run(g, 0, 600, lambda t: race(t, shot="battle" if 100 <= t < 500 else "leader",
                                    shot_since=100.0 if 100 <= t < 500 else 0, dotd_ready=False))
 bt = [t for t, a, k in ev if a == "show" and k == "battle"]
-check("battle after 6 s of a battle shot, then every 180 s", bt == [106.0, 286.0, 466.0], bt)
+check("battle: not in the first 5 min, then every 180 s", bt == [300.0, 480.0], bt)
 check("no battle graphic outside battle shots", all(100 <= t < 500 for t in bt))
 
 # 3) provisional DotD in the last third, once
@@ -55,7 +55,7 @@ ev = run(g, 0, 2400, lambda t: race(t, dotd_ready=False))
 check("no dotd without a provisional winner", not any(k == "dotd" for _, a, k in ev))
 
 # 4) one at a time + gap; replay hides and blocks; not in quali
-g = rg.GraphicsDirector()
+g = rg.GraphicsDirector({"battle": {"after_green_s": 0}})
 ev = run(g, 0, 200, lambda t: race(t, shot="battle", shot_since=0.0, dotd_ready=False))
 on, last_hide, ok = None, -1e9, True
 for t, a, k in ev:
@@ -80,7 +80,7 @@ check("source missing in OBS -> skipped", not any(k == "weather" for _, a, k in 
 g = rg.GraphicsDirector({"enabled": False})
 check("graphics off", run(g, 0, 300, lambda t: race(t, shot="battle", shot_since=0.0)) == [])
 check("config merge keeps defaults", rg.merge_config({"battle": {"source": "Catch"}})["battle"]
-      == {"source": "Catch", "secs": 10.0, "after_s": 6.0, "every_s": 180.0})
+      == {"source": "Catch", "secs": 10.0, "after_s": 6.0, "every_s": 180.0, "after_green_s": 300.0})
 
 # 6) lines
 check("weather line dry", rg.weather_line({"connected": True, "air_temp": 21.4, "track_temp": 33.6, "wetness": "Dry"})

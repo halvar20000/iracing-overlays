@@ -131,6 +131,10 @@ class ObsClient:
         self.call("TriggerMediaInputAction", {"inputName": source,
                                               "mediaAction": "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART"})
 
+    def set_media_file(self, source: str, path: str):
+        """Point a media source at another file (per-track video)."""
+        self.call("SetInputSettings", {"inputName": source, "inputSettings": {"local_file": path}})
+
     def media_stop(self, source: str):
         self.call("TriggerMediaInputAction", {"inputName": source,
                                               "mediaAction": "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_STOP"})

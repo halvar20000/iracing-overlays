@@ -122,6 +122,12 @@ class FakeObs:
             state = "OBS_MEDIA_STATE_ENDED" if el >= m["duration"] else "OBS_MEDIA_STATE_PLAYING"
             return True, {"mediaState": state, "mediaDuration": int(m["duration"] * 1000),
                           "mediaCursor": int(min(el, m["duration"]) * 1000)}, None
+        if rt == "SetInputSettings":
+            m = self.media.get(rd["inputName"])
+            if m is None:
+                return False, None, "No input"
+            m["file"] = (rd.get("inputSettings") or {}).get("local_file")
+            return True, None, None
         if rt == "GetStreamStatus":
             return True, {"outputActive": self.streaming}, None
         return False, None, f"unknown request {rt}"

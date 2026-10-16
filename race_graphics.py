@@ -29,7 +29,9 @@ DEFAULTS = {
     "scene": "iRacing",
     "gap_s": 45.0,
     "weather": {"source": "Wetter", "secs": 12.0, "after_s": 40.0},
-    "battle": {"source": "Duell", "secs": 10.0, "after_s": 6.0, "every_s": 180.0},
+    # the catch-up graphic needs two clean laps per car ("GATHERING LAP DATA"
+    # in lap 1 — video 2026-10-16): not before after_green_s
+    "battle": {"source": "Duell", "secs": 10.0, "after_s": 6.0, "every_s": 180.0, "after_green_s": 300.0},
     "dotd": {"source": "Fahrer des Tages", "secs": 14.0, "at": [0.67]},
 }
 
@@ -110,6 +112,8 @@ class GraphicsDirector:
                     return "dotd"
         # battle: REGIE shows one and has done for a few seconds
         if (self._ok("battle") and state.get("shot") == "battle"
+                and self.green_at is not None
+                and now - self.green_at >= float(c["battle"].get("after_green_s", 0))
                 and state.get("shot_since") is not None
                 and now - state["shot_since"] >= float(c["battle"].get("after_s", 6))
                 and now - self.battle_at >= float(c["battle"].get("every_s", 180))):

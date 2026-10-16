@@ -126,6 +126,7 @@ class Shot:
     def as_dict(self):
         return {"kind": self.kind, "car_idx": self.car["idx"],
                 "car_number": self.car["number"], "name": self.car["name"],
+                "klasse": self.car.get("proam"),   # PRO / AM of the DRIVER (WCT), else None
                 "group": self.group["name"] if self.group else None,
                 "reason": self.reason, "info": self.info}
 

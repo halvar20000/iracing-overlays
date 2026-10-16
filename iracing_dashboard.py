@@ -1850,6 +1850,12 @@ class TelemetryPoller:
             except Exception:
                 pass
         facts = show_runner.build_facts(ri, track, notes, video_s, notes_dir)
+        vdir = Path(cfg.get("track_video_dir") or "show_notes/videos")
+        if not vdir.is_absolute():
+            vdir = Path(__file__).resolve().parent / vdir
+        has_any, vpath = show_runner.find_track_video(vdir, track.get("name") or "", track.get("config") or "")
+        if has_any:
+            facts["streckenvideo"] = vpath is not None      # False: the moderation does not announce one
         if ri is None:
             self.show.last_error = "CLS-Daten nicht erreichbar (läuft die Meisterschaft auf 5010?)"
         return facts
@@ -2002,6 +2008,12 @@ class TelemetryPoller:
             t_sess = float(self.ir["SessionTime"] or 0.0)
         except Exception:
             t_sess = None
+        try:                                  # PRO / AM per driver (WCT) for the commentary
+            if self.proam.active_for(c.get("uid") for c in cars):
+                for c in cars:
+                    c["proam"] = self.proam.lookup(c.get("uid"))
+        except Exception:
+            pass
         if mode == "quali":
             try:
                 self._quali_class_filter(cars, t_sess)

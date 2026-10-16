@@ -606,7 +606,21 @@ race; REGIE off, Moderator scene, sources "Ergebnis" / "Meisterschaft",
 stays on Moderator (post_end_scene). Page /abspann (same SHOW_HTML, BASE),
 /abspann/status|script|<action>, Stream Deck post_start|post_next|post_stop.
 ALSO: 5010 projection (/api/state) during a replay of round N projects onto
-the table BEFORE round N (today's table already holds it — counted twice). Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
+the table BEFORE round N (today's table already holds it — counted twice).
+VIDEO REVIEW (Thomas's 52-min recording 2026-10-16, Drive → curl, vosk ASR
+with timestamps + ffmpeg contact sheets every 10 s): pre-show data right
+(before-R4), but → fixes: (1) per-track video: show_notes/videos/<word of
+the track>.mp4 is put into "Streckenvideo" via SetInputSettings local_file
+(obs_ws.set_media_file); videos in the folder but none for the track → no
+video and facts streckenvideo=False (no announcement) — the Algarve video ran
+over Motegi; (2) quali attack lines only from 40 % of the lap, every 25 s,
+once per car per 100 s (ATTACK_SAY_*) — it said "X greift an …" every 10 s;
+(3) gaps rounded (hundredths < 1 s, tenths above) — "null Komma sieben drei
+fünf"; (4) the DRIVER's class (log entry "klasse" from cls_proam) — AM drivers
+were called "in der Pro-Quali" after the switch; (5) battle graphic not
+before 5 min of racing (after_green_s) — "GATHERING LAP DATA" in lap 1.
+Not changed: OBS layout (pre-race pages cover the avatar), REGIE idle in
+warm-up / before the green (cockpit view for minutes). Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

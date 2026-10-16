@@ -550,6 +550,31 @@ check("Abspann: result during results, table during standings_after", ("results"
 r13.state = "idle"
 check("Abspann never starts by itself", r13.tick() is None and r13.state == "idle")
 
+# per-track video: the right file into the source, none when the folder has no video for the track
+with tempfile.TemporaryDirectory() as td:
+    vd = Path(td)
+    (vd / "portimao-algarve.mp4").write_bytes(b"x"); (vd / "Mobility Motegi GP.mp4").write_bytes(b"x")
+    check("video by track name", sr.find_track_video(vd, "Mobility Resort Motegi", "Full Road Course")[1].name
+          == "Mobility Motegi GP.mp4" and sr.find_track_video(vd, "Autódromo Internacional do Algarve")[1].name
+          == "portimao-algarve.mp4" and sr.find_track_video(vd, "Circuit Zandvoort") == (True, None))
+    check("no video folder: (False, None)", sr.find_track_video(vd / "nope", "Motegi") == (False, None))
+    for track, expect in (("Mobility Resort Motegi", "Mobility Motegi GP.mp4"), ("Circuit Zandvoort", None)):
+        obs14 = FakeObs({"Moderator": {"Streckenvideo": False}, "iRacing": {}}, media={"Streckenvideo": 0.2})
+        c14 = sr.load_config(); c14["obs"] = {"host": "127.0.0.1", "port": obs14.port}; c14["track_video_dir"] = str(vd)
+        f14 = dict(facts, strecke=track)
+        r14 = sr.ShowRunner(c14, ObsClient(port=obs14.port), Speaker(), facts_fn=lambda: f14,
+                            script_fn=lambda f, s_: ({"track": "Text."}, "template"), director_on=lambda: None)
+        r14.prepare(); r14.segments = ["track"]; r14.script = {"track": "Text."}
+        r14.start()
+        wait_for(lambda: r14.state == "done", 15, tick=r14.tick)
+        played = any(c[0] == "TriggerMediaInputAction" for c in obs14.calls)
+        got = (obs14.media["Streckenvideo"].get("file") or "").rsplit("/", 1)[-1] or None
+        check(f"track video for {track.split()[-1]}: {expect or 'none'}",
+              (played and got == expect) if expect else (not played), (played, got, r14.log[-3:]))
+check("no video for the track: the moderation does not announce one",
+      "kein Streckenvideo" in sr._track_words({"streckenvideo": False}, {})
+      and "Schauen wir" not in sr.template_script(cfg, dict(facts, streckenvideo=False), ["track"])["track"])
+
 # hand edits: kept, empty segment skipped, survive a restart, never rewritten automatically
 with tempfile.TemporaryDirectory() as td:
     store = Path(td) / "show_script.json"

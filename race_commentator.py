@@ -58,7 +58,9 @@ SYSTEM_PROMPT = (
     "(sag \"auf Kurs zu Platz …\"), lap_time ist offiziell. Fährt ein Fahrer noch ohne Zeit "
     "(kein lap_time), stell ihn vor – Auto, Team, Aufwärmrunde oder schnelle Runde. Erwähne NIE, "
     "dass jemand noch keine Zeit oder keine gezeitete Runde hat, und beginne nicht jeden Satz gleich. Steht quali_abschnitt im Kontext, ist gerade nur diese "
-    "Klasse (AM oder PRO) auf der Strecke – du kannst es erwähnen. Wiederhole nicht Formulierungen der letzten Sätze. Keine Emojis, "
+    "Klasse (AM oder PRO) auf der Strecke – du kannst es erwähnen; die Klasse eines Fahrers steht "
+    "aber in 'klasse' (ein AM-Fahrer bleibt AM, auch in der PRO-Phase). Abstände höchstens auf "
+    "Hundertstel. Wiederhole nicht Formulierungen der letzten Sätze. Keine Emojis, "
     "keine Anführungszeichen, keine Startnummern mit #, kein Vorspann – nur der Satz."
 )
 
@@ -83,6 +85,9 @@ def quali_phase(fmt: dict, elapsed_s: float) -> str:
 
 
 QUALI_FIELD_EVERY_S = 45.0   # qualifying: at most one "car from the field" line this often
+ATTACK_SAY_MIN_PCT = 0.4     # a flying lap is commented once this much of it is done
+ATTACK_SAY_EVERY_S = 25.0    # at most one attack line this often
+ATTACK_SAY_CAR_S = 100.0     # ... and one per car and lap
 
 
 def load_config() -> dict:
@@ -130,7 +135,8 @@ def facts_from(entry: dict) -> dict | None:
         if info.get("finished"):
             return None                       # the lap result (quali_lap) says it
         f.update(session="Qualifying", first_lap=bool(info.get("first_lap")),
-                 next_lap=bool(info.get("next_lap")), delta_to_pole_s=info.get("delta"),
+                 next_lap=bool(info.get("next_lap")), delta_to_pole_s=_r(info.get("delta"), 2),
+                 lap_done=info.get("pct"),
                  predicted_position=info.get("predicted_position"),
                  pole_sitter=bool(info.get("pole_sitter")), pole=info.get("pole"),
                  pole_time=info.get("pole_time"))
@@ -138,11 +144,30 @@ def facts_from(entry: dict) -> dict | None:
         f.update(session="Qualifying", position=1, lap_time=info.get("lap_time_str"))
     elif kind == "quali_lap":
         f.update(session="Qualifying", lap_time=info.get("lap_time_str"), position=info.get("position"),
-                 gap_to_pole_s=info.get("gap_to_pole"), new_pole=bool(info.get("new_pole")),
-                 margin_s=info.get("margin"), kept_pole=bool(info.get("kept_pole")))
+                 gap_to_pole_s=_gap_r(info.get("gap_to_pole")), new_pole=bool(info.get("new_pole")),
+                 margin_s=_gap_r(info.get("margin")), kept_pole=bool(info.get("kept_pole")))
     else:
         return None
+    if entry.get("klasse"):
+        f["klasse"] = entry["klasse"]         # the DRIVER's class — not the part of the session
     return f
+
+
+def _r(v, n):
+    try:
+        return round(float(v), n)
+    except (TypeError, ValueError):
+        return None
+
+
+def _gap_r(v):
+    """A gap the way it is said: hundredths under a second, tenths above
+    (the video of 2026-10-16: "null Komma sieben drei fünf Sekunden")."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return round(v, 2) if abs(v) < 1 else round(v, 1)
 
 
 TEMPLATES = {
@@ -300,6 +325,8 @@ class Commentator:
         self._seen_log: set = set()
         self._recent_tpl: deque = deque(maxlen=6)
         self._last_quali_field = -1e9
+        self._last_attack = -1e9
+        self._attack_by_car: dict = {}
         self._next_id = 1
         self._lock = threading.Lock()
         self._api_call = api_call or self._call_claude
@@ -388,6 +415,16 @@ class Commentator:
                 if now - self._last_quali_field < QUALI_FIELD_EVERY_S:
                     continue
                 self._last_quali_field = now
+            # qualifying attacks: worth a line once the lap means something, not
+            # every cut ("X greift an, 0,01 schneller …" every 10 s — video 2026-10-16)
+            if f["kind"] == "attack" and not f.get("first_lap"):
+                car = e.get("car_idx")
+                if ((f.get("lap_done") or 0) < ATTACK_SAY_MIN_PCT
+                        or now - self._last_attack < ATTACK_SAY_EVERY_S
+                        or now - self._attack_by_car.get(car, -1e9) < ATTACK_SAY_CAR_S):
+                    continue
+                self._last_attack = now
+                self._attack_by_car[car] = now
             if self.ai_enabled:
                 self._ensure_worker()
                 self._q.put((now, f, dict(context or {})))
