@@ -812,6 +812,12 @@ class ShowRunner:
             return
         if not d.get("at") or self.clock() - d["at"] > EDIT_KEEP_S:
             return
+        # Only a HAND-EDITED script is worth keeping over a restart. An
+        # automatic one may stem from older data / code (2026-10-15: after an
+        # update the old script — results AFTER the replayed round — was used
+        # once before a new one was written); it is simply written again.
+        if not d.get("edited"):
+            return
         self.script, self.order, self.segments = d.get("script") or {}, d.get("order") or [], d.get("segments") or []
         self.script_source, self.script_at = d.get("source") or "", d["at"]
         self.edited, self.facts = bool(d.get("edited")), d.get("facts") or {}

@@ -510,7 +510,7 @@ or browser) and skips a clip that stops moving after 3 tries — a silent run
 was a second voice page / stale OBS cache; the next run played every line.
 `mouth_gain` (commentary_config.json, ?mouth=). EDITABLE SCRIPT on /show
 (textarea per segment, POST /show/script; empty = skipped; an edited script
-is never rewritten automatically for 12 h and survives restarts in
+is never rewritten automatically for 12 h and survives restarts (an AUTOMATIC one does not — it could stem from older data / code) in
 show_script.json — gitignored + PROTECTED). Track segment: text FIRST, then
 the video (`video_after_speech`, default true; false = old talk-over, sized
 to the video). Pro/Am: own OBS sources per class ("Letztes Rennen PRO/AM",

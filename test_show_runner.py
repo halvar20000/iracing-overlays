@@ -458,6 +458,10 @@ with tempfile.TemporaryDirectory() as td:
                        director_on=lambda: None, store=store, points_fn=lambda f: ["A.", "B.", "C."])
     rp.prepare()
     got = [rp.next_point(), rp.next_point()]
+    rp1b = sr.ShowRunner(cfg, None, Speaker(), facts_fn=lambda: pa, script_fn=lambda f, s_: ({}, "t"),
+                         director_on=lambda: None, store=store)
+    check("an automatic script is not restored after a restart (written again)", not rp1b.script and not rp1b.points)
+    rp.set_script({"intro": rp.script["intro"]})          # hand-edited -> kept over a restart
     rp2 = sr.ShowRunner(cfg, None, Speaker(), facts_fn=lambda: pa, script_fn=lambda f, s_: ({}, "t"),
                         director_on=lambda: None, store=store)
     check("points spoken in order, once; remembered across a restart", got == ["A.", "B."]
