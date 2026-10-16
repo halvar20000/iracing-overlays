@@ -620,7 +620,16 @@ fünf"; (4) the DRIVER's class (log entry "klasse" from cls_proam) — AM driver
 were called "in der Pro-Quali" after the switch; (5) battle graphic not
 before 5 min of racing (after_green_s) — "GATHERING LAP DATA" in lap 1.
 Not changed: OBS layout (pre-race pages cover the avatar), REGIE idle in
-warm-up / before the green (cockpit view for minutes). Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
+warm-up / before the green (cockpit view for minutes).
+AVATAR (2026-10-16): photoreal moderator = "Gaby Ferrari", an AI persona
+Andreas made in Photoshop/Firefly (avatar/gaby_full.mp4, 4 s; gaby_calm.mp4 =
+the calm hands-folded part 1.85-3.35 s). The blonde woman in the first clips is
+a REAL person — never use. Lip-sync via sync.so (avatar_sync.py: multipart
+POST /v2/generate video+audio, model lipsync-2-pro, sync_mode bounce, poll
+GET /v2/generate/{id}, download outputUrl to avatar/out/ — gitignored); key
+"sync_api_key" in commentary_config.json. Test page /avatar (one sentence →
+voice → video). Hobby plan: 300 credits ≈ 36 s sync-2-pro — on camera only
+for greeting / hand-over / goodbye. Not yet wired into the show. Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

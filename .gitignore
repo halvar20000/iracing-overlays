@@ -58,3 +58,5 @@ show_script.json
 
 # per-track videos for the moderation (big, local)
 show_notes/videos/
+# generated avatar videos (sync.so)
+avatar/out/

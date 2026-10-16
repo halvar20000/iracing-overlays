@@ -13,6 +13,7 @@ v7 adds:
 """
 
 import json
+import re
 import sys
 import threading
 import time
@@ -257,6 +258,8 @@ class TelemetryPoller:
             facts_fn=self._post_facts, script_fn=self._post_script,
             director_on=lambda: None, kind="post", director_off=lambda: self.set_director(False))
         self._race_story: list = []       # this race told by its live commentary (Abspann summary)
+        import avatar_sync
+        self.avatar_test = avatar_sync.AvatarTest(self.voice)   # /avatar: sync.so lip-sync test
         self._story_key = None
         self._post_key = None             # race the Abspann ran for (once per race)
         self._chequered_at = None
@@ -5375,6 +5378,84 @@ def show_check():
     except Exception as e:
         return jsonify({"ok": False, "error": f"OBS: {e} – OBS offen? Werkzeuge → WebSocket-Server "
                                               f"aktiviert (Port {cfg['obs'].get('port')})?"})
+
+
+AVATAR_HTML = r"""<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><title>Avatar-Test</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  /* AVATAR test (avatar_sync.py, sync.so): one sentence -> lip-synced video */
+  :root { --bg: #14161b; --panel: #1d2027; --line: #2c3039; --text: #e8e8ec; --dim: #9aa0ab;
+          --acc: #22d3ee; --bad: #f87171; --ok: #34d399; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 'Segoe UI', Arial, sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; } h1 span { color: var(--acc); }
+  textarea { width: 100%; background: #15171c; color: var(--text); border: 1px solid var(--line);
+             border-radius: 6px; padding: 8px; font: inherit; }
+  button { background: var(--panel); color: var(--text); border: 1px solid var(--ok); border-radius: 6px;
+           padding: 9px 14px; font-size: 15px; cursor: pointer; margin-top: 8px; }
+  .dim { color: var(--dim); } .err { color: var(--bad); }
+  video { width: 100%; margin-top: 12px; border-radius: 6px; background: #000; }
+</style></head><body><main>
+<h1>Avatar-Test <span>Gaby</span></h1>
+<div class="dim">Ein Satz wird zur Stimme und dann bei sync.so zum sprechenden Video (Gabys ruhiger Clip).
+Kostet Credits: Hobby-Plan ≈ 36 Sekunden pro 300 Credits.</div>
+<textarea id="t" rows="3">Hallo und herzlich willkommen bei Kas! Heute steht die nächste Runde der GT3 WCT auf dem Programm.</textarea>
+<button onclick="go()">▶ Video erzeugen</button>
+<p id="st" class="dim"></p>
+<video id="v" controls style="display:none"></video>
+<script>
+async function go() {
+  const r = await (await fetch('/avatar/test', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({text: document.getElementById('t').value})})).json();
+  if (!r.ok) document.getElementById('st').innerHTML = '<span class="err">' + r.error + '</span>';
+}
+let shown = '';
+async function tick() {
+  const d = await (await fetch('/avatar/status')).json();
+  const st = document.getElementById('st');
+  st.className = d.state === 'error' ? 'err' : 'dim';
+  st.textContent = !d.key ? 'Kein sync.so-Schlüssel: "sync_api_key" in commentary_config.json eintragen, Dashboard neu starten.'
+                 : ({idle: 'bereit', running: 'läuft: ', done: 'fertig: ', error: 'Fehler: '}[d.state] || '') + (d.msg || '');
+  if (d.file && d.file !== shown) { shown = d.file; const v = document.getElementById('v');
+    v.src = '/avatar/video/' + d.file; v.style.display = 'block'; }
+}
+setInterval(tick, 1500); tick();
+</script></main></body></html>
+"""
+
+
+@app.route("/avatar")
+def avatar_page():
+    from flask import Response
+    return Response(AVATAR_HTML, mimetype="text/html")
+
+
+@app.route("/avatar/status")
+def avatar_status():
+    return jsonify(poller.avatar_test.status())
+
+
+@app.route("/avatar/test", methods=["POST"])
+def avatar_test():
+    import avatar_sync
+    if not avatar_sync.api_key():
+        return jsonify({"ok": False, "error": "kein sync.so-Schlüssel in commentary_config.json"})
+    text = ((request.get_json(silent=True) or {}).get("text") or "").strip()[:400]
+    if not text:
+        return jsonify({"ok": False, "error": "kein Text"})
+    ok = poller.avatar_test.start(text)
+    return jsonify({"ok": ok, "error": None if ok else "läuft schon"})
+
+
+@app.route("/avatar/video/<name>")
+def avatar_video(name):
+    import avatar_sync
+    from flask import send_from_directory
+    if not re.fullmatch(r"[A-Za-z0-9_-]+\.mp4", name):
+        return ("", 404)
+    return send_from_directory(str(avatar_sync.OUT_DIR), name, mimetype="video/mp4")
 
 
 @app.route("/abspann")
