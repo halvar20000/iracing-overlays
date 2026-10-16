@@ -252,8 +252,22 @@ class TelemetryPoller:
             pin=lambda cls: show_runner.pin_class(scfg, cls), store=show_runner.SCRIPT_FILE,
             points_fn=self._show_points)
         self._point_at = 0.0              # last talking point spoken (quiet moments in quali / race)
-        self.commentator.on_line = lambda ln: self.voice.say(ln["id"], ln["text"],
-                                                             keep=bool(ln.get("queue")))
+        self.post_show = show_runner.ShowRunner(           # ABSPANN after the race
+            scfg, self.show_obs, _ShowSpeaker(self.commentator),
+            facts_fn=self._post_facts, script_fn=self._post_script,
+            director_on=lambda: None, kind="post", director_off=lambda: self.set_director(False))
+        self._race_story: list = []       # this race told by its live commentary (Abspann summary)
+        self._story_key = None
+        self._post_key = None             # race the Abspann ran for (once per race)
+        self._chequered_at = None
+
+        def _on_line(ln):
+            self.voice.say(ln["id"], ln["text"], keep=bool(ln.get("queue")))
+            try:
+                self._story_add(ln)
+            except Exception:
+                pass
+        self.commentator.on_line = _on_line
         self.director_enabled = False
         self.proam = ProAmRoster()        # CLS PRO / AM per driver (WCT quali: one class at a time)
         self.graphics = GraphicsDirector(scfg.get("graphics"))   # overlays brought up during REGIE
@@ -1840,6 +1854,83 @@ class TelemetryPoller:
             self.show.last_error = "CLS-Daten nicht erreichbar (läuft die Meisterschaft auf 5010?)"
         return facts
 
+    # --- ABSPANN after the race (show_runner kind="post") ---------------------
+    def _story_add(self, ln):
+        """Collect the race's live commentary lines — the Abspann tells the race from them."""
+        if not self._cur_is_race or ln.get("queue"):
+            return
+        key = (self.ir["SessionUniqueID"], self.ir["SessionNum"])
+        if key != self._story_key:
+            self._story_key, self._race_story = key, []
+        self._race_story.append(ln["text"])
+        del self._race_story[:-150]
+
+    def _maybe_post_show(self):
+        """Start the Abspann post_delay_s after the chequered flag of the race
+        REGIE is running — once per race."""
+        cfg = self.post_show.cfg
+        if not (cfg.get("post_auto") and self.director_enabled and self._cur_is_race):
+            self._chequered_at = None
+            return
+        key = (self.ir["SessionUniqueID"], self.ir["SessionNum"])
+        if self._post_key == key or (self.ir["SessionState"] or 0) < 5:
+            if (self.ir["SessionState"] or 0) < 5:
+                self._chequered_at = None
+            return
+        now = time.time()
+        if self._chequered_at is None:
+            self._chequered_at = now
+            print(f"[abspann] chequered flag - Abspann in {cfg.get('post_delay_s', 120)} s")
+        if now - self._chequered_at >= float(cfg.get("post_delay_s") or 120):
+            self._post_key = key
+            threading.Thread(target=self.start_post_show, daemon=True).start()
+
+    def start_post_show(self):
+        self.post_show.prepare()
+        self.post_show.start()
+
+    def _post_facts(self) -> dict:
+        def get(url):
+            try:
+                with urllib.request.urlopen(url, timeout=8) as r:
+                    return json.loads(r.read().decode("utf-8"))
+            except Exception:
+                return None
+        wk = dict(self._weekend or {})
+        track = {"name": wk.get("TrackDisplayName"), "config": wk.get("TrackConfigName")}
+        cfg = self.post_show.cfg
+        ri = show_runner.fetch_roundinfo(cfg.get("champ_url") or show_runner.DEFAULT_CONFIG["champ_url"])
+        champ_base = (cfg.get("champ_url") or show_runner.DEFAULT_CONFIG["champ_url"]).split("/api/")[0]
+        projection = get(f"{champ_base}/api/state")
+        results = get("http://127.0.0.1:5002/results")
+        # Pro/Am class per driver name (CLS roster by iRacing customer id)
+        classes = {}
+        try:
+            drivers = (self.ir["DriverInfo"] or {}).get("Drivers") or []
+            if self.proam.active_for(d.get("UserID") for d in drivers):
+                for d in drivers:
+                    c = self.proam.lookup(d.get("UserID"))
+                    if c and d.get("UserName"):
+                        classes[d["UserName"]] = c
+        except Exception:
+            pass
+        notes_dir = Path(__file__).resolve().parent / (cfg.get("notes_dir") or "show_notes")
+        facts = show_runner.build_post_facts(results, projection, ri, list(self._race_story), track,
+                                             classes, notes_dir)
+        if not results:
+            self.post_show.last_error = "Ergebnis nicht erreichbar (läuft Race Results auf 5002?)"
+        return facts
+
+    def _post_script(self, facts: dict, segments: list):
+        if self.commentator.ai_enabled:
+            try:
+                return show_runner.claude_script(self.post_show.cfg, self.commentator.cfg, facts, segments,
+                                                 system=show_runner.POST_SYSTEM,
+                                                 briefs=show_runner.POST_BRIEF), "claude"
+            except Exception as e:
+                self.post_show.last_error = f"Claude-Skript: {e} – Vorlagen benutzt"
+        return show_runner.template_post_script(self.post_show.cfg, facts, segments), "template"
+
     def _show_points(self, facts: dict) -> list:
         n = int(self.show.cfg.get("points_count") or 15)
         if self.commentator.ai_enabled:
@@ -2425,6 +2516,10 @@ class TelemetryPoller:
                 self._tick_graphics()
             except Exception as e:
                 print(f"[grafik] {type(e).__name__}: {e}")
+            try:
+                self._maybe_post_show()
+            except Exception as e:
+                print(f"[abspann] {e}")
             try:
                 self._maybe_talking_point()
             except Exception as e:
@@ -5112,7 +5207,14 @@ SHOW_HTML = r"""<!DOCTYPE html>
 <div class="card"><div class="dim">Protokoll</div><ul id="log"></ul></div>
 <div class="card"><details><summary class="dim">Fakten für das Skript</summary><pre id="facts"></pre></details></div>
 <script>
-const NAMES = {intro: 'Begrüßung', last_race: 'Letztes Rennen', standings: 'Tabelle', track: 'Strecke', outro: 'Übergabe',
+// the same page drives the Abspann (/abspann): BASE = where its API lives
+const BASE = location.pathname.startsWith('/abspann') ? '/abspann' : '/show';
+if (BASE === '/abspann') { document.querySelector('h1').innerHTML = 'Abspann <span>KI</span>';
+                           document.title = 'Abspann';
+                           document.querySelector('button.go').textContent = '▶ Abspann starten'; }
+const NAMES = {race_summary: 'Rennverlauf', results: 'Endergebnis', standings_after: 'Meisterschaft danach',
+               next_round: 'Nächstes Rennen', goodbye: 'Verabschiedung',
+               intro: 'Begrüßung', last_race: 'Letztes Rennen', standings: 'Tabelle', track: 'Strecke', outro: 'Übergabe',
                last_race_pro: 'Letztes Rennen · PRO', last_race_am: 'Letztes Rennen · AM',
                standings_pro: 'Tabelle · PRO', standings_am: 'Tabelle · AM', schedule: 'Saisonplan'};
 // The script is editable until the show runs: a text field per segment,
@@ -5124,7 +5226,7 @@ async function act(a) {
     if (a === 'prepare' && last && (last.edited || dirty) &&
         !confirm('Das Skript wurde von Hand geändert. Wirklich neu schreiben lassen?')) return;
     if (a === 'start' && dirty && !confirm('Ungespeicherte Änderungen – ohne sie starten?')) return;
-    const r = await fetch('/show/' + a, {method: 'POST'}); const d = await r.json();
+    const r = await fetch(BASE + '/' + a, {method: 'POST'}); const d = await r.json();
     if (!d.ok) document.getElementById('err').textContent = d.error || 'Fehler';
     setTimeout(tick, 300);
 }
@@ -5135,18 +5237,21 @@ async function check() {
     el.innerHTML = '<div class="dim">OBS: ' + (d.streaming ? '<span class="ok">streamt</span>' : 'streamt nicht') +
         ' · Szene jetzt: ' + esc(d.current) + '</div><ul>' +
         d.items.map(i => '<li class="' + (i.found ? 'ok' : i.optional ? 'dim' : 'err') + '">' +
-                    (i.found ? '✓ ' : i.optional ? '– nicht da (optional: Pro/Am-Klasse, Saisonplan, Grafik während der REGIE): ' : '✗ fehlt: ') +
+                    (i.found ? '✓ ' : i.optional ? '– nicht da (optional: Pro/Am-Klasse, Saisonplan, Streckenort, Grafik während der REGIE, Abspann): ' : '✗ fehlt: ') +
                     esc(i.what) + ' „' + esc(i.name) + '“' +
                     (!i.found && i.near && i.near.length ? ' <span class="dim">– in OBS gibt es: ' +
                         i.near.map(n => '„' + esc(n) + '“').join(', ') + '</span>' : '') + '</li>').join('') + '</ul>';
 }
 async function tick() {
-    let d; try { d = await (await fetch('/show/status')).json(); } catch (e) { return; }
+    let d; try { d = await (await fetch(BASE + '/status')).json(); } catch (e) { return; }
     const st = document.getElementById('state');
-    st.textContent = {idle: 'bereit', preparing: 'schreibt Skript …', running: 'läuft', done: 'fertig – REGIE übernimmt',
+    st.textContent = {idle: 'bereit', preparing: 'schreibt Skript …', running: 'läuft',
+                      done: BASE === '/abspann' ? 'fertig' : 'fertig – REGIE übernimmt',
                       stopped: 'gestoppt'}[d.state] || d.state;
     st.className = 'pill ' + d.state;
-    document.getElementById('when').textContent = d.auto_start
+    document.getElementById('when').textContent = BASE === '/abspann'
+        ? 'Startet automatisch ' + Math.round((d.post_delay_s || 120) / 60) + ' Min. nach der Zielflagge, wenn die REGIE läuft'
+        : d.auto_start
         ? 'Automatischer Start ' + d.start_at + ' Uhr, wenn OBS streamt' + (d.ran_today ? ' (heute schon gelaufen)' : '')
         : 'Automatischer Start aus';
     document.getElementById('err').textContent = d.last_error || '';
@@ -5180,7 +5285,7 @@ function draw(d, force) {
         if (!force && (dirty || key === shownKey)) { document.getElementById('edit').className = 'row' + (dirty ? ' dirty' : ''); return; }
         shownKey = key;
         const pb = document.getElementById('pointsbox'), pt = document.getElementById('points');
-        pb.style.display = (d.points || []).length || order.length ? 'block' : 'none';
+        pb.style.display = BASE !== '/abspann' && ((d.points || []).length || order.length) ? 'block' : 'none';
         pt.value = (d.points || []).join('\n');
         pt.oninput = () => { dirty = true; document.getElementById('edit').className = 'row dirty'; };
         el.innerHTML = order.map(s => {
@@ -5200,7 +5305,7 @@ async function save() {
     const script = {};
     document.querySelectorAll('#script textarea').forEach(ta => { script[ta.dataset.seg] = ta.value; });
     const points = document.getElementById('points').value.split('\n').map(x => x.trim()).filter(Boolean);
-    const d = await (await fetch('/show/script', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    const d = await (await fetch(BASE + '/script', {method: 'POST', headers: {'Content-Type': 'application/json'},
                                                     body: JSON.stringify({script, points})})).json();
     if (!d.ok) { document.getElementById('err').textContent = d.error || 'Fehler'; return; }
     dirty = false; shownKey = ''; tick();
@@ -5240,7 +5345,8 @@ def show_check():
             if name:
                 real = show_runner.match_name(name, srcs)
                 items.append({"what": f"Quelle in {mod}", "name": real or name, "found": bool(real),
-                              "optional": key in show_runner.CLASS_SOURCE_FALLBACK or key.startswith("schedule:"),
+                              "optional": key in show_runner.CLASS_SOURCE_FALLBACK or key.startswith("schedule:")
+                                          or key in ("track_location", "results", "standings_after"),
                               "near": [] if real else [h for h in srcs if h and any(
                                   w in h.casefold() for w in name.casefold().split() if len(w) >= 4)][:4]})
         gcfg = poller.graphics.cfg                       # GRAFIK sources on the iRacing scene
@@ -5257,6 +5363,40 @@ def show_check():
     except Exception as e:
         return jsonify({"ok": False, "error": f"OBS: {e} – OBS offen? Werkzeuge → WebSocket-Server "
                                               f"aktiviert (Port {cfg['obs'].get('port')})?"})
+
+
+@app.route("/abspann")
+def abspann_page():
+    from flask import Response
+    return Response(SHOW_HTML, mimetype="text/html")
+
+
+@app.route("/abspann/status")
+def abspann_status():
+    return jsonify(dict(poller.post_show.status(), post_delay_s=poller.post_show.cfg.get("post_delay_s")))
+
+
+@app.route("/abspann/script", methods=["POST"])
+def abspann_script_edit():
+    body = request.get_json(silent=True) or {}
+    err = poller.post_show.set_script(body.get("script") or {}, body.get("points"))
+    return jsonify({"ok": not err, "error": err})
+
+
+@app.route("/abspann/<action>", methods=["POST"])
+def abspann_action(action):
+    sh = poller.post_show
+    if action == "start":
+        threading.Thread(target=poller.start_post_show, daemon=True).start()
+    elif action == "next":
+        sh.next()
+    elif action == "stop":
+        sh.stop()
+    elif action == "prepare":
+        threading.Thread(target=sh.prepare, daemon=True).start()
+    else:
+        return jsonify({"ok": False, "error": f"unknown action {action}"})
+    return jsonify({"ok": True})
 
 
 @app.route("/show/script", methods=["POST"])
@@ -5584,6 +5724,16 @@ def streamdeck(action, param=None):
     elif action == "show_stop":
         poller.show.stop()
         ok, msg = True, "show stopped"
+    # --- Abspann after the race ---
+    elif action == "post_start":
+        threading.Thread(target=poller.start_post_show, daemon=True).start()
+        ok, msg = True, "abspann starting"
+    elif action == "post_next":
+        poller.post_show.next()
+        ok, msg = True, f"abspann segment={poller.post_show.seg['id'] if poller.post_show.seg else None}"
+    elif action == "post_stop":
+        poller.post_show.stop()
+        ok, msg = True, "abspann stopped"
 
     elif action == "toggle_auto_replay":
         poller.set_auto_replay(not poller.auto_replay)
@@ -5708,7 +5858,8 @@ if __name__ == "__main__":
     t.start()
     threading.Thread(target=poller._watch_league, daemon=True, name="LeagueWatch").start()
     poller.proam.start()
-    poller.show.run_forever()          # SENDEABLAUF: auto start at start_at while OBS streams
+    poller.show.run_forever()
+    poller.post_show.run_forever()      # ABSPANN after the race          # SENDEABLAUF: auto start at start_at while OBS streams
 
     print("\n" + "=" * 60)
     print("  iRacing Broadcast Dashboard v8")
@@ -5726,6 +5877,7 @@ if __name__ == "__main__":
     print("  Commentary (OBS)  http://localhost:5000/commentary/overlay")
     print("  Voice (OBS audio) http://localhost:5000/commentary/voice")
     print("  Sendeablauf       http://localhost:5000/show   (Stream Deck: /streamdeck/show_start|show_next|show_stop)")
+    print("  Abspann           http://localhost:5000/abspann (Stream Deck: /streamdeck/post_start|post_next|post_stop)")
     print("  List cameras      http://localhost:5000/cameras?format=text")
     print("  Driver next/prev  http://localhost:5000/streamdeck/driver_next")
     print("  Toggle follow     http://localhost:5000/streamdeck/toggle_auto_follow")

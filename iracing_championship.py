@@ -916,6 +916,14 @@ def _state() -> dict:
     _apply_detected_league(race)
     fetch = fetcher.get()
     champ = fetch.get("data")
+    # Replay of an earlier round: project onto the table as it stood BEFORE
+    # that round — today's CLS table already holds it (it would count twice).
+    replay_n = _replay_round_now((round_info.get() or {}).get("data") or {})
+    if replay_n:
+        try:
+            champ = _roundinfo_before(replay_n)["standings"]
+        except Exception as e:
+            print(f"[championship] table before round {replay_n}: {e}")
     round_memory.update(race, champ)
     earlier = round_memory.earlier_races(champ, (race or {}).get("session_key"))
     payload = build_projection(race, champ, earlier, fetch.get("config"))
@@ -925,6 +933,7 @@ def _state() -> dict:
     payload["ui"]            = dict(ui_state)
     payload["config"]        = fetch.get("config")
     payload["detected"]      = detected_state.get("result")
+    payload["replay_round"]  = replay_n
     return payload
 
 

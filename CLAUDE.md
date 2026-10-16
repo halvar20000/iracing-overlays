@@ -592,7 +592,21 @@ WCT quali camera split: after split_min (15; show_config
 "quali_camera_split_min", e.g. 17) REGIE shows only PRO cars, before it only
 AM (dashboard `_quali_class_filter`: cls_proam ProAmRoster per UserID →
 car "eligible": False + "ineligible_since_t"; quali_director drops them as
-subjects, except an AM flying lap begun before the switch, shown to the line). Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
+subjects, except an AM flying lap begun before the switch, shown to the line).
+ABSPANN (post-race show): a second ShowRunner(kind="post") — segments
+race_summary / results / standings_after / next_round / goodbye
+(POST_SYSTEM + POST_BRIEF, claude_script(system=, briefs=) or
+template_post_script), facts build_post_facts(): 5002 /results (top 10,
+fastest lap, biggest gainer, retirements, per class via cls_proam by name),
+5010 /api/state projection (table incl. tonight, per class, class rank
+before), next round = tonight's + 1 from CLS rounds (+ schedule file), and
+`verlauf` = the race's own live commentary lines (dashboard _race_story).
+Starts post_delay_s 120 after SessionState >= 5 while REGIE runs, once per
+race; REGIE off, Moderator scene, sources "Ergebnis" / "Meisterschaft",
+stays on Moderator (post_end_scene). Page /abspann (same SHOW_HTML, BASE),
+/abspann/status|script|<action>, Stream Deck post_start|post_next|post_stop.
+ALSO: 5010 projection (/api/state) during a replay of round N projects onto
+the table BEFORE round N (today's table already holds it — counted twice). Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

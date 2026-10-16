@@ -64,6 +64,23 @@ Ablauf nur einmal.
 5. Zum Prüfen öffnest du `http://localhost:5000/show` → **„OBS prüfen“**. Dort
    bekommt jede Szene und Quelle einen Haken, oder es steht da, was fehlt.
 
+## 1a. Abspann nach dem Rennen
+
+Läuft die REGIE, startet **2 Minuten nach der Zielflagge** der Abspann (einmal
+pro Rennen; `"post_delay_s"`, `"post_auto": false` = nur per Knopf). Die REGIE
+geht aus, OBS schaltet auf **Moderator**, dann:
+
+1. **Rennverlauf** — erzählt aus den Live-Kommentaren des Rennens
+2. **Endergebnis** — Quelle `Ergebnis` (Browserquelle `obs_loaders\results.html`)
+3. **Meisterschaft danach** — Quelle `Meisterschaft` (`obs_loaders\champ.html`),
+   vorläufig inkl. dieses Rennens, bei Pro/Am je Klasse
+4. **Nächstes Rennen** — Runde, Datum, Strecke
+5. **Verabschiedung**
+
+Seite: `http://localhost:5000/abspann` (Skript lesen und ändern, Start,
+Weiter, Stopp). Stream Deck: `/streamdeck/post_start`, `post_next`,
+`post_stop`. Braucht Race Results (5002) und die Meisterschaft (5010).
+
 ## 1b. Grafiken während der REGIE (Szene iRacing, optional)
 
 Läuft die REGIE, blendet sie im Rennen passende Overlays kurz ein, immer nur

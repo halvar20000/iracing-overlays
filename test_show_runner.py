@@ -475,6 +475,81 @@ with tempfile.TemporaryDirectory() as td:
     rp3.prepare()
     check("points failure does not stop the script", rp3.script and rp3.points == [])
 
+# ABSPANN after the race: facts, segments, templates, run
+RES = {"rows": [
+    {"position": 1, "name": "Maurice Becker", "car": "Porsche", "start_pos": 2, "position_change": 1,
+     "fastest_lap": 109.5, "is_fastest_overall": True, "finished": True, "time_gap": 0},
+    {"position": 2, "name": "Andreas Bastian", "car": "Porsche", "start_pos": 9, "position_change": 7,
+     "fastest_lap": 110.1, "finished": True, "time_gap": 3.4},
+    {"position": 3, "name": "Mike Zocher", "car": "BMW", "start_pos": 1, "position_change": -2,
+     "fastest_lap": 109.9, "finished": True, "time_gap": 5.0},
+    {"position": 4, "name": "Thomas Kuebler", "car": "Corvette", "start_pos": 5, "position_change": 1,
+     "fastest_lap": 110.6, "finished": False, "reason_out": "Disconnected", "laps_behind": 3}]}
+PROJ = {"season": {"proAmEnabled": True}, "champ_rows": [
+    {"name": "Maurice Becker", "pro_am": "PRO", "proj_points": 153, "pre_points": 118, "rank": 3, "proj_rank": 1, "race_pts": 35, "in_race": True},
+    {"name": "Mike Zocher", "pro_am": "PRO", "proj_points": 140, "pre_points": 110, "rank": 4, "proj_rank": 3, "race_pts": 30, "in_race": True},
+    {"name": "Andreas Bastian", "pro_am": "AM", "proj_points": 144, "pre_points": 104, "rank": 2, "proj_rank": 2, "race_pts": 40, "in_race": True},
+    {"name": "Thomas Kuebler", "pro_am": "AM", "proj_points": 120, "pre_points": 108, "rank": 1, "proj_rank": 4, "race_pts": 12, "in_race": True}]}
+RIP = {"ok": True, "info": {"league": {"slug": "cas-gt3-wct", "name": "CAS GT3 WCT"}, "season": {"name": "14th"},
+       "nextRound": {"number": 4, "track": "Mobility Resort Motegi"},
+       "rounds": [{"number": n, "startsAt": f"2026-10-{6 + 7 * (n - 3):02d}T18:00:00.000Z",
+                   "status": "COMPLETED" if n < 4 else "UPCOMING",
+                   "track": {4: "Mobility Resort Motegi", 5: "Indianapolis Motor Speedway"}.get(n, "X")}
+                  for n in (3, 4, 5)]}}
+CL = {"Maurice Becker": "PRO", "Mike Zocher": "PRO", "Andreas Bastian": "AM", "Thomas Kuebler": "AM"}
+pf = sr.build_post_facts(RES, PROJ, RIP, ["Zocher führt.", "Becker geht vorbei!"], {"name": "Motegi"}, CL)
+check("post facts: result, classes, fastest lap, biggest gain, retirement",
+      pf["ergebnis"]["top10"][0]["name"] == "Maurice Becker" and pf["ergebnis"]["schnellste_runde"]["zeit"] == "1:49,500"
+      and pf["ergebnis"]["meiste_plaetze_gut"]["name"] == "Andreas Bastian"
+      and pf["ergebnis"]["klassen"]["AM"]["top3"][0]["name"] == "Andreas Bastian"
+      and pf["ergebnis"]["ausgefallen"] == ["Thomas Kuebler"], pf["ergebnis"])
+check("post facts: championship per class incl. tonight, class rank before",
+      pf["meisterschaft"]["PRO"][0]["name"] == "Maurice Becker" and pf["meisterschaft"]["AM"][0]["name"] == "Andreas Bastian"
+      and pf["meisterschaft"]["AM"][0]["vorher_rang"] == 2 and pf["meisterschaft"]["AM"][0]["punkte_heute"] == 40,
+      pf["meisterschaft"])
+check("post facts: next round = the one after tonight's", pf["naechstes_rennen"]["runde"] == 5
+      and pf["naechstes_rennen"]["strecke"] == "Indianapolis Motor Speedway" and pf["naechstes_rennen"]["datum"] == "20. Oktober",
+      pf.get("naechstes_rennen"))
+check("post facts: race story from the commentary", pf["verlauf"] == ["Zocher führt.", "Becker geht vorbei!"])
+psegs = sr.available_post_segments(sr.load_config(), pf)
+check("post segments", psegs == ["race_summary", "results", "standings_after", "next_round", "goodbye"], psegs)
+check("post segments without data", sr.available_post_segments(sr.load_config(), {}) == ["goodbye"])
+ptpl = sr.template_post_script(sr.load_config(), pf, psegs)
+check("post templates", set(ptpl) == set(psegs) and "Klasse AM gewinnt Andreas Bastian" in ptpl["results"]
+      and "Runde 5 von 5" in ptpl["next_round"] and "kam Thomas Kuebler." in ptpl["race_summary"] and "Indianapolis" in ptpl["next_round"]
+      and "vorläufig" in ptpl["standings_after"] and not any("None" in t for t in ptpl.values()), ptpl)
+pcalls2 = []
+def post2(payload):
+    pcalls2.append(payload)
+    return {"content": [{"type": "text", "text": '{"segments": {"goodbye": "Tschüss!"}}'}]}
+sr.claude_script(sr.load_config(), {"api_key": "k"}, pf, ["goodbye"], post=post2,
+                 system=sr.POST_SYSTEM, briefs=sr.POST_BRIEF)
+check("post script prompt is the Abspann one", "Abspann" in pcalls2[0]["system"]
+      and "goodbye" in json.loads(pcalls2[0]["messages"][0]["content"])["segmente"])
+obs13 = FakeObs({"Moderator": {"Ergebnis": False, "Meisterschaft": True}, "iRacing": {}}, media={})
+obs13.current = "iRacing"
+c13 = sr.load_config(); c13["obs"] = {"host": "127.0.0.1", "port": obs13.port}
+ev13 = []
+r13 = sr.ShowRunner(c13, ObsClient(port=obs13.port), Speaker(), facts_fn=lambda: pf,
+                    script_fn=lambda f, s_: (sr.template_post_script(c13, f, s_), "template"),
+                    director_on=lambda: ev13.append("on"), kind="post", director_off=lambda: ev13.append("off"))
+r13.prepare()
+vis13 = []
+def w13():
+    r13.tick()
+    v = (r13.seg["id"] if r13.seg else None, obs13.scenes["Moderator"]["Ergebnis"], obs13.scenes["Moderator"]["Meisterschaft"])
+    if not vis13 or vis13[-1] != v:
+        vis13.append(v)
+r13.start()
+check("Abspann: REGIE off, Moderator scene, table left on hidden", ev13 == ["off"] and obs13.current == "Moderator"
+      and obs13.scenes["Moderator"]["Meisterschaft"] is False)
+check("Abspann runs to the end, stays on Moderator, no REGIE", wait_for(lambda: r13.state == "done", 20, tick=w13)
+      and obs13.current == "Moderator" and ev13 == ["off"], r13.status()["log"])
+check("Abspann: result during results, table during standings_after", ("results", True, False) in vis13
+      and ("standings_after", False, True) in vis13 and all(not e and not t for s_, e, t in vis13 if s_ in ("goodbye", None, "race_summary")), vis13)
+r13.state = "idle"
+check("Abspann never starts by itself", r13.tick() is None and r13.state == "idle")
+
 # hand edits: kept, empty segment skipped, survive a restart, never rewritten automatically
 with tempfile.TemporaryDirectory() as td:
     store = Path(td) / "show_script.json"

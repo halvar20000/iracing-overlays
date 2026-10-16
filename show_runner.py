@@ -55,6 +55,9 @@ DEFAULT_CONFIG = {
         # where the track is (5007 /location, loader location.html): shown while
         # the track is talked about, before the video (optional)
         "track_location": "Streckenort",
+        # Abspann: final classification + championship after the race
+        "results": "Ergebnis",
+        "standings_after": "Meisterschaft",
         # Pro/Am seasons: one source per class (5010 /lastrace/pro, /lastrace/am,
         # /table/pro, /table/am). Missing in OBS -> the plain source above,
         # pinned to the class.
@@ -67,6 +70,12 @@ DEFAULT_CONFIG = {
     # season schedule picture per league (CLS slug -> OBS source in the
     # Moderator scene); a league without one skips the schedule segment
     "schedule_sources": {"cas-gt3-wct": "WCT"},
+    # ABSPANN after the race (post show, same machinery): segments, start
+    # automatically post_delay_s after the chequered flag while REGIE runs
+    "post_segments": ["race_summary", "results", "standings_after", "next_round", "goodbye"],
+    "post_auto": True,
+    "post_delay_s": 120,
+    "post_end_scene": "",             # "" = stay on the Moderator scene at the end
     "auto_start": True,
     "start_at": "19:40",              # local time
     "start_window_min": 20,           # auto start only within this many minutes after start_at
@@ -81,7 +90,7 @@ DEFAULT_CONFIG = {
 SEGMENT_SOURCES = {"last_race": "last_race", "standings": "standings",
                    "last_race_pro": "last_race_pro", "last_race_am": "last_race_am",
                    "standings_pro": "standings_pro", "standings_am": "standings_am",
-                   "schedule": "schedule"}
+                   "schedule": "schedule", "results": "results", "standings_after": "standings_after"}
 CLASS_SOURCE_FALLBACK = {"last_race_pro": "last_race", "last_race_am": "last_race",
                          "standings_pro": "standings", "standings_am": "standings"}
 # Pro/Am seasons (WCT GT3): results and table are talked about per class, and
@@ -449,15 +458,17 @@ def _track_words(facts, cfg=None):
     return "80-120 Wörter, gesprochen während das Streckenvideo läuft"
 
 
-def claude_script(cfg: dict, api_cfg: dict, facts: dict, segments: list[str], post=None) -> dict:
+def claude_script(cfg: dict, api_cfg: dict, facts: dict, segments: list[str], post=None,
+                  system: str | None = None, briefs: dict | None = None) -> dict:
     """{segment: text} from Claude. Raises on any failure (caller falls back)."""
     host = cfg.get("host_name") or ""
     host_desc = f"{host}, die KI-Moderation" if host else "die KI-Moderation"
-    brief = {s: SEGMENT_BRIEF[s].format(words=_track_words(facts, cfg)) for s in segments if s in SEGMENT_BRIEF}
+    briefs = briefs or SEGMENT_BRIEF
+    brief = {s: briefs[s].format(words=_track_words(facts, cfg)) for s in segments if s in briefs}
     user = json.dumps({"segmente": brief, "daten": facts}, ensure_ascii=False)
     payload = {"model": cfg.get("model") or DEFAULT_CONFIG["model"], "max_tokens": 6000,
                "thinking": {"type": "disabled"},
-               "system": SYSTEM_PROMPT.format(host=host_desc),
+               "system": (system or SYSTEM_PROMPT).format(host=host_desc),
                "messages": [{"role": "user", "content": user}]}
     if post is None:
         from race_commentator import Commentator
@@ -591,6 +602,189 @@ def template_points(facts: dict) -> list[str]:
     return out[:20]
 
 
+# -- ABSPANN (after the race) ------------------------------------------------------
+POST_SYSTEM = (
+    "Du bist {host} eines deutschsprachigen Twitch-Streams für iRacing-Ligarennen der Community "
+    "CAS. Das Rennen ist gerade zu Ende, du moderierst den Abspann; deine Texte werden von einer "
+    "Sprachausgabe vorgelesen. Schreibe natürlich, locker, sympathisch, kurze Sätze, keine "
+    "Aufzählungen, keine Emojis. Nutze AUSSCHLIESSLICH die gegebenen Daten: 'ergebnis' ist das "
+    "Endergebnis, 'verlauf' sind die Live-Kommentare aus dem Rennen in zeitlicher Reihenfolge "
+    "(daraus erzählst du die Geschichte des Rennens), 'meisterschaft' ist die Tabelle "
+    "einschließlich dieses Rennens (vorläufig, bis die Liga das Ergebnis bestätigt). In "
+    "Pro/Am-Ligen ('pro_am') gibt es zwei Wertungen; vermische sie nie. Erfinde nichts. "
+    "Antworte NUR mit JSON: {{\"segments\": {{\"<id>\": \"<Text>\", ...}}}} für genau die "
+    "verlangten Segment-IDs."
+)
+POST_BRIEF = {
+    "race_summary": "Zusammenfassung des Rennens aus 'verlauf' und 'ergebnis': wie es lief, die "
+                    "entscheidenden Momente, Duelle, Zwischenfälle. Noch nicht das ganze Ergebnis "
+                    "aufzählen. 60-100 Wörter.",
+    "results": "Das Endergebnis, das Ergebnis ist im Bild: Sieger, Podium (bei Pro/Am je Klasse), "
+               "schnellste Runde, wer die meisten Plätze gutgemacht hat. 50-80 Wörter.",
+    "standings_after": "Die Meisterschaft nach diesem Rennen, die Tabelle ist im Bild: wer führt, "
+                       "Abstände, wer gewonnen oder verloren hat (bei Pro/Am beide Klassen). "
+                       "Vorläufig, bis die Liga das Ergebnis bestätigt. 50-80 Wörter.",
+    "next_round": "Hinweis auf das nächste Rennen: Datum, Strecke, Runde x von y. 20-40 Wörter.",
+    "goodbye": "Verabschiedung: danke fürs Zuschauen, an die Fahrer, bis zum nächsten Mal. "
+               "20-35 Wörter.",
+}
+
+
+def _lap(sec) -> str | None:
+    try:
+        sec = float(sec)
+    except (TypeError, ValueError):
+        return None
+    if sec <= 0:
+        return None
+    m, s_ = divmod(sec, 60)
+    return f"{int(m)}:{s_:06.3f}".replace(".", ",")
+
+
+def build_post_facts(results: dict | None, projection: dict | None, roundinfo: dict | None,
+                     story: list, track: dict, classes_by_name: dict | None = None,
+                     notes_dir: Path | None = None) -> dict:
+    """Everything the Abspann may say: final result (5002 /results), the
+    championship incl. this race (5010 /api/state projection), the next
+    round (CLS), and the race told by its live commentary lines."""
+    info = (roundinfo or {}).get("info") or {}
+    league = info.get("league") or {}
+    season = info.get("season") or {}
+    facts = {"liga": league.get("name"), "liga_slug": league.get("slug"), "saison": season.get("name"),
+             "strecke": track.get("name"), "layout": track.get("config")}
+    classes_by_name = {k.casefold(): v for k, v in (classes_by_name or {}).items()}
+    rows = [r for r in ((results or {}).get("rows") or []) if r.get("position")]
+    if rows:
+        def item(r, pos=None):
+            it = {"platz": pos or r["position"], "name": r.get("name"), "auto": r.get("car")}
+            if r.get("start_pos"):
+                it["start"] = r["start_pos"]
+            if r.get("laps_behind"):
+                it["runden_zurueck"] = r["laps_behind"]
+            elif r.get("time_gap"):
+                it["abstand_s"] = round(r["time_gap"], 1)
+            if not r.get("finished", True) and r.get("reason_out"):
+                it["ausfall"] = r["reason_out"]
+            return it
+        res = {"top10": [item(r) for r in rows[:10]], "starter": len(rows)}
+        fl = next((r for r in rows if r.get("is_fastest_overall")), None)
+        if fl:
+            res["schnellste_runde"] = {"name": fl.get("name"), "zeit": _lap(fl.get("fastest_lap"))}
+        gain = max(rows, key=lambda r: r.get("position_change") or 0)
+        if (gain.get("position_change") or 0) > 0:
+            res["meiste_plaetze_gut"] = {"name": gain.get("name"), "plaetze": gain["position_change"],
+                                         "von": gain.get("start_pos"), "auf": gain["position"]}
+        out_ = [r.get("name") for r in rows if not r.get("finished", True)]
+        if out_:
+            res["ausgefallen"] = out_
+        if classes_by_name:
+            kl = {}
+            for c in ("PRO", "AM"):
+                cr = [r for r in rows if classes_by_name.get((r.get("name") or "").casefold()) == c]
+                if cr:
+                    kl[c] = {"top3": [item(r, i + 1) for i, r in enumerate(cr[:3])],
+                             "schnellste_runde": (lambda f: {"name": f.get("name"), "zeit": _lap(f.get("fastest_lap"))})(
+                                 min((r for r in cr if (r.get("fastest_lap") or 0) > 0),
+                                     key=lambda r: r["fastest_lap"], default={}))
+                             if any((r.get("fastest_lap") or 0) > 0 for r in cr) else None}
+            if kl:
+                res["klassen"] = kl
+                facts["pro_am"] = list(kl)
+        facts["ergebnis"] = res
+    champ = [r for r in ((projection or {}).get("champ_rows") or []) if r.get("proj_rank")]
+    if champ:
+        def crow(r, rank):
+            d = {"rang": rank, "name": r.get("name"), "punkte": r.get("proj_points"),
+                 "vorher_rang": r.get("rank")}
+            if r.get("in_race") or r.get("race_pts"):
+                d["punkte_heute"] = r.get("class_race_pts") or r.get("race_pts")
+            return d
+        tab = {"vorlaeufig": True}
+        groups = {c: [r for r in champ if r.get("pro_am") == c] for c in ("PRO", "AM")}
+        groups = {c: g for c, g in groups.items() if g}
+        if groups and (projection or {}).get("season", {}).get("proAmEnabled", True) and len(groups) > 1:
+            for c, g in groups.items():
+                g = sorted(g, key=lambda r: (-(r.get("proj_points") or 0), r.get("rank") or 999))
+                # class ranks before the race: order by pre-race points within the class
+                pre = sorted(g, key=lambda r: (-(r.get("pre_points") or 0), r.get("rank") or 999))
+                pre_rank = {id(r): i + 1 for i, r in enumerate(pre)}
+                tab[c] = [dict(crow(r, i + 1), vorher_rang=pre_rank[id(r)]) for i, r in enumerate(g[:5])]
+        else:
+            g = sorted(champ, key=lambda r: r["proj_rank"])
+            tab["top5"] = [crow(r, r["proj_rank"]) for r in g[:5]]
+        facts["meisterschaft"] = tab
+    # the round after tonight's (live: CLS still has tonight as "next"; a
+    # replay of round N: data as before N -> next is N + 1)
+    rounds = sorted(info.get("rounds") or [], key=lambda r: r.get("number") or 0)
+    cur = (info.get("nextRound") or {}).get("number")
+    nxt = next((r for r in rounds if cur and (r.get("number") or 0) == cur + 1), None)
+    if nxt:
+        sched = schedule_tracks(notes_dir or HERE / "show_notes", league.get("slug"))
+        total = season.get("totalRounds") or max((r.get("number") or 0) for r in rounds)
+        facts["naechstes_rennen"] = {"runde": nxt.get("number"), "von": total,
+                                     "datum": _date(nxt.get("startsAt"), spoken=True),
+                                     "strecke": nxt.get("track") or sched.get(_date(nxt.get("startsAt")) or "")}
+    if story:
+        facts["verlauf"] = [x for x in story][-70:]
+    return facts
+
+
+def available_post_segments(cfg: dict, facts: dict) -> list[str]:
+    need = {"results": "ergebnis", "standings_after": "meisterschaft", "next_round": "naechstes_rennen",
+            "race_summary": "ergebnis"}
+    return [s for s in cfg.get("post_segments") or DEFAULT_CONFIG["post_segments"]
+            if s in POST_BRIEF and (s not in need or facts.get(need[s]))]
+
+
+def template_post_script(cfg: dict, facts: dict, segments: list[str]) -> dict:
+    out = {}
+    res = facts.get("ergebnis") or {}
+    top = res.get("top10") or []
+    if "race_summary" in segments and top:
+        s = f"Das Rennen in {facts.get('strecke') or 'unserer Strecke'} ist vorbei."
+        if res.get("meiste_plaetze_gut"):
+            g = res["meiste_plaetze_gut"]
+            s += f" Den größten Sprung nach vorn machte {g['name']}, von Platz {g['von']} auf Platz {g['auf']}."
+        if res.get("ausgefallen"):
+            out_ = res["ausgefallen"][:3]
+            s += (f" Nicht ins Ziel kam {out_[0]}." if len(out_) == 1
+                  else f" Nicht ins Ziel kamen {', '.join(out_[:-1])} und {out_[-1]}.")
+        out["race_summary"] = s
+    if "results" in segments and top:
+        parts = []
+        if res.get("klassen"):
+            for c, k in res["klassen"].items():
+                t = k["top3"]
+                parts.append(f"In der Klasse {c} gewinnt {t[0]['name']}"
+                             + (f" vor {', '.join(x['name'] for x in t[1:3])}." if len(t) > 1 else "."))
+        else:
+            parts.append(f"Der Sieg geht an {top[0]['name']}"
+                         + (f" vor {', '.join(x['name'] for x in top[1:3])}." if len(top) > 1 else "."))
+        if res.get("schnellste_runde"):
+            parts.append(f"Die schnellste Runde fuhr {res['schnellste_runde']['name']}.")
+        out["results"] = " ".join(parts)
+    tab = facts.get("meisterschaft") or {}
+    if "standings_after" in segments and tab:
+        parts = []
+        for c in ("PRO", "AM", "top5"):
+            t = tab.get(c)
+            if t:
+                cl = f" der Klasse {c}" if c != "top5" else ""
+                parts.append(f"In der Meisterschaft{cl} führt jetzt {t[0]['name']} mit {t[0]['punkte']} Punkten"
+                             + (f" vor {t[1]['name']}." if len(t) > 1 else "."))
+        parts.append("Das ist der vorläufige Stand, bis die Liga das Ergebnis bestätigt.")
+        out["standings_after"] = " ".join(parts)
+    n = facts.get("naechstes_rennen")
+    if "next_round" in segments and n:
+        out["next_round"] = (f"Weiter geht es mit Runde {n['runde']} von {n['von']}"
+                             + (f" am {n['datum']}" if n.get("datum") else "")
+                             + (f" in {n['strecke']}." if n.get("strecke") else "."))
+    if "goodbye" in segments:
+        out["goodbye"] = ("Das war es von uns für heute. Danke fürs Zuschauen, danke an alle Fahrer, "
+                          "und bis zum nächsten Mal!")
+    return out
+
+
 def template_script(cfg: dict, facts: dict, segments: list[str]) -> dict:
     out = {}
     liga, strecke = facts.get("liga") or "unserer Liga", facts.get("strecke") or "der heutigen Strecke"
@@ -705,7 +899,7 @@ class ShowRunner:
 
     def __init__(self, cfg, obs, speaker, facts_fn, script_fn, director_on,
                  clock=time.time, local_now=None, listening=lambda: True, pin=None, store=None,
-                 points_fn=None):
+                 points_fn=None, kind="pre", director_off=None):
         self.cfg = cfg
         self.obs = obs
         self.speaker = speaker
@@ -737,6 +931,8 @@ class ShowRunner:
         self.edited = False            # changed by hand on /show -> no automatic rewrite
         self.store = store             # Path to keep the script across restarts (None = memory only)
         self.points_fn = points_fn     # facts -> (talking points, source)
+        self.kind = kind               # "pre" = before quali, "post" = Abspann after the race
+        self.director_off = director_off
         self.points: list = []         # talking points for quiet moments in quali / race
         self.points_used: list = []    # their indices, in the order they were spoken
         self._load()
@@ -752,7 +948,7 @@ class ShowRunner:
                     "log": self.log[-30:], "last_error": self.last_error,
                     "facts": self.facts, "order": self.order or self.segments,
                     "as_of_round": self.as_of_round,
-                    "points": self.points, "points_used": self.points_used,
+                    "points": self.points, "points_used": self.points_used, "kind": self.kind,
                     "edited": self.edited}
 
     def next_point(self) -> str | None:
@@ -832,7 +1028,8 @@ class ShowRunner:
                 self.state = "preparing"
         try:
             facts = self.facts_fn()
-            segs = available_segments(self.cfg, facts)
+            segs = (available_post_segments(self.cfg, facts) if self.kind == "post"
+                    else available_segments(self.cfg, facts))
             script, source = self.script_fn(facts, segs)
             points = []
             if self.points_fn:
@@ -873,6 +1070,12 @@ class ShowRunner:
                 self._note("kein Skript – Ablauf abgebrochen")
                 self.state = "stopped"
                 return
+            if self.kind == "post" and self.director_off:
+                try:
+                    self.director_off()               # the camera work is over
+                    self._note("REGIE aus")
+                except Exception as e:
+                    self.last_error = f"REGIE: {e}"
             self._obs(lambda: self.obs.set_scene(self.cfg["scenes"]["moderator"]),
                       "Szene Moderator")
             try:
@@ -913,6 +1116,8 @@ class ShowRunner:
             if self.state == "running":
                 self._tick_segment()
                 return
+            if self.kind == "post":
+                return                                # the Abspann is started by the dashboard
             if self.state in ("done", "stopped") and self.ran_on != self.local_now().date():
                 self.state = "idle"                   # a new day
             if self.state != "idle" or not self.cfg.get("auto_start"):
@@ -1109,6 +1314,14 @@ class ShowRunner:
         self.seg = None
 
     def _finish(self):
+        if self.kind == "post":                     # Abspann: no hand-over, no REGIE
+            end = self.cfg.get("post_end_scene")
+            if end:
+                self._obs(lambda: self.obs.set_scene(end), f"Szene {end}")
+            self.state = "done"
+            self.seg = None
+            self._note("Abspann fertig")
+            return
         self._obs(lambda: self.obs.set_scene(self.cfg["scenes"]["iracing"]), "Szene iRacing")
         if self.cfg.get("director_after"):
             try:
