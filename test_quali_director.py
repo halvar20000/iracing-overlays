@@ -70,7 +70,7 @@ class Car:
         return out
 
 
-def run(cars, until, mode="quali", start=0.0, step=0.25, director=None, on_tick=None):
+def run(cars, until, mode="quali", start=0.0, step=0.25, director=None, on_tick=None, decorate=None):
     d = director or rd.RaceDirector(random.Random(3))
     cam = 0
     t = start
@@ -85,6 +85,9 @@ def run(cars, until, mode="quali", start=0.0, step=0.25, director=None, on_tick=
             rows.append({"idx": c.idx, "number": str(10 + c.idx), "name": c.name, "class_id": 1,
                          "class_name": "GT3", "progress": prog, "on_pit": pit, "in_world": world,
                          "est_lap": 100.0, "best": c.best})
+        if decorate:
+            for r in rows:
+                decorate(r, t)
         shot = d.tick(t, rows, GROUPS, cam, [], racing=True, mode=mode, t_session=t)
         if shot is not None:
             cam = shot.car["idx"]
@@ -195,6 +198,30 @@ row = {"idx": 0, "number": "10", "name": "X", "class_id": 1, "progress": 2.5, "o
        "in_world": True, "est_lap": 100.0, "best": 98.7}
 d4.tick(1.0, [row], GROUPS, 0, [], mode="quali", t_session=1.0)
 check("existing bests at switch-on are not logged", not [e for e in d4.log if e["kind"] == "quali_lap"])
+
+# --- WCT: AM drivers first, then PRO — only the class whose part it is -----------
+AMS = [Car(0, [100.0, 100.5, 100.2, 99.8, 100.1], leave_at=0.0), Car(1, [101.0, 100.8, 100.9, 100.4, 100.3], leave_at=5.0)]
+PROS = [Car(2, [99.0, 98.7, 98.9], leave_at=250.0), Car(3, [99.4, 99.1, 98.6], leave_at=255.0)]
+SPLIT = 400.0
+def deco(r, t):
+    am = r["idx"] in (0, 1)
+    if t < SPLIT and not am:
+        r["eligible"], r["ineligible_since_t"] = False, 0.0
+    elif t >= SPLIT and am:
+        r["eligible"], r["ineligible_since_t"] = False, SPLIT
+seen_cls = []
+def on_split(t, d, cam):
+    cur = d.current
+    if cur:
+        seen_cls.append((t, cur.car["idx"], cur.kind))
+run(AMS + PROS, 700.0, decorate=deco, on_tick=on_split)
+before = {i for t, i, k in seen_cls if t < SPLIT}
+after = [(t, i, k) for t, i, k in seen_cls if t >= SPLIT and i in (0, 1)]
+check("WCT quali: only AM cars before the switch", before and before <= {0, 1}, before)
+# AM laps that began before 400 (car 0: 360-460, car 1: 367.6-468.1) may run to the line (+ hold)
+check("WCT quali: after the switch an AM car only to finish a lap begun before it",
+      all(k == "attack" and t <= 475 for t, i, k in after), after[:5])
+check("WCT quali: PRO cars on screen after the switch", any(i in (2, 3) for t, i, k in seen_cls if t > 480))
 
 print(f"\n{'ALL PASS' if not fails else f'{fails} FAILED'}")
 raise SystemExit(1 if fails else 0)

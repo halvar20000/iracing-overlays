@@ -587,7 +587,12 @@ Runde" for every field shot — quali field facts now carry only keys that
 have a value (no lap_time / position / cars_with_time = null), the context
 drops fahrer_mit_zeit = 0, the prompt forbids it, and the commentator says at
 most one quali "field" line per QUALI_FIELD_EVERY_S 45 s (REGIE cuts every
-~12 s); the quiet gaps are where talking points come in. Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
+~12 s); the quiet gaps are where talking points come in.
+WCT quali camera split: after split_min (15; show_config
+"quali_camera_split_min", e.g. 17) REGIE shows only PRO cars, before it only
+AM (dashboard `_quali_class_filter`: cls_proam ProAmRoster per UserID →
+car "eligible": False + "ineligible_since_t"; quali_director drops them as
+subjects, except an AM flying lap begun before the switch, shown to the line). Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

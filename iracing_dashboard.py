@@ -23,6 +23,7 @@ from race_director import RaceDirector
 from race_commentator import Commentator
 import race_commentator
 from race_graphics import GraphicsDirector, weather_line, dotd_line
+from cls_proam import ProAmRoster
 from race_voice import Voice
 import show_runner
 from obs_ws import ObsClient
@@ -254,6 +255,7 @@ class TelemetryPoller:
         self.commentator.on_line = lambda ln: self.voice.say(ln["id"], ln["text"],
                                                              keep=bool(ln.get("queue")))
         self.director_enabled = False
+        self.proam = ProAmRoster()        # CLS PRO / AM per driver (WCT quali: one class at a time)
         self.graphics = GraphicsDirector(scfg.get("graphics"))   # overlays brought up during REGIE
         self._gfx_key = None              # session the graphics state belongs to
         self._gfx_dotd = None             # provisional DotD line (5013), refreshed in the background
@@ -1665,6 +1667,7 @@ class TelemetryPoller:
                 "name":        d.get("UserName", "") or "",
                 "car_number":  d.get("CarNumber", "") or "",
                 "car":         d.get("CarScreenNameShort") or d.get("CarScreenName", ""),
+                "user_id":     d.get("UserID"),
                 "team":        (d.get("TeamName") or "") if (d.get("TeamName") or "") != (d.get("UserName") or "") else "",
                 "position":    positions[idx] if idx < len(positions) else 0,
                 "lap":         lap_v,
@@ -1893,7 +1896,7 @@ class TelemetryPoller:
                  "in_world": d["in_world"], "est_lap": d.get("est_lap") or 100.0,
                  # iRacing: -1 = no time yet; the director treats every best <= 0 as none
                  "best": max(d.get("best_lap") or 0.0, 0.0), "surface": d.get("surface"),
-                 "car": d.get("car") or "", "team": d.get("team") or ""}
+                 "car": d.get("car") or "", "team": d.get("team") or "", "uid": d.get("user_id")}
                 for d in drivers]
         # events detected while OUR replay was playing come from the replayed
         # footage (the same pass / contact again) — never news
@@ -1908,6 +1911,11 @@ class TelemetryPoller:
             t_sess = float(self.ir["SessionTime"] or 0.0)
         except Exception:
             t_sess = None
+        if mode == "quali":
+            try:
+                self._quali_class_filter(cars, t_sess)
+            except Exception as e:
+                print(f"[regie] quali class filter: {e}")
         shot = self.director.tick(time.time(), cars, self._camera_groups,
                                   current_cam_idx, events, racing, mode=mode, t_session=t_sess)
         if shot is None:
@@ -1949,6 +1957,27 @@ class TelemetryPoller:
         if rp.get("total_time") is None or rp.get("time_remaining") is None:
             return None
         return max(0.0, rp["total_time"] - rp["time_remaining"])
+
+    def _quali_class_filter(self, cars: list, t_sess):
+        """WCT GT3 qualifying: AM drivers first, then PRO — REGIE shows only
+        the class whose part it is. An AM flying lap begun before the switch
+        may still be shown to the line (quali_director: ineligible_since_t).
+        show_config.json "quali_camera_split_min" moves the switch (e.g. 17)."""
+        fmt = race_commentator.quali_format(self._league_slug)
+        if not fmt or t_sess is None:
+            return
+        el = self._quali_elapsed(self._race_progress())
+        if el is None or not self.proam.active_for(c.get("uid") for c in cars):
+            return
+        split_s = float(self.show.cfg.get("quali_camera_split_min") or fmt["split_min"]) * 60.0
+        start_t = t_sess - el
+        first = el < split_s
+        for c in cars:
+            cls = self.proam.lookup(c.get("uid"))
+            if first and cls == fmt["second"]:
+                c["eligible"], c["ineligible_since_t"] = False, start_t
+            elif not first and cls == fmt["first"]:
+                c["eligible"], c["ineligible_since_t"] = False, start_t + split_s
 
     def _announce_quali_phase(self):
         """WCT GT3 qualifying: AM drivers first, then PRO — say when it starts
@@ -5678,6 +5707,7 @@ if __name__ == "__main__":
     t = threading.Thread(target=poller.run, daemon=True)
     t.start()
     threading.Thread(target=poller._watch_league, daemon=True, name="LeagueWatch").start()
+    poller.proam.start()
     poller.show.run_forever()          # SENDEABLAUF: auto start at start_at while OBS streams
 
     print("\n" + "=" * 60)

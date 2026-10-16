@@ -165,6 +165,18 @@ class QualiState:
     # -- candidates -----------------------------------------------------------
     def candidates(self, director, now, t, live, by_idx, fresh, cars=None):
         from race_director import Shot
+        # WCT GT3 (AM first, then PRO): cars of the class whose part of the
+        # session it is NOT are no subjects — except a flying lap that began
+        # before their time ran out (dashboard: eligible / ineligible_since_t)
+        def eligible(c):
+            if c.get("eligible", True):
+                return True
+            st = self.lap.get(c["idx"]) or {}
+            since = c.get("ineligible_since_t")
+            return bool(st.get("flying") and st.get("start") is not None and since is not None
+                        and st["start"] < since)
+        live = [c for c in live if eligible(c)]
+        by_idx = {c["idx"]: c for c in live}
         cur = director.current
         cur_key = cur.key() if cur else None
         out = []
