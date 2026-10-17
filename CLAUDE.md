@@ -642,7 +642,13 @@ _next_segment plays a ready one (set_media_file on source "Gabi" + visible +
 restart, waits for the media to end, hides it — the "Gabi Ruhe" idle loop
 underneath stays on), else speaks it. With a sync key the script is written
 avatar.prepare_min 20 min ahead. /show shows "🎬 Gabi: …" per segment. Media
-"ended" is ignored for 1.5 s after a restart (old state of a fresh file). Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
+"ended" is ignored for 1.5 s after a restart (old state of a fresh file). Keep Gabi's paid on-camera time
+small (Thomas): _avatar_segs() never includes a segment with a picture
+(SEGMENT_SOURCES / track), avatar.max_words 45 (longer = voice), briefs
+intro 25-40 / outro 12-25 / goodbye 12-25 words, the quali format moved from
+the outro to the schedule segment, and the Abspann's race_summary shows the
+results page, next_round the league schedule (no voice segment without a
+picture). Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

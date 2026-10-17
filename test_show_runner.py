@@ -63,7 +63,7 @@ check("facts: DotD", facts["letzte_runde"]["fahrer_des_tages"] == "Gregor Micews
 check("facts: table + gap", facts["tabelle"]["abstand_p1_p2"] == 13
       and facts["tabelle"]["top5"][0]["name"] == "Andreas Bastian" and "pro_am" not in facts, facts["tabelle"])
 check("facts: WCT quali format (AM first, then PRO)", "AM-Fahrern" in facts.get("qualifying_format", "")
-      and "PRO" in sr.template_script(sr.load_config(), facts, ["outro"])["outro"])
+      and "PRO" not in sr.template_script(sr.load_config(), facts, ["outro"])["outro"])   # Gabi's on-camera bit stays short
 check("facts: no quali format for other leagues", "qualifying_format" not in sr.build_facts(
       {"ok": True, "info": {"league": {"slug": "cas-pccd"}, "season": {}}, "standings": {}}, {}, None, None))
 check("facts: notes + video", facts["streckennotizen"] and facts["video_sekunden"] == 95)
@@ -381,7 +381,9 @@ check("schedule facts: today, next, tracks by date, spoken dates",
 csch = sr.load_config()
 check("schedule segment only with a source for the league", "schedule" in sr.available_segments(csch, sf)
       and "schedule" not in sr.available_segments(dict(csch, schedule_sources={}), sf))
-check("schedule template", "Runde 4 von 6" in sr.template_script(csch, sf, ["schedule"])["schedule"])
+check("schedule template (with the quali format, moved here from Gabi's hand-over)",
+      "Runde 4 von 6" in sr.template_script(csch, sf, ["schedule"])["schedule"]
+      and "AM-Fahrern" in sr.template_script(csch, sf, ["schedule"])["schedule"])
 obs11 = FakeObs({"Moderator": {"Letztes Rennen": False, "Tabelle": False, "Streckenvideo": False, "WCT": False},
                  "iRacing": {}}, media={"Streckenvideo": 0.2})
 c11 = sr.load_config(); c11["obs"] = {"host": "127.0.0.1", "port": obs11.port}
@@ -545,8 +547,15 @@ check("Abspann: REGIE off, Moderator scene, table left on hidden", ev13 == ["off
       and obs13.scenes["Moderator"]["Meisterschaft"] is False)
 check("Abspann runs to the end, stays on Moderator, no REGIE", wait_for(lambda: r13.state == "done", 20, tick=w13)
       and obs13.current == "Moderator" and ev13 == ["off"], r13.status()["log"])
-check("Abspann: result during results, table during standings_after", ("results", True, False) in vis13
-      and ("standings_after", False, True) in vis13 and all(not e and not t for s_, e, t in vis13 if s_ in ("goodbye", None, "race_summary")), vis13)
+check("Abspann: a picture for every voice segment (result from the summary on), none for the goodbye",
+      ("race_summary", True, False) in vis13 and ("results", True, False) in vis13
+      and ("standings_after", False, True) in vis13 and all(not e and not t for s_, e, t in vis13 if s_ in ("goodbye", None)), vis13)
+r17 = sr.ShowRunner(dict(sr.load_config(), avatar={"segments": ["intro", "last_race", "track", "schedule", "outro"], "max_words": 5}),
+                    None, Speaker(), lambda: {}, lambda f, s_: ({}, "t"), lambda: None)
+r17.segments = ["intro", "last_race", "track", "schedule", "outro"]
+r17.script = {"intro": "eins zwei drei", "outro": "eins zwei drei vier fünf sechs"}
+check("avatar segments filtered to picture-less ones; word cap", r17._avatar_segs() == ["intro", "outro"]
+      and r17._avatar_words_ok("intro") and not r17._avatar_words_ok("outro"))
 r13.state = "idle"
 check("Abspann never starts by itself", r13.tick() is None and r13.state == "idle")
 

@@ -95,7 +95,8 @@ DEFAULT_CONFIG = {
     # commentary_config.json); the rest is voice only. Videos are made ahead —
     # the script is written prepare_min before start_at. Not ready in time /
     # failed -> that segment is spoken by the voice.
-    "avatar": {"enabled": True, "segments": ["intro", "outro", "goodbye"], "prepare_min": 20},
+    "avatar": {"enabled": True, "segments": ["intro", "outro", "goodbye"], "prepare_min": 20,
+               "max_words": 45},              # longer = voice only (≈ 19 s of paid video at most)
     "model": "claude-sonnet-5-5",
     "host_name": "",                  # name the AI host introduces itself with ("" = none)
     "notes_dir": "show_notes",
@@ -104,7 +105,9 @@ DEFAULT_CONFIG = {
 SEGMENT_SOURCES = {"last_race": "last_race", "standings": "standings",
                    "last_race_pro": "last_race_pro", "last_race_am": "last_race_am",
                    "standings_pro": "standings_pro", "standings_am": "standings_am",
-                   "schedule": "schedule", "results": "results", "standings_after": "standings_after"}
+                   "schedule": "schedule", "results": "results", "standings_after": "standings_after",
+                   # Abspann: no segment without a picture — Gabi is on camera only when SHE speaks
+                   "race_summary": "results", "next_round": "schedule"}
 CLASS_SOURCE_FALLBACK = {"last_race_pro": "last_race", "last_race_am": "last_race",
                          "standings_pro": "standings", "standings_am": "standings"}
 # Pro/Am seasons (WCT GT3): results and table are talked about per class, and
@@ -452,8 +455,10 @@ SYSTEM_PROMPT = (
     "verlangten Segment-IDs."
 )
 SEGMENT_BRIEF = {
-    "intro": "Begrüßung: Liga, Saison, welche Runde, welche Strecke, dass gleich Qualifying und "
-             "Rennen kommen. 35-55 Wörter.",
+    # intro / outro / goodbye are what Gabi says ON CAMERA (paid video per
+    # second) — kept short; everything with a picture is the voice's job
+    "intro": "Begrüßung: Liga, welche Runde, welche Strecke, dass gleich Qualifying und Rennen "
+             "kommen. Kurz: 25-40 Wörter.",
     "last_race": "Rückblick auf die letzte Runde: Sieger und Podium (pro Rennen), wer überrascht "
                  "hat (z. B. weit vorgefahren), schnellste Runde, Fahrer des Tages. 60-90 Wörter. "
                  "Dabei ist die Ergebnisliste im Bild.",
@@ -462,9 +467,9 @@ SEGMENT_BRIEF = {
     "track": "Die Strecke vorstellen: wo sie liegt (ort; dabei ist eine Karte im Bild), Charakter, Schlüsselkurven, wo man überholen kann. {words}.",
     "schedule": "Der Saisonplan der Liga ist im Bild (daten.saisonplan): welche Runde heute ist, "
                 "wie viele noch folgen, die nächsten Termine mit Datum, das Finale bzw. Special Event. "
-                "Strecken späterer Runden nur, wenn sie bei der Runde stehen (strecke). 35-60 Wörter.",
-    "outro": "Überleitung: gleich geht es live zum Qualifying, viel Spaß. Steht 'qualifying_format' "
-             "in den Daten, erkläre es kurz. 20-45 Wörter.",
+                "Strecken späterer Runden nur, wenn sie bei der Runde stehen (strecke). Steht "
+                "'qualifying_format' in den Daten, erwähne es zum Schluss kurz. 35-70 Wörter.",
+    "outro": "Überleitung: gleich geht es live zum Qualifying, viel Spaß. Kurz: 12-25 Wörter.",
     # Pro/Am seasons: one segment per class, the page shows only that class
     "last_race_pro": "Rückblick auf die letzte Runde, Klasse PRO (daten.letzte_runde, jeweils "
                      "klassen.PRO): Klassensieger und Podium, schnellste Runde der Klasse; Gesamtsieger "
@@ -662,7 +667,7 @@ POST_BRIEF = {
                        "Vorläufig, bis die Liga das Ergebnis bestätigt. 50-80 Wörter.",
     "next_round": "Hinweis auf das nächste Rennen: Datum, Strecke, Runde x von y. 20-40 Wörter.",
     "goodbye": "Verabschiedung: danke fürs Zuschauen, an die Fahrer, bis zum nächsten Mal. "
-               "20-35 Wörter.",
+               "Kurz: 12-25 Wörter.",
 }
 
 
@@ -898,6 +903,8 @@ def template_script(cfg: dict, facts: dict, segments: list[str]) -> dict:
             parts.append(f"Das Saisonfinale steigt am {fin['datum']}"
                          + (" mit einem Special Event." if "special" in (fin.get("strecke") or fin.get("name") or "").lower()
                             else "."))
+        if facts.get("qualifying_format"):
+            parts.append(facts["qualifying_format"])
         out["schedule"] = " ".join(parts)
     if "track" in segments:
         out["track"] = (f"Jetzt ein Blick auf die Strecke: {strecke}"
@@ -905,9 +912,7 @@ def template_script(cfg: dict, facts: dict, segments: list[str]) -> dict:
                         + (f", gefahren wird das Layout {facts['layout']}." if facts.get("layout") else ".")
                         + (" Schauen wir uns eine Runde an." if facts.get("streckenvideo") is not False else ""))
     if "outro" in segments:
-        out["outro"] = ("Das war der Überblick. Jetzt geht es live ins Qualifying. "
-                        + (facts["qualifying_format"] + " " if facts.get("qualifying_format") else "")
-                        + "Viel Spaß beim Zuschauen!")
+        out["outro"] = "Das war der Überblick. Jetzt geht es live ins Qualifying, viel Spaß beim Zuschauen!"
     return out
 
 
@@ -1243,13 +1248,24 @@ class ShowRunner:
                     and (self.cfg.get("sources") or {}).get("avatar_talk"))
 
     def _avatar_segs(self) -> list:
-        return [s for s in (self._avatar_cfg().get("segments") or []) if s in self.segments]
+        """Gabi speaks on camera only where nothing else is shown — never in a
+        segment with a page, the map or a video (paid per second of video)."""
+        return [s for s in (self._avatar_cfg().get("segments") or [])
+                if s in self.segments and s not in SEGMENT_SOURCES and s != "track"]
+
+    def _avatar_words_ok(self, sid) -> bool:
+        n = len((self.script.get(sid) or "").split())
+        return n <= int(self._avatar_cfg().get("max_words") or 45)
 
     def _avatar_render(self):
         """Have Gabi's videos made for the avatar segments (in the background)."""
         if not self._avatar_on():
             return
         for sid in self._avatar_segs():
+            if not self._avatar_words_ok(sid):
+                self._note(f"Gabi-Video für {sid}: Text zu lang (> {self._avatar_cfg().get('max_words') or 45} "
+                           "Wörter) – dort spricht die Stimme; kürzen, dann wird das Video erzeugt")
+                continue
             self.avatar.ensure(self.kind, sid, self.script.get(sid) or "")
 
     def _avatar_play(self, sid, text, seg) -> bool:
