@@ -1,8 +1,8 @@
 """
 AVATAR — the moderator as a lip-synced video (sync.so), 2026-10-16.
 
-Gaby Ferrari (an AI persona Andreas made in Photoshop / Firefly, avatar/
-gaby_*.mp4) speaks our moderation text: the voice line we already make
+Gabi Ferrari (an AI persona Andreas made in Photoshop / Firefly, avatar/
+gabi_*.mp4) speaks our moderation text: the voice line we already make
 (race_voice / edge-tts) + her calm studio clip go to sync.so, which moves the
 mouth to the audio and returns an MP4 (short clips are played forward /
 backward to the length of the audio — sync_mode "bounce").
@@ -27,7 +27,8 @@ HERE = Path(__file__).resolve().parent
 AVATAR_DIR = HERE / "avatar"
 OUT_DIR = AVATAR_DIR / "out"                  # gitignored: generated videos
 API = "https://api.sync.so/v2"
-DEFAULT_CLIP = AVATAR_DIR / "gaby_calm.mp4"
+DEFAULT_CLIP = AVATAR_DIR / "gabi_speaking.mp4"   # a SPEAKING base: a still one (mouth closed) barely moved the lips
+IDLE_LOOP = AVATAR_DIR / "gabi_idle_loop.mp4"        # gabi_still.mp4 forward + backward: between sentences, no credits
 DEFAULT_MODEL = "lipsync-2-pro"
 
 
