@@ -87,6 +87,78 @@ def lipsync(audio: bytes, audio_name: str, clip: Path = DEFAULT_CLIP, model: str
     return out
 
 
+class AvatarRenderer:
+    """Gabi's talking videos for the show, made ahead in the background.
+
+    ensure(kind, seg, text) starts a render unless one for exactly this text
+    is ready / running; get(kind, seg, text) -> Path of a finished video for
+    this text or None (then the show speaks the segment with the voice only).
+    One render at a time (sync.so takes ~2 min per 10 s of video)."""
+
+    def __init__(self, voice, lipsync_fn=None):
+        self.voice = voice
+        self.lipsync = lipsync_fn or lipsync
+        self.jobs: dict = {}            # (kind, seg) -> {text, state, file, error, at}
+        self._q: list = []
+        self._lock = threading.Lock()
+        self._worker = None
+
+    @staticmethod
+    def _tag(text: str) -> str:
+        import hashlib
+        return hashlib.sha1(text.strip().encode("utf-8")).hexdigest()[:10]
+
+    def ensure(self, kind: str, seg: str, text: str):
+        text = (text or "").strip()
+        if not text:
+            return
+        key = (kind, seg)
+        with self._lock:
+            j = self.jobs.get(key)
+            if j and j["text"] == text and j["state"] in ("queued", "rendering", "ready"):
+                return
+            self.jobs[key] = {"text": text, "state": "queued", "file": None, "error": "", "at": time.time()}
+            self._q.append(key)
+            if not (self._worker and self._worker.is_alive()):
+                self._worker = threading.Thread(target=self._run, daemon=True, name="AvatarRender")
+                self._worker.start()
+
+    def available(self) -> bool:
+        return bool(api_key())
+
+    def get(self, kind: str, seg: str, text: str) -> Path | None:
+        j = self.jobs.get((kind, seg))
+        if j and j["state"] == "ready" and j["text"] == (text or "").strip() and j["file"] and Path(j["file"]).exists():
+            return Path(j["file"])
+        return None
+
+    def status(self, kind: str) -> dict:
+        return {seg: {"state": j["state"], "error": j["error"], "file": Path(j["file"]).name if j["file"] else None}
+                for (k, seg), j in list(self.jobs.items()) if k == kind}
+
+    def _run(self):
+        while True:
+            with self._lock:
+                if not self._q:
+                    return
+                key = self._q.pop(0)
+                j = self.jobs.get(key)
+                if not j or j["state"] != "queued":
+                    continue
+                j["state"], text = "rendering", j["text"]
+            try:
+                data, mime, _ = self.voice.synth(text)
+                name = f"{key[0]}_{key[1]}_{self._tag(text)}"
+                out = self.lipsync(data, "a.mp3" if "mpeg" in mime else "a.wav", out_name=name)
+                with self._lock:
+                    if self.jobs.get(key) is j:          # text not changed meanwhile
+                        j["state"], j["file"] = "ready", str(out)
+            except Exception as e:
+                with self._lock:
+                    if self.jobs.get(key) is j:
+                        j["state"], j["error"] = "failed", f"{type(e).__name__}: {e}"
+
+
 class AvatarTest:
     """One sentence -> voice -> lip-synced video, for /avatar in the dashboard."""
 

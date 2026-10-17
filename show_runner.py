@@ -55,6 +55,9 @@ DEFAULT_CONFIG = {
         # where the track is (5007 /location, loader location.html): shown while
         # the track is talked about, before the video (optional)
         "track_location": "Streckenort",
+        # Gabi speaking (avatar_sync.py): a media source ABOVE the idle loop
+        # (source with avatar/gabi_idle_loop.mp4, looping, always on)
+        "avatar_talk": "Gabi",
         # Abspann: final classification + championship after the race
         "results": "Ergebnis",
         "standings_after": "Meisterschaft",
@@ -88,6 +91,11 @@ DEFAULT_CONFIG = {
     # video plays when there is none (2026-10-16: the Algarve video ran over
     # Motegi). Empty / missing folder: the source plays whatever it holds.
     "track_video_dir": "show_notes/videos",
+    # AVATAR: Gabi says these segments as a lip-synced video (sync.so key in
+    # commentary_config.json); the rest is voice only. Videos are made ahead —
+    # the script is written prepare_min before start_at. Not ready in time /
+    # failed -> that segment is spoken by the voice.
+    "avatar": {"enabled": True, "segments": ["intro", "outro", "goodbye"], "prepare_min": 20},
     "model": "claude-sonnet-5-5",
     "host_name": "",                  # name the AI host introduces itself with ("" = none)
     "notes_dir": "show_notes",
@@ -927,7 +935,7 @@ class ShowRunner:
 
     def __init__(self, cfg, obs, speaker, facts_fn, script_fn, director_on,
                  clock=time.time, local_now=None, listening=lambda: True, pin=None, store=None,
-                 points_fn=None, kind="pre", director_off=None):
+                 points_fn=None, kind="pre", director_off=None, avatar=None):
         self.cfg = cfg
         self.obs = obs
         self.speaker = speaker
@@ -960,6 +968,7 @@ class ShowRunner:
         self.store = store             # Path to keep the script across restarts (None = memory only)
         self.points_fn = points_fn     # facts -> (talking points, source)
         self.kind = kind               # "pre" = before quali, "post" = Abspann after the race
+        self.avatar = avatar           # avatar_sync.AvatarRenderer (or None)
         self.director_off = director_off
         self.points: list = []         # talking points for quiet moments in quali / race
         self.points_used: list = []    # their indices, in the order they were spoken
@@ -977,6 +986,7 @@ class ShowRunner:
                     "facts": self.facts, "order": self.order or self.segments,
                     "as_of_round": self.as_of_round,
                     "points": self.points, "points_used": self.points_used, "kind": self.kind,
+                    "avatar": self.avatar_status() if self._avatar_on() else None,
                     "edited": self.edited}
 
     def next_point(self) -> str | None:
@@ -1010,6 +1020,7 @@ class ShowRunner:
             self.script_at = self.clock()
             self._note("Skript von Hand geändert: " + (", ".join(self.segments) or "leer"))
             self._save()
+            self._avatar_render()
             return None
 
     def _keep_edit(self) -> bool:
@@ -1074,6 +1085,7 @@ class ShowRunner:
                 self.script_at = self.clock()
                 self._note(f"Skript fertig ({source}): {', '.join(self.segments)}")
                 self._save()
+                self._avatar_render()
         except Exception as e:
             self.last_error = f"Skript: {e}"
             self._note(self.last_error)
@@ -1110,7 +1122,7 @@ class ShowRunner:
                 self._items = set(self.obs.scene_items(self.cfg["scenes"]["moderator"]))
             except Exception:
                 self._items = None             # unknown: try the class sources
-            for key in set(SEGMENT_SOURCES.values()) | {"track_video", "track_location"}:   # nothing left on from a rehearsal
+            for key in set(SEGMENT_SOURCES.values()) | {"track_video", "track_location", "avatar_talk"}:   # nothing left on from a rehearsal
                 name = self._name(key)
                 if name and (self._items is None or name in self._items):
                     self._source(key, False)
@@ -1192,7 +1204,8 @@ class ShowRunner:
             return None
         if start <= now < start + _dt.timedelta(minutes=int(self.cfg.get("start_window_min") or 20)):
             return "start"
-        if start - _dt.timedelta(minutes=5) <= now < start:
+        lead = int(self._avatar_cfg().get("prepare_min") or 20) if self._avatar_on() else 5
+        if start - _dt.timedelta(minutes=lead) <= now < start:
             return "prepare"
         return None
 
@@ -1220,6 +1233,45 @@ class ShowRunner:
             if not name or (self._items is not None and name not in self._items):
                 return fb
         return key
+
+    # -- AVATAR -----------------------------------------------------------------
+    def _avatar_cfg(self) -> dict:
+        return self.cfg.get("avatar") or {}
+
+    def _avatar_on(self) -> bool:
+        return bool(self.avatar and self._avatar_cfg().get("enabled", True) and self.avatar.available()
+                    and (self.cfg.get("sources") or {}).get("avatar_talk"))
+
+    def _avatar_segs(self) -> list:
+        return [s for s in (self._avatar_cfg().get("segments") or []) if s in self.segments]
+
+    def _avatar_render(self):
+        """Have Gabi's videos made for the avatar segments (in the background)."""
+        if not self._avatar_on():
+            return
+        for sid in self._avatar_segs():
+            self.avatar.ensure(self.kind, sid, self.script.get(sid) or "")
+
+    def _avatar_play(self, sid, text, seg) -> bool:
+        """Gabi says this segment as a video, if it is ready. False = voice."""
+        if not self._avatar_on() or sid not in self._avatar_segs():
+            return False
+        path = self.avatar.get(self.kind, sid, text)
+        if path is None or not self._has("avatar_talk"):
+            self._note(f"Segment {sid}: Gabi-Video nicht fertig – nur Stimme")
+            return False
+        src = self._name("avatar_talk")
+        if not self._obs(lambda: self.obs.set_media_file(src, str(path)), f"Gabi-Video {path.name}"):
+            return False
+        self._source("avatar_talk", True)
+        if not self._obs(lambda: self.obs.media_restart(src), "Gabi-Video starten"):
+            self._source("avatar_talk", False)
+            return False
+        seg["media"], seg["video_at"], seg["avatar"] = src, self.clock(), True
+        return True
+
+    def avatar_status(self) -> dict:
+        return self.avatar.status(self.kind) if self.avatar else {}
 
     def _pick_track_video(self) -> bool:
         """Is there a video to play for today's track? Points the media source
@@ -1294,14 +1346,15 @@ class ShowRunner:
             self._source("track_video", True)
             if self._obs(lambda: self.obs.media_restart(vid), f"Video {vid}"):
                 seg["media"] = vid
-        chunks = split_sentences(text)
+        chunks = [] if self._avatar_play(sid, text, seg) else split_sentences(text)
         for ch in chunks:
             seg["ids"].append(self.speaker.say(ch, sid))
         words = len(text.split())
         # safety net: no voice page listening / audio lost -> move on anyway
         seg["deadline"] = self.clock() + words / WORDS_PER_S * 1.6 + DEADLINE_PAD_S
         self.seg = seg
-        self._note(f"Segment {sid}: {len(chunks)} Sätze" + (f", Video {seg['media']}" if seg["media"] else ""))
+        self._note(f"Segment {sid}: " + ("Gabi spricht (Video)" if seg.get("avatar") else f"{len(chunks)} Sätze")
+                   + (f", Video {seg['media']}" if seg["media"] and not seg.get("avatar") else ""))
 
     def _tick_segment(self):
         seg = self.seg
@@ -1329,7 +1382,8 @@ class ShowRunner:
             try:
                 st = self.obs.media_status(seg["media"])
                 media_done = st["state"] in ("OBS_MEDIA_STATE_ENDED", "OBS_MEDIA_STATE_STOPPED",
-                                             "OBS_MEDIA_STATE_ERROR", "OBS_MEDIA_STATE_NONE")
+                                             "OBS_MEDIA_STATE_ERROR", "OBS_MEDIA_STATE_NONE") \
+                    and self.clock() - seg.get("video_at", seg["started"]) > 1.5   # not the old state of a fresh restart
                 if st.get("duration_s") and self.clock() - seg.get("video_at", seg["started"]) > st["duration_s"] + 3:
                     media_done = True
             except Exception:
@@ -1356,6 +1410,11 @@ class ShowRunner:
                 self._pin(None)
         if seg.get("map"):
             self._source("track_location", False)
+        if seg.get("avatar"):                   # Gabi back to the idle loop underneath
+            self._obs(lambda: self.obs.media_stop(seg["media"]), "Gabi-Video stoppen")
+            self._source("avatar_talk", False)
+            self.seg = None
+            return
         if seg["media"]:
             self._obs(lambda: self.obs.media_stop(seg["media"]), "Video stoppen")
             self._source("track_video", False)

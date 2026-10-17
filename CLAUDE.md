@@ -633,7 +633,16 @@ for greeting / hand-over / goodbye. Not yet wired into the show. 2026-10-17: Gab
 BLONDE variant (black top): avatar/gabi_speaking.mp4 is the lip-sync base
 (DEFAULT_CLIP — with gabi_still.mp4, mouth closed, sync.so barely moved the
 lips), gabi_idle_loop.mp4 = gabi_still forward + backward (8 s) to wait
-between sentences without credits. (Not the real person from the first clips.) Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
+between sentences without credits. (Not the real person from the first clips.) The dark-haired Gaby is
+OUT (clips removed). SHOW INTEGRATION: avatar_sync.AvatarRenderer (one render
+at a time in the background, keyed (kind, segment), re-render on a text
+change, failed → voice) is given to both ShowRunners; after prepare / hand
+edits they order videos for cfg "avatar" segments (intro, outro, goodbye);
+_next_segment plays a ready one (set_media_file on source "Gabi" + visible +
+restart, waits for the media to end, hides it — the "Gabi Ruhe" idle loop
+underneath stays on), else speaks it. With a sync key the script is written
+avatar.prepare_min 20 min ahead. /show shows "🎬 Gabi: …" per segment. Media
+"ended" is ignored for 1.5 s after a restart (old state of a fresh file). Source names matched to OBS ignoring case / spaces (match_name); "OBS prüfen" lists similar names when one is missing.
 
 **October 13, 2026 (trackmap — Pro/Am dot colours, WCT only):** car dots
 red = PRO, green = AM (same colours as the tower bars), via `cls_proam`

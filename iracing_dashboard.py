@@ -246,19 +246,21 @@ class TelemetryPoller:
         scfg = show_runner.load_config()
         self.show_obs = ObsClient(scfg["obs"].get("host", "127.0.0.1"), scfg["obs"].get("port", 4455),
                                   scfg["obs"].get("password", ""))
+        import avatar_sync
+        self.avatar_renderer = avatar_sync.AvatarRenderer(self.voice)   # Gabi's talking videos (sync.so)
         self.show = show_runner.ShowRunner(
             scfg, self.show_obs, _ShowSpeaker(self.commentator),
             facts_fn=self._show_facts, script_fn=self._show_script,
             director_on=lambda: self.set_director(True),
             pin=lambda cls: show_runner.pin_class(scfg, cls), store=show_runner.SCRIPT_FILE,
-            points_fn=self._show_points)
+            points_fn=self._show_points, avatar=self.avatar_renderer)
         self._point_at = 0.0              # last talking point spoken (quiet moments in quali / race)
         self.post_show = show_runner.ShowRunner(           # ABSPANN after the race
             scfg, self.show_obs, _ShowSpeaker(self.commentator),
             facts_fn=self._post_facts, script_fn=self._post_script,
-            director_on=lambda: None, kind="post", director_off=lambda: self.set_director(False))
+            director_on=lambda: None, kind="post", director_off=lambda: self.set_director(False),
+            avatar=self.avatar_renderer)
         self._race_story: list = []       # this race told by its live commentary (Abspann summary)
-        import avatar_sync
         self.avatar_test = avatar_sync.AvatarTest(self.voice)   # /avatar: sync.so lip-sync test
         self._story_key = None
         self._post_key = None             # race the Abspann ran for (once per race)
@@ -5294,7 +5296,7 @@ function draw(d, force) {
     } else {
         // rebuild the text fields only when the script changed on the server and
         // nothing is being edited here — never under the operator's cursor
-        const key = JSON.stringify([order, d.script, d.script_at, d.points]);
+        const key = JSON.stringify([order, d.script, d.script_at, d.points, d.avatar]);
     document.getElementById('pinfo').textContent = (d.points || []).length
         ? (d.points_used || []).length + ' von ' + d.points.length + ' gesprochen' : '';
         if (!force && (dirty || key === shownKey)) { document.getElementById('edit').className = 'row' + (dirty ? ' dirty' : ''); return; }
@@ -5305,7 +5307,11 @@ function draw(d, force) {
         pt.oninput = () => { dirty = true; document.getElementById('edit').className = 'row dirty'; };
         el.innerHTML = order.map(s => {
             const t = d.script[s] || '';
-            return '<div class="seg' + (t ? '' : ' off') + '"><b>' + esc(NAMES[s] || s) + '</b>' +
+            const av = (d.avatar || {})[s];
+            const avl = av ? ' <span class="words" style="float:none;margin-left:8px">🎬 Gabi: ' +
+                ({queued: 'wartet', rendering: 'Video wird erzeugt …', ready: 'Video fertig', failed: 'Fehler – nur Stimme'}[av.state] || av.state) +
+                '</span>' : '';
+            return '<div class="seg' + (t ? '' : ' off') + '"><b>' + esc(NAMES[s] || s) + '</b>' + avl +
                 '<span class="words" id="w_' + s + '">' + words(t) + ' Wörter</span>' +
                 '<textarea data-seg="' + s + '" rows="' + Math.max(3, Math.ceil(t.length / 95) + 1) + '">' + esc(t) + '</textarea></div>';
         }).join('');

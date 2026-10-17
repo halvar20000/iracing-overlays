@@ -151,7 +151,32 @@ Fehlt eine, wird sie einfach übersprungen. Andere Namen oder Zeiten:
 blendet alles aus, bleibt auf der Moderator-Szene und gibt dir die Kontrolle
 zurück.
 
-## 3. Avatar mit VTube Studio
+## 3. Avatar Gabi (sprechendes Video, sync.so)
+
+Gabi Ferrari spricht **Begrüßung, Übergabe zum Qualifying und Verabschiedung im
+Abspann** als echtes Video; alles andere (Ergebnisse, Tabellen, Strecke …)
+spricht die Stimme, während Gabi ruhig im Studio sitzt.
+
+1. **Schlüssel:** in `commentary_config.json` die Zeile
+   `"sync_api_key": "sk-…"` ergänzen (nie in den Chat), Dashboard neu starten.
+   Test: `http://localhost:5000/avatar` — Satz eingeben, Video ansehen.
+2. **OBS, Szene Moderator**, zwei Medienquellen übereinander:
+   - `Gabi Ruhe` (unten): lokale Datei `avatar\gabi_idle_loop.mp4`, **Schleife an**,
+     immer sichtbar. So sitzt sie da, wenn sie nichts sagt.
+   - `Gabi` (darüber, gleiche Größe und Position): Datei egal, der Ablauf setzt sie.
+     Ausgeblendet lassen. „Wiedergabe neu starten, wenn Quelle aktiv wird“ **aus**,
+     Audio: „Audioüberwachung → Überwachen und ausgeben“ wie bei der Stimme.
+   - Die VTube-Studio-Aufnahme in dieser Szene kann raus.
+3. **Zeitplan:** Mit Schlüssel wird das Skript **20 Minuten** vor dem Start
+   geschrieben (statt 5), denn sync.so braucht ca. 2 Minuten pro 10 Sekunden
+   Video. Auf `/show` steht bei jedem Abschnitt „🎬 Gabi: Video fertig“ oder
+   „wird erzeugt“. Ist ein Video zum Zeitpunkt nicht fertig, spricht dort einfach
+   die Stimme. Wer das Skript ändert, bekommt das Video neu erzeugt.
+4. Andere Abschnitte für Gabi oder aus: `show_config.json`
+   `{"avatar": {"segments": ["intro", "outro", "goodbye"]}}` bzw.
+   `{"avatar": {"enabled": false}}`. Kosten: sync.so-Credits pro Sekunde Video.
+
+## 3b. Avatar mit VTube Studio (alt)
 
 1. VTube Studio starten und ein Modell laden. Die mitgelieferten Modelle
    reichen zum Ausprobieren.

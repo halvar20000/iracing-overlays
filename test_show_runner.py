@@ -575,6 +575,73 @@ check("no video for the track: the moderation does not announce one",
       "kein Streckenvideo" in sr._track_words({"streckenvideo": False}, {})
       and "Schauen wir" not in sr.template_script(cfg, dict(facts, streckenvideo=False), ["track"])["track"])
 
+# AVATAR: Gabi says the avatar segments as a video when it is ready, else the voice does
+import avatar_sync
+class FakeRenderer:
+    def __init__(self, ready): self.ready, self.ensured = ready, []
+    def available(self): return True
+    def ensure(self, kind, seg, text): self.ensured.append((kind, seg, text))
+    def get(self, kind, seg, text): return Path(f"/tmp/{kind}_{seg}.mp4") if seg in self.ready else None
+    def status(self, kind): return {s: {"state": "ready"} for s in self.ready}
+obs15 = FakeObs({"Moderator": {"Gabi": False}, "iRacing": {}}, media={"Gabi": 0.6})
+c15 = sr.load_config(); c15["obs"] = {"host": "127.0.0.1", "port": obs15.port}
+fr = FakeRenderer({"intro"})
+sp15 = Speaker()
+r15 = sr.ShowRunner(c15, ObsClient(port=obs15.port), sp15, facts_fn=lambda: facts,
+                    script_fn=lambda f, s_: ({"intro": "Hallo, ich bin Gabi.", "track": "Spa.", "outro": "Tschüss."}, "t"),
+                    director_on=lambda: None, avatar=fr)
+r15.prepare()
+check("avatar: videos ordered for the avatar segments after the script", sorted(x[1] for x in fr.ensured) == ["intro", "outro"]
+      and all(x[0] == "pre" for x in fr.ensured), fr.ensured)
+vis15 = []
+def w15():
+    r15.tick()
+    v = (r15.seg["id"] if r15.seg else None, obs15.scenes["Moderator"]["Gabi"])
+    if not vis15 or vis15[-1] != v:
+        vis15.append(v)
+r15.start()
+check("avatar: intro played as Gabi's video (file set, restarted, visible)", obs15.media["Gabi"].get("file") == "/tmp/pre_intro.mp4"
+      and ("intro", True) in vis15 + [(r15.seg["id"] if r15.seg else None, obs15.scenes["Moderator"]["Gabi"])])
+wait_for(lambda: r15.state == "done", 20, tick=w15)
+said15 = [sg for _, sg, _ in sp15.lines]
+check("avatar: intro not spoken by the voice, outro (no video yet) is", "intro" not in said15 and "outro" in said15, said15)
+check("avatar: Gabi's video hidden after the intro", obs15.scenes["Moderator"]["Gabi"] is False
+      and all(not g for s_, g in vis15 if s_ != "intro"), vis15)
+check("avatar: the show waited for the video to end", any("Gabi spricht" in e["msg"] for e in r15.log), r15.log)
+r15.set_script({"outro": "Neuer Abschied."})
+check("avatar: an edited segment is rendered again", ("pre", "outro", "Neuer Abschied.") in fr.ensured)
+fr_off = FakeRenderer({"intro"}); fr_off.available = lambda: False
+r16 = sr.ShowRunner(c15, None, Speaker(), facts_fn=lambda: facts, script_fn=lambda f, s_: ({"intro": "x"}, "t"),
+                    director_on=lambda: None, avatar=fr_off)
+r16.prepare()
+check("avatar: without a sync.so key nothing is ordered, 5 min lead", not fr_off.ensured
+      and r16._due(dt.datetime(2026, 10, 15, 19, 30)) is None and r16._due(dt.datetime(2026, 10, 15, 19, 36)) == "prepare")
+check("avatar: with it the script is written 20 min ahead", r15._due(dt.datetime(2026, 10, 15, 19, 21)) == "prepare")
+# the renderer itself
+rd_calls = []
+def fake_ls(data, name, out_name=None, **k):
+    rd_calls.append(out_name)
+    if "kaputt" in out_name:
+        raise RuntimeError("sync.so FAILED")
+    return Path(td_r) / f"{out_name}.mp4"
+with tempfile.TemporaryDirectory() as td_r:
+    vox = type("V", (), {"synth": lambda self, t: (b"a", "audio/mpeg", "edge")})()
+    rr = avatar_sync.AvatarRenderer(vox, lipsync_fn=lambda d, n, out_name=None, **k:
+                                    (fake_ls(d, n, out_name="kaputt" if "Fehler" in rr.jobs[("pre", "outro")]["text"] else out_name)
+                                     if False else fake_ls(d, n, out_name=out_name)))
+    rr.ensure("pre", "intro", "Hallo.")
+    wait_for(lambda: rr.jobs[("pre", "intro")]["state"] == "ready", 5)
+    (Path(td_r) / Path(rr.jobs[("pre", "intro")]["file"]).name).write_bytes(b"x")
+    check("renderer: ready, found for the same text only", rr.get("pre", "intro", "Hallo.") is not None
+          and rr.get("pre", "intro", "Anders.") is None)
+    n = len(rd_calls); rr.ensure("pre", "intro", "Hallo."); time.sleep(0.1)
+    check("renderer: same text not rendered twice", len(rd_calls) == n)
+    rr.lipsync = lambda d, n_, out_name=None, **k: (_ for _ in ()).throw(RuntimeError("sync.so FAILED"))
+    rr.ensure("pre", "outro", "Tschüss.")
+    wait_for(lambda: rr.jobs[("pre", "outro")]["state"] == "failed", 5)
+    check("renderer: a failure is reported, no video", rr.jobs[("pre", "outro")]["state"] == "failed"
+          and "FAILED" in rr.jobs[("pre", "outro")]["error"] and rr.get("pre", "outro", "Tschüss.") is None)
+
 # hand edits: kept, empty segment skipped, survive a restart, never rewritten automatically
 with tempfile.TemporaryDirectory() as td:
     store = Path(td) / "show_script.json"
