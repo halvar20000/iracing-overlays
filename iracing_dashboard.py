@@ -1439,6 +1439,13 @@ class TelemetryPoller:
                     if raw < -0.5:
                         raw += 1.0
                     delta_pct_signed = raw
+            else:
+                # In the pits / out of the world: forget the last position.
+                # Otherwise the pit-ENTRY position (~0.8 at Indianapolis) was
+                # compared with the pit-EXIT one (~0.05, the pit lane crosses
+                # the S/F line) — "moved backwards 75 % of lap" and a replay
+                # for every car leaving the pits (WCT Indianapolis 2026-10-20).
+                self._prev_lap_pct.pop(idx, None)
 
             # --- stopped-on-track (spec-mode crash proxy) ------------------
             # A car that's crashed / beached shows as "still on the racing
