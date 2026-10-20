@@ -109,6 +109,7 @@ G = {
     "doc": '<path d="M6 2.5h8l4.5 4.5v14.5H6z"/><path d="M14 2.5V7h4.5M9 12h6.5M9 15.5h6.5M9 19h4"/>',
     "chat": '<path d="M4 4.5h16a1.5 1.5 0 0 1 1.5 1.5v9.5a1.5 1.5 0 0 1-1.5 1.5H10l-5 4v-4H4A1.5 1.5 0 0 1 2.5 15.5V6A1.5 1.5 0 0 1 4 4.5z"/>'
             '<path d="M7 9h10M7 12.5h6"/>',
+    "mic": '<rect x="9" y="2.5" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/>',
     "speaker": '<path d="M3.5 9.5h4l5-4.5v14l-5-4.5h-4z"/><path d="M16 9a4 4 0 0 1 0 6M18.8 6.2a8 8 0 0 1 0 11.6"/>',
     "stop": '<rect x="3" y="3" width="18" height="18" rx="4"/><rect x="8.5" y="8.5" width="7" height="7" rx="1" class="F"/>',
     "play": '<rect x="2" y="5" width="20" height="14" rx="4"/><path d="M10 9v6l5-3z" class="F"/>',
@@ -208,9 +209,12 @@ DASH_ICONS = [
     ("show_start",        "auto",   "play",        "Moderation Start",  "show_start"),
     ("show_next",         "auto",   "next",        "Moderation weiter", "show_next"),
     ("show_stop",         "auto",   "stop",        "Moderation Stopp",  "show_stop"),
+    # Frag Claude (race_qa.py): press = listen, press again = answer
+    ("ask",               "auto",   "mic",         "Frag Claude",       "ask"),
     # PAGES, not /streamdeck commands: Website action without "background"
     ("ot_panel",          "tool",   "overtake",    "Überhol Fenster",   "/overtakes/panel"),
     ("show_page",         "tool",   "list",        "Sendeablauf",       "/show"),
+    ("ask_page",          "tool",   "chat",        "Fragen",            "/ask"),
 ]
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8"><style>

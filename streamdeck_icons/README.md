@@ -123,6 +123,7 @@ URL wie unten. Das Dashboard (Port 5000) muss laufen.
 | `show_start.png` | `http://localhost:5000/streamdeck/show_start` — KI-Moderation jetzt starten |
 | `show_next.png` | `http://localhost:5000/streamdeck/show_next` — nächster Moderations-Abschnitt |
 | `show_stop.png` | `http://localhost:5000/streamdeck/show_stop` — Moderation abbrechen |
+| `ask.png` | `http://localhost:5000/streamdeck/ask` — Frag Claude: drücken = Frage stellen, nochmal drücken = Antwort (FRAG_CLAUDE.md) |
 
 ## Seiten als Fenster öffnen (z. B. auf dem Hochkant-Monitor)
 
@@ -135,6 +136,7 @@ jeweilige Overlay muss im Launcher gestartet sein (das Dashboard für das
 |---|---|---|
 | `dashboard/ot_panel.png` | `http://localhost:5000/overtakes/panel` | Überhol-Fenster: Replay 10 s / 20 s, Kamera, Auto-Replay, Go Live |
 | `dashboard/show_page.png` | `http://localhost:5000/show` | Sendeablauf: Skript lesen, starten, weiter, stoppen, OBS prüfen |
+| `dashboard/ask_page.png` | `http://localhost:5000/ask` | Frag Claude: letzte Fragen + Antworten, Frage tippen |
 | `overlays/dashboard.png` | `http://localhost:5000` | ganzes Dashboard |
 | `overlays/logger.png` | `http://localhost:5009` | Race Logger Monitor |
 | — | `http://localhost:8080` | Race Control (Stewards) |

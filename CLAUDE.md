@@ -177,6 +177,45 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 20, 2026, evening (FRAG CLAUDE — voice Q&A co-commentator, for
+streams Thomas / Andreas commentate THEMSELVES, not REGIE):** NEW `race_qa.py`
+(`RaceQA`, pure logic, mic / STT / API injectable). Stream Deck
+`/streamdeck/ask` (toggle: press = listen, press again = answer, auto-stop
+`qa_max_record_s` 20 s; `ask_start` / `ask_stop` for hold plugins,
+`ask_cancel`) → `MicRecorder` (sounddevice, 16 kHz mono, `qa_mic` = name part
+or index) → `WhisperSTT` (faster-whisper `qa_stt_model` "small", int8 CPU,
+German, `initial_prompt` = track + the session's driver names) → Claude
+Messages API via urllib (`qa_model` claude-haiku-5-5, thinking disabled with
+the commentator's retry-without fallback, ≤ 6 tool rounds, pause_turn
+continued, refusal = error) with tools live_session (dashboard
+`_qa_session()`), live_standings 5005, race_results 5002, championship 5010
+/api/state, round_info + league_table (5010 /api/roundinfo split into "info"
+and "standings" — together they were cut off), track_notes
+(show_runner.find_notes) and Anthropic web_search (`web_search_20250305` for
+Haiku, `_20260209` otherwise; `qa_web_search`). Prompt: answer ONLY from tool
+results, else say it is not known; 1-3 spoken German sentences. Overlay JSON
+goes through `compact()` (drops colours / urls / ids / solo team = name,
+rounds floats, lists ≤ 40, depth ≤ 12 — depth 6 had turned the CLS race rows
+into "…") and a 24 000-char cap; every real 5005/5002/5010 payload of the
+WCT Indianapolis evening fits uncut. Answer → `Commentator.say_show(text,
+"frage")` = queued voice line (played in full by /commentary/voice, before
+REGIE lines). Operator page `5000/ask` (state, Q&A list with sources and
+seconds, typed question, warns when no voice page listens; opening it preloads
+the speech model — first run downloads ~480 MB). Icons dashboard/ask.png
+(mic) + ask_page.png (rendered with local Edge — the claude-agent container's
+chromium hangs: ~3300 zombie chromium processes, nothing reaps them).
+requirements + faster-whisper, sounddevice. Guide FRAG_CLAUDE.md (German).
+Tests: test_race_qa.py 60/60 (fake recorder / STT / API: tool loop,
+compaction, split, errors, toggle / hold / too short / auto stop / cancel,
+real Commentator queue). Scratchpad venv: real faster-whisper on three
+edge-tts German questions = word-perfect incl. "Remo Cursio und Bastian
+Kübler", ~1 s each; dashboard Flask test client (/ask, /ask/text,
+/ask/status, /streamdeck/ask twice, /commentary carries the queued answer)
+all pass; real mic capture (Elgato Wave XLR) works; /ask rendered.
+NOT tried: a real Claude answer (no key on this PC), sound through OBS.
+Trigger is the Stream Deck BUTTON only — Thomas decided: no wake word,
+not even later; a few seconds' wait is fine. Not built: Andreas via Discord.
+
 **October 20, 2026, later (Abspann PRO / AM pictures, WCT GT3 race at
 Indianapolis that evening):** the Abspann talked per class but showed mixed
 pages. Now `available_post_segments` splits `results` → results_pro/_am and

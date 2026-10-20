@@ -26,6 +26,7 @@ import race_commentator
 from race_graphics import GraphicsDirector, weather_line, dotd_line
 from cls_proam import ProAmRoster
 from race_voice import Voice
+import race_qa
 import show_runner
 from obs_ws import ObsClient
 from pathlib import Path
@@ -262,6 +263,11 @@ class TelemetryPoller:
             avatar=self.avatar_renderer)
         self._race_story: list = []       # this race told by its live commentary (Abspann summary)
         self.avatar_test = avatar_sync.AvatarTest(self.voice)   # /avatar: sync.so lip-sync test
+        # FRAG CLAUDE (race_qa.py, 2026-10-20): the streamer asks by voice
+        # (Stream Deck push-to-talk), the answer is spoken by the same voice
+        self.qa = race_qa.RaceQA(self.commentator.cfg,
+                                 speak=lambda text: self.commentator.say_show(text, "frage"),
+                                 session_fn=self._qa_session)
         self._story_key = None
         self._post_key = None             # race the Abspann ran for (once per race)
         self._chequered_at = None
@@ -1824,6 +1830,28 @@ class TelemetryPoller:
             print(f"[focus-leader] -> P1 #{leader['car_number']} {leader['name']}")
         except Exception as e:
             print(f"[focus-leader] switch failed: {e}")
+
+    # --- FRAG CLAUDE (race_qa.py) ----------------------------------------------
+    def _qa_session(self) -> dict:
+        """The live_session tool: what the dashboard knows right now."""
+        snap = self.get()
+        wk = dict(self._weekend or {})
+        rp = snap.get("race_progress") or {}
+        drivers = snap.get("drivers") or []
+        cam = snap.get("active_driver") or {}
+        out = {"verbunden": bool(snap.get("connected")),
+               "strecke": wk.get("TrackDisplayName") or snap.get("track") or "",
+               "layout": wk.get("TrackConfigName") or "",
+               "ort": ", ".join(x for x in (wk.get("TrackCity"), wk.get("TrackCountry")) if x),
+               "laenge": wk.get("TrackLength") or "",
+               "session": {k: rp.get(k) for k in ("session_type", "session_name", "laps_done",
+                                                    "total_laps", "laps_remaining", "total_time",
+                                                    "time_remaining") if rp.get(k) is not None},
+               "im_bild": {k: cam.get(k) for k in ("name", "car_number", "position", "team",
+                                                    "car") if isinstance(cam, dict) and cam.get(k)},
+               "fahrer": [d.get("name") for d in drivers if d.get("name")],
+               "liga": self._league_slug or ""}
+        return out
 
     # --- show runner ("SENDEABLAUF") ------------------------------------------
     def _show_facts(self) -> dict:
@@ -5441,6 +5469,116 @@ setInterval(tick, 1500); tick();
 """
 
 
+ASK_HTML = r"""<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><title>Frag Claude</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  /* FRAG CLAUDE (race_qa.py, 2026-10-20): voice questions to the co-commentator */
+  :root { --bg: #14161b; --panel: #1d2027; --line: #2c3039; --text: #e8e8ec; --dim: #9aa0ab;
+          --acc: #22d3ee; --bad: #f87171; --ok: #34d399; --rec: #ef4444; --warn: #fbbf24; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 'Segoe UI', Arial, sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 0 0 10px; } h1 span { color: var(--acc); }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+  .pill { padding: 4px 12px; border-radius: 99px; background: var(--panel); border: 1px solid var(--line);
+          font-weight: 600; }
+  .pill.recording { background: var(--rec); border-color: var(--rec); color: #fff; animation: p 1s infinite; }
+  .pill.transcribing, .pill.thinking { background: var(--warn); border-color: var(--warn); color: #111; }
+  .pill.speaking { background: var(--ok); border-color: var(--ok); color: #111; }
+  @keyframes p { 50% { opacity: .6; } }
+  button { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+           padding: 9px 14px; font-size: 15px; cursor: pointer; }
+  button.main { border-color: var(--acc); font-size: 17px; padding: 12px 20px; }
+  input { flex: 1; min-width: 0; background: #15171c; color: var(--text); border: 1px solid var(--line);
+          border-radius: 6px; padding: 9px; font: inherit; }
+  .dim { color: var(--dim); font-size: 13px; } .err { color: var(--bad); }
+  .item { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+          margin-bottom: 8px; }
+  .q { color: var(--acc); font-weight: 600; } .a { margin-top: 4px; font-size: 17px; }
+</style></head><body><main>
+<h1>Frag <span>Claude</span></h1>
+<div class="bar">
+  <span id="st" class="pill">…</span>
+  <button class="main" onclick="act('toggle')">🎙 Fragen / Antworten</button>
+  <button onclick="act('cancel')">Abbrechen</button>
+  <span id="info" class="dim"></span>
+</div>
+<div class="bar">
+  <input id="t" placeholder="Frage tippen (ohne Mikrofon) …" onkeydown="if(event.key==='Enter')send()">
+  <button onclick="send()">Senden</button>
+</div>
+<div id="warn" class="err"></div>
+<div id="list"></div>
+<div class="dim">Stream Deck (Website, im Hintergrund): /streamdeck/ask = drücken zum Zuhören, nochmal
+drücken zum Antworten · /streamdeck/ask_start + ask_stop zum Halten · /streamdeck/ask_cancel.
+Die Antwort spricht die Stimme (OBS-Quelle commentary_voice.html).</div>
+<script>
+const NAMES = {idle: 'bereit', recording: '● hört zu', transcribing: 'versteht …', thinking: 'denkt nach …',
+               speaking: 'spricht'};
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+async function act(a) { await fetch('/ask/' + a, {method: 'POST'}); tick(); }
+async function send() {
+  const t = document.getElementById('t'); if (!t.value.trim()) return;
+  await fetch('/ask/text', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({question: t.value})});
+  t.value = ''; tick();
+}
+let sig = '';
+async function tick() {
+  let d; try { d = await (await fetch('/ask/status')).json(); } catch (e) { return; }
+  const st = document.getElementById('st');
+  st.className = 'pill ' + d.state;
+  st.textContent = (NAMES[d.state] || d.state) + (d.recording_s != null ? ' ' + d.recording_s.toFixed(0) + ' s' : '');
+  document.getElementById('info').textContent = (d.ai ? d.model : 'kein API-Schlüssel') +
+    ' · Sprache: whisper ' + d.stt_model + (d.stt_ready ? '' : ' (lädt …)') + (d.web_search ? ' · Websuche an' : '');
+  const w = [];
+  if (!d.ai) w.push('Kein Claude-Schlüssel: "api_key" in commentary_config.json.');
+  if (d.voice && !d.voice.listening) w.push('Keine Stimme hört zu – OBS-Quelle commentary_voice.html fehlt oder ist aus. Antworten bleiben stumm.');
+  if (d.last_error) w.push(d.last_error);
+  document.getElementById('warn').innerHTML = w.map(esc).join('<br>');
+  const s = JSON.stringify(d.items);
+  if (s === sig) return; sig = s;
+  document.getElementById('list').innerHTML = d.items.map(i =>
+    `<div class="item"><div class="q">${i.typed ? '⌨' : '🎙'} ${esc(i.question)}</div>
+     <div class="a">${i.answer ? esc(i.answer) : (i.error ? '' : '…')}</div>
+     ${i.error ? `<div class="err">${esc(i.error)}</div>` : ''}
+     <div class="dim">${new Date(i.t * 1000).toLocaleTimeString('de-DE')}
+       ${i.took_s != null ? ' · ' + i.took_s + ' s' : ''}
+       ${i.tools.length ? ' · Quellen: ' + esc([...new Set(i.tools)].join(', ')) : ''}</div></div>`).join('');
+}
+setInterval(tick, 700); tick();
+</script></main></body></html>
+"""
+
+
+@app.route("/ask")
+def ask_page():
+    from flask import Response
+    return Response(ASK_HTML, mimetype="text/html")
+
+
+@app.route("/ask/status")
+def ask_status():
+    poller.qa.preload()                   # page open = speech model loaded before the first question
+    return jsonify(dict(poller.qa.status(), voice=poller.voice.status()))
+
+
+@app.route("/ask/text", methods=["POST"])
+def ask_text():
+    q = (request.get_json(silent=True) or {}).get("question") or ""
+    return jsonify({"ok": True, "msg": poller.qa.ask_text(q[:500])})
+
+
+@app.route("/ask/<action>", methods=["POST"])
+def ask_action(action):
+    fn = {"toggle": poller.qa.toggle, "start": poller.qa.start_listen,
+          "stop": poller.qa.stop_listen, "cancel": poller.qa.cancel}.get(action)
+    if fn is None:
+        return jsonify({"ok": False, "msg": f"unknown action: {action}"}), 404
+    return jsonify({"ok": True, "msg": fn()})
+
+
 @app.route("/avatar")
 def avatar_page():
     from flask import Response
@@ -5842,6 +5980,15 @@ def streamdeck(action, param=None):
     elif action == "post_stop":
         poller.post_show.stop()
         ok, msg = True, "abspann stopped"
+    # --- FRAG CLAUDE (race_qa.py): push-to-talk question ---
+    elif action == "ask":                 # one key: press = listen, press again = answer
+        ok, msg = True, f"ask: {poller.qa.toggle()}"
+    elif action == "ask_start":           # hold: key down ...
+        ok, msg = True, f"ask: {poller.qa.start_listen()}"
+    elif action == "ask_stop":            # ... key up
+        ok, msg = True, f"ask: {poller.qa.stop_listen()}"
+    elif action == "ask_cancel":
+        ok, msg = True, f"ask: {poller.qa.cancel()}"
 
     elif action == "toggle_auto_replay":
         poller.set_auto_replay(not poller.auto_replay)
@@ -5985,6 +6132,7 @@ if __name__ == "__main__":
     print("  Commentary (OBS)  http://localhost:5000/commentary/overlay")
     print("  Voice (OBS audio) http://localhost:5000/commentary/voice")
     print("  Sendeablauf       http://localhost:5000/show   (Stream Deck: /streamdeck/show_start|show_next|show_stop)")
+    print("  Frag Claude       http://localhost:5000/ask    (Stream Deck: /streamdeck/ask = Frage an / beantworten)")
     print("  Abspann           http://localhost:5000/abspann (Stream Deck: /streamdeck/post_start|post_next|post_stop)")
     print("  List cameras      http://localhost:5000/cameras?format=text")
     print("  Driver next/prev  http://localhost:5000/streamdeck/driver_next")

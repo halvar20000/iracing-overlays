@@ -29,6 +29,13 @@ imageio-ffmpeg>=0.4.9
 # without internet) the voice falls back to the Windows SAPI voice (pywin32).
 edge-tts>=7.0
 
+# Frag Claude (race_qa.py, dashboard /ask): push-to-talk questions to Claude.
+# faster-whisper = local German speech to text (the "small" model, ~480 MB, is
+# downloaded on first use), sounddevice = the microphone. Optional — without
+# them a TYPED question on /ask still works.
+faster-whisper>=1.0
+sounddevice>=0.4
+
 # Sendeablauf (show_runner.py / obs_ws.py): talks to OBS over obs-websocket v5.
 websocket-client>=1.6
 
