@@ -478,7 +478,7 @@ with tempfile.TemporaryDirectory() as td:
     check("points failure does not stop the script", rp3.script and rp3.points == [])
 
 # ABSPANN after the race: facts, segments, templates, run
-RES = {"rows": [
+RES = {"results": [                     # the shape 5002 /results really serves
     {"position": 1, "name": "Maurice Becker", "car": "Porsche", "start_pos": 2, "position_change": 1,
      "fastest_lap": 109.5, "is_fastest_overall": True, "finished": True, "time_gap": 0},
     {"position": 2, "name": "Andreas Bastian", "car": "Porsche", "start_pos": 9, "position_change": 7,
@@ -513,13 +513,23 @@ check("post facts: next round = the one after tonight's", pf["naechstes_rennen"]
       and pf["naechstes_rennen"]["strecke"] == "Indianapolis Motor Speedway" and pf["naechstes_rennen"]["datum"] == "20. Oktober",
       pf.get("naechstes_rennen"))
 check("post facts: race story from the commentary", pf["verlauf"] == ["Zocher führt.", "Becker geht vorbei!"])
+check("post facts: old 'rows' key still read", sr.build_post_facts({"rows": RES["results"]}, None, None, [], {})
+      ["ergebnis"]["top10"][0]["name"] == "Maurice Becker")
 psegs = sr.available_post_segments(sr.load_config(), pf)
-check("post segments", psegs == ["race_summary", "results", "standings_after", "next_round", "goodbye"], psegs)
+check("post segments: Pro/Am result and table per class", psegs == [
+    "race_summary", "results_pro", "results_am", "standings_after_pro", "standings_after_am", "next_round", "goodbye"], psegs)
+pf_one = sr.build_post_facts(RES, {"season": {"proAmEnabled": False}, "champ_rows": PROJ["champ_rows"]}, RIP, [], {})
+check("post segments: no classes -> one result, one table",
+      sr.available_post_segments(sr.load_config(), pf_one)
+      == ["race_summary", "results", "standings_after", "next_round", "goodbye"])
 check("post segments without data", sr.available_post_segments(sr.load_config(), {}) == ["goodbye"])
 ptpl = sr.template_post_script(sr.load_config(), pf, psegs)
-check("post templates", set(ptpl) == set(psegs) and "Klasse AM gewinnt Andreas Bastian" in ptpl["results"]
+check("post templates", set(ptpl) == set(psegs) and "Klasse AM gewinnt Andreas Bastian" in ptpl["results_am"]
+      and "Andreas Bastian" not in ptpl["results_pro"] and "Klasse PRO gewinnt Maurice Becker" in ptpl["results_pro"]
       and "Runde 5 von 5" in ptpl["next_round"] and "kam Thomas Kuebler." in ptpl["race_summary"] and "Indianapolis" in ptpl["next_round"]
-      and "vorläufig" in ptpl["standings_after"] and not any("None" in t for t in ptpl.values()), ptpl)
+      and "vorläufig" in ptpl["standings_after_pro"] and "Andreas Bastian" in ptpl["standings_after_am"]
+      and not any("None" in t for t in ptpl.values()), ptpl)
+check("post briefs exist for every split segment", all(s in sr.POST_BRIEF for v in sr.POST_PROAM_SPLIT.values() for s in v))
 pcalls2 = []
 def post2(payload):
     pcalls2.append(payload)
@@ -532,14 +542,17 @@ obs13 = FakeObs({"Moderator": {"Ergebnis": False, "Meisterschaft": True}, "iRaci
 obs13.current = "iRacing"
 c13 = sr.load_config(); c13["obs"] = {"host": "127.0.0.1", "port": obs13.port}
 ev13 = []
+pin13 = [None]
 r13 = sr.ShowRunner(c13, ObsClient(port=obs13.port), Speaker(), facts_fn=lambda: pf,
                     script_fn=lambda f, s_: (sr.template_post_script(c13, f, s_), "template"),
-                    director_on=lambda: ev13.append("on"), kind="post", director_off=lambda: ev13.append("off"))
+                    director_on=lambda: ev13.append("on"), kind="post", director_off=lambda: ev13.append("off"),
+                    pin=lambda c: pin13.__setitem__(0, c))
 r13.prepare()
 vis13 = []
 def w13():
     r13.tick()
-    v = (r13.seg["id"] if r13.seg else None, obs13.scenes["Moderator"]["Ergebnis"], obs13.scenes["Moderator"]["Meisterschaft"])
+    v = (r13.seg["id"] if r13.seg else None, obs13.scenes["Moderator"]["Ergebnis"],
+         obs13.scenes["Moderator"]["Meisterschaft"], pin13[0])
     if not vis13 or vis13[-1] != v:
         vis13.append(v)
 r13.start()
@@ -548,8 +561,13 @@ check("Abspann: REGIE off, Moderator scene, table left on hidden", ev13 == ["off
 check("Abspann runs to the end, stays on Moderator, no REGIE", wait_for(lambda: r13.state == "done", 20, tick=w13)
       and obs13.current == "Moderator" and ev13 == ["off"], r13.status()["log"])
 check("Abspann: a picture for every voice segment (result from the summary on), none for the goodbye",
-      ("race_summary", True, False) in vis13 and ("results", True, False) in vis13
-      and ("standings_after", False, True) in vis13 and all(not e and not t for s_, e, t in vis13 if s_ in ("goodbye", None)), vis13)
+      ("race_summary", True, False, None) in vis13 and ("results_pro", True, False, "pro") in vis13
+      and ("results_am", True, False, "am") in vis13 and ("standings_after_pro", False, True, "pro") in vis13
+      and ("standings_after_am", False, True, "am") in vis13
+      and all(not e and not t for s_, e, t, _ in vis13 if s_ in ("goodbye", None)), vis13)
+check("Abspann: the result page stays up summary -> PRO -> AM (no blink), class released at the end",
+      [e for s_, e, t, _ in vis13 if s_ in ("race_summary", "results_pro", "results_am")] == [True] * len(
+          [1 for s_, *_ in vis13 if s_ in ("race_summary", "results_pro", "results_am")]) and pin13[0] is None, vis13)
 r17 = sr.ShowRunner(dict(sr.load_config(), avatar={"segments": ["intro", "last_race", "track", "schedule", "outro"], "max_words": 5}),
                     None, Speaker(), lambda: {}, lambda f, s_: ({}, "t"), lambda: None)
 r17.segments = ["intro", "last_race", "track", "schedule", "outro"]

@@ -83,6 +83,12 @@ geht aus, OBS schaltet auf **Moderator**, dann:
 4. **Nächstes Rennen** — Runde, Datum, Strecke
 5. **Verabschiedung**
 
+**Pro/Am-Ligen (WCT GT3):** Endergebnis und Meisterschaft werden je Klasse
+besprochen, erst PRO, dann AM, und die Seiten im Bild zeigen genau diese
+Klasse (Plätze, Abstände und Punkte innerhalb der Klasse). Dafür reichen
+dieselben zwei Quellen; Race Results (5002) braucht dazu den CLS-Kader
+(wie der Tower, automatisch).
+
 Beide Quellen bildschirmfüllend (1920 × 1080) über Gabi legen. Die
 `_solid`-Seiten haben einen deckenden dunklen Hintergrund, damit Gabi nicht
 durchscheint, während die Stimme spricht. Die Tabelle ist mittig und

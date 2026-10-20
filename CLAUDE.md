@@ -177,6 +177,25 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 20, 2026, later (Abspann PRO / AM pictures, WCT GT3 race at
+Indianapolis that evening):** the Abspann talked per class but showed mixed
+pages. Now `available_post_segments` splits `results` → results_pro/_am and
+`standings_after` → standings_after_pro/_am (`POST_PROAM_SPLIT`, own
+POST_BRIEFs + templates) when the facts carry both classes; they share the
+plain sources Ergebnis / Meisterschaft (stay up PRO → AM) and pin the class
+via 5010 /api/prerace_pin. 5002 now has a ProAmRoster (row `proam`,
+`proam_active`, `/proam`, `/pin` = proxy of the 5010 pin) and /solid shows
+only the pinned class: positions, gaps (to the class winner, laps too), grid
+change (class start order) and FL inside the class. 5010 /overlay/solid
+follows the pin too (class ranks before/after + Δ inside the class, always
+view B). BUG FIXED on the way: build_post_facts read `rows` but 5002 serves
+`results` — the Abspann never had the final result (segment dropped).
+test_show_runner.py 118 PASS (the 2 Windows-only fails — track video path,
+avatar — fail on HEAD too); both pages run for real (stubbed SDK) with a
+fake WCT field, PRO and AM checked by text + screenshot. Minor: the champ
+sub-line "Race P4" is still the OVERALL race position. Restart 5000, 5002,
+5010.
+
 **October 20, 2026 (Abspann sources opaque, for Gabi):** the Abspann shows
 `Ergebnis` / `Meisterschaft` on the Moderator scene OVER the Gabi idle loop,
 and the normal results (5002, stream mode = transparent, remembered in

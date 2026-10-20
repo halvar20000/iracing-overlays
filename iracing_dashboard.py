@@ -5231,6 +5231,8 @@ if (BASE === '/abspann') { document.querySelector('h1').innerHTML = 'Abspann <sp
                            document.querySelector('button.go').textContent = '▶ Abspann starten'; }
 const NAMES = {race_summary: 'Rennverlauf', results: 'Endergebnis', standings_after: 'Meisterschaft danach',
                next_round: 'Nächstes Rennen', goodbye: 'Verabschiedung',
+               results_pro: 'Endergebnis · PRO', results_am: 'Endergebnis · AM',
+               standings_after_pro: 'Meisterschaft danach · PRO', standings_after_am: 'Meisterschaft danach · AM',
                intro: 'Begrüßung', last_race: 'Letztes Rennen', standings: 'Tabelle', track: 'Strecke', outro: 'Übergabe',
                last_race_pro: 'Letztes Rennen · PRO', last_race_am: 'Letztes Rennen · AM',
                standings_pro: 'Tabelle · PRO', standings_am: 'Tabelle · AM', schedule: 'Saisonplan'};

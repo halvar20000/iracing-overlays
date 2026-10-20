@@ -107,15 +107,23 @@ SEGMENT_SOURCES = {"last_race": "last_race", "standings": "standings",
                    "standings_pro": "standings_pro", "standings_am": "standings_am",
                    "schedule": "schedule", "results": "results", "standings_after": "standings_after",
                    # Abspann: no segment without a picture — Gabi is on camera only when SHE speaks
-                   "race_summary": "results", "next_round": "schedule"}
+                   "race_summary": "results", "next_round": "schedule",
+                   # Abspann in Pro/Am seasons: one page per source, pinned to the class
+                   "results_pro": "results", "results_am": "results",
+                   "standings_after_pro": "standings_after", "standings_after_am": "standings_after"}
 CLASS_SOURCE_FALLBACK = {"last_race_pro": "last_race", "last_race_am": "last_race",
                          "standings_pro": "standings", "standings_am": "standings"}
 # Pro/Am seasons (WCT GT3): results and table are talked about per class, and
 # the championship pages (5010) are pinned to that class while it is spoken.
 SEGMENT_CLASS = {"last_race_pro": "pro", "last_race_am": "am",
-                 "standings_pro": "pro", "standings_am": "am"}
+                 "standings_pro": "pro", "standings_am": "am",
+                 "results_pro": "pro", "results_am": "am",
+                 "standings_after_pro": "pro", "standings_after_am": "am"}
 PROAM_SPLIT = {"last_race": ["last_race_pro", "last_race_am"],
                "standings": ["standings_pro", "standings_am"]}
+# the Abspann's split (5002 /solid and 5010 /overlay/solid follow the pin)
+POST_PROAM_SPLIT = {"results": ["results_pro", "results_am"],
+                    "standings_after": ["standings_after_pro", "standings_after_am"]}
 WORDS_PER_S = 2.4                     # edge-tts at +10 %: ~2.4 German words / second
 DEADLINE_PAD_S = 15.0                 # a segment moves on this long after its speech should have ended
 
@@ -665,6 +673,15 @@ POST_BRIEF = {
     "standings_after": "Die Meisterschaft nach diesem Rennen, die Tabelle ist im Bild: wer führt, "
                        "Abstände, wer gewonnen oder verloren hat (bei Pro/Am beide Klassen). "
                        "Vorläufig, bis die Liga das Ergebnis bestätigt. 50-80 Wörter.",
+    "results_pro": "Das Endergebnis der Klasse PRO (ergebnis.klassen.PRO), das PRO-Ergebnis ist im "
+                   "Bild: Klassensieger, Podium, schnellste Runde der Klasse. Nur PRO. 35-60 Wörter.",
+    "results_am": "Weiter mit dem Endergebnis der Klasse AM (ergebnis.klassen.AM), das AM-Ergebnis ist "
+                  "im Bild: Klassensieger, Podium, schnellste Runde der Klasse. Nur AM. 35-60 Wörter.",
+    "standings_after_pro": "Die Meisterschaft der Klasse PRO nach diesem Rennen (meisterschaft.PRO), die "
+                           "PRO-Tabelle ist im Bild: wer führt, Abstände, wer gewonnen oder verloren hat. "
+                           "Vorläufig, bis die Liga das Ergebnis bestätigt. 35-60 Wörter.",
+    "standings_after_am": "Weiter mit der Meisterschaft der Klasse AM (meisterschaft.AM), die AM-Tabelle "
+                          "ist im Bild: wer führt, Abstände, wer gewonnen oder verloren hat. 35-60 Wörter.",
     "next_round": "Hinweis auf das nächste Rennen: Datum, Strecke, Runde x von y. 20-40 Wörter.",
     "goodbye": "Verabschiedung: danke fürs Zuschauen, an die Fahrer, bis zum nächsten Mal. "
                "Kurz: 12-25 Wörter.",
@@ -694,7 +711,9 @@ def build_post_facts(results: dict | None, projection: dict | None, roundinfo: d
     facts = {"liga": league.get("name"), "liga_slug": league.get("slug"), "saison": season.get("name"),
              "strecke": track.get("name"), "layout": track.get("config")}
     classes_by_name = {k.casefold(): v for k, v in (classes_by_name or {}).items()}
-    rows = [r for r in ((results or {}).get("rows") or []) if r.get("position")]
+    # 5002 /results serves the rows under "results" ("rows" kept for old callers)
+    rows = [r for r in ((results or {}).get("results") or (results or {}).get("rows") or [])
+            if r.get("position")]
     if rows:
         def item(r, pos=None):
             it = {"platz": pos or r["position"], "name": r.get("name"), "auto": r.get("car")}
@@ -773,8 +792,18 @@ def build_post_facts(results: dict | None, projection: dict | None, roundinfo: d
 def available_post_segments(cfg: dict, facts: dict) -> list[str]:
     need = {"results": "ergebnis", "standings_after": "meisterschaft", "next_round": "naechstes_rennen",
             "race_summary": "ergebnis"}
-    return [s for s in cfg.get("post_segments") or DEFAULT_CONFIG["post_segments"]
-            if s in POST_BRIEF and (s not in need or facts.get(need[s]))]
+    # Pro/Am: result and table per class, each with its own page in the picture
+    have = {"results": set(((facts.get("ergebnis") or {}).get("klassen") or {}).keys()),
+            "standings_after": {c for c in ("PRO", "AM") if (facts.get("meisterschaft") or {}).get(c)}}
+    out = []
+    for s in cfg.get("post_segments") or DEFAULT_CONFIG["post_segments"]:
+        if s not in POST_BRIEF or (s in need and not facts.get(need[s])):
+            continue
+        if s in POST_PROAM_SPLIT and len(have.get(s) or ()) > 1:
+            out += [x for x in POST_PROAM_SPLIT[s] if SEGMENT_CLASS[x].upper() in have[s]]
+            continue
+        out.append(s)
+    return out
 
 
 def template_post_script(cfg: dict, facts: dict, segments: list[str]) -> dict:
@@ -804,7 +833,23 @@ def template_post_script(cfg: dict, facts: dict, segments: list[str]) -> dict:
         if res.get("schnellste_runde"):
             parts.append(f"Die schnellste Runde fuhr {res['schnellste_runde']['name']}.")
         out["results"] = " ".join(parts)
+    for c in ("PRO", "AM"):
+        k = (res.get("klassen") or {}).get(c)
+        if f"results_{c.lower()}" in segments and k:
+            t = k["top3"]
+            s = (f"In der Klasse {c} gewinnt {t[0]['name']}"
+                 + (f" vor {', '.join(x['name'] for x in t[1:3])}." if len(t) > 1 else "."))
+            if k.get("schnellste_runde"):
+                s += f" Die schnellste Runde in {c} fuhr {k['schnellste_runde']['name']}."
+            out[f"results_{c.lower()}"] = s
     tab = facts.get("meisterschaft") or {}
+    for c in ("PRO", "AM"):
+        t = tab.get(c)
+        if f"standings_after_{c.lower()}" in segments and t:
+            out[f"standings_after_{c.lower()}"] = (
+                f"In der Meisterschaft der Klasse {c} führt jetzt {t[0]['name']} mit {t[0]['punkte']} Punkten"
+                + (f" vor {t[1]['name']}." if len(t) > 1 else ".")
+                + (" Das ist der vorläufige Stand, bis die Liga das Ergebnis bestätigt." if c == "PRO" else ""))
     if "standings_after" in segments and tab:
         parts = []
         for c in ("PRO", "AM", "top5"):

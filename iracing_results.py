@@ -23,11 +23,18 @@ Data source:
   order — so it's useful both during and after the race.
 """
 
+import json
 import threading
+import urllib.request
 from flask import Flask, jsonify, render_template_string
 
+from cls_proam import ProAmRoster
 from iracing_sdk_base import SDKPoller, setup_utf8_stdout
 setup_utf8_stdout()
+
+# The AI moderation pins the class it is talking about on the championship
+# server (5010 /api/prerace_pin); /solid follows it in Pro/Am seasons.
+PIN_URL = "http://127.0.0.1:5010/api/prerace_pin"
 
 
 # -----------------------------------------------------------------------------
@@ -56,6 +63,7 @@ class ResultsPoller(SDKPoller):
                 "irating":    d.get("IRating", 0) or 0,
                 "license":    d.get("LicString", "") or "",
                 "team_name":  d.get("TeamName", "") or "",
+                "user_id":    d.get("UserID"),
             }
         return out
 
@@ -198,7 +206,14 @@ class ResultsPoller(SDKPoller):
         for r in rows:
             r["is_fastest_overall"] = (r["car_idx"] == fastest_overall_idx)
 
+        # Pro/Am class per driver (CLS roster, WCT GT3) — only when the field
+        # IS a Pro/Am field, same rule as the tower and the driver card.
+        proam_active = proam.active_for(d.get("user_id") for d in drivers.values())
+        for r in rows:
+            r["proam"] = proam.lookup(r.get("user_id")) if proam_active else None
+
         return {
+            "proam_active": proam_active,
             "connected":    True,
             "official":     official,
             "source":       source,
@@ -216,6 +231,7 @@ class ResultsPoller(SDKPoller):
 # -----------------------------------------------------------------------------
 app = Flask(__name__)
 poller = ResultsPoller()
+proam = ProAmRoster()
 
 
 @app.after_request
@@ -461,7 +477,7 @@ RESULTS_HTML = """
 <div class="wrapper">
     <div class="title-card">
         <div>
-            <h1>🏆 Final Classification</h1>
+            <h1 id="title">🏆 Final Classification</h1>
             <div class="subtitle" id="subtitle">Waiting for race results…</div>
         </div>
         <div class="track-info">
@@ -541,6 +557,32 @@ function incidentClass(n) {
     if (n <= 4)  return "low";
     if (n <= 12) return "med";
     return "high";
+}
+
+// One Pro/Am class of the result, as its own classification: positions,
+// gaps, grid change and fastest lap all counted inside the class.
+function classRows(rows, cls) {
+    const list = (rows || []).filter(r => r.proam === cls);
+    const placed = list.filter(r => r.position > 0);
+    const lead = placed[0];
+    const grid = placed.filter(r => r.start_pos > 0).slice().sort((a, b) => a.start_pos - b.start_pos);
+    let best = null;
+    list.forEach(r => { if (r.fastest_lap > 0 && (!best || r.fastest_lap < best.fastest_lap)) best = r; });
+    return list.map(r => {
+        const x = {...r, is_fastest_overall: r === best};
+        const i = placed.indexOf(r);
+        if (i < 0) return x;
+        x.position = i + 1;
+        const g = grid.indexOf(r);
+        x.position_change = g >= 0 ? (g + 1) - x.position : 0;
+        const lb = (r.laps_behind || 0) - (lead.laps_behind || 0);
+        if (lb > 0) { x.laps_behind = lb; x.time_gap = null; }
+        else {
+            x.laps_behind = 0;
+            x.time_gap = (r.time_gap != null && lead.time_gap != null) ? r.time_gap - (lead.time_gap || 0) : null;
+        }
+        return x;
+    });
 }
 
 function renderResults(rows) {
@@ -683,7 +725,19 @@ async function tick() {
             pill.textContent = "No results yet";
         }
 
-        renderResults(d.results);
+        // Abspann page in a Pro/Am season: the class the moderation talks about
+        let cls = null;
+        if (SOLID && d.proam_active) {
+            try { cls = ((await (await fetch("/pin", {cache: "no-store"})).json()).cls || "").toUpperCase(); }
+            catch (e) { cls = null; }
+            if (cls !== "PRO" && cls !== "AM") cls = null;
+        }
+        document.getElementById("title").textContent =
+            "🏆 Final Classification" + (cls ? " · " + cls : "");
+        const shown = cls ? classRows(d.results, cls) : d.results;
+        if (cls) document.getElementById("subtitle").textContent =
+            `${shown.length} classified in ${cls} — ${d.session_name || "Race"}`;
+        renderResults(shown);
     } catch (e) { console.error(e); }
 }
 setInterval(tick, 2000);
@@ -705,10 +759,26 @@ def results():
     return jsonify(poller.get())
 
 
+@app.route("/pin")
+def pin():
+    """The Pro/Am class the moderation is talking about (from 5010), or None."""
+    try:
+        with urllib.request.urlopen(PIN_URL, timeout=1.0) as r:
+            return jsonify({"cls": (json.loads(r.read().decode("utf-8")) or {}).get("cls")})
+    except Exception:
+        return jsonify({"cls": None})
+
+
+@app.route("/proam")
+def proam_status():
+    return jsonify(proam.status())
+
+
 # -----------------------------------------------------------------------------
 # Entry point
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
+    proam.start()
     t = threading.Thread(target=poller.run, daemon=True)
     t.start()
 

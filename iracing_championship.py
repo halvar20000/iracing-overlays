@@ -1439,7 +1439,8 @@ if (location.pathname.split('/').filter(Boolean).pop() === 'solid'
     || new URLSearchParams(location.search).get('solid') === '1') {
   document.documentElement.classList.add('solid');
   document.body.classList.add('solid');
-  const z = parseFloat(new URLSearchParams(location.search).get('zoom'));
+  if (!LOCAL_VIEW) LOCAL_VIEW = 'B';   // the Abspann always wants the table
+  const z =parseFloat(new URLSearchParams(location.search).get('zoom'));
   if (z > 0) document.body.style.setProperty('--zoom', z);
 }
 
@@ -1492,8 +1493,21 @@ function renderRaceView(d) {
   return `<table>${head}<tbody>${body}</tbody></table>`;
 }
 
+// One Pro/Am class as its own table: ranks before / after and the Δ counted
+// inside the class (CLS `points` already IS the class total in Pro/Am).
+function classChampRows(rows, cls) {
+  const list = rows.filter(r => r.pro_am === cls);           // already in projected order
+  const pre = list.slice().sort((a, b) => (b.pre_points - a.pre_points) || (a.rank - b.rank));
+  return list.map((r, i) => {
+    const before = pre.indexOf(r) + 1;
+    return { ...r, rank: before, proj_rank: i + 1, delta: before - (i + 1) };
+  });
+}
+let PIN_CLS = null;   // Abspann (/overlay/solid): the class the moderation talks about
+
 function renderChampView(d) {
-  const all = d.champ_rows || [];   // sorted by projected rank
+  let all = d.champ_rows || [];   // sorted by projected rank
+  if (PIN_CLS && d.season?.proAmEnabled) all = classChampRows(all, PIN_CLS);
   const rows = TOP_N > 0 ? all.slice(0, TOP_N) : all;
   if (rows.length === 0) {
     return '<div class="empty">No championship rows loaded.</div>';
@@ -1544,6 +1558,12 @@ async function tick() {
   try {
     const r = await fetch('/api/state', { cache: 'no-store' });
     const d = await r.json();
+    if (document.body.classList.contains('solid')) {
+      try {
+        const p = ((await (await fetch('/api/prerace_pin', { cache: 'no-store' })).json()).cls || '').toUpperCase();
+        PIN_CLS = (p === 'PRO' || p === 'AM') ? p : null;
+      } catch (e) { PIN_CLS = null; }
+    }
     const ui = Object.assign({ view: 'B', stream: true }, d.ui || {});
     if (LOCAL_VIEW) ui.view = LOCAL_VIEW;
 
@@ -1559,7 +1579,8 @@ async function tick() {
       ui.view === 'A' ? (d.session_type || 'Race')
       : (d.live_race && !d.race_finished ? 'Championship · live'
          : ((d.race_finished || (d.earlier_races || []).length) ? 'Championship · provisional'
-            : 'Championship'));
+            : 'Championship'))
+      + (ui.view === 'B' && PIN_CLS && d.season?.proAmEnabled ? ' · ' + PIN_CLS : '');
 
     document.getElementById('sub').textContent =
       (d.season?.name || '—') +
