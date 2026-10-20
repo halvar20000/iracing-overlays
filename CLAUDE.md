@@ -177,6 +177,36 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 20, 2026, after the race (caution + voice mood + pit-exit
+false spins; WCT Indianapolis):** (1) every pit exit was "moved backwards
+75 % of lap" → lost_control + REGIE replay: the lap-regression detector kept
+the pit-ENTRY pct while the car was in the pits (pit lane crosses the S/F
+line) — `_prev_lap_pct` is now dropped while in the pits / out of the world
+(test_pit_exit.py, fails on the old code). (2) FULL-COURSE YELLOW was not
+handled at all: dashboard `_caution_phase()` (SessionFlags 0x4000/0x8000 =
+caution, 0x0200 one-to-green — only after a caution, it also flies before
+the start) → `RaceDirector.tick(caution=)`: each phase change (start /
+one_to_green / restart) = log entry kind "caution" + cut to the leader (only
+logged while the operator has the camera); under yellow no battles, leader
+prio 65; no overtake replays under yellow nor RESTART_SKIP_LAPS 0.5 after
+the green; dashboard overtake detection pauses (ranks follow silently).
+Commentator: caution_start / _one_to_green / _restart templates, caution
+lines are never replaced by the next picture, prompt explains phases.
+(3) VOICE MOOD: every commentary line has `mood` (race_commentator.mood_of:
+hype = incident / seen / overtake replay / new pole / faster attack /
+caution start + restart, calm = pit / one_to_green, else normal; Claude gets
+`stimmung`); race_voice `MOODS` → edge-tts rate / pitch / volume per line
+(hype +16 % / +10 Hz / +15 %, calm −8 % / −3 Hz), `"moods"` override in
+commentary_config.json; engines without pitch/volume fall back to rate.
+Checked with real edge-tts (same sentence: hype 3.7 s, normal 4.25 s, calm
+4.56 s). test_caution.py 28/28 with tonight's flag timeline (compressed).
+Video review (OBS recording from 19:06): moderation run 2 clean — greeting
+once, hand-over is its own clip (audio cross-check vs the greeting: no
+match). OPEN: Thomas saw "the intro started again before REGIE took over" —
+not visible in the recording (it starts 19:06:03, after run 1 was stopped by
+hand at 19:06:00); ask him for the moment in the video.
+Restart 5000.
+
 **October 20, 2026, evening (FRAG CLAUDE — voice Q&A co-commentator, for
 streams Thomas / Andreas commentate THEMSELVES, not REGIE):** NEW `race_qa.py`
 (`RaceQA`, pure logic, mic / STT / API injectable). Stream Deck

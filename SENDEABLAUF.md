@@ -236,6 +236,22 @@ Weitere Schalter:
 
 Nach einer Änderung startest du das Dashboard (5000) neu.
 
+## 5. Caution und Stimmung der Stimme
+
+- **Full Course Yellow:** Die REGIE erkennt die Caution an der Flagge von
+  iRacing. Beim Beginn, eine Runde vor dem Restart und beim Restart (Grün)
+  schneidet sie auf den Führenden, und der Kommentar sagt es an. Unter Gelb
+  zeigt sie keine „Duelle“ (das Feld fährt dicht hinter dem Pace Car) und
+  keine Überholmanöver (Plätze ändern sich dann durch die Box). Nach dem
+  Restart folgen eine halbe Runde lang keine Überhol-Replays, wie beim Start.
+- **Stimmung:** Jeder Kommentarsatz hat eine Stimmung. **hype** (Dreher,
+  Kontakt, Überholmanöver, neue Pole, Caution, Restart) ist schneller, höher
+  und lauter, **ruhig** (Boxenstopp, letzte Runde unter Gelb) langsamer, alles
+  andere normal. Anpassen in `commentary_config.json`, z. B.
+  `"moods": {"hype": {"rate": 20, "pitch": "+12Hz", "volume": "+20%"}}`
+  (`rate` als Zahl = zusätzlich zu `tts_rate`, als `"+30%"` = fest).
+  Die Moderation spricht immer normal.
+
 ## Probe ohne Stream
 
 `"only_while_streaming": false` setzen oder einfach „▶ Moderation starten“

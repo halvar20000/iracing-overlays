@@ -48,12 +48,43 @@ MAX_AGE_S = 12.0         # a line still waiting this long in the queue is not sp
 KEEP_MAX_AGE_S = 300.0   # ...a moderation line (keep=True) waits much longer
 
 
-def _edge_synth(text: str, voice: str, rate: str) -> tuple[bytes, str]:
+# How a line SOUNDS by its mood (race_commentator.mood_of): the German neural
+# voices have no emotion styles, but rate / pitch / volume per line already
+# make a pass sound different from a pit stop. Base rate = "tts_rate".
+# Override per mood in commentary_config.json "moods": {"hype": {"rate": "+25%", ...}}.
+MOODS = {
+    "hype":   {"rate": +16, "pitch": "+10Hz", "volume": "+15%"},
+    "calm":   {"rate": -8,  "pitch": "-3Hz", "volume": "+0%"},
+    "normal": {"rate": 0,   "pitch": "+0Hz", "volume": "+0%"},
+}
+
+
+def _pct(v) -> int:
+    try:
+        return int(str(v).strip().rstrip("%"))
+    except ValueError:
+        return 0
+
+
+def prosody(mood: str, base_rate: str, overrides: dict | None = None) -> dict:
+    """{'rate': '+22%', 'pitch': '+6Hz', 'volume': '+10%'} for edge-tts.
+    A mood's "rate" is added to the base rate (int) or replaces it ("+25%")."""
+    m = dict(MOODS.get(mood) or MOODS["normal"])
+    m.update((overrides or {}).get(mood) or {})
+    r = m.get("rate", 0)
+    rate = (_pct(base_rate) + r) if isinstance(r, (int, float)) else _pct(r)
+    return {"rate": f"{rate:+d}%", "pitch": str(m.get("pitch") or "+0Hz"),
+            "volume": str(m.get("volume") or "+0%")}
+
+
+def _edge_synth(text: str, voice: str, rate: str, pitch: str = "+0Hz",
+                volume: str = "+0%") -> tuple[bytes, str]:
     import edge_tts                      # pip install edge-tts
 
     async def run():
         data = bytearray()
-        async for ch in edge_tts.Communicate(text, voice, rate=rate).stream():
+        async for ch in edge_tts.Communicate(text, voice, rate=rate, pitch=pitch,
+                                             volume=volume).stream():
             if ch.get("type") == "audio":
                 data += ch["data"]
         return bytes(data)
@@ -195,8 +226,10 @@ class Voice:
         """A voice page polled — keep making audio for the next LISTEN_S."""
         self._listen_until = (time.time() if now is None else now) + LISTEN_S
 
-    def say(self, line_id, text: str, now: float | None = None, keep: bool = False) -> None:
-        """keep=True (moderation): made in order, never dropped for a newer line."""
+    def say(self, line_id, text: str, now: float | None = None, keep: bool = False,
+            mood: str = "normal") -> None:
+        """keep=True (moderation): made in order, never dropped for a newer line.
+        mood: "hype" / "calm" / "normal" — how fast / high / loud (MOODS)."""
         now = time.time() if now is None else now
         if self.mode == "off" or not text or now > self._listen_until:
             return
@@ -206,7 +239,7 @@ class Voice:
         self.requested.add(line_id)
         if len(self.requested) > 500:
             self.requested = set(sorted(self.requested)[-200:])
-        self._q.put((now, line_id, text, keep))
+        self._q.put((now, line_id, text, keep, mood or "normal"))
 
     def get(self, line_id):
         with self._lock:
@@ -234,10 +267,11 @@ class Voice:
             return ["sapi", "edge"]
         return ["edge", "sapi"]
 
-    def synth(self, text: str, now: float | None = None):
+    def synth(self, text: str, now: float | None = None, mood: str = "normal"):
         """-> (bytes, mime, engine); raises when every engine failed."""
         now = time.time() if now is None else now
         text = speakable(text, self.cfg.get("aussprache"))
+        p = prosody(mood, self.cfg.get("tts_rate") or DEFAULT_RATE, self.cfg.get("moods"))
         errors = []
         for name in self._order(now):
             fn = self.engines.get(name)
@@ -245,12 +279,14 @@ class Voice:
                 continue
             try:
                 if name == "edge":
-                    data, mime = fn(text, self.cfg.get("tts_voice") or DEFAULT_VOICE,
-                                    self.cfg.get("tts_rate") or DEFAULT_RATE)
+                    voice = self.cfg.get("tts_voice") or DEFAULT_VOICE
+                    try:
+                        data, mime = fn(text, voice, p["rate"], pitch=p["pitch"], volume=p["volume"])
+                    except TypeError:          # an engine without pitch / volume (old edge-tts)
+                        data, mime = fn(text, voice, p["rate"])
                     self._edge_failed_at = None
-                else:
-                    data, mime = fn(text, self.cfg.get("sapi_voice") or "",
-                                    self.cfg.get("tts_rate") or DEFAULT_RATE)
+                else:                          # SAPI: only the speed changes
+                    data, mime = fn(text, self.cfg.get("sapi_voice") or "", p["rate"])
                 return data, mime, name
             except Exception as e:            # missing package, no internet, no voice …
                 if name == "edge":
@@ -265,16 +301,16 @@ class Voice:
                 items.append(self._q.get_nowait())
             # moderation lines all, in order; of the commentary only the newest
             last_plain = max((i for i, it in enumerate(items) if not it[3]), default=None)
-            for i, (t0, line_id, text, keep) in enumerate(items):
+            for i, (t0, line_id, text, keep, mood) in enumerate(items):
                 if not keep and i != last_plain:
                     continue
                 if time.time() - t0 > (KEEP_MAX_AGE_S if keep else MAX_AGE_S):
                     continue
-                self._make(line_id, text)
+                self._make(line_id, text, mood)
 
-    def _make(self, line_id, text):
+    def _make(self, line_id, text, mood="normal"):
         try:
-            data, mime, engine = self.synth(text)
+            data, mime, engine = self.synth(text, mood=mood)
             self.last_engine, self.last_error = engine, ""
             with self._lock:
                 self._clips[line_id] = (data, mime, engine)

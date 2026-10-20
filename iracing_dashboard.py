@@ -168,6 +168,8 @@ OT_MIN_SPEED_MPS   = 12.0    # overtaken car must still be racing (≥43 km/h)
 OT_PAIR_COOLDOWN_S = 25.0    # same pair, same direction: no ping-pong spam
 OT_REVERSE_COOLDOWN_S = 10.0 # the counter-attack may be reported after this
 FLAG_BLUE          = 0x0020  # CarIdxSessionFlags blue-flag bit
+SESSION_CAUTION_BITS = 0x4000 | 0x8000   # SessionFlags caution / caution waving (full-course yellow)
+SESSION_ONE_TO_GREEN = 0x0200            # SessionFlags one lap to green
 # Auto-replay priority: overtakes outrank incidents — they may fire during
 # the post-replay cooldown of a lower-priority event (but NEVER interrupt
 # a replay that is currently playing).
@@ -273,7 +275,7 @@ class TelemetryPoller:
         self._chequered_at = None
 
         def _on_line(ln):
-            self.voice.say(ln["id"], ln["text"], keep=bool(ln.get("queue")))
+            self.voice.say(ln["id"], ln["text"], keep=bool(ln.get("queue")), mood=ln.get("mood") or "normal")
             try:
                 self._story_add(ln)
             except Exception:
@@ -380,6 +382,7 @@ class TelemetryPoller:
         # Overtake feed (separate panel from incidents)
         self._overtakes = deque(maxlen=30)
         self._ot_prev_rank = {}          # car_idx -> live race rank last tick
+        self._caution_seen = False       # a full-course yellow is on (until the green)
         self._ot_pending = {}            # (x,y) -> {"t0":…, "pos":…}
         self._ot_pair_last = {}          # (x,y) -> last emit t_session
         self._ot_last_swap = {}          # frozenset({x,y}) -> last rank-swap t
@@ -1004,6 +1007,24 @@ class TelemetryPoller:
             return
         self._ot_pending[key] = {"t0": t_now, "pos": position}
 
+    def _caution_phase(self):
+        """Full-course yellow from the session flags: None (green / no
+        caution), "caution", or "one_to_green" (last lap behind the pace car).
+        One-to-green also flies before the START — it only counts after a
+        caution was seen (WCT Indianapolis 2026-10-20: caution 547 s,
+        one-to-green 739 s, green 916 s)."""
+        try:
+            flags = int(self.ir["SessionFlags"] or 0)
+        except (TypeError, ValueError):
+            flags = 0
+        if flags & SESSION_CAUTION_BITS:
+            self._caution_seen = True
+            return "one_to_green" if flags & SESSION_ONE_TO_GREEN else "caution"
+        if self._caution_seen and flags & SESSION_ONE_TO_GREEN:
+            return "one_to_green"
+        self._caution_seen = False
+        return None
+
     def _update_overtakes(self, t_now, surfaces, pct_arr, laps_arr,
                           on_pit, flags_arr, sess_state):
         if sess_state != 4 or not self._is_race_session():
@@ -1021,6 +1042,12 @@ class TelemetryPoller:
             prog[idx] = (lap or 0) + max(pct, 0.0)
         order = sorted(prog, key=lambda i: -prog[i])
         rank = {idx: r + 1 for r, idx in enumerate(order)}
+        if self._caution_phase() is not None:
+            # full-course yellow: places change through the pits and the
+            # pace-car queue, not by passing — no overtakes until the green
+            self._ot_pending.clear()
+            self._ot_prev_rank = rank
+            return
         prev = self._ot_prev_rank
 
         # new swap candidates: X improved its rank past Y
@@ -2060,7 +2087,8 @@ class TelemetryPoller:
             except Exception as e:
                 print(f"[regie] quali class filter: {e}")
         shot = self.director.tick(time.time(), cars, self._camera_groups,
-                                  current_cam_idx, events, racing, mode=mode, t_session=t_sess)
+                                  current_cam_idx, events, racing, mode=mode, t_session=t_sess,
+                                  caution=self._caution_phase() if mode == "race" else None)
         if shot is None:
             return
         if shot.kind == "replay":

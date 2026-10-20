@@ -37,7 +37,7 @@ from quali_director import QualiState
 # --- pacing (seconds) ---------------------------------------------------------
 MIN_SHOT = 8.0           # a shot is never cut earlier — except for a higher-priority event
 MIN_BY_KIND = {          # ...longer for the subjects that need time to read
-    "battle": 15.0, "leader": 10.0,
+    "battle": 15.0, "leader": 10.0, "caution": 12.0,
     "attack": 12.0, "pole": 10.0,     # qualifying
 }
 SWITCH_MARGIN = 10       # after MIN: another subject must be clearly better, not just
@@ -48,7 +48,7 @@ LEADER_EVERY_S = 120.0   # the leader gets a shot at least this often
 CAM_VARY_EVERY = 14.0    # long shots change camera group this often
 MAX_SHOT = {             # after this a shot loses its claim, something else gets a turn
     "incident": 10.0, "overtake": 9.0, "battle": 40.0, "pit": 12.0,
-    "leader": 16.0, "field": 12.0,
+    "leader": 16.0, "field": 12.0, "caution": 20.0,
     "attack": 200.0, "pole": 16.0,    # an attack runs to the end of its lap
 }
 REVISIT_PENALTY_S = 45.0  # a car shown within this window scores lower
@@ -79,6 +79,16 @@ SAME_EVENT_S = 90.0      # same pass (same two cars) / same car's contact again 
 REPLAY_HOLD_S = 16.0     # after a replay the shot on air gets a fresh MIN_SHOT
 PIT_TOP_N = 5            # pit stops worth showing: top N of a class
 
+# --- full-course yellow (WCT Indianapolis 2026-10-20: not detected at all) -----
+# The dashboard passes the flag phase (`caution` = None / "caution" /
+# "one_to_green"). Each change is a cut to the leader with its own log entry
+# (phase start / one_to_green / restart) for the commentary. Under yellow:
+# no battles (the queue behind the pace car is all "battles"), no overtake
+# replays (places change in the pits); after the green the restart is
+# chaos like the start, so overtakes wait RESTART_SKIP_LAPS.
+RESTART_SKIP_LAPS = 0.5
+CAUTION_LEADER_PRIO = 65 # under yellow the front of the queue is the story
+
 # --- base priorities ----------------------------------------------------------
 PRIO = {"incident": 100, "overtake": 70, "battle": 60, "pit": 45,
         "leader": 35, "field": 20}
@@ -99,6 +109,7 @@ CAMS = {
     "field":    ["TV2", "TV1", "Chase", "TV3"],
     "attack":   ["TV1", "Chase", "Gyro", "TV2", "TV3"],
     "pole":     ["TV1", "Chase", "TV2", "TV3"],
+    "caution":  ["TV1", "TV2", "Chase", "TV3"],
 }
 
 
@@ -148,9 +159,13 @@ class RaceDirector:
         self.kind_cuts: dict[str, int] = {}      # cuts per kind -> camera rotation
         self.mode = "race"
         self.quali = QualiState()
+        self.caution = None                       # None / "caution" / "one_to_green"
+        self.restart_lead = None                  # leader progress at the green after a caution
 
     # -- public ---------------------------------------------------------------
     def reset(self):
+        self.caution = None
+        self.restart_lead = None
         self.current = None
         self.last_shown.clear()
         self.seen_events.clear()
@@ -185,8 +200,10 @@ class RaceDirector:
             "log": list(self.log),
         }
 
-    def tick(self, now, cars, groups, cam_idx, events, racing=True, mode="race", t_session=None):
-        """Returns a Shot to cut to (with .group set), or None."""
+    def tick(self, now, cars, groups, cam_idx, events, racing=True, mode="race", t_session=None,
+             caution=None):
+        """Returns a Shot to cut to (with .group set), or None.
+        `caution`: None, "caution" or "one_to_green" (full-course yellow, race only)."""
         if mode != self.mode:                    # quali -> race: a fresh start
             self.reset()
             self.current = None
@@ -206,6 +223,10 @@ class RaceDirector:
         t = now if t_session is None else t_session
         if mode == "quali":
             self.quali.update(now, t, cars, self)    # lap tracking runs even while paused
+        if mode == "race":
+            shot = self._caution_change(now, caution, live, lead, groups)
+            if shot is not None:
+                return shot
         if now < self.paused_until:
             return None
         if mode == "quali":                      # no replays in quali
@@ -273,6 +294,41 @@ class RaceDirector:
             return cur                            # camera drifted (e.g. iRacing) — re-assert
         return None
 
+    # -- full-course yellow -----------------------------------------------------
+    def _caution_change(self, now, caution, live, lead, groups):
+        """A change of the flag phase: a log entry for the commentary (phase
+        start / one_to_green / restart) and a cut to the leader of the field
+        — unless the operator has the camera (then only the log entry)."""
+        phase = caution if caution in ("caution", "one_to_green") else None
+        if phase == self.caution:
+            return None
+        prev, self.caution = self.caution, phase
+        if phase == "caution" and prev is None:
+            what = "start"
+        elif phase == "one_to_green":
+            what = "one_to_green"
+        elif phase is None:
+            what = "restart"
+            self.restart_lead = lead
+        else:                                    # one_to_green -> caution again: nothing new
+            return None
+        on_track = [c for c in live if not c.get("on_pit")] or live
+        leader = max(on_track, key=lambda c: c["progress"])
+        reason = {"start": "full-course yellow — the field behind the pace car",
+                  "one_to_green": "one lap to green — restart next lap",
+                  "restart": "green — restart"}[what]
+        shot = Shot("caution", leader, 90, f"{reason}: leader #{leader['number']} {leader['name']}",
+                    {"phase": what, "position": 1})
+        if now < self.paused_until:
+            self.log.appendleft({"t": round(now, 1), **shot.as_dict()})
+            return None
+        return self._cut(now, shot, groups)
+
+    def _overtakes_paused(self, lead) -> bool:
+        """No overtake replays under yellow nor in the restart chaos after it."""
+        return (self.caution is not None
+                or (self.restart_lead is not None and lead - self.restart_lead < RESTART_SKIP_LAPS))
+
     # -- replays ---------------------------------------------------------------
     def _note_visible(self, now, cam_idx, by_idx):
         """Remember which cars were in the picture: the camera car, both cars
@@ -315,8 +371,9 @@ class RaceDirector:
                 continue                                  # already handled
             self.event_keys[ekey] = now
             kind = "overtake" if typ == "overtake" else "incident"
-            if kind == "overtake" and lead - self.green_lead < OVERTAKE_SKIP_LAPS:
-                continue                                  # start chaos: ignored
+            if kind == "overtake" and (lead - self.green_lead < OVERTAKE_SKIP_LAPS
+                                       or self._overtakes_paused(lead)):
+                continue                                  # start / restart chaos, yellow: ignored
             if self._was_visible(now, (e.get("car_idx"), e.get("passed_idx")),
                                  SEEN_WINDOW_S.get(typ, 10.0)):
                 self.log.appendleft({"t": round(now, 1), "kind": "seen", "car_idx": c["idx"],
@@ -441,9 +498,15 @@ class RaceDirector:
             if cur.car["idx"] in by_idx:
                 out.append(Shot(cur.kind, by_idx[cur.car["idx"]], cur.prio, cur.reason, cur.info))
 
+        # the caution / restart shot keeps its claim for its length
+        if cur and cur.kind == "caution" and now - cur.started < MAX_SHOT["caution"]:
+            if cur.car["idx"] in by_idx:
+                out.append(Shot(cur.kind, by_idx[cur.car["idx"]], cur.prio, cur.reason, cur.info))
+
         # 2) overtakes: shown as REPLAYS (_event_replay), not cut to live
         # 3) battles inside a class: chaser within BATTLE_ENTER_S of the car ahead
-        for cl in classes.values():
+        #    (not under yellow: the whole queue behind the pace car is "close")
+        for cl in (classes.values() if self.caution is None else ()):
             for i in range(1, len(cl)):
                 a, b = cl[i - 1], cl[i]                # a ahead, b chasing
                 if a.get("on_pit") or b.get("on_pit"):
@@ -480,7 +543,10 @@ class RaceDirector:
             if c.get("on_pit"):
                 continue
             seen = self.last_shown.get(c["idx"], self.started_at)
-            if cur_key != ("leader", c["idx"]) and now - seen >= LEADER_EVERY_S:
+            if self.caution is not None:
+                prio = CAUTION_LEADER_PRIO - (0 if cur_key == ("leader", c["idx"])
+                                              else self._recent_penalty(now, c["idx"]))
+            elif cur_key != ("leader", c["idx"]) and now - seen >= LEADER_EVERY_S:
                 prio = LEADER_DUE_PRIO
             else:
                 prio = PRIO["leader"] - (0 if cur_key == ("leader", c["idx"])

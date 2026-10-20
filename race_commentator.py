@@ -61,7 +61,13 @@ SYSTEM_PROMPT = (
     "Klasse (AM oder PRO) auf der Strecke – du kannst es erwähnen; die Klasse eines Fahrers steht "
     "aber in 'klasse' (ein AM-Fahrer bleibt AM, auch in der PRO-Phase). Abstände höchstens auf "
     "Hundertstel. Wiederhole nicht Formulierungen der letzten Sätze. Keine Emojis, "
-    "keine Anführungszeichen, keine Startnummern mit #, kein Vorspann – nur der Satz."
+    "keine Anführungszeichen, keine Startnummern mit #, kein Vorspann – nur der Satz. "
+    "kind = caution ist eine Full-Course-Yellow-Phase, driver ist der Führende: phase start = "
+    "Gelb, das Feld fährt hinter dem Pace Car (dringlich, aber ohne Ursache zu erfinden), "
+    "one_to_green = noch eine Runde bis zum Restart (Vorfreude), restart = grün, es geht wieder "
+    "los (begeistert). 'stimmung' sagt, wie der Satz klingen soll (die Stimme wird passend "
+    "schneller oder ruhiger): hype = kurz, ausrufend, mit Energie; calm = ruhig und erzählend; "
+    "normal = sachlich."
 )
 
 
@@ -130,6 +136,9 @@ def facts_from(entry: dict) -> dict | None:
         f.update(event=info.get("event"), passed=info.get("passed"), position=info.get("position"))
     elif kind == "seen":
         f.update(event=info.get("event"), passed=info.get("passed"), position=info.get("position"))
+    elif kind == "caution":
+        # full-course yellow: start / one lap to green / restart; driver = the leader
+        f.update(phase=info.get("phase"), position=1)
     # qualifying (quali_director.py)
     elif kind == "attack":
         if info.get("finished"):
@@ -277,13 +286,56 @@ TEMPLATES = {
     "seen_lost_control": [
         "{driver} hat sich gedreht!",
     ],
+    # full-course yellow (driver = the leader of the field)
+    "caution_start": [
+        "Gelb über die ganze Strecke – Full Course Yellow! Das Feld sammelt sich hinter dem Pace Car.",
+        "Caution! Jetzt heißt es Tempo raus, {driver} führt das Feld hinter dem Pace Car an.",
+        "Full Course Yellow – das Rennen wird neutralisiert, vorne liegt {driver}.",
+    ],
+    "caution_one_to_green": [
+        "Noch eine Runde hinter dem Pace Car, dann geht es wieder los.",
+        "Letzte Runde unter Gelb – gleich wird wieder Gas gegeben!",
+        "Eine Runde noch, dann ist das Feld wieder freigegeben. {driver} gibt vorne das Tempo vor.",
+    ],
+    "caution_restart": [
+        "Grün, grün, grün! {driver} führt das Feld in den Restart!",
+        "Und wir sind wieder im Rennen – {driver} vorne beim Restart!",
+        "Die Strecke ist wieder frei! {driver} zieht das Feld in die nächste Runde.",
+    ],
 }
+
+# How a line should SOUND (race_voice.py: rate / pitch / volume per mood).
+# "hype" = the things a commentator shouts, "calm" = neutralised race.
+MOOD_HYPE = {"incident", "seen", "replay_overtake", "caution_start", "caution_restart",
+             "quali_lap_pole", "attack_faster"}
+MOOD_CALM = {"caution_one_to_green", "pit"}
+
+
+def mood_of(f: dict) -> str:
+    """'hype' / 'calm' / 'normal' for a line with these facts."""
+    kind = f.get("kind")
+    keys = {kind}
+    if kind in ("incident", "replay", "seen"):
+        keys.add(f"{kind}_{f.get('event')}")
+    if kind == "caution":
+        keys.add(f"caution_{f.get('phase')}")
+    if kind == "quali_lap" and f.get("new_pole") and not f.get("kept_pole"):
+        keys.add("quali_lap_pole")
+    if kind == "attack" and (f.get("delta_to_pole_s") or 0) < 0 and not f.get("pole_sitter"):
+        keys.add("attack_faster")
+    if keys & MOOD_HYPE:
+        return "hype"
+    if keys & MOOD_CALM:
+        return "calm"
+    return "normal"
 
 
 def template_line(f: dict, rng: random.Random, avoid: set | None = None) -> str | None:
     key = f["kind"]
     if key in ("incident", "replay", "seen"):
         key = f"{key}_{f.get('event')}"
+    elif key == "caution":
+        key = f"caution_{f.get('phase')}"
     elif key == "attack":
         d = f.get("delta_to_pole_s")
         key = ("attack_first" if f.get("first_lap") else "attack_next" if f.get("next_lap")
@@ -445,10 +497,10 @@ class Commentator:
     def _publish(self, text: str, f: dict, now: float, source: str):
         with self._lock:
             if (self.lines and now - self.lines[0]["t"] < MIN_GAP_S
-                    and self.lines[0]["kind"] not in ("replay", "show")):
+                    and self.lines[0]["kind"] not in ("replay", "show", "caution")):
                 self.lines.popleft()          # the picture moved on before it was read
             line = {"id": self._next_id, "t": round(now, 1), "text": text,
-                    "kind": f["kind"], "source": source}
+                    "kind": f["kind"], "source": source, "mood": mood_of(f)}
             self.lines.appendleft(line)
             self._next_id += 1
         if self.on_line is not None:
@@ -494,7 +546,8 @@ class Commentator:
                 self._publish_template(f, time.time())
 
     def _call_claude(self, f: dict, ctx: dict, recent: list) -> str | None:
-        user = json.dumps({"bild": f, "rennen": ctx, "letzte_saetze": recent}, ensure_ascii=False)
+        user = json.dumps({"bild": f, "stimmung": mood_of(f), "rennen": ctx, "letzte_saetze": recent},
+                          ensure_ascii=False)
         payload = {
             "model": self.cfg.get("model") or DEFAULT_CONFIG["model"],
             "max_tokens": 400,
