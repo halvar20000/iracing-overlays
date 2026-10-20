@@ -1301,6 +1301,12 @@ OVERLAY_HTML = r"""<!DOCTYPE html>
     width: 100%; max-width: 540px;
     padding: 10px;
   }
+  /* /overlay/solid (or ?solid=1): opaque full page, table centred and scaled
+     up (?zoom=, default 1.6) - the Abspann shows it over Gabi. */
+  html.solid, body.solid { background: #0a0a0f; min-height: 100vh; }
+  body.solid .container { margin: 24px auto 0; zoom: var(--zoom, 1.6); }
+  body.solid .panel, body.solid.stream .panel { background: #14141c; backdrop-filter: none;
+    -webkit-backdrop-filter: none; }
   .panel {
     background: var(--bg-panel);
     border: 1px solid rgba(255,255,255,0.06);
@@ -1429,6 +1435,13 @@ if (LOCAL_VIEW !== 'A' && LOCAL_VIEW !== 'B') LOCAL_VIEW = '';
 // ?top=N limits the championship table to the (projected) top N; 0 = all.
 const TOP_N = (() => { const v = parseInt(new URLSearchParams(location.search).get('top') ?? '10', 10);
                        return isNaN(v) ? 10 : v; })();
+if (location.pathname.split('/').filter(Boolean).pop() === 'solid'
+    || new URLSearchParams(location.search).get('solid') === '1') {
+  document.documentElement.classList.add('solid');
+  document.body.classList.add('solid');
+  const z = parseFloat(new URLSearchParams(location.search).get('zoom'));
+  if (z > 0) document.body.style.setProperty('--zoom', z);
+}
 
 function fmtDelta(d) {
   if (d === null || d === undefined) return '<span class="delta none">—</span>';
@@ -1600,6 +1613,7 @@ def index():
 
 
 @app.route("/overlay")
+@app.route("/overlay/solid")
 def overlay():
     return render_template_string(OVERLAY_HTML)
 

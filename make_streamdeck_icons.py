@@ -180,6 +180,8 @@ OVERLAY_ICONS = [
     ("lastdotd",      "pre",    "star",      "DotD letzte Runde"),
     ("results",       "post",   "podium",    "Ergebnis"),
     ("results_lite",  "post",   "list",      "Ergebnis Lite"),
+    ("results_solid", "post",   "podium",    "Ergebnis Abspann"),
+    ("champ_solid",   "post",   "trophy",    "Meisterschaft Abspann"),
     ("dashboard",     "tool",   "gauge",     "Dashboard"),
     ("logger",        "tool",   "doc",       "Race Logger"),
     ("line",          "tool",   "curve",     "Corner Cues"),

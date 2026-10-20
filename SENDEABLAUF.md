@@ -77,11 +77,17 @@ pro Rennen; `"post_delay_s"`, `"post_auto": false` = nur per Knopf). Die REGIE
 geht aus, OBS schaltet auf **Moderator**, dann:
 
 1. **Rennverlauf** — erzählt aus den Live-Kommentaren des Rennens
-2. **Endergebnis** — Quelle `Ergebnis` (Browserquelle `obs_loaders\results.html`)
-3. **Meisterschaft danach** — Quelle `Meisterschaft` (`obs_loaders\champ.html`),
+2. **Endergebnis** — Quelle `Ergebnis` (Browserquelle `obs_loaders\results_solid.html`)
+3. **Meisterschaft danach** — Quelle `Meisterschaft` (`obs_loaders\champ_solid.html`),
    vorläufig inkl. dieses Rennens, bei Pro/Am je Klasse
 4. **Nächstes Rennen** — Runde, Datum, Strecke
 5. **Verabschiedung**
+
+Beide Quellen bildschirmfüllend (1920 × 1080) über Gabi legen. Die
+`_solid`-Seiten haben einen deckenden dunklen Hintergrund, damit Gabi nicht
+durchscheint, während die Stimme spricht. Die Tabelle ist mittig und
+vergrößert (`?zoom=` ändert das, Standard 1.6). Die normalen `results.html` /
+`champ.html` bleiben transparent für die Szene iRacing.
 
 Seite: `http://localhost:5000/abspann` (Skript lesen und ändern, Start,
 Weiter, Stopp). Stream Deck: `/streamdeck/post_start`, `post_next`,

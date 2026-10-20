@@ -61,6 +61,9 @@ OVERLAYS = [
     ("lastrace_am",   "Last Round Results AM", 5010, "/lastrace/am"),
     ("table_pro",     "Standings Before Round PRO", 5010, "/table/pro"),
     ("table_am",      "Standings Before Round AM", 5010, "/table/am"),
+    # ABSPANN: opaque full-page versions, shown over Gabi on the Moderator scene
+    ("results_solid", "Results (Abspann, opaque)", 5002, "/solid"),
+    ("champ_solid",   "Championship (Abspann, opaque)", 5010, "/overlay/solid"),
     ("rsvp",          "RSVP Overview",    5010, "/rsvp"),
     ("stats",         "Season Statistics", 5010, "/stats"),
     ("lastdotd",      "Last Round Driver of the Day", 5010, "/lastdotd"),

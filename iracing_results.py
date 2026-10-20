@@ -494,15 +494,24 @@ function applyStreamMode(on) {
     try { localStorage.setItem(STREAM_KEY, on ? "1" : "0"); } catch (e) {}
 }
 function toggleStreamMode() { applyStreamMode(!document.body.classList.contains("stream-mode")); }
-// Transparent (stream) mode is the DEFAULT for OBS browser sources.
-// Press H to toggle the dark debug background back on; the choice persists.
-try {
-    const v = localStorage.getItem(STREAM_KEY);
-    applyStreamMode(v === null ? true : v !== "0");
-} catch (e) { applyStreamMode(true); }
-document.addEventListener("keydown", e => {
-    if (e.key === "h" || e.key === "H") toggleStreamMode();
-});
+// /solid (or ?solid=1) = always the dark opaque page, never transparent and
+// never written to localStorage: the Abspann shows it OVER Gabi on the
+// Moderator scene, so nothing behind it may shine through.
+const SOLID = location.pathname.split("/").filter(Boolean).pop() === "solid"
+    || new URLSearchParams(location.search).get("solid") === "1";
+if (SOLID) {
+    document.body.classList.remove("stream-mode");
+} else {
+    // Transparent (stream) mode is the DEFAULT for OBS browser sources.
+    // Press H to toggle the dark debug background back on; the choice persists.
+    try {
+        const v = localStorage.getItem(STREAM_KEY);
+        applyStreamMode(v === null ? true : v !== "0");
+    } catch (e) { applyStreamMode(true); }
+    document.addEventListener("keydown", e => {
+        if (e.key === "h" || e.key === "H") toggleStreamMode();
+    });
+}
 
 function fmtLap(sec) {
     if (!sec || sec <= 0) return "—";
@@ -686,6 +695,7 @@ tick();
 
 
 @app.route("/")
+@app.route("/solid")
 def index():
     return render_template_string(RESULTS_HTML)
 
