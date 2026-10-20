@@ -186,11 +186,14 @@ show through while the voice speaks. NEW opaque variants: `5002/solid` and
 default 1.6), loaders results_solid.html / champ_solid.html (48),
 SENDEABLAUF.md points the two Abspann sources at them, OBS_OVERLAYS.md +
 OVERLAY_TABLE.md rows. Checked in Edge: both pages fully opaque.
-NOT done: Stream Deck icons results_solid / champ_solid — the
-streamdeck_icons folders are not writable from the Windows PC (Y: share);
-run `python3 make_streamdeck_icons.py overlays overlays_off` on Unraid.
-Also from Windows: git needs `GIT_CONFIG_NOSYSTEM=1` (the system gitconfig
-on that PC is corrupt) and `-c safe.directory=*` (UNC share).
+Icons rendered in the container (see below).
+WORKING FROM THE WINDOWS PC (Y: = the Unraid share): .git/objects and
+streamdeck_icons/ are NOT writable from there, there are no GitHub
+credentials, the Unraid HOST has no browser. Commit, push and icon renders go
+through `ssh unraid` → `docker exec -e HOME=/home/agent claude-agent …`
+(chromium + gh login, git with `-c safe.directory=*` and
+`-c credential.helper='!gh auth git-credential'`). Windows-side git reads
+need `GIT_CONFIG_NOSYSTEM=1` (corrupt system gitconfig on that PC).
 
 **October 15, 2026 (LIVE pit-stop tire wear for the stream, WCT GT3 — and
 RaceLogger v1.4.0 found broken):** Thomas wants an overlay after a stop
