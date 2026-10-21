@@ -284,7 +284,8 @@ class TelemetryPoller:
         self.highlights_active = False
         self.highlights = highlight_runner.HighlightRunner(
             highlight_runner.PollerReplay(self), self.show_obs, speaker=_HighlightSpeaker(self.commentator),
-            avatar=self.avatar_renderer, cfg=scfg.get("highlights"))
+            avatar=self.avatar_renderer, cfg=scfg.get("highlights"),
+            pin=lambda cls: show_runner.pin_class(scfg, cls))
         # FRAG CLAUDE (race_qa.py, 2026-10-20): the streamer asks by voice
         # (Stream Deck push-to-talk), the answer is spoken by the same voice
         self.qa = race_qa.RaceQA(self.commentator.cfg,
@@ -5700,7 +5701,8 @@ HIGHLIGHTS_HTML = r"""<!DOCTYPE html>
   <div class="bar">
     <label><input type="checkbox" id="o_record" checked> Aufnahme (OBS)</label>
     <label><input type="checkbox" id="o_card" checked> Titelkarte</label>
-    <label title="weiche Blende über Schwarz zwischen den Szenen (OBS-Übergang Fade)"><input type="checkbox" id="o_fade" checked> Blenden</label>
+    <label title="weiche Überblendung zwischen den Szenen (OBS-Übergang Fade)"><input type="checkbox" id="o_fade" checked> Blenden</label>
+    <label title="nach dem Zieleinlauf: Endergebnis und Meisterschaft (bei Pro/Am je PRO und AM), Quellen Ergebnis / Meisterschaft in der Szene Moderator"><input type="checkbox" id="o_tables" checked> Ergebnis + Tabelle</label>
     <label><input type="checkbox" id="o_voice"> Stimme</label>
     <label><input type="checkbox" id="o_gabi"> Gabi Intro / Outro</label>
     <button onclick="orderGabi()">Gabi-Videos bestellen</button>
@@ -5726,7 +5728,7 @@ HIGHLIGHTS_HTML = r"""<!DOCTYPE html>
 </div>
 <div class="box"><pre id="lg"></pre></div>
 <script>
-let scenes = [], status = null;
+let scenes = [], status = null, lastInfo = null;
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function fmt(t) { t = Math.max(0, Math.round(t)); const h = Math.floor(t/3600), m = Math.floor(t/60)%60, s = t%60;
@@ -5750,6 +5752,7 @@ async function pick() {
   if (!d.ok) { $('info').innerHTML = '<span class="err">' + esc(d.error) + '</span>'; return; }
   scenes = d.scenes;
   const i = d.info;
+  lastInfo = i;
   if (!scenes.length) {
     $('info').innerHTML = '<span class="err">Keine Szenen in diesem Log – kein ganzes Rennen (z. B. ein Stück, das der Race-Logger '
       + 'beim Abspielen eines Replays geschrieben hat). Oben ein Log mit „Rennen komplett“ wählen.</span>';
@@ -5791,7 +5794,7 @@ async function prev(i) {
   if (!d.ok) alert(d.error);
 }
 function opts() { return {record: $('o_record').checked, card: $('o_card').checked, voice: $('o_voice').checked,
-  fade: $('o_fade').checked,
+  fade: $('o_fade').checked, tables: $('o_tables').checked, proam: !!(lastInfo && lastInfo.proam),
   gabi: $('o_gabi').checked, intro: $('intro').value, outro: $('outro').value}; }
 async function start() {
   const d = await (await fetch('/highlights/start', {method:'POST', headers:{'Content-Type':'application/json'},
@@ -5952,7 +5955,7 @@ def highlights_start():
                            "car_number": str(s["car_number"]), "text": str(s.get("text") or "")[:300]})
         except (KeyError, TypeError, ValueError):
             return jsonify({"ok": False, "error": "Szene unvollständig"}), 400
-    opts = {k: bool(body.get(k)) for k in ("record", "card", "voice", "gabi", "fade")}
+    opts = {k: bool(body.get(k)) for k in ("record", "card", "voice", "gabi", "fade", "tables", "proam")}
     opts.update({k: str(body.get(k) or "")[:400] for k in ("intro", "outro")})
     ok, msg = poller.highlights.start(scenes, opts)
     return jsonify({"ok": ok, "msg": msg})

@@ -197,7 +197,8 @@ check("grid: one recording, no pause between grid and start", rc == ["StartRecor
 check("grid: one seek only (start plays on from the grid)", [c for c in rp.calls if c[0] == "seek"]
       == [("seek", 3, 244.0)], rp.calls)
 check("grid: source hidden again", not fake.scenes["iRacing"]["Startaufstellung"])
-vis = [d["sceneItemEnabled"] for rt, d in fake.calls if rt == "SetSceneItemEnabled"]
+vis = [d["sceneItemEnabled"] for rt, d in fake.calls if rt == "SetSceneItemEnabled"
+       and d["sceneItemId"] == fake.ids[("iRacing", "Startaufstellung")]]
 check("grid: hidden at run start, shown, hidden", vis == [False, True, False], vis)
 gcam = [c for c in rp.calls if c[0] == "cam"][0]
 check("grid: wide camera, not TV1 (no Blimp here -> TV2)", gcam[2] == "TV2", gcam)
@@ -600,6 +601,78 @@ check("still: every switch except the last 'back to iRacing' is recorded",
       all(p[1] for p in so.program_log[1:-1]), so.program_log)
 check("still: hidden + OBS transition restored at the end", not so.scenes["Highlight Schwarz"]["Highlight Standbild"]
       and so.transition == "Schnitt" and so.duration == 300, (so.transition, so.duration))
+
+# ---------------------------------------------------------------- result + championship pages after the finish
+# (Thomas, 2026-10-21: "after the finish the final result split PRO / AM and the
+# championship table PRO / AM before Gabi's outro")
+MOD_TABLES = {"iRacing": {"Kommentar Stimme": True, "Startaufstellung": False},
+              "Moderator": {"Gabi Ruhe": False, "Gabi": False, "Ergebnis": True, "Meisterschaft": True}}
+pins = []
+
+
+class TableObs(StillObs):
+    def handle(self, rt, rd):
+        if rt == "SetCurrentProgramScene":
+            m = self.scenes["Moderator"]
+            self.pages_at_switch.append((rd["sceneName"], m.get("Ergebnis"), m.get("Meisterschaft"),
+                                         pins[-1] if pins else "-", self.recording and not self.rec_paused))
+        return super().handle(rt, rd)
+
+
+sp = Speaker()
+to = TableObs(MOD_TABLES)
+to.pages_at_switch = []
+rp = FakeReplay(speed=10)
+to.replay = rp
+r = R.HighlightRunner(rp, TracingObs(to.port, rp), speaker=sp, cfg=dict(CFG, fade_s=0.3, table_s=0.5),
+                      pin=lambda c: pins.append(c))
+r.sleep = lambda s: time.sleep(min(s, 0.6))
+r.start(SCENES[2:3], {"record": True, "voice": True, "proam": True, "outro": "Tschüss!"})
+r.wait(60)
+st = r.status()
+check("tables: run done", st["state"] == "done", st["error"])
+check("tables: both pages hidden at the start (left on from a show)",
+      sum(1 for rt, d in to.calls if rt == "SetSceneItemEnabled" and not d["sceneItemEnabled"]) >= 2)
+mods = [p for p in to.pages_at_switch if p[0] == "Moderator"]
+check("tables: Ergebnis PRO, Ergebnis AM, Meisterschaft PRO, Meisterschaft AM, then the outro",
+      [(e, m, c) for _, e, m, c, _ in mods] == [(True, False, "PRO"), (True, False, "AM"),
+                                               (False, True, "PRO"), (False, True, "AM"),
+                                               (False, False, None)], mods)
+check("tables: each page faded in while recording", all(p[4] for p in mods), mods)
+check("tables: pins PRO, AM, PRO, AM, released", [c for c in pins if c] == ["PRO", "AM", "PRO", "AM"]
+      and pins[-1] is None, pins)
+check("tables: a still + cut between pages (no black)",
+      [n for n, t, v in to.trans_at_switch].count("Highlight Schwarz") >= 5
+      and all(t == "Schnitt" for n, t, v in to.trans_at_switch[1:-2] if n == "Highlight Schwarz"), to.trans_at_switch)
+check("tables: spoken per page", [t for t, _ in sp.said][1:5] == [
+    "Das Endergebnis in der Klasse Pro.", "Das Endergebnis in der Klasse A M.",
+    "Die Meisterschaft nach diesem Rennen in der Klasse Pro.",
+    "Die Meisterschaft nach diesem Rennen in der Klasse A M."], sp.said)
+check("tables: pages hidden at the end", not to.scenes["Moderator"]["Ergebnis"]
+      and not to.scenes["Moderator"]["Meisterschaft"])
+
+pins.clear()
+to2 = TableObs(MOD_TABLES)
+to2.pages_at_switch = []
+rp = FakeReplay(speed=10)
+to2.replay = rp
+r = R.HighlightRunner(rp, TracingObs(to2.port, rp), cfg=dict(CFG, fade_s=0.3, table_s=0.5),
+                      pin=lambda c: pins.append(c))
+r.start(SCENES[2:3], {"record": True, "proam": False})
+r.wait(60)
+mods = [p for p in to2.pages_at_switch if p[0] == "Moderator"]
+check("tables, no Pro/Am: result, then championship, no class pinned",
+      [(e, m) for _, e, m, _, _ in mods] == [(True, False), (False, True)] and not any(pins), (mods, pins))
+check("tables, last thing in the video: fades to black at the end",
+      to2.trans_at_switch[-2][0] == "Highlight Schwarz" and to2.trans_at_switch[-2][1] == "Überblenden"
+      and not to2.trans_at_switch[-2][2], to2.trans_at_switch)
+rp = FakeReplay(speed=10)
+to3 = TableObs(MOD_TABLES)
+to3.pages_at_switch = []
+r = R.HighlightRunner(rp, TracingObs(to3.port, rp), cfg=CFG)
+r.start(SCENES[2:3], {"record": True, "tables": False})
+r.wait(30)
+check("tables off: no page shown", not any(p[1] or p[2] for p in to3.pages_at_switch if p[0] == "Moderator"))
 
 # ---------------------------------------------------------------- OBS that cannot pause (Simple output,
 # Recording Quality "Same as stream" - Thomas's profile, 2026-10-21): stop before recording

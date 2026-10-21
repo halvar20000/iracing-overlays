@@ -26,6 +26,11 @@ Optional per run:
            out to black at its very start / end; without a still (screenshot
            failed) a scene change dips to black. Moderator <-> race the same
            way. OBS's transition is put back afterwards.
+  tables — after the finish, before the outro: final result and championship
+           table on the Moderator scene (the Abspann sources "Ergebnis" /
+           "Meisterschaft"), split PRO -> AM in a Pro/Am field (opts["proam"]),
+           the class pinned through `pin` (5010 /api/prerace_pin, which 5002
+           /solid follows too), table_s each, crossfaded (Thomas, 2026-10-21)
   card   — the title card page (/highlights/card on the dashboard) shows the
            scene's title + line for the first CARD_S seconds of each scene
            (it reads status()["card"]; nothing to switch in OBS)
@@ -58,7 +63,10 @@ from race_director import NEVER_CAMS
 DEFAULTS = {
     "scenes": {"race": "iRacing", "moderator": "Moderator", "black": "Highlight Schwarz"},
     "sources": {"avatar_talk": "Gabi", "avatar_idle": "Gabi Ruhe", "grid": "Startaufstellung",
-                "still": "Highlight Standbild"},
+                "still": "Highlight Standbild",
+                # the Abspann pages on the Moderator scene (results_solid / champ_solid loaders)
+                "results": "Ergebnis", "standings": "Meisterschaft"},
+    "table_s": 10.0,        # each results / standings page after the finish
     "preroll_s": 1.5,       # seek this much before the scene: camera settles off the record
     "card_s": 5.0,          # title card on screen at the start of each scene
     "cam_every_s": 12.0,    # next TV camera inside a long scene
@@ -114,8 +122,9 @@ def default_texts(info: dict) -> dict:
 
 class HighlightRunner:
     def __init__(self, replay, obs=None, speaker=None, avatar=None, cfg: dict | None = None,
-                 clock=time.time, sleep=time.sleep):
+                 clock=time.time, sleep=time.sleep, pin=None):
         self.replay, self.obs, self.speaker, self.avatar = replay, obs, speaker, avatar
+        self.pin = pin                 # pin(cls or None): Pro/Am class of the 5002 / 5010 pages
         self.cfg = {**DEFAULTS, **(cfg or {})}
         self.cfg["scenes"] = {**DEFAULTS["scenes"], **((cfg or {}).get("scenes") or {})}
         self.cfg["sources"] = {**DEFAULTS["sources"], **((cfg or {}).get("sources") or {})}
@@ -156,6 +165,7 @@ class HighlightRunner:
                 s["id"] = i + 1
                 s["state"] = "wartet"
             self.opts = {"record": True, "card": True, "voice": False, "gabi": False, "fade": True,
+                         "tables": True, "proam": False,
                          "intro": "", "outro": "", **(opts or {})}
             self._stop.clear()
             self.state, self.phase, self.current, self.error, self.output = "running", "start", -1, "", ""
@@ -246,6 +256,7 @@ class HighlightRunner:
             for sc in self.scenes:
                 if sc.get("overlay"):
                     self._overlay(sc, False)
+            self._tables_off()
             self._note(f"{len(self.scenes)} Szenen, {sum(s['t_end'] - s['t_start'] for s in self.scenes):.0f} s"
                        + (" – Aufnahme" if rec else " – Probelauf ohne Aufnahme"))
             self._fade_setup()
@@ -261,7 +272,9 @@ class HighlightRunner:
                 nxt = self.scenes[i + 1] if i + 1 < len(self.scenes) else None
                 self._scene(sc, i, rec, cont_prev=self._contiguous(self.scenes[i - 1] if i else None, sc),
                             cont_next=self._contiguous(sc, nxt),
-                            last=nxt is None and not self._outro_planned())
+                            last=nxt is None and not self._outro_planned() and not self._tables_planned())
+            if not self._stop.is_set() and self._tables_planned():
+                self._tables(rec)
             if not self._stop.is_set() and self.opts.get("outro") and (self.opts.get("gabi") or self.opts.get("voice")):
                 self._moderation("outro", self.opts["outro"], rec)
             self.state = "stopped" if self._stop.is_set() else "done"
@@ -288,6 +301,7 @@ class HighlightRunner:
                     self.replay.restore()
                 except Exception as e:
                     self._note(f"Dashboard zurücksetzen: {e}")
+            self._tables_off()
             if self._fade_ok:
                 if self._program == "black":          # never leave the program on black
                     self._show("race", wait=False)
@@ -489,6 +503,85 @@ class HighlightRunner:
             self.rec_seconds += now - self._rec_from
             self._rec_from = None
 
+    def _tables_planned(self) -> bool:
+        src = self.cfg["sources"]
+        return bool(self.opts.get("tables") and self.obs is not None and (src.get("results") or src.get("standings")))
+
+    def _pages(self) -> list:
+        """[(source key, class or None, spoken line)] after the finish."""
+        out = []
+        classes = ["PRO", "AM"] if self.opts.get("proam") else [None]
+        for key, what in (("results", "Das Endergebnis"), ("standings", "Die Meisterschaft nach diesem Rennen")):
+            if not self.cfg["sources"].get(key):
+                continue
+            for c in classes:
+                out.append((key, c, f"{what}" + (f" in der Klasse {'Pro' if c == 'PRO' else 'A M'}." if c else ".")))
+        return out
+
+    def _pin(self, cls):
+        if self.pin is None:
+            return
+        try:
+            self.pin(cls)
+        except Exception as e:
+            self._note(f"Klasse anheften ({cls}): {e}")
+
+    def _tables_off(self):
+        if self.obs is None:
+            return
+        mod = self.cfg["scenes"]["moderator"]
+        for key in ("results", "standings"):
+            name = self.cfg["sources"].get(key)
+            if name:
+                try:
+                    self.obs.set_visible(mod, name, False)
+                except Exception:
+                    pass
+        if self.opts.get("tables"):
+            self._pin(None)
+
+    def _tables(self, rec):
+        """Final result + championship, PRO then AM, on the Moderator scene:
+        while the record is paused the class is pinned and the page shown
+        (the pages poll the pin ~1 s), then record on and crossfade in."""
+        mod = self.cfg["scenes"]["moderator"]
+        src = self.cfg["sources"]
+        pages = self._pages()
+        if src.get("avatar_idle"):
+            self._obs(lambda: self.obs.set_visible(mod, src["avatar_idle"], True), "Gabi Ruhe")
+        shown = None
+        for n, (key, cls, line) in enumerate(pages):
+            if self._stop.is_set():
+                break
+            self.phase = ("Ergebnis" if key == "results" else "Meisterschaft") + (f" {cls}" if cls else "")
+            self._pin(cls)
+            if shown != key:
+                if shown:
+                    self._obs(lambda: self.obs.set_visible(mod, src[shown], False), f"{src[shown]} aus")
+                ok = self._obs(lambda: (self.obs.set_visible(mod, src[key], True), True)[1], f"Quelle {src[key]}")
+                if ok is None:
+                    self._note(f"  (Quelle „{src[key]}“ fehlt in Szene „{mod}“ – Seite übersprungen)")
+                    continue
+                shown = key
+            self.sleep(2.0)                               # the page follows the pin (polls ~1 s)
+            self._rec_on(rec)
+            self._show("moderator")                       # crossfade in from the still
+            self._note(f"Tafel {self.phase}")
+            if self.opts.get("voice") and self.speaker is not None:
+                try:
+                    self.speaker.say(line, "normal")
+                except Exception as e:
+                    self._note(f"Stimme: {e}")
+            t_end = self.clock() + float(self.cfg["table_s"])
+            while not self._stop.is_set() and self.clock() < t_end:
+                self.sleep(0.1)
+            last = n == len(pages) - 1 and not self._outro_planned()
+            self._leave(last)
+            self._rec_off(rec)
+        if shown:
+            self._obs(lambda: self.obs.set_visible(mod, src[shown], False), f"{src[shown]} aus")
+        self._pin(None)
+
     def _outro_planned(self) -> bool:
         return bool(self.opts.get("outro") and (self.opts.get("gabi") or self.opts.get("voice")))
 
@@ -505,7 +598,7 @@ class HighlightRunner:
         if not name or self.obs is None:
             return
         race = self.cfg["scenes"]["race"]
-        if self._obs(lambda: self.obs.set_visible(race, name, on), f"Quelle {name}") is None and on:
+        if self._obs(lambda: (self.obs.set_visible(race, name, on), True)[1], f"Quelle {name}") is None and on:
             self._note(f"  (Quelle „{name}“ in Szene „{race}“ anlegen: obs_loaders/grid.html)")
 
     def _scene(self, sc, i, rec, cont_prev=False, cont_next=False, last=False):

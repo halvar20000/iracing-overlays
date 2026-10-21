@@ -319,6 +319,21 @@ visibilitychange; hover pauses. Highlight grid scene 15 -> 20 s. Checked in
 the browser with the real grid (still at 6 s, scrolling at 11 s, reset on the
 visibility event). Tests 47 / 104. The real-OBS check of the still crossfade
 is NOT done yet — OBS was recording (Thomas) when I tried; nothing touched.
+TENTH (Thomas: after the finish the final result PRO / AM and the championship
+PRO / AM before Gabi's outro): _tables() after the scenes — Moderator scene,
+Abspann sources "Ergebnis" (results_solid) / "Meisterschaft" (champ_solid),
+pages results PRO, AM, standings PRO, AM (opts proam from the pick info, else
+one page each), class pinned via `pin` = show_runner.pin_class (5010
+/api/prerace_pin; 5002 /solid follows it), while the record is PAUSED: pin,
+show, 2 s for the page, record on, crossfade in; table_s 10; spoken line per
+page with voice; pages hidden + pin released at start and end; the last page
+fades to black when no outro follows. Page checkbox "Ergebnis + Tabelle".
+Also fixed: _overlay's "source missing" hint fired always (_obs returns None
+on success too). Real OBS + replay test (finish + 4 pages, recorded): pages
+right (Zocher / Kuebler, provisional PRO / AM tables), crossfades, no black.
+The still crossfade between race scenes was checked the same way. NOTE: the
+Moderator scene holds "Ergebnis" TWICE (items 66, 75); GetSceneItemId takes
+the first. Tests 115.
 Restart 5000 + 5001.
 
 **October 21, 2026 (launcher: "Update & restart" button missing unless the

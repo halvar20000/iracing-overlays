@@ -64,6 +64,17 @@ Automatik-Kamera („Most Exciting“) ist während der Aufnahme aus und danach 
 wie vorher. (Die Maus nicht über das iRacing-Fenster bewegen — das zeigt die
 Replay-Leiste kurz an.)
 
+## Ergebnis und Meisterschaft (nach dem Zieleinlauf)
+
+Häkchen **Ergebnis + Tabelle**: nach dem Zieleinlauf, vor Gabis Outro, zeigt die
+Szene **Moderator** die Abspann-Quellen **„Ergebnis“** (`results_solid.html`) und
+**„Meisterschaft“** (`champ_solid.html`) — bei Pro/Am (WCT) nacheinander Ergebnis PRO,
+Ergebnis AM, Meisterschaft PRO, Meisterschaft AM, je 10 s, mit Überblendung
+dazwischen (mit **Stimme**: „Das Endergebnis in der Klasse Pro.“ …). Die Klasse wird
+wie im Abspann über die Meisterschaft (5010) angeheftet — Ergebnis- (5002) und
+Meisterschafts-Overlay (5010) müssen laufen. Die Meisterschaft ist die vorläufige
+Tabelle nach diesem Rennen.
+
 ## Gabi Intro / Outro
 
 Texte stehen vorgeschlagen in den Feldern (änderbar). **Gabi-Videos bestellen**
@@ -79,8 +90,9 @@ Dashboards. Nach „Szenen wählen“ steht dann „ready (gespeichert, kostenlo
 
 ## Einstellungen (optional)
 
-`show_config.json` → `"highlights"`: `scenes` (`race`, `moderator`), `sources`
-(`grid`, `avatar_talk`, `avatar_idle`), `preroll_s` (1.5), `card_s` (5), `cam_every_s`
+`show_config.json` → `"highlights"`: `scenes` (`race`, `moderator`, `black`), `sources`
+(`grid`, `avatar_talk`, `avatar_idle`, `still`, `results`, `standings`), `table_s` (10),
+`fade_s` (0.6), `preroll_s` (1.5), `card_s` (5), `cam_every_s`
 (12 = nächste TV-Kamera in langen Szenen).
 
 ## Gut zu wissen
