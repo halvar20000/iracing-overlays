@@ -218,6 +218,10 @@ replay too) on the race scene, no title card over it, Blimp / Chopper / TV2;
 contiguous scenes (b.t_start − a.t_end ≤ 1 s) play on without seek or record
 pause, so grid → start is one take. Missing source = hint in the log.
 Tests 45 / 60, integ 19.
+FIX same day (first real run: Gabi's intro LOOPED for 31 s until Thomas
+stopped it): the OBS source "Gabi" loops, so it never reports ENDED. The
+intro / outro now ends at the clip's duration (−0.15 s) or when the cursor
+jumps back, then media_stop + hide. Test: LoopObs (test_highlight_runner 63).
 Restart 5000.
 
 **October 21, 2026 (launcher: "Update & restart" button missing unless the

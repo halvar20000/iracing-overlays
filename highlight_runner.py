@@ -409,13 +409,25 @@ class HighlightRunner:
             self._obs(lambda: self.obs.set_media_file(talk, str(path)), "Gabi-Video laden")
             self._obs(lambda: self.obs.set_visible(mod, talk, True), "Gabi zeigen")
             self._obs(lambda: self.obs.media_restart(talk), "Gabi-Video starten")
-            t0 = self.clock()
+            # Done when OBS says ended — or, for a source with "Loop" ticked (it never
+            # ends), when the clip's length has played or its cursor jumped back.
+            t0, dur, last_cur = self.clock(), None, None
             while not self._stop.is_set() and self.clock() - t0 < 90:
-                if self.clock() - t0 > 1.5:      # a fresh file reports the old 'ended' for a moment
-                    st = self._obs(lambda: self.obs.media_status(talk), "Gabi-Video Status") or {}
-                    if st.get("state") in ("OBS_MEDIA_STATE_ENDED", "OBS_MEDIA_STATE_STOPPED"):
-                        break
-                self.sleep(0.2)
+                el = self.clock() - t0
+                st = self._obs(lambda: self.obs.media_status(talk), "Gabi-Video Status") or {}
+                dur = st.get("duration_s") or dur
+                cur = st.get("cursor_s")
+                if el > 1.5 and st.get("state") in ("OBS_MEDIA_STATE_ENDED", "OBS_MEDIA_STATE_STOPPED",
+                                                    "OBS_MEDIA_STATE_ERROR", "OBS_MEDIA_STATE_NONE"):
+                    break                        # (a fresh file reports the old 'ended' for a moment)
+                if dur and el >= dur - 0.15:
+                    break
+                if el > 1.5 and cur is not None and last_cur is not None and cur + 0.5 < last_cur:
+                    break                        # looped back to the start
+                if cur is not None:
+                    last_cur = cur
+                self.sleep(0.1)
+            self._obs(lambda: self.obs.media_stop(talk), "Gabi-Video stoppen")
             self._obs(lambda: self.obs.set_visible(mod, talk, False), "Gabi ausblenden")
         else:
             lid = self.speaker.say(text, "normal")

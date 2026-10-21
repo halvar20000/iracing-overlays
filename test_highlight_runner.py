@@ -288,6 +288,34 @@ check("gabi: video restarted and hidden afterwards", any(rt == "TriggerMediaInpu
 check("gabi: outro skipped without video and voice", any("outro nicht fertig" in l for l in st["log"])
       and len(fake.rec_segments) == 2, (st["log"], fake.rec_segments))
 
+# ---------------------------------------------------------------- Gabi source with "Loop" ticked in OBS
+# (Thomas, 2026-10-21: the intro ran in a loop — OBS never reports "ended" for a looping source)
+class LoopObs(FakeObs):
+    def handle(self, rt, rd):
+        if rt == "GetMediaInputStatus" and rd.get("inputName") == "Gabi":
+            self.calls.append((rt, rd))
+            m = self.media["Gabi"]
+            el = (time.time() - m["started"]) if m["started"] else 0
+            return True, {"mediaState": "OBS_MEDIA_STATE_PLAYING", "mediaDuration": int(m["duration"] * 1000),
+                          "mediaCursor": int((el % m["duration"]) * 1000)}, None
+        return super().handle(rt, rd)
+
+
+lo = LoopObs(OBS_SCENES, media={"Gabi": 1.2})
+rp = FakeReplay()
+r = R.HighlightRunner(rp, TracingObs(lo.port, rp), avatar=Avatar(), cfg=CFG)
+t_start = time.time()
+r.start(SCENES[:1], {"record": True, "gabi": True, "intro": "Hallo!"})
+t_intro = None
+while r.status()["state"] == "running" and time.time() - t_start < 30:
+    if t_intro is None and lo.current == "iRacing" and lo.recording:
+        t_intro = time.time() - t_start
+    time.sleep(0.05)
+check("loop: run done", r.status()["state"] == "done", r.status()["error"])
+check("loop: intro ends after the clip's length, not after 90 s", t_intro is not None and t_intro < 4, t_intro)
+check("loop: Gabi video stopped + hidden", any(rt == "TriggerMediaInputAction" and d["mediaAction"].endswith("STOP")
+                                            for rt, d in lo.calls) and not lo.scenes["Moderator"]["Gabi"])
+
 # ---------------------------------------------------------------- real reel (Indianapolis), when the log is here
 INDY = "logs/WCT/indianapolis/20261020-195328_indianapolis_motor_speedway_road_course_race.jsonl"
 if os.path.exists(INDY):
