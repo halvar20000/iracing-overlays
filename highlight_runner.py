@@ -454,6 +454,61 @@ class HighlightRunner:
             self.sleep(0.1)
         return False
 
+    def _play_talk(self, mod: str, talk: str, path) -> bool:
+        """Play Gabi's video once in the media source `talk`; True = it played.
+
+        Real OBS (2026-10-21, checked by hand on Thomas's OBS): after a
+        MediaStop the same file does NOT start again with RESTART — OBS reports
+        PLAYING but the cursor stays at 0 (the second run was silent). Loading
+        the file afresh (empty path, then the file) and activating the source
+        (restart_on_activate) plays it; RESTART only as a second try. The
+        source is only HIDDEN afterwards, never stopped. "Playing" = the
+        cursor moves; done at the clip's length (the source may loop, then it
+        never says ended), when the cursor jumps back, or it stalls."""
+        o = self.obs
+        self._obs(lambda: o.set_visible(mod, talk, False), "Gabi verstecken")
+        self._obs(lambda: o.call("SetInputSettings", {"inputName": talk, "inputSettings": {"local_file": ""}}),
+                  "Gabi-Quelle leeren")
+        self._obs(lambda: o.set_media_file(talk, str(path)), "Gabi-Video laden")
+        self._obs(lambda: o.set_visible(mod, talk, True), "Gabi zeigen")
+        t0, start, dur, last_cur, moved_at, kicked = self.clock(), None, None, None, None, False
+        try:
+            while not self._stop.is_set() and self.clock() - t0 < 90:
+                now = self.clock()
+                st = self._obs(lambda: o.media_status(talk), "Gabi-Video Status") or {}
+                state, cur = st.get("state"), st.get("cursor_s")
+                if (st.get("duration_s") or 0) > 1.0:
+                    dur = st["duration_s"]
+                if start is None:
+                    # a FRESH start: the first readings can still carry the old
+                    # playback's cursor (e.g. 6.9 s of the last run)
+                    if cur is not None and 0.05 < cur < 1.5 and last_cur is not None and cur > last_cur:
+                        start, last_cur, moved_at = now - cur, cur, now
+                    elif now - t0 > 1.2 and not kicked:
+                        self._obs(lambda: o.media_restart(talk), "Gabi-Video neu starten")
+                        kicked = True
+                    elif now - t0 > 6.0:
+                        self._note("Gabi-Video startet nicht (OBS-Quelle hängt)")
+                        return False
+                    last_cur = cur if cur is not None else 0.0
+                    self.sleep(0.1)
+                    continue
+                if state in ("OBS_MEDIA_STATE_ENDED", "OBS_MEDIA_STATE_STOPPED",
+                             "OBS_MEDIA_STATE_ERROR", "OBS_MEDIA_STATE_NONE"):
+                    break
+                if dur and now - start >= dur - 0.15:
+                    break                        # a looping source never says "ended"
+                if cur is not None and last_cur is not None and cur + 0.5 < last_cur:
+                    break                        # looped back to the start
+                if cur is not None and cur != last_cur:
+                    last_cur, moved_at = cur, now
+                elif now - moved_at > 2.0:
+                    break                        # stalled
+                self.sleep(0.1)
+            return start is not None
+        finally:
+            self._obs(lambda: o.set_visible(mod, talk, False), "Gabi ausblenden")
+
     def _moderation(self, seg: str, text: str, rec: bool) -> bool:
         """Intro / outro on the Moderator scene: Gabi's video, else the voice."""
         path = None
@@ -472,45 +527,12 @@ class HighlightRunner:
         self._card = None
         self._rec_on(rec)
         self._note(f"{self.phase}: " + ("Gabi-Video" if path else "Stimme"))
+        played = False
         if path is not None and src.get("avatar_talk"):
-            talk = src["avatar_talk"]
-            self._obs(lambda: self.obs.set_media_file(talk, str(path)), "Gabi-Video laden")
-            self._obs(lambda: self.obs.set_visible(mod, talk, True), "Gabi zeigen")
-            self._obs(lambda: self.obs.media_restart(talk), "Gabi-Video starten")
-            # Done when OBS says ended — or, for a source with "Loop" ticked (it never
-            # ends), when the clip's length has played or its cursor jumped back.
-            # While the new file opens OBS reports duration -1 / the old state, so
-            # length and cursor only count once the clip PLAYS (2nd real run:
-            # duration -1 ended the intro at once, Gabi never spoke).
-            t0, dur, last_cur, playing_at = self.clock(), None, None, None
-            while not self._stop.is_set() and self.clock() - t0 < 90:
-                el = self.clock() - t0
-                st = self._obs(lambda: self.obs.media_status(talk), "Gabi-Video Status") or {}
-                state, cur = st.get("state"), st.get("cursor_s")
-                if state == "OBS_MEDIA_STATE_PLAYING":
-                    if playing_at is None:
-                        playing_at = self.clock()
-                    if (st.get("duration_s") or 0) > 1.0:
-                        dur = st["duration_s"]
-                if playing_at is None:
-                    if el > 10:
-                        self._note("Gabi-Video startet nicht")
-                        break
-                    self.sleep(0.1)
-                    continue
-                if el > 1.5 and state in ("OBS_MEDIA_STATE_ENDED", "OBS_MEDIA_STATE_STOPPED",
-                                          "OBS_MEDIA_STATE_ERROR", "OBS_MEDIA_STATE_NONE"):
-                    break
-                if dur and self.clock() - playing_at >= dur - 0.15:
-                    break                        # a looping source never says "ended"
-                if cur is not None and last_cur is not None and cur + 0.5 < last_cur:
-                    break                        # looped back to the start
-                if cur is not None:
-                    last_cur = cur
-                self.sleep(0.1)
-            self._obs(lambda: self.obs.media_stop(talk), "Gabi-Video stoppen")
-            self._obs(lambda: self.obs.set_visible(mod, talk, False), "Gabi ausblenden")
-        else:
+            played = self._play_talk(mod, src["avatar_talk"], path)
+            if not played:
+                self._note("Gabi-Video lief nicht" + (" – Stimme" if self.opts.get("voice") else ""))
+        if not played and self.opts.get("voice") and self.speaker is not None:
             lid = self.speaker.say(text, "normal")
             deadline = self.clock() + len(text.split()) / 2.4 * 1.6 + 10
             while not self._stop.is_set() and self.clock() < deadline:

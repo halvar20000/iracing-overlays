@@ -315,8 +315,7 @@ while r.status()["state"] == "running" and time.time() - t_start < 30:
     time.sleep(0.05)
 check("loop: run done", r.status()["state"] == "done", r.status()["error"])
 check("loop: intro ends after the clip's length, not after 90 s", t_intro is not None and t_intro < 4, t_intro)
-check("loop: Gabi video stopped + hidden", any(rt == "TriggerMediaInputAction" and d["mediaAction"].endswith("STOP")
-                                            for rt, d in lo.calls) and not lo.scenes["Moderator"]["Gabi"])
+check("loop: Gabi video hidden at the end", not lo.scenes["Moderator"]["Gabi"])
 
 # ---------------------------------------------------------------- OBS as it really behaves (2nd real run,
 # 2026-10-21: "ResumeRecord: 503", Gabi silent): the record output starts a moment
@@ -403,6 +402,61 @@ with tempfile.TemporaryDirectory() as td:
         time.sleep(0.05)
     check("saved: a changed text is ordered", len(orders) == 2, orders)
     check("saved: same text in another segment is its own video", a3.get("highlights", "outro", "Willkommen!") is None)
+
+# ---------------------------------------------------------------- the same Gabi video in a SECOND run
+# (real OBS, 2026-10-21: after MediaStop a RESTART of the same file reports PLAYING with the
+# cursor stuck at 0 — the second run was silent; a fresh load + activation plays it)
+class StickyObs(RealishObs):
+    def handle(self, rt, rd):
+        m = self.media.get("Gabi")
+        if rt == "TriggerMediaInputAction" and rd.get("inputName") == "Gabi":
+            self.calls.append((rt, rd))
+            if rd["mediaAction"].endswith("STOP"):
+                m["started"], m["stuck"] = None, True
+            elif rd["mediaAction"].endswith("RESTART"):
+                m["started"] = time.time()
+                if not m.get("stuck"):
+                    m["real_plays"] = m.get("real_plays", 0) + 1
+            return True, None, None
+        if rt == "SetInputSettings" and rd.get("inputName") == "Gabi":
+            new = (rd.get("inputSettings") or {}).get("local_file")
+            if new != m.get("file"):
+                m["stuck"] = False               # a changed file is opened afresh
+            m["file"] = new
+            self.calls.append((rt, rd))
+            return True, None, None
+        if rt == "SetSceneItemEnabled" and rd.get("sceneItemEnabled") and m is not None:
+            if self.ids.get(("Moderator", "Gabi")) == rd["sceneItemId"] and not m.get("stuck"):
+                m["started"] = time.time()       # restart_on_activate
+                m["real_plays"] = m.get("real_plays", 0) + 1
+        if rt == "GetMediaInputStatus" and rd.get("inputName") == "Gabi" and m.get("stuck") and m["started"]:
+            self.calls.append((rt, rd))
+            return True, {"mediaState": "OBS_MEDIA_STATE_PLAYING", "mediaDuration": int(m["duration"] * 1000),
+                          "mediaCursor": 0}, None
+        return super().handle(rt, rd)
+
+
+so = StickyObs(OBS_SCENES, media={"Gabi": 1.5})
+so.media["Gabi"]["started"], so.media["Gabi"]["stuck"], so.media["Gabi"]["file"] = None, True, \
+    "C:/avatar/out/highlights_intro.mp4"                          # left STOPPED by an earlier run
+for n in (1, 2):
+    plays0 = so.media["Gabi"].get("real_plays", 0)
+    rp = FakeReplay()
+    r = R.HighlightRunner(rp, TracingObs(so.port, rp), avatar=Avatar(), cfg=CFG)
+    t_start, seen_mod, t_intro = time.time(), None, None
+    r.start(SCENES[:1], {"record": True, "gabi": True, "intro": "Hallo!"})
+    while r.status()["state"] == "running" and time.time() - t_start < 40:
+        if seen_mod is None and so.current == "Moderator":
+            seen_mod = time.time()
+        if t_intro is None and seen_mod and so.current == "iRacing":
+            t_intro = time.time() - seen_mod
+        time.sleep(0.05)
+    st = r.status()
+    check(f"same file again (run {n}): Gabi plays her whole clip", st["state"] == "done" and t_intro is not None
+          and t_intro >= 1.5 and not any("lief nicht" in l for l in st["log"])
+          and so.media["Gabi"].get("real_plays", 0) > plays0, (t_intro, st["log"]))
+check("Gabi is only hidden at the end, never stopped", not any(
+    rt == "TriggerMediaInputAction" and d["mediaAction"].endswith("STOP") for rt, d in so.calls))
 
 # ---------------------------------------------------------------- OBS that cannot pause (Simple output,
 # Recording Quality "Same as stream" - Thomas's profile, 2026-10-21): stop before recording

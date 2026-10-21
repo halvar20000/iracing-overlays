@@ -283,6 +283,15 @@ newest fragment was preselected, 0 scenes. list_logs now ranks WHOLE races
 first (session_end + green flag + >= 50 lap events), options show date, track,
 "Rennen komplett" / "Teilstück", laps; 0 scenes -> a German hint. Open: the
 logger writing fragments during replays at all (not changed).
+SEVENTH (Gabi silent again, idle loop only): measured on Thomas's real OBS —
+after TriggerMediaInputAction STOP, a RESTART of the SAME file reports PLAYING
+with the cursor stuck at 0 (the first run of the day worked: new file).
+_play_talk(): hide, SetInputSettings local_file "" then the file, show
+(restart_on_activate plays it), RESTART only after 1.2 s without a FRESH
+cursor (0.05-1.5 s and rising — the first readings can carry the old run's
+cursor), give up after 6 s (-> voice). Played = cursor moved; never stopped,
+only hidden. Real OBS: 3 runs in a row incl. a STOP between, 7.0 / 7.0 /
+8.1 s each. StickyObs test fails on the old code like the real run; 86.
 Restart 5000.
 
 **October 21, 2026 (launcher: "Update & restart" button missing unless the
