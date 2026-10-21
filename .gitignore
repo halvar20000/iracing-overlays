@@ -60,3 +60,6 @@ show_script.json
 show_notes/videos/
 # generated avatar videos (sync.so)
 avatar/out/
+
+# zoom-in videos + their tile cache (make_track_zoom.py)
+/track_zoom/
