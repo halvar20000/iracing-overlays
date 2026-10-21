@@ -314,10 +314,9 @@ class TelemetryPoller:
         self._dir_laps: dict = {}         # car_idx -> last progress handed to the director
         self._focus_crash_hold_seconds = 12.0
 
-        # HUD-hidden state. iRacing re-shows its broadcast HUD every time
-        # the camera changes; we track whether the user has toggled it
-        # hidden and re-press spacebar after camera actions to reassert
-        # the hidden state.
+        # HUD-hidden wish of the operator. The real state is the ui_hidden
+        # bit of CamCameraState; after camera actions _reassert_ui_hide()
+        # sets that bit again (via cam_set_state, no spacebar) while True.
         self.iracing_ui_hidden = False
 
         # Camera groups
@@ -2832,78 +2831,97 @@ class TelemetryPoller:
         self._reassert_ui_hide()
         return True
 
-    # Bits in iRacing's CamCameraState bitfield (see irsdk_defines.h).
-    CAM_TOOL_ACTIVE           = 0x0001
-    CAM_UI_HIDDEN             = 0x0002
-    CAM_USE_AUTO_SHOT         = 0x0004   # "Most Exciting"
-    CAM_USE_TEMPORARY_EDITS   = 0x0008
-    CAM_USE_KEY_ACCELERATION  = 0x0010
-    CAM_USE_KEY_10X_ACCEL     = 0x0020
-    CAM_USE_MOUSE_AIM_MODE    = 0x0040
+    # Bits in iRacing's CamCameraState bitfield (irsdk_defines.h /
+    # pyirsdk irsdk.CameraState). Until 2026-10-21 this list was shifted
+    # by one bit (0x0002 "UI hidden", 0x0004 "auto shot"), so MOST
+    # EXCITING really switched on the camera TOOL — the April "HUD pops
+    # up on every camera action" symptom.
+    CAM_IS_SESSION_SCREEN     = 0x0001   # read-only
+    CAM_IS_SCENIC_ACTIVE      = 0x0002   # read-only
+    CAM_TOOL_ACTIVE           = 0x0004   # never set it
+    CAM_UI_HIDDEN             = 0x0008
+    CAM_USE_AUTO_SHOT         = 0x0010   # "Most Exciting"
+    CAM_USE_TEMPORARY_EDITS   = 0x0020
+    CAM_USE_KEY_ACCELERATION  = 0x0040
+    CAM_USE_KEY_10X_ACCEL     = 0x0080
+    CAM_USE_MOUSE_AIM_MODE    = 0x0100
+    CAM_CHANGEABLE            = 0x01FC   # bits cam_set_state may write
 
-    def set_auto_camera(self, enabled: bool) -> bool:
-        """
-        Turn iRacing's "Most Exciting" auto-shot selection on or off.
-        That's CamUseAutoShotSelection (bit 0x0004) in the camera state
-        bitfield.
-
-        We write ONLY the auto-shot bit (plus whatever UI_HIDDEN bit was
-        already set). We do NOT set CAM_TOOL_ACTIVE — that bit puts
-        iRacing into "camera tool" mode which itself triggers iRacing to
-        show its broadcast/camera UI. Earlier versions of this method
-        were unconditionally setting CAM_TOOL_ACTIVE, which is why the
-        HUD was popping up on every camera change.
-
-        IDEMPOTENT: if the current CamCameraState already reflects the
-        desired auto-shot setting, we do NOT call cam_set_state at all.
-        Avoids gratuitous SDK writes that can disturb the HUD.
-        """
-        if not self.connected:
-            return False
+    def _cam_state(self):
+        """CamCameraState as int, None when unreadable."""
         try:
-            current = int(self.ir["CamCameraState"] or 0)
-            currently_auto = bool(current & self.CAM_USE_AUTO_SHOT)
-            if currently_auto == bool(enabled):
-                # Already in the right state — skip the SDK call entirely.
-                return True
-            # Build new state: preserve everything except the auto-shot bit.
-            state = current & ~self.CAM_USE_AUTO_SHOT
-            if enabled:
-                state |= self.CAM_USE_AUTO_SHOT
+            v = self.ir["CamCameraState"]
+            return int(v) if v is not None else None
+        except Exception:
+            return None
+
+    def _write_cam_bit(self, bit: int, on: bool) -> bool:
+        """Set or clear one changeable CamCameraState bit. Writes only the
+        changeable bits, never the camera tool, and only when the bit
+        differs (every gratuitous write can disturb the HUD)."""
+        current = self._cam_state()
+        if current is None:
+            return False
+        if bool(current & bit) == bool(on):
+            return True
+        state = current & self.CAM_CHANGEABLE & ~self.CAM_TOOL_ACTIVE
+        state = (state | bit) if on else (state & ~bit)
+        try:
             self.ir.cam_set_state(state)
-            self._reassert_ui_hide()
             return True
         except Exception as e:
             print(f"[dashboard] cam_set_state failed: {e}")
             return False
 
+    def set_auto_camera(self, enabled: bool) -> bool:
+        """
+        Turn iRacing's "Most Exciting" auto-shot selection on or off
+        (CamUseAutoShotSelection, bit 0x0010). Idempotent: no SDK call
+        when the bit already matches.
+        """
+        if not self.connected:
+            return False
+        ok = self._write_cam_bit(self.CAM_USE_AUTO_SHOT, bool(enabled))
+        self._reassert_ui_hide()
+        return ok
+
     def is_auto_camera_active(self) -> bool:
         """Read current CamCameraState bitfield, check the auto-shot bit."""
-        try:
-            state = self.ir["CamCameraState"]
-            if state is None:
-                return False
-            return bool(int(state) & self.CAM_USE_AUTO_SHOT)
-        except Exception:
-            return False
+        state = self._cam_state()
+        return bool(state is not None and state & self.CAM_USE_AUTO_SHOT)
+
+    def is_ui_hidden(self):
+        """True / False from CamCameraState, None when unreadable."""
+        state = self._cam_state()
+        return None if state is None else bool(state & self.CAM_UI_HIDDEN)
+
+    def toggle_ui_hidden(self):
+        """Dashboard / Stream Deck 'Hide UI' key: flip iRacing's UI from its
+        REAL state (CamCameraState), set via cam_set_state. Spacebar only
+        as a fallback when the state can't be read."""
+        hidden = self.is_ui_hidden() if self.connected else None
+        if hidden is None:
+            ok, msg = send_key_to_iracing(VK_SPACE)
+            if ok:
+                self.iracing_ui_hidden = not self.iracing_ui_hidden
+            return ok, msg
+        want = not hidden
+        ok = self._write_cam_bit(self.CAM_UI_HIDDEN, want)
+        if ok:
+            self.iracing_ui_hidden = want
+        return ok, f"iracing_ui_hidden={'on' if self.iracing_ui_hidden else 'off'}"
 
     def _reassert_ui_hide(self):
         """
-        iRacing's broadcast HUD pops back up on every camera switch.
-        If the user has asked to keep it hidden, re-send spacebar a beat
-        after the switch so the HUD goes away again. Done in a small
-        delayed thread so iRacing has time to process the camera change
-        before we re-hide.
+        Keep iRacing's UI hidden after camera / replay actions while the
+        operator asked for it: sets the ui_hidden bit when it is not set
+        (idempotent, no spacebar — a key press is a toggle and could
+        un-hide). Checked on a real replay 2026-10-21: switches, play and
+        seeks don't clear the bit, so this is a cheap no-op normally.
         """
-        if not self.iracing_ui_hidden:
+        if not self.iracing_ui_hidden or not self.connected:
             return
-        def _worker():
-            time.sleep(0.25)
-            try:
-                send_key_to_iracing(VK_SPACE)
-            except Exception as e:
-                print(f"[dashboard] ui-rehide failed: {e}")
-        threading.Thread(target=_worker, daemon=True).start()
+        self._write_cam_bit(self.CAM_UI_HIDDEN, True)
 
     def replay_5s_of_car(self, car_number: str,
                          t_session: float | None = None,
@@ -3103,11 +3121,8 @@ class TelemetryPoller:
         `slow=True` puts iRacing in slow-motion mode where speed acts
         as a divisor (e.g. speed=2 slow=True = half speed).
 
-        Always re-asserts the HUD-hidden state afterwards: every call to
-        `replay_set_play_speed` causes iRacing to re-show its broadcast
-        HUD if it was hidden by the user (spacebar). We mirror what the
-        camera-switching code does — re-press spacebar in a tiny
-        delayed thread when poller.iracing_ui_hidden is True.
+        Always re-asserts the HUD-hidden state afterwards (ui_hidden bit,
+        see _reassert_ui_hide) when poller.iracing_ui_hidden is True.
         """
         if not self.connected:
             return False, "not connected"
@@ -6114,12 +6129,9 @@ def starred():
 
 @app.route("/hide_iracing_ui", methods=["POST"])
 def hide_iracing_ui():
-    # Spacebar is what actually toggles iRacing's broadcast HUD. We also
-    # flip our own boolean so that any subsequent camera switch can auto
-    # re-press spacebar and keep the HUD hidden.
-    ok, msg = send_key_to_iracing(VK_SPACE)
-    if ok:
-        poller.iracing_ui_hidden = not poller.iracing_ui_hidden
+    # Flips iRacing's UI via the ui_hidden bit of CamCameraState (spacebar
+    # only if the state can't be read); later camera actions keep it so.
+    ok, msg = poller.toggle_ui_hidden()
     return jsonify({
         "ok":     ok,
         "hidden": poller.iracing_ui_hidden,
@@ -6338,13 +6350,10 @@ def streamdeck(action, param=None):
     # --- hide / show iRacing's broadcast HUD (toggle) ---
     # Same logic as the dashboard's Hide-UI button and the POST
     # /hide_iracing_ui endpoint, exposed here as a GET so a Stream Deck
-    # "Website" key (background) can fire it. Spacebar toggles iRacing's
-    # HUD; we mirror the state so later camera switches keep it hidden.
+    # "Website" key (background) can fire it. Reads the real UI state from
+    # CamCameraState and flips it; later camera switches keep it hidden.
     elif action == "hide_ui":
-        ok, msg = send_key_to_iracing(VK_SPACE)
-        if ok:
-            poller.iracing_ui_hidden = not poller.iracing_ui_hidden
-            msg = f"iracing_ui_hidden={'on' if poller.iracing_ui_hidden else 'off'}"
+        ok, msg = poller.toggle_ui_hidden()
 
     # --- toggles ---
     elif action == "toggle_auto_follow":

@@ -177,6 +177,22 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 21, 2026 (dashboard CamCameraState bits fixed):** the dashboard's
+constants were one bit off (0x0001 "tool", 0x0002 "UI hidden", 0x0004 "auto
+shot"); the real irsdk.CameraState bits are session screen 0x0001 / scenic
+active 0x0002 (both read-only), cam tool 0x0004, UI hidden 0x0008, auto shot
+0x0010, temp edits 0x0020, key accel 0x0040, 10x 0x0080, mouse aim 0x0100;
+changeable mask 0x01FC. So MOST EXCITING really switched on the camera TOOL
+(the April "HUD pops up" symptom). `_write_cam_bit()` writes only changeable
+bits, always clears the cam tool, only when the bit differs;
+`set_auto_camera` uses it. Hide UI (`/hide_iracing_ui`, Stream Deck
+`hide_ui`) = `toggle_ui_hidden()`: flips from the REAL ui_hidden bit via
+cam_set_state (spacebar only when CamCameraState is unreadable);
+`_reassert_ui_hide()` sets the bit again after camera / replay actions
+(idempotent, no key press, no thread). test_cam_state.py 19/19 (fake ir).
+NOT tried in real iRacing from the dashboard (the same bits were verified via
+highlight_runner on a real replay). Restart 5000.
+
 **October 21, 2026 (HIGHLIGHT VIDEO from replay + race log):** NEW
 `highlights.py` (pure picker) + `highlight_runner.py` (run) + dashboard page
 `5000/highlights` (German operator UI) and title card `5000/highlights/card`
@@ -2663,7 +2679,8 @@ All three are mutually exclusive and any regular camera-group click
 turns them off.
 
 CRITICAL GOTCHAS around `ir.cam_set_state(...)` — discovered the hard
-way this session:
+way this session (NOTE 2026-10-21: the bit VALUES below were wrong — tool
+0x0004, UI hidden 0x0008, auto shot 0x0010; see the Oct 21 entry):
   • **Never set `CAM_TOOL_ACTIVE` (0x0001) on the state.** That bit
     puts iRacing into "camera tool" mode, which has the side effect of
     showing the HUD. Once set, every camera operation re-surfaces the
