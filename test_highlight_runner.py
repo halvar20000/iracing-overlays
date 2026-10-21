@@ -541,6 +541,66 @@ check("fade + moderation: black -> Moderator -> black -> race -> black -> Modera
                                           "Highlight Schwarz", "Moderator", "Highlight Schwarz", "iRacing"],
       [p[0] for p in fo3.program_log])
 
+# ---------------------------------------------------------------- crossfade out of a still of the last frame
+# (Thomas, 2026-10-21, after the fades: "you always see a black screen between the scenes")
+class StillObs(FadeObs):
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.shots, self.trans_at_switch = [], []
+
+    def handle(self, rt, rd):
+        if rt == "GetVideoSettings":
+            self.calls.append((rt, rd))
+            return True, {"baseWidth": 1920, "baseHeight": 1080}, None
+        if rt == "CreateInput":
+            self.calls.append((rt, rd))
+            self.scenes[rd["sceneName"]][rd["inputName"]] = bool(rd.get("sceneItemEnabled", True))
+            self.ids[(rd["sceneName"], rd["inputName"])] = max(self.ids.values()) + 1
+            return True, {"sceneItemId": self.ids[(rd["sceneName"], rd["inputName"])]}, None
+        if rt == "SaveSourceScreenshot":
+            self.calls.append((rt, rd))
+            self.shots.append((rd["sourceName"], rd["imageFilePath"], self.replay.session_time()))
+            return True, None, None
+        if rt == "SetInputSettings" and rd.get("inputName") == "Highlight Standbild":
+            self.calls.append((rt, rd))
+            return True, None, None
+        if rt == "SetCurrentProgramScene":
+            self.trans_at_switch.append((rd["sceneName"], self.transition,
+                                         self.scenes.get("Highlight Schwarz", {}).get("Highlight Standbild")))
+        return super().handle(rt, rd)
+
+
+sp = Speaker()
+so = StillObs(OBS_SCENES)
+rp = FakeReplay(speed=10)
+so.replay = rp
+r = R.HighlightRunner(rp, TracingObs(so.port, rp), speaker=sp, cfg=dict(CFG, fade_s=0.3))
+r.start(SCENES[:2], {"record": True, "voice": True, "intro": "Hallo!", "outro": "Tschüss!"})
+r.wait(60)
+st = r.status()
+ts = so.trans_at_switch
+check("still: run done", st["state"] == "done", st["error"])
+check("still: image source created in the black scene", any(rt == "CreateInput" and d["inputName"] == "Highlight Standbild"
+                                                           for rt, d in so.calls))
+check("still: a still taken at each inner change (intro->1, 1->2, 2->outro)",
+      [x[0] for x in so.shots] == ["Moderator", "iRacing", "iRacing"], so.shots)
+check("still: the scene's still is taken at its end",
+      all(t >= sc["t_end"] - 0.5 for (_, _, t), sc in zip(so.shots[1:], SCENES)), so.shots)
+check("still: alternating files (OBS image cache)", len({x[1] for x in so.shots[:2]}) == 2, so.shots)
+# switches: black(start, fade) -> Moderator(fade) -> black(CUT + still) -> race(fade) -> black(CUT + still)
+#   -> race(fade) -> black(CUT + still) -> Moderator(fade) -> black(FADE, no still = real end) -> race
+check("still: inner changes cut to the still, everything else fades",
+      [(n, t, bool(v)) for n, t, v in ts] == [
+          ("Highlight Schwarz", "Überblenden", False), ("Moderator", "Überblenden", False),
+          ("Highlight Schwarz", "Schnitt", True), ("iRacing", "Überblenden", True),
+          ("Highlight Schwarz", "Schnitt", True), ("iRacing", "Überblenden", True),
+          ("Highlight Schwarz", "Schnitt", True), ("Moderator", "Überblenden", True),
+          ("Highlight Schwarz", "Überblenden", False), ("iRacing", "Überblenden", False)], ts)
+check("still: every switch except the last 'back to iRacing' is recorded",
+      all(p[1] for p in so.program_log[1:-1]), so.program_log)
+check("still: hidden + OBS transition restored at the end", not so.scenes["Highlight Schwarz"]["Highlight Standbild"]
+      and so.transition == "Schnitt" and so.duration == 300, (so.transition, so.duration))
+
 # ---------------------------------------------------------------- OBS that cannot pause (Simple output,
 # Recording Quality "Same as stream" - Thomas's profile, 2026-10-21): stop before recording
 class SameAsStreamObs(FakeObs):

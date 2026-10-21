@@ -46,7 +46,8 @@ MAX_INCIDENTS = 4
 
 # scene windows: seconds before / after the moment
 WIN = {
-    "grid":    (8.0 + 15.0, -8.0),    # 15 s of pace lap, ends where "start" begins
+    "grid":    (8.0 + 20.0, -8.0),    # 20 s of pace lap, ends where "start" begins: the grid
+                                       # page holds the first places 10 s, then scrolls
     "start":   (8.0, 30.0),
     "caution": (4.0, 10.0),
     "restart": (12.0, 18.0),

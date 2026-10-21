@@ -316,21 +316,11 @@ GRID_HTML = """
     .scroll-inner {
         transition: transform 0.3s;
     }
-    /* When there are more cars than fit, animate the inner block.
-       Pattern: hold at top -> scroll down -> hold at bottom -> instant snap
-       back to top -> repeat.  The "instant snap" is achieved by making the
-       final keyframe (100%) the same as 0% with no tween between 99% and 100%. */
-    .scroll-inner.autoscroll {
-        animation: ticker var(--scroll-duration, 20s) linear infinite;
-    }
-    /* Pause the ticker on hover so you can read it on your monitor */
-    .scroll-viewport:hover .scroll-inner.autoscroll { animation-play-state: paused; }
-
-    @keyframes ticker {
-        0%,  15%  { transform: translateY(0); }                          /* hold at top */
-        85%, 99%  { transform: translateY(var(--scroll-distance, 0)); }  /* scroll down, hold at bottom */
-        100%      { transform: translateY(0); }                          /* instant snap back */
-    }
+    /* When there are more cars than fit, the inner block is animated from JS
+       (Web Animations, see updateAutoScroll): hold at the TOP for ?hold=
+       seconds (default 10), scroll down, hold at the bottom, snap back,
+       repeat — and start again at the top every time OBS shows the source
+       (2026-10-21: the highlight video caught it half scrolled). */
 
     /* Two-column stagger layout - tight */
     .grid-layout {
@@ -525,17 +515,20 @@ function renderGrid(rows) {
 }
 
 // Auto-scroll controller.  When the inner content is taller than the viewport
-// (typical for 20+ car fields in OBS), we set CSS vars to animate a vertical
-// translate from 0 to -(overflow height) and loop.
+// (typical for 20+ car fields in OBS): hold the first places at the top for
+// HOLD_S, scroll to the bottom, hold there, snap back, repeat.
+const QS = new URLSearchParams(location.search);
+const HOLD_S = Math.max(0, parseFloat(QS.get("hold") || "10"));   // first places stand still this long
+const HOLD_BOTTOM_S = 4;
+let scrollAnim = null;
 function updateAutoScroll() {
     const viewport = document.getElementById("scroll-viewport");
     const inner    = document.getElementById("scroll-inner");
     if (!viewport || !inner) return;
 
     // Reset any previous animation so we can re-measure
-    inner.classList.remove("autoscroll");
-    inner.style.removeProperty("--scroll-distance");
-    inner.style.removeProperty("--scroll-duration");
+    if (scrollAnim) { scrollAnim.cancel(); scrollAnim = null; }
+    inner.style.transform = "";
 
     // Measure
     const visibleH = viewport.clientHeight;
@@ -544,14 +537,33 @@ function updateAutoScroll() {
 
     if (overflow <= 4) return;  // content fits (or only a couple px off)
 
-    // Pick a duration roughly proportional to content height.
-    // ~100ms per pixel of overflow, clamped to [12s, 40s].  Keeps short fields
-    // quick to cycle and big fields from racing past too fast.
-    let duration = Math.max(12, Math.min(40, overflow * 0.08));
-    inner.style.setProperty("--scroll-distance", (-overflow) + "px");
-    inner.style.setProperty("--scroll-duration", duration.toFixed(1) + "s");
-    inner.classList.add("autoscroll");
+    // Scroll time roughly proportional to the overflow, clamped to [6s, 30s].
+    const scrollS = Math.max(6, Math.min(30, overflow * 0.06));
+    const total = HOLD_S + scrollS + HOLD_BOTTOM_S;
+    const down = "translateY(" + (-overflow) + "px)";
+    scrollAnim = inner.animate([
+        { transform: "translateY(0)", offset: 0 },
+        { transform: "translateY(0)", offset: HOLD_S / total },
+        { transform: down, offset: (HOLD_S + scrollS) / total },
+        { transform: down, offset: 0.999 },
+        { transform: "translateY(0)", offset: 1 },
+    ], { duration: total * 1000, iterations: Infinity, easing: "linear" });
 }
+// Back to the top (first places, then the hold) every time the source is shown
+function restartScroll() {
+    if (scrollAnim) { scrollAnim.currentTime = 0; scrollAnim.play(); }
+    else updateAutoScroll();
+}
+window.addEventListener("obsSourceVisibleChanged", e => { if (!e.detail || e.detail.visible) restartScroll(); });
+window.addEventListener("obsSourceActiveChanged", e => { if (!e.detail || e.detail.active) restartScroll(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) restartScroll(); });
+// Pause on hover so you can read it on your monitor
+document.addEventListener("DOMContentLoaded", () => {
+    const vp = document.getElementById("scroll-viewport");
+    if (!vp) return;
+    vp.addEventListener("mouseenter", () => scrollAnim && scrollAnim.pause());
+    vp.addEventListener("mouseleave", () => scrollAnim && scrollAnim.play());
+});
 
 // Recompute on window resize (OBS sources can be resized live)
 window.addEventListener("resize", () => {

@@ -303,7 +303,23 @@ fade_s 0.6, page checkbox "Blenden", no fade transition in OBS -> hard cuts.
 (3) Gyro dropped from the plans (a dark cockpit in the reel). Real test on
 Thomas's OBS + replay (2 scenes, recorded): luma 57 -> 15 -> 75 across the
 cut, fade in / out at start / end. Tests 47 / 96.
-Restart 5000.
+NINTH (Thomas: "always a short black screen between the scenes"; grid graphic
+"already scrolled too far"): (1) CROSSFADE OUT OF A STILL instead of the black
+dip — _leave(): SaveSourceScreenshot of the program scene (jpg, canvas size
+from GetVideoSettings, alternating temp files cas_highlight_still_0/1.jpg —
+image-source cache), into image source "Highlight Standbild" (CreateInput in
+"Highlight Schwarz" if missing), CUT to it (same picture), record pauses,
+replay jumps, record resumes on the still, FADE into the new scene. Only the
+very start / end fade from / to black (still hidden); a failed screenshot dips
+to black. (2) iracing_grid.py: the CSS ticker looped from page load, so when
+OBS showed the source it was mid-scroll. Now Web Animations from JS: hold the
+top HOLD_S (?hold=, default 10 s), scroll, hold the bottom 4 s, snap back;
+restarts at the top on obsSourceVisibleChanged / ActiveChanged /
+visibilitychange; hover pauses. Highlight grid scene 15 -> 20 s. Checked in
+the browser with the real grid (still at 6 s, scrolling at 11 s, reset on the
+visibility event). Tests 47 / 104. The real-OBS check of the still crossfade
+is NOT done yet — OBS was recording (Thomas) when I tried; nothing touched.
+Restart 5000 + 5001.
 
 **October 21, 2026 (launcher: "Update & restart" button missing unless the
 window was dragged very wide):** the banner packed its LABEL first and the

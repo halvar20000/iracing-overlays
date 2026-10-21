@@ -48,10 +48,13 @@ Höchstens 5 Überholmanöver und 4 Zwischenfälle, über das Rennen verteilt, k
    Aufnahme; der Pfad der MP4 steht oben (OBS-Aufnahmeordner und -Format).
    **■ Stop** bricht ab und beendet die Aufnahme sauber.
 
-Zwischen den Szenen wird **weich über Schwarz geblendet** (Häkchen **Blenden**):
-dafür legt der Ablauf in OBS einmal die leere Szene **„Highlight Schwarz“** an und
-benutzt OBS' Übergang „Fade“ (0,6 s); danach steht der Übergang wieder wie vorher.
-Gabi ↔ Rennen wird genauso geblendet. **Fahrer des Tages** kommt direkt vor dem
+Zwischen den Szenen wird **überblendet** (Häkchen **Blenden**): am Szenenende hält
+OBS das letzte Bild fest, das Replay springt, und die neue Szene blendet aus diesem
+Standbild heraus auf — kein schwarzes Bild dazwischen. Nur der Anfang blendet aus
+Schwarz auf und das Ende auf Schwarz ab. Dafür legt der Ablauf in OBS einmal die
+Szene **„Highlight Schwarz“** mit der Bildquelle **„Highlight Standbild“** an (bitte
+stehen lassen) und benutzt OBS' Übergang „Fade“ (0,6 s); danach steht der Übergang
+wieder wie vorher. Gabi ↔ Rennen wird genauso überblendet. **Fahrer des Tages** kommt direkt vor dem
 Zieleinlauf.
 
 Während der Aufnahme sind REGIE, Auto-Follow, Fokus-Modi und Auto-Replays aus;
@@ -87,6 +90,9 @@ Dashboards. Nach „Szenen wählen“ steht dann „ready (gespeichert, kostenlo
   Dateigröße“); im erweiterten Modus einen eigenen Video-Encoder statt „Stream-Encoder
   verwenden“. Sonst bricht der Start mit diesem Hinweis ab — OBS würde das Spulen
   zwischen den Szenen mit aufnehmen.
+- **Startaufstellung**: die Grafik (Grid-Overlay 5001) zeigt beim Einblenden zuerst
+  10 s still die ersten Plätze, dann scrollt sie (`?hold=` = andere Sekundenzahl);
+  die Szene dauert 20 s.
 - Das Replay darf in einer anderen Session stehen (z. B. Training): der Sprung ins
   Rennen dauert ~2–3 s, das Dashboard wartet ihn ab.
 - OBS darf beim Start nicht schon aufnehmen (sonst Abbruch mit Meldung).
