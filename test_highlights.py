@@ -200,6 +200,31 @@ sel = H.select([c1, c2], 240)
 check("merge: overlap -> one scene 90-110", len(sel) == 1 and sel[0]["t_start"] == 90 and sel[0]["t_end"] == 110, sel)
 check("merge keeps the stronger scene's car", sel and sel[0]["car_idx"] == 1)
 
+# log list: whole races first and preselected; fragments the race logger wrote while a
+# REPLAY played (official session_end, but no green flag / few laps) behind them
+# (Thomas, 2026-10-21: the newest fragment was preselected -> 0 scenes, Start grey)
+import json as _json
+import os as _os
+import tempfile
+with tempfile.TemporaryDirectory() as td:
+    def write(name, events, mtime):
+        p = _os.path.join(td, name)
+        with open(p, "w", encoding="utf-8") as f:
+            for e in events:
+                f.write(_json.dumps(e) + "\n")
+        _os.utime(p, (mtime, mtime))
+    head = {"type": "session_start", "track": "Indy", "drivers": DR}
+    lapsx = [{"type": "lap", "car_idx": 0, "lap": i} for i in range(60)]
+    write("20261020-195328_x_race.jsonl", [head, {"type": "flag", "flag": "green"}] + lapsx
+          + [{"type": "session_end", "official": True}], 1000)
+    write("20261021-112943_x_race.jsonl", [head, {"type": "session_end", "official": True}], 3000)
+    write("20261021-110818_x_race.jsonl", [head] + lapsx, 2000)
+    ls = H.list_logs(td)
+    check("log list: whole race first, then fragments newest first",
+          [d["name"][:15] for d in ls] == ["20261020-195328", "20261021-112943", "20261021-110818"]
+          and [d["complete"] for d in ls] == [True, False, False] and ls[0]["track"] == "Indy"
+          and ls[0]["laps"] == 60, ls)
+
 print(f"\n{passes} PASS, {len(fails)} FAIL")
 for f in fails:
     print("  FAIL", f)

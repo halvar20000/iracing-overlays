@@ -5734,8 +5734,13 @@ const KIND = {grid:'Startaufstellung', start:'Start', restart:'Restart', caution
               contact:'Kontakt', spin:'Dreher', fastest:'Schnellste Runde', dotd:'Fahrer des Tages'};
 async function loadLogs() {
   const d = await (await fetch('/highlights/logs')).json();
-  $('log').innerHTML = (d.logs || []).map(l => `<option value="${esc(l.path)}">${esc(l.path.replace(/^logs\//,''))}</option>`).join('')
-    || '<option value="">keine Race-Logs in logs/</option>';
+  // finished races first (and preselected); fragments the logger wrote while a replay played are marked
+  $('log').innerHTML = (d.logs || []).map(l => {
+    const m = l.name.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})/);
+    const when = m ? `${m[3]}.${m[2]}.${m[1]} ${m[4]}:${m[5]}` : l.name;
+    const kb = Math.round(l.size / 1024);
+    return `<option value="${esc(l.path)}">${esc(when)} · ${esc(l.track || l.name)} · ${l.complete ? 'Rennen komplett' : 'Teilstück (z. B. beim Replay mitgeschrieben)'} · ${l.laps} Runden (${kb} KB)</option>`;
+  }).join('') || '<option value="">keine Race-Logs in logs/</option>';
 }
 async function pick() {
   $('info').textContent = 'wähle Szenen …';
@@ -5744,6 +5749,11 @@ async function pick() {
   if (!d.ok) { $('info').innerHTML = '<span class="err">' + esc(d.error) + '</span>'; return; }
   scenes = d.scenes;
   const i = d.info;
+  if (!scenes.length) {
+    $('info').innerHTML = '<span class="err">Keine Szenen in diesem Log – kein ganzes Rennen (z. B. ein Stück, das der Race-Logger '
+      + 'beim Abspielen eines Replays geschrieben hat). Oben ein Log mit „Rennen komplett“ wählen.</span>';
+    render(); return;
+  }
   $('info').textContent = `${i.track || ''} ${i.config || ''} · Sieger ${i.winner || '?'} · ${i.drivers} Fahrer · Session ${i.session_num}`
     + (i.proam ? ' · Pro/Am' : '') + ` · ${scenes.length} Szenen aus ${d.candidates} Kandidaten`;
   if (!$('intro').value || $('intro').dataset.auto === '1') { $('intro').value = d.texts.intro; $('intro').dataset.auto = '1'; }

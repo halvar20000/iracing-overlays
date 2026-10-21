@@ -275,7 +275,14 @@ rehearsal -> 0 of 454 samples with the UI shown, auto shot back after. FOUND:
 the DASHBOARD's own constants are WRONG — CAM_UI_HIDDEN 0x0002 is
 "scenic active" (read-only), CAM_USE_AUTO_SHOT 0x0004 is "cam tool active"
 (irsdk CameraState), so its MOST EXCITING button sets the cam tool (the April
-"HUD pops up" symptom). Not fixed here. Tests 83.
+"HUD pops up" symptom). Fixed separately (cb5a126). Tests 83.
+SIXTH (after the update "Start" stayed grey): the local install's logs/ had
+the real race plus fragments the RACE LOGGER wrote while the replay played
+(every seek starts a new file; they even carry an official session_end) — the
+newest fragment was preselected, 0 scenes. list_logs now ranks WHOLE races
+first (session_end + green flag + >= 50 lap events), options show date, track,
+"Rennen komplett" / "Teilstück", laps; 0 scenes -> a German hint. Open: the
+logger writing fragments during replays at all (not changed).
 Restart 5000.
 
 **October 21, 2026 (launcher: "Update & restart" button missing unless the

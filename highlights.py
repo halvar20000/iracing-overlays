@@ -764,16 +764,41 @@ def pick_file(path, budget_s=DEFAULT_BUDGET_S, proam_cache="proam_cache.json") -
     return out
 
 
+COMPLETE_MIN_LAPS = 50       # lap events of all cars together
+
+
+def _log_summary(p: Path) -> dict:
+    """Track, laps logged and whether this is a WHOLE race: green flag, an
+    end, and at least COMPLETE_MIN_LAPS lap events. The race logger also
+    writes short logs while a REPLAY of a race plays (seeks start new files) —
+    those even carry an "official" session_end, but no start and few laps."""
+    track, laps, complete = "", 0, False
+    try:
+        data = p.read_bytes()
+        try:
+            track = json.loads(data.split(b"\n", 1)[0].decode("utf-8")).get("track") or ""
+        except ValueError:
+            pass
+        laps = data.count(b'"type":"lap"') + data.count(b'"type": "lap"')
+        has = lambda k, v: (b'"%s":"%s"' % (k, v)) in data or (b'"%s": "%s"' % (k, v)) in data
+        complete = has(b"type", b"session_end") and has(b"flag", b"green") and laps >= COMPLETE_MIN_LAPS
+    except OSError:
+        pass
+    return {"track": track, "laps": laps, "complete": complete}
+
+
 def list_logs(root="logs") -> list[dict]:
-    """Race logs, newest first: {path, name, size}."""
+    """Race logs: finished races first (newest first), then fragments.
+    {path, name, size, mtime, track, complete}."""
     out = []
     for p in Path(root).rglob("*_race.jsonl"):
         try:
             st = p.stat()
         except OSError:
             continue
-        out.append({"path": str(p.as_posix()), "name": p.name, "size": st.st_size, "mtime": st.st_mtime})
-    out.sort(key=lambda d: -d["mtime"])
+        out.append({"path": str(p.as_posix()), "name": p.name, "size": st.st_size, "mtime": st.st_mtime,
+                    **_log_summary(p)})
+    out.sort(key=lambda d: (not d["complete"], -d["mtime"]))
     return out
 
 
