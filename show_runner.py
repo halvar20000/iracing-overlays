@@ -58,6 +58,10 @@ DEFAULT_CONFIG = {
         # Gabi speaking (avatar_sync.py): a media source ABOVE the idle loop
         # (source with avatar/gabi_idle_loop.mp4, looping, always on)
         "avatar_talk": "Gabi",
+        # ...and the idle loop under it: switched ON at every start, so Gabi
+        # stays in the studio (silent) after her greeting while the voice reads
+        # the tables (Andreas, 2026-10-21: "she vanished after the greeting")
+        "avatar_idle": "Gabi Ruhe",
         # Abspann: final classification + championship after the race
         "results": "Ergebnis",
         "standings_after": "Meisterschaft",
@@ -1176,6 +1180,8 @@ class ShowRunner:
                 name = self._name(key)
                 if name and (self._items is None or name in self._items):
                     self._source(key, False)
+            if self._items is not None and self._has("avatar_idle"):
+                self._source("avatar_idle", True)     # Gabi sits in the studio the whole show
             self._shown = None
             self._pin(None)
             self.seg_i = -1

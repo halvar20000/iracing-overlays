@@ -568,6 +568,23 @@ check("Abspann: a picture for every voice segment (result from the summary on), 
 check("Abspann: the result page stays up summary -> PRO -> AM (no blink), class released at the end",
       [e for s_, e, t, _ in vis13 if s_ in ("race_summary", "results_pro", "results_am")] == [True] * len(
           [1 for s_, *_ in vis13 if s_ in ("race_summary", "results_pro", "results_am")]) and pin13[0] is None, vis13)
+# Gabi's idle loop: switched ON at the start (it was off) and left on to the end
+# (Andreas, 2026-10-21: after the greeting she vanished from the studio)
+obs18 = FakeObs({"Moderator": {"Ergebnis": False, "Meisterschaft": False, "Gabi Ruhe": False}, "iRacing": {}},
+                media={})
+c18 = sr.load_config(); c18["obs"] = {"host": "127.0.0.1", "port": obs18.port}
+r18 = sr.ShowRunner(c18, ObsClient(port=obs18.port), Speaker(), facts_fn=lambda: pf,
+                    script_fn=lambda f, s_: (sr.template_post_script(c18, f, s_), "template"),
+                    director_on=lambda: None, kind="post", director_off=lambda: None)
+r18.prepare()
+idle18 = []
+def w18():
+    r18.tick()
+    idle18.append(obs18.scenes["Moderator"]["Gabi Ruhe"])
+r18.start()
+check("idle loop switched on at the start and kept on to the end",
+      obs18.scenes["Moderator"]["Gabi Ruhe"] is True and wait_for(lambda: r18.state == "done", 20, tick=w18)
+      and all(idle18) and obs18.scenes["Moderator"]["Gabi Ruhe"] is True, idle18[:5])
 r17 = sr.ShowRunner(dict(sr.load_config(), avatar={"segments": ["intro", "last_race", "track", "schedule", "outro"], "max_words": 5}),
                     None, Speaker(), lambda: {}, lambda f, s_: ({}, "t"), lambda: None)
 r17.segments = ["intro", "last_race", "track", "schedule", "outro"]

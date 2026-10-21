@@ -162,6 +162,15 @@ d = rd.RaceDirector()
 g = d._pick_group("battle", [{"id": 0, "name": "Scenic"}, {"id": 1, "name": "Blimp"}], 0)
 check("fallback group when TV/Chase are missing", g and g["name"] == "Blimp", g)
 check("only Scenic -> no shot", d._pick_group("leader", [{"id": 0, "name": "Scenic"}], 0) is None)
+# no chase cameras at all (Andreas, 2026-10-21) — not in the plan, not as the fallback
+chase_only = [{"id": 0, "name": "Chase"}, {"id": 1, "name": "Far Chase"}, {"id": 2, "name": "Rear Chase"}]
+check("chase cameras are never picked, not even as the fallback",
+      all(d._pick_group(k, chase_only, i) is None for k in rd.CAMS for i in range(4)))
+check("no chase camera in any shot plan",
+      not any("CHASE" in rd._norm(n) for names in rd.CAMS.values() for n in names))
+s = Sim().run(300, lambda t: [car(i, i * 0.6) for i in range(8)])
+check("a long race of battles never cuts to a chase camera",
+      s.cuts and not any("chase" in g.lower() for _, _, _, g in s.cuts), {g for *_, g in s.cuts})
 
 # 10) camera drifted away (iRacing / someone else) -> director re-asserts
 s = Sim().run(10, spread)

@@ -5432,7 +5432,7 @@ def show_check():
                 real = show_runner.match_name(name, srcs)
                 items.append({"what": f"Quelle in {mod}", "name": real or name, "found": bool(real),
                               "optional": key in show_runner.CLASS_SOURCE_FALLBACK or key.startswith("schedule:")
-                                          or key in ("track_location", "results", "standings_after"),
+                                          or key in ("track_location", "results", "standings_after", "avatar_idle"),
                               "near": [] if real else [h for h in srcs if h and any(
                                   w in h.casefold() for w in name.casefold().split() if len(w) >= 4)][:4]})
         gcfg = poller.graphics.cfg                       # GRAFIK sources on the iRacing scene

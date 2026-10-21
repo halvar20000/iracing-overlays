@@ -264,6 +264,9 @@ RESULTS_HTML = """
     body.stream-mode { background: transparent; padding: 16px; }
     body.stream-mode .card,
     body.stream-mode .title-card { background: rgba(20,20,28,0.88); }
+    /* /solid (Abspann): OPAQUE cards on a transparent page — placed next to
+       Gabi in the studio, she stays in the picture (Andreas, 2026-10-21) */
+    html.solid, body.solid { background: transparent; padding: 16px; }
 
     .stream-toggle {
         position: fixed; top: 12px; right: 12px; z-index: 1000;
@@ -510,13 +513,16 @@ function applyStreamMode(on) {
     try { localStorage.setItem(STREAM_KEY, on ? "1" : "0"); } catch (e) {}
 }
 function toggleStreamMode() { applyStreamMode(!document.body.classList.contains("stream-mode")); }
-// /solid (or ?solid=1) = always the dark opaque page, never transparent and
-// never written to localStorage: the Abspann shows it OVER Gabi on the
-// Moderator scene, so nothing behind it may shine through.
+// /solid (or ?solid=1) = opaque cards on a transparent page, never stream
+// mode and never written to localStorage: the Abspann places it NEXT TO
+// Gabi on the Moderator scene — the table must not let her shine through,
+// the rest of the page must not cover her.
 const SOLID = location.pathname.split("/").filter(Boolean).pop() === "solid"
     || new URLSearchParams(location.search).get("solid") === "1";
 if (SOLID) {
     document.body.classList.remove("stream-mode");
+    document.documentElement.classList.add("solid");
+    document.body.classList.add("solid");
 } else {
     // Transparent (stream) mode is the DEFAULT for OBS browser sources.
     // Press H to toggle the dark debug background back on; the choice persists.

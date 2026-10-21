@@ -1301,9 +1301,11 @@ OVERLAY_HTML = r"""<!DOCTYPE html>
     width: 100%; max-width: 540px;
     padding: 10px;
   }
-  /* /overlay/solid (or ?solid=1): opaque full page, table centred and scaled
-     up (?zoom=, default 1.6) - the Abspann shows it over Gabi. */
-  html.solid, body.solid { background: #0a0a0f; min-height: 100vh; }
+  /* /overlay/solid (or ?solid=1): the Abspann's table — an OPAQUE panel
+     (nothing shines through it) on a transparent page, scaled up (?zoom=,
+     default 1.6), so it can sit NEXT TO Gabi in the studio (Andreas,
+     2026-10-21: she stays in the picture while the voice reads). */
+  html.solid, body.solid { background: rgba(0,0,0,0); }
   body.solid .container { margin: 24px auto 0; zoom: var(--zoom, 1.6); }
   body.solid .panel, body.solid.stream .panel { background: #14141c; backdrop-filter: none;
     -webkit-backdrop-filter: none; }

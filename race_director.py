@@ -99,17 +99,19 @@ INTERRUPT_MARGIN = 25    # a candidate this much stronger may cut a shot before 
 # tried in order and rotated inside long shots. Missing names are skipped;
 # Scenic is never used. Track cameras (TV) show incidents and battles best.
 # In-car view = Gyro only, never Cockpit (Thomas, 2026-10-15).
-NEVER_CAMS = ("SCENIC", "COCKPIT")
+# No chase cameras at all (Chase / Far Chase / Rear Chase): the view from
+# behind the car looks unrealistic on stream (Andreas, 2026-10-21).
+NEVER_CAMS = ("SCENIC", "COCKPIT", "CHASE")
 CAMS = {
     "incident": ["TV1", "TV2", "TV3"],
     "overtake": ["TV1", "TV2", "TV3"],
-    "battle":   ["TV1", "Chase", "TV2", "Far Chase", "TV3"],
+    "battle":   ["TV1", "TV2", "TV3", "Gyro"],
     "pit":      ["Pit Lane", "TV1", "TV2"],
-    "leader":   ["TV1", "Chase", "TV2", "Gyro", "TV3"],
-    "field":    ["TV2", "TV1", "Chase", "TV3"],
-    "attack":   ["TV1", "Chase", "Gyro", "TV2", "TV3"],
-    "pole":     ["TV1", "Chase", "TV2", "TV3"],
-    "caution":  ["TV1", "TV2", "Chase", "TV3"],
+    "leader":   ["TV1", "TV2", "Gyro", "TV3"],
+    "field":    ["TV2", "TV1", "TV3"],
+    "attack":   ["TV1", "Gyro", "TV2", "TV3"],
+    "pole":     ["TV1", "TV2", "TV3"],
+    "caution":  ["TV1", "TV2", "TV3"],
 }
 
 

@@ -89,11 +89,11 @@ Klasse (Plätze, Abstände und Punkte innerhalb der Klasse). Dafür reichen
 dieselben zwei Quellen; Race Results (5002) braucht dazu den CLS-Kader
 (wie der Tower, automatisch).
 
-Beide Quellen bildschirmfüllend (1920 × 1080) über Gabi legen. Die
-`_solid`-Seiten haben einen deckenden dunklen Hintergrund, damit Gabi nicht
-durchscheint, während die Stimme spricht. Die Tabelle ist mittig und
-vergrößert (`?zoom=` ändert das, Standard 1.6). Die normalen `results.html` /
-`champ.html` bleiben transparent für die Szene iRacing.
+Die `_solid`-Seiten zeigen eine **deckende Tabelle auf durchsichtigem
+Grund**. Gabi bleibt still im Studio sitzen, während die Stimme vorliest. Lege
+die Quellen deshalb **neben** Gabi, nicht über sie (siehe „Layout“ unter 3.).
+Die Meisterschaft ist vergrößert (`?zoom=` ändert das, Standard 1.6). Die
+normalen `results.html` / `champ.html` bleiben für die Szene iRacing.
 
 Seite: `http://localhost:5000/abspann` (Skript lesen und ändern, Start,
 Weiter, Stopp). Stream Deck: `/streamdeck/post_start`, `post_next`,
@@ -173,8 +173,14 @@ spricht die Stimme, während Gabi ruhig im Studio sitzt.
    `"sync_api_key": "sk-…"` ergänzen (nie in den Chat), Dashboard neu starten.
    Test: `http://localhost:5000/avatar` — Satz eingeben, Video ansehen.
 2. **OBS, Szene Moderator**, zwei Medienquellen übereinander:
-   - `Gabi Ruhe` (unten): lokale Datei `avatar\gabi_idle_loop.mp4`, **Schleife an**,
-     immer sichtbar. So sitzt sie da, wenn sie nichts sagt.
+   - `Gabi Ruhe` (unten): lokale Datei `avatar\gabi_idle_loop.mp4`, **Schleife an**.
+     Der Ablauf blendet sie beim Start von Moderation und Abspann selbst ein.
+     So sitzt sie still im Studio, wenn sie nichts sagt.
+   - **Layout:** Gabi sitzt in der Bildmitte. Alle Seiten, die während der
+     Moderation kommen (`Letztes Rennen …`, `Tabelle …`, `WCT`, `Ergebnis`,
+     `Meisterschaft`), gehören **seitlich** daneben, z. B. auf die linke
+     Bildhälfte (Rechtsklick → Transformieren, oder mit Strg ziehen) — nicht
+     über die Mitte. In der Szenenliste liegen sie über `Gabi Ruhe`.
    - `Gabi` (darüber, gleiche Größe und Position): Datei egal, der Ablauf setzt sie.
      Ausgeblendet lassen. „Wiedergabe neu starten, wenn Quelle aktiv wird“ **aus**,
      Audio: „Audioüberwachung → Überwachen und ausgeben“ wie bei der Stimme.

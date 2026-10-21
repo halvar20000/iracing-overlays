@@ -177,6 +177,25 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 21, 2026 (Andreas's feedback on the WCT Indianapolis show):**
+(1) "Gabi vanished after the greeting" — the recording shows the EMPTY studio
+during every page: the idle loop was not on, and the code never touched it.
+New source key `avatar_idle` ("Gabi Ruhe"): switched ON at every start of
+moderation / Abspann (`ShowRunner.start`), listed (optional) in "OBS prüfen".
+(2) Tables should sit BESIDE her, she stays in the picture while the voice
+reads → the Abspann `_solid` pages are now an OPAQUE table on a TRANSPARENT
+page (reverses the 2026-10-20 full-screen dark page, whose purpose was to
+hide her); placement is OBS layout (SENDEABLAUF.md: pages on one side, not
+over the centre). (3) "Chase camera looks unrealistic" → `NEVER_CAMS` +=
+"CHASE" (Chase / Far Chase / Rear Chase, also as the fallback), CAMS lists
+without chase. (4) "tables didn't always match, overall standings": the
+pre-race pages in the recording all matched (PRO/AM checked frame by frame) —
+probably the Abspann sources still pointing at results.html / champ.html,
+which do not follow the class pin; told Thomas to use the _solid loaders.
+Tests: test_race_director +3, test_show_runner +1 (idle on to the end),
+both pages checked in Edge (page transparent, table rgb(20,20,28)).
+Restart 5000, 5002, 5010.
+
 **October 20, 2026, after the race (caution + voice mood + pit-exit
 false spins; WCT Indianapolis):** (1) every pit exit was "moved backwards
 75 % of lap" → lost_control + REGIE replay: the lap-regression detector kept
