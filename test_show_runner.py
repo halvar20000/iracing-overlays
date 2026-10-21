@@ -661,6 +661,35 @@ r16.prepare()
 check("avatar: without a sync.so key nothing is ordered, 5 min lead", not fr_off.ensured
       and r16._due(dt.datetime(2026, 10, 15, 19, 30)) is None and r16._due(dt.datetime(2026, 10, 15, 19, 36)) == "prepare")
 check("avatar: with it the script is written 20 min ahead", r15._due(dt.datetime(2026, 10, 15, 19, 21)) == "prepare")
+# Gabi's clip with "Loop" on in OBS (copied from the idle source) played ~1.5
+# times (2026-10-21): loop is switched off before playing, the segment ends
+# after ONE pass; and if OBS ignored that, a clip starting over still ends it
+def loop_run(ignore_setting):
+    o = FakeObs({"Moderator": {"Gabi": False}, "iRacing": {}}, media={"Gabi": 2.0})
+    o.media["Gabi"]["looping"] = True
+    o.media["Gabi"]["restart_on_activate"] = True
+    c = sr.load_config(); c["obs"] = {"host": "127.0.0.1", "port": o.port}
+    cl = ObsClient(port=o.port)
+    if ignore_setting:                       # an OBS that keeps looping whatever we say
+        cl.set_input_settings = lambda s, st: None
+        cl.set_media_file = lambda s, p, **k: cl.call("SetInputSettings",
+                                                      {"inputName": s, "inputSettings": {"local_file": p}})
+    r = sr.ShowRunner(c, cl, Speaker(), facts_fn=lambda: facts,
+                      script_fn=lambda f, s_: ({"intro": "Hallo, ich bin Gabi."}, "t"),
+                      director_on=lambda: None, avatar=FakeRenderer({"intro"}))
+    r.prepare()
+    t0 = time.time()
+    r.start()
+    wait_for(lambda: r.state == "done", 20, tick=r.tick)
+    return o, time.time() - t0
+o21, took21 = loop_run(False)
+check("Gabi clip: loop and restart-on-show switched off before playing",
+      o21.media["Gabi"].get("looping") is False and o21.media["Gabi"].get("restart_on_activate") is False,
+      o21.media["Gabi"])
+check("Gabi clip with Loop on in OBS plays once (2 s clip, not ~1.5x / +3 s)", took21 < 3.6, round(took21, 2))
+o22, took22 = loop_run(True)
+check("...and if OBS keeps looping, the restart of the clip ends the segment",
+      o22.media["Gabi"].get("looping") is True and took22 < 3.6, round(took22, 2))
 # Abspann: the goodbye is written at the chequered flag (Gabi's video ordered
 # then) and kept word for word when the script is written again at the start
 calls19, now19 = [0], [1000.0]

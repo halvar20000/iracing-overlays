@@ -46,6 +46,10 @@ CONFIG_FILE = HERE / "show_config.json"
 SCRIPT_FILE = HERE / "show_script.json"   # the last script (incl. hand edits), survives a restart
 EDIT_KEEP_S = 12 * 3600                   # an edited script is never rewritten automatically within this
 EARLY_GOODBYE_S = 1800                    # Abspann: the goodbye written at the flag is kept this long
+# Gabi's clips and the track video are played ONCE: with "Loop" on (copied
+# from the idle source) OBS never reports "ended", the clip ran ~1.5 times
+# until the duration + 3 s safety net cut it (2026-10-20/21). Set before every play.
+MEDIA_ONCE = {"looping": False, "restart_on_activate": False}
 DEFAULT_CONFIG = {
     "obs": {"host": "127.0.0.1", "port": 4455, "password": ""},
     "scenes": {"moderator": "Moderator", "iracing": "iRacing"},
@@ -1352,7 +1356,7 @@ class ShowRunner:
             self._note(f"Segment {sid}: Gabi-Video nicht fertig – nur Stimme")
             return False
         src = self._name("avatar_talk")
-        if not self._obs(lambda: self.obs.set_media_file(src, str(path)), f"Gabi-Video {path.name}"):
+        if not self._obs(lambda: self.obs.set_media_file(src, str(path), **MEDIA_ONCE), f"Gabi-Video {path.name}"):
             return False
         self._source("avatar_talk", True)
         if not self._obs(lambda: self.obs.media_restart(src), "Gabi-Video starten"):
@@ -1379,10 +1383,14 @@ class ShowRunner:
         if path is None:
             self._note(f"Kein Streckenvideo für {self.facts.get('strecke') or 'diese Strecke'} in {d.name}/ – ohne Video")
             return False
-        if self._obs(lambda: self.obs.set_media_file(vid, str(path)), f"Video-Datei {path.name}"):
+        if self._obs(lambda: self.obs.set_media_file(vid, str(path), **MEDIA_ONCE), f"Video-Datei {path.name}"):
             self._note(f"Streckenvideo: {path.name}")
             return True
         return False
+
+    def _play_once(self, name):
+        """Loop / restart-on-show off before a clip is played (see MEDIA_ONCE)."""
+        self._obs(lambda: self.obs.set_input_settings(name, MEDIA_ONCE), f"Schleife aus {name}")
 
     def _has(self, key) -> bool:
         """An optional source: configured and (when the scene is known) in it."""
@@ -1434,6 +1442,7 @@ class ShowRunner:
             seg["video_pending"] = self.cfg["sources"]["track_video"]   # started once the text is spoken
         elif video_ok:
             vid = self.cfg["sources"]["track_video"]
+            self._play_once(vid)
             self._source("track_video", True)
             if self._obs(lambda: self.obs.media_restart(vid), f"Video {vid}"):
                 seg["media"] = vid
@@ -1462,6 +1471,7 @@ class ShowRunner:
             if seg.get("map"):
                 self._source("track_location", False)
                 seg["map"] = False
+            self._play_once(vid)
             self._source("track_video", True)
             if self._obs(lambda: self.obs.media_restart(vid), f"Video {vid}"):
                 seg["media"], seg["video_at"] = vid, self.clock()
@@ -1472,9 +1482,15 @@ class ShowRunner:
         if seg["media"]:
             try:
                 st = self.obs.media_status(seg["media"])
+                settled = self.clock() - seg.get("video_at", seg["started"]) > 1.5   # not the old state of a fresh restart
                 media_done = st["state"] in ("OBS_MEDIA_STATE_ENDED", "OBS_MEDIA_STATE_STOPPED",
-                                             "OBS_MEDIA_STATE_ERROR", "OBS_MEDIA_STATE_NONE") \
-                    and self.clock() - seg.get("video_at", seg["started"]) > 1.5   # not the old state of a fresh restart
+                                             "OBS_MEDIA_STATE_ERROR", "OBS_MEDIA_STATE_NONE") and settled
+                # the clip started over (Loop still on in OBS): it has played once — done
+                cur = st.get("cursor_s")
+                if cur is not None and settled:
+                    if cur < seg.get("cursor_max", 0.0) - 1.0:
+                        media_done = True
+                    seg["cursor_max"] = max(seg.get("cursor_max", 0.0), cur)
                 if st.get("duration_s") and self.clock() - seg.get("video_at", seg["started"]) > st["duration_s"] + 3:
                     media_done = True
             except Exception:

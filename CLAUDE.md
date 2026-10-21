@@ -177,6 +177,21 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 21, 2026 (Gabi's clip played ~1.5 times — the "intro started
+again" of the race night too):** read from Thomas's OBS over the LAN
+(obs-websocket 192.168.86.138:4455): source "Gabi" had `looping: True`
+(copied from the idle source), "Streckenvideo" looping + restart_on_activate.
+A looping ffmpeg source never reports ENDED, so `_tick_segment` waited for
+the duration + 3 s safety net — a ~12 s clip ran ~15-18 s. Now
+`MEDIA_ONCE` {looping: False, restart_on_activate: False} is sent with every
+`set_media_file` (Gabi, per-track video) and via `_play_once()` before every
+track-video restart; and a clip whose cursor jumps back > 1 s (after the
+1.5 s settle) counts as played once. `obs_ws.set_input_settings()`;
+`set_media_file(**settings)`. fake_obs merges SetInputSettings and loops
+like OBS. test_show_runner +3 (fail on the old code: 5.0 s for a 2 s clip).
+Also seen: "Gabi Ruhe" plays gabi_still.mp4 (4 s, jumps at the loop), not
+gabi_idle_loop.mp4 (forward + backward, seamless).
+
 **October 21, 2026 (dashboard CamCameraState bits fixed):** the dashboard's
 constants were one bit off (0x0001 "tool", 0x0002 "UI hidden", 0x0004 "auto
 shot"); the real irsdk.CameraState bits are session screen 0x0001 / scenic

@@ -123,6 +123,9 @@ class FakeObs:
                 return True, {"mediaState": "OBS_MEDIA_STATE_STOPPED", "mediaDuration": int(m["duration"] * 1000),
                               "mediaCursor": 0}, None
             el = time.time() - m["started"]
+            if m.get("looping"):              # like OBS: a looping source never ends
+                return True, {"mediaState": "OBS_MEDIA_STATE_PLAYING", "mediaDuration": int(m["duration"] * 1000),
+                              "mediaCursor": int((el % m["duration"]) * 1000)}, None
             state = "OBS_MEDIA_STATE_ENDED" if el >= m["duration"] else "OBS_MEDIA_STATE_PLAYING"
             return True, {"mediaState": state, "mediaDuration": int(m["duration"] * 1000),
                           "mediaCursor": int(min(el, m["duration"]) * 1000)}, None
@@ -130,7 +133,12 @@ class FakeObs:
             m = self.media.get(rd["inputName"])
             if m is None:
                 return False, None, "No input"
-            m["file"] = (rd.get("inputSettings") or {}).get("local_file")
+            s = rd.get("inputSettings") or {}    # merged, like OBS (overlay=true)
+            if "local_file" in s:
+                m["file"] = s["local_file"]
+            for k in ("looping", "restart_on_activate"):
+                if k in s:
+                    m[k] = s[k]
             return True, None, None
         if rt == "GetStreamStatus":
             return True, {"outputActive": self.streaming}, None

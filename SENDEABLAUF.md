@@ -182,7 +182,9 @@ spricht die Stimme, während Gabi ruhig im Studio sitzt.
      Bildhälfte (Rechtsklick → Transformieren, oder mit Strg ziehen) — nicht
      über die Mitte. In der Szenenliste liegen sie über `Gabi Ruhe`.
    - `Gabi` (darüber, gleiche Größe und Position): Datei egal, der Ablauf setzt sie.
-     Ausgeblendet lassen. „Wiedergabe neu starten, wenn Quelle aktiv wird“ **aus**,
+     Ausgeblendet lassen. **„Schleife“ aus.** Der Ablauf schaltet Schleife und
+     „Wiedergabe neu starten, wenn Quelle aktiv wird“ vor jedem Abspielen selbst
+     aus (auch beim `Streckenvideo`): mit Schleife lief ein Clip sonst ~1,5-mal.
      Audio: „Audioüberwachung → Überwachen und ausgeben“ wie bei der Stimme.
    - Die VTube-Studio-Aufnahme in dieser Szene kann raus.
 3. **Abschied im Abspann:** Schon **an der Zielflagge** schreibt der Abspann
