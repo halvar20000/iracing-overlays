@@ -258,22 +258,52 @@ class HighlightRunner:
             self.ended_at = self.clock()
 
     # recording on / off around each scene
+    # OBS starts / pauses its recording output ASYNCHRONOUSLY: StartRecord
+    # answers before the output runs, and a PauseRecord sent in that moment is
+    # lost (first real run: Gabi's intro ended at once -> ResumeRecord "503 not
+    # paused"). Every step therefore waits until GetRecordStatus shows it.
+    def _rec_status(self):
+        st = self._obs(lambda: self.obs.call("GetRecordStatus"), "Aufnahme-Status") or {}
+        return bool(st.get("outputActive")), bool(st.get("outputPaused"))
+
+    def _rec_wait(self, active=None, paused=None, timeout=5.0) -> bool:
+        t0 = self.clock()
+        while True:
+            a, p = self._rec_status()
+            if (active is None or a == active) and (paused is None or p == paused):
+                return True
+            if self.clock() - t0 > timeout:
+                return False
+            self.sleep(0.1)
+
     def _rec_on(self, rec):
         if not rec:
             return
         if not self.rec_started:
             self._obs(lambda: self.obs.call("StartRecord"), "Aufnahme starten", required=True)
             self.rec_started = True
+            if not self._rec_wait(active=True):
+                raise RuntimeError("OBS-Aufnahme startet nicht (Aufnahmepfad / Encoder in OBS prüfen)")
             self._note("Aufnahme gestartet")
         elif self.rec_paused:
-            self._obs(lambda: self.obs.call("ResumeRecord"), "Aufnahme fortsetzen", required=True)
+            a, p = self._rec_status()
+            if p:
+                self._obs(lambda: self.obs.call("ResumeRecord"), "Aufnahme fortsetzen", required=True)
+                self._rec_wait(paused=False, timeout=3.0)
+            elif not a:
+                raise RuntimeError("OBS-Aufnahme läuft nicht mehr")
+            else:
+                self._note("Aufnahme lief schon weiter (Pause war nicht angekommen)")
         self.rec_paused = False
         self._rec_resume_clock(True)
 
     def _rec_off(self, rec):
         if not rec or not self.rec_started or self.rec_paused:
             return
+        self._rec_wait(active=True)
         self._obs(lambda: self.obs.call("PauseRecord"), "Aufnahme pausieren", required=True)
+        if not self._rec_wait(paused=True, timeout=3.0):
+            self._note("OBS meldet die Pause nicht")
         self.rec_paused = True
         self._rec_resume_clock(False)
 
@@ -411,18 +441,31 @@ class HighlightRunner:
             self._obs(lambda: self.obs.media_restart(talk), "Gabi-Video starten")
             # Done when OBS says ended — or, for a source with "Loop" ticked (it never
             # ends), when the clip's length has played or its cursor jumped back.
-            t0, dur, last_cur = self.clock(), None, None
+            # While the new file opens OBS reports duration -1 / the old state, so
+            # length and cursor only count once the clip PLAYS (2nd real run:
+            # duration -1 ended the intro at once, Gabi never spoke).
+            t0, dur, last_cur, playing_at = self.clock(), None, None, None
             while not self._stop.is_set() and self.clock() - t0 < 90:
                 el = self.clock() - t0
                 st = self._obs(lambda: self.obs.media_status(talk), "Gabi-Video Status") or {}
-                dur = st.get("duration_s") or dur
-                cur = st.get("cursor_s")
-                if el > 1.5 and st.get("state") in ("OBS_MEDIA_STATE_ENDED", "OBS_MEDIA_STATE_STOPPED",
-                                                    "OBS_MEDIA_STATE_ERROR", "OBS_MEDIA_STATE_NONE"):
-                    break                        # (a fresh file reports the old 'ended' for a moment)
-                if dur and el >= dur - 0.15:
+                state, cur = st.get("state"), st.get("cursor_s")
+                if state == "OBS_MEDIA_STATE_PLAYING":
+                    if playing_at is None:
+                        playing_at = self.clock()
+                    if (st.get("duration_s") or 0) > 1.0:
+                        dur = st["duration_s"]
+                if playing_at is None:
+                    if el > 10:
+                        self._note("Gabi-Video startet nicht")
+                        break
+                    self.sleep(0.1)
+                    continue
+                if el > 1.5 and state in ("OBS_MEDIA_STATE_ENDED", "OBS_MEDIA_STATE_STOPPED",
+                                          "OBS_MEDIA_STATE_ERROR", "OBS_MEDIA_STATE_NONE"):
                     break
-                if el > 1.5 and cur is not None and last_cur is not None and cur + 0.5 < last_cur:
+                if dur and self.clock() - playing_at >= dur - 0.15:
+                    break                        # a looping source never says "ended"
+                if cur is not None and last_cur is not None and cur + 0.5 < last_cur:
                     break                        # looped back to the start
                 if cur is not None:
                     last_cur = cur

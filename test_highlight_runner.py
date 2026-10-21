@@ -150,9 +150,10 @@ check("card shown at the start of a scene", st["card"] and st["card"]["title"] =
 r.wait(30)
 st = r.status()
 check("run done", st["state"] == "done", st)
-rec_calls = [c for c, _ in obs.trace]
+rec_calls = [c for c, _ in obs.trace if c != "GetRecordStatus"]
+check("status checked before anything", obs.trace[0][0] == "GetRecordStatus")
 check("record calls: Start, Pause, Resume, Pause, Resume, Pause, Stop",
-      rec_calls == ["GetRecordStatus", "StartRecord", "PauseRecord", "ResumeRecord", "PauseRecord",
+      rec_calls == ["StartRecord", "PauseRecord", "ResumeRecord", "PauseRecord",
                     "ResumeRecord", "PauseRecord", "StopRecord"], rec_calls)
 check("OBS recorded 3 segments", len(fake.rec_segments) == 3 and not fake.recording, fake.rec_segments)
 check("output path reported", st["output"] == "C:/Videos/fake_recording.mp4", st["output"])
@@ -189,9 +190,8 @@ check("grid: source Startaufstellung visible, no title card over it",
 r.wait(30)
 st = r.status()
 check("grid: done", st["state"] == "done", st["error"])
-rc = [c for c, _ in obs.trace]
-check("grid: one recording, no pause between grid and start", rc == ["GetRecordStatus", "StartRecord",
-      "PauseRecord", "StopRecord"], rc)
+rc = [c for c, _ in obs.trace if c != "GetRecordStatus"]
+check("grid: one recording, no pause between grid and start", rc == ["StartRecord", "PauseRecord", "StopRecord"], rc)
 check("grid: one seek only (start plays on from the grid)", [c for c in rp.calls if c[0] == "seek"]
       == [("seek", 3, 244.0)], rp.calls)
 check("grid: source hidden again", not fake.scenes["iRacing"]["Startaufstellung"])
@@ -315,6 +315,54 @@ check("loop: run done", r.status()["state"] == "done", r.status()["error"])
 check("loop: intro ends after the clip's length, not after 90 s", t_intro is not None and t_intro < 4, t_intro)
 check("loop: Gabi video stopped + hidden", any(rt == "TriggerMediaInputAction" and d["mediaAction"].endswith("STOP")
                                             for rt, d in lo.calls) and not lo.scenes["Moderator"]["Gabi"])
+
+# ---------------------------------------------------------------- OBS as it really behaves (2nd real run,
+# 2026-10-21: "ResumeRecord: 503", Gabi silent): the record output starts a moment
+# AFTER StartRecord answers, a PauseRecord in that moment is lost, and a freshly
+# loaded media file reports duration -1 while it opens.
+class RealishObs(LoopObs):
+    START_LAG, OPEN_S = 0.5, 0.4
+
+    def handle(self, rt, rd):
+        now = time.time()
+        if rt == "StartRecord" and not self.recording:
+            self.calls.append((rt, rd))
+            self.recording, self.rec_paused, self._active_at = True, False, now + self.START_LAG
+            self.rec_segments.append([now, None])
+            return True, None, None
+        active = self.recording and now >= getattr(self, "_active_at", 0)
+        if rt == "GetRecordStatus":
+            self.calls.append((rt, rd))
+            return True, {"outputActive": active, "outputPaused": self.rec_paused}, None
+        if rt == "PauseRecord" and self.recording and not active:
+            self.calls.append((rt, rd))
+            return True, None, None            # accepted, but nothing happens
+        if rt == "GetMediaInputStatus" and rd.get("inputName") == "Gabi":
+            m = self.media["Gabi"]
+            if m["started"] and now - m["started"] < self.OPEN_S:
+                self.calls.append((rt, rd))
+                return True, {"mediaState": "OBS_MEDIA_STATE_OPENING", "mediaDuration": -1,
+                              "mediaCursor": 0}, None
+        return super().handle(rt, rd)
+
+
+ro = RealishObs(OBS_SCENES, media={"Gabi": 1.5})
+rp = FakeReplay()
+r = R.HighlightRunner(rp, TracingObs(ro.port, rp), avatar=Avatar(), cfg=CFG)
+t_start = time.time()
+r.start(SCENES[:2], {"record": True, "gabi": True, "intro": "Hallo!"})
+t_intro, seen_mod = None, None
+while r.status()["state"] == "running" and time.time() - t_start < 40:
+    if seen_mod is None and ro.current == "Moderator":
+        seen_mod = time.time()
+    if t_intro is None and seen_mod and ro.current == "iRacing":
+        t_intro = time.time() - seen_mod
+    time.sleep(0.05)
+st = r.status()
+check("realistic OBS: run done, no 503", st["state"] == "done", st["error"])
+check("realistic OBS: Gabi spoke her whole clip (>= 1.5 s after it opened)", t_intro is not None and t_intro >= 1.8,
+      t_intro)
+check("realistic OBS: intro + 2 scenes = 3 recorded segments", len(ro.rec_segments) == 3, ro.rec_segments)
 
 # ---------------------------------------------------------------- real reel (Indianapolis), when the log is here
 INDY = "logs/WCT/indianapolis/20261020-195328_indianapolis_motor_speedway_road_course_race.jsonl"

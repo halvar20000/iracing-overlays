@@ -222,6 +222,14 @@ FIX same day (first real run: Gabi's intro LOOPED for 31 s until Thomas
 stopped it): the OBS source "Gabi" loops, so it never reports ENDED. The
 intro / outro now ends at the clip's duration (−0.15 s) or when the cursor
 jumps back, then media_stop + hide. Test: LoopObs (test_highlight_runner 63).
+SECOND FIX (next run: "ResumeRecord: 503", Gabi silent): (1) a freshly loaded
+media file reports duration −1 / OPENING — the loop fix took −1 as the length
+and ended the intro at once; length / cursor now count only once the clip
+PLAYS. (2) OBS starts the record output ASYNCHRONOUSLY: the PauseRecord sent
+right after StartRecord was accepted but lost, so ResumeRecord got 503 (not
+paused). Every record step now waits for GetRecordStatus (active / paused),
+and a resume when OBS is not paused just goes on. Test RealishObs (start lag,
+lost pause, OPENING −1) fails on the old code exactly like the real run; 67.
 Restart 5000.
 
 **October 21, 2026 (launcher: "Update & restart" button missing unless the
