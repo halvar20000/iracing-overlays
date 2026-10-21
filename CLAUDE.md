@@ -250,6 +250,16 @@ stream) — OBS cannot PAUSE then (PauseRecord accepted, nothing happens), so
 the seeks were recorded. The run reads the profile (GetProfileParameter)
 before StartRecord and stops with a German hint (also Advanced + "use stream
 encoder"). Tests 79.
+FIFTH (Thomas: always check the iRacing UI is hidden): PollerReplay reads
+CamCameraState and sets ui_hidden (0x0008) + clears iRacing's own auto shot
+(0x0010) via cam_set_state only when needed — on prepare, after every switch /
+play, every 1 s in hold(); restore() puts the auto shot back. No spacebar any
+more (a toggle can un-hide). Real replay: UI shown + auto shot on before the
+rehearsal -> 0 of 454 samples with the UI shown, auto shot back after. FOUND:
+the DASHBOARD's own constants are WRONG — CAM_UI_HIDDEN 0x0002 is
+"scenic active" (read-only), CAM_USE_AUTO_SHOT 0x0004 is "cam tool active"
+(irsdk CameraState), so its MOST EXCITING button sets the cam tool (the April
+"HUD pops up" symptom). Not fixed here. Tests 83.
 Restart 5000.
 
 **October 21, 2026 (launcher: "Update & restart" button missing unless the

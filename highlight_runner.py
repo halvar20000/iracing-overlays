@@ -529,10 +529,49 @@ class PollerReplay:
     auto-replays are off and the lost-camera watchdog is held back; restore()
     puts them back as they were."""
 
+    # CamCameraState bits (irsdk CameraState). NOTE: the dashboard's own
+    # CAM_UI_HIDDEN = 0x0002 / CAM_USE_AUTO_SHOT = 0x0004 are NOT these —
+    # 0x0002 is "scenic active" (read-only), 0x0004 is "cam tool active".
+    CAM_TOOL = 0x0004
+    UI_HIDDEN = 0x0008
+    AUTO_SHOT = 0x0010
+    CAM_CHANGEABLE = 0x01FC          # bits a broadcast may set
+    UI_CHECK_S = 1.0
+
     def __init__(self, poller, sleep=time.sleep):
         self.p = poller
         self.sleep = sleep
         self._saved = None
+        self._cam_state0 = None
+        self._ui_at = 0.0
+
+    def _cam_state(self):
+        try:
+            v = self.p.ir["CamCameraState"]
+            return int(v) if v is not None else None
+        except Exception:
+            return None
+
+    def ensure_ui_hidden(self, force=False) -> bool:
+        """iRacing's UI hidden and its own auto camera ("Most Exciting") off,
+        read from CamCameraState — set only when it is not so already.
+        Checked before every shot and every UI_CHECK_S while recording
+        (Thomas, 2026-10-21: the replay bar was in the video)."""
+        now = time.time()
+        if not force and now - self._ui_at < self.UI_CHECK_S:
+            return True
+        self._ui_at = now
+        v = self._cam_state()
+        if v is None:
+            return False
+        if (v & self.UI_HIDDEN) and not (v & self.AUTO_SHOT):
+            return True
+        want = ((v & self.CAM_CHANGEABLE) & ~self.CAM_TOOL & ~self.AUTO_SHOT) | self.UI_HIDDEN
+        try:
+            self.p.ir.cam_set_state(want)
+        except Exception:
+            return False
+        return False
 
     def connected(self) -> bool:
         return bool(self.p.connected)
@@ -559,9 +598,12 @@ class PollerReplay:
             pass
         p.highlights_active = True
         p._own_replay_from = time.time()
+        self._cam_state0 = self._cam_state()
+        self.ensure_ui_hidden(force=True)
         self.hold()
 
     def hold(self):
+        self.ensure_ui_hidden()
         until = time.time() + 30.0
         self.p._manual_override_until = until      # watchdog / auto modes keep off
         self.p._own_replay_until = until           # detectors' replay noise is not news
@@ -578,6 +620,12 @@ class PollerReplay:
         if s.get("director_enabled"):
             p.set_director(True)
         self._saved = None
+        v0, v = self._cam_state0, self._cam_state()
+        if v0 is not None and v is not None and (v0 & self.AUTO_SHOT) and not (v & self.AUTO_SHOT):
+            try:                          # iRacing's own auto camera back as it was (UI stays hidden)
+                self.p.ir.cam_set_state(((v & self.CAM_CHANGEABLE) & ~self.CAM_TOOL) | self.AUTO_SHOT)
+            except Exception:
+                pass
 
     LAND_TOL_S = 3.0      # the playhead is "there" within this many seconds
     LAND_WAIT_S = 6.0     # per try; a jump into ANOTHER session takes iRacing ~2.5 s
@@ -613,7 +661,7 @@ class PollerReplay:
 
     def play(self):
         self.p.ir.replay_set_play_speed(1, False)
-        self.p._reassert_ui_hide()
+        self.ensure_ui_hidden(force=True)
 
     def pause(self):
         self.p.ir.replay_set_play_speed(0, False)
@@ -621,4 +669,4 @@ class PollerReplay:
     def switch(self, car_number, group_id):
         self.p.ir.cam_switch_num(str(car_number), int(group_id), 0)
         self.p._current_cam_group = int(group_id)
-        self.p._reassert_ui_hide()
+        self.ensure_ui_hidden(force=True)

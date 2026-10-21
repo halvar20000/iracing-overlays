@@ -490,7 +490,8 @@ else:
 class FakeIR:
     def __init__(self):
         self.calls = []
-        self.vals = {"SessionTime": 123.4, "SessionNum": 2}
+        self.vals = {"SessionTime": 123.4, "SessionNum": 2,
+                     "CamCameraState": 0x51}     # UI SHOWN, iRacing's auto camera ON (Thomas's replay)
 
     def __getitem__(self, k):
         return self.vals.get(k)
@@ -505,6 +506,10 @@ class FakeIR:
 
     def cam_switch_num(self, car, grp, cam):
         self.calls.append(("cam", car, grp, cam))
+
+    def cam_set_state(self, v):
+        self.calls.append(("state", v))
+        self.vals["CamCameraState"] = v | (self.vals["CamCameraState"] & 0x3)   # read-only bits stay
 
 
 class FakePoller:
@@ -538,6 +543,10 @@ class FakePoller:
 fp = FakePoller()
 pr = R.PollerReplay(fp, sleep=lambda s: None)
 pr.prepare()
+st0 = [c for c in fp.ir.calls if c[0] == "state"]
+check("adapter: UI hidden + iRacing auto camera off at the start (never cam-tool bit)",
+      st0 == [("state", 0x48)] and fp.ir.vals["CamCameraState"] & 0x08 and not fp.ir.vals["CamCameraState"] & 0x14, st0)
+fp.ir.calls.clear()
 check("adapter: REGIE / focus / auto-replays off", not fp.director_enabled and not fp.focus_leader
       and not fp.auto_replay and not fp.auto_replay_overtakes and fp.director_calls == [False])
 check("adapter: watchdog held back", fp._manual_override_until > time.time() + 20)
@@ -545,15 +554,27 @@ landed = pr.seek(3, 547.72)
 check("adapter: seek reports it landed", landed is True)
 pr.switch("01", 2)
 pr.play()
-check("adapter: pause -> search(session_num, ms) -> cam -> play 1x",
+check("adapter: pause -> search(session_num, ms) -> cam -> play 1x (UI already hidden: no state writes)",
       fp.ir.calls == [("speed", 0), ("search", 3, 547720), ("cam", "01", 2, 0), ("speed", 1)], fp.ir.calls)
-check("adapter: HUD re-hidden after camera / play", fp.hud == 2)
+check("adapter: no spacebar toggling any more", fp.hud == 0)
+fp.ir.vals["CamCameraState"] = 0x41            # someone showed the UI
+fp.ir.calls.clear()
+pr.switch("01", 3)
+check("adapter: UI shown -> hidden again right after a camera switch",
+      ("state", 0x48) in fp.ir.calls and fp.ir.vals["CamCameraState"] & 0x08, fp.ir.calls)
+fp.ir.vals["CamCameraState"] = 0x41
+fp.ir.calls.clear()
+pr._ui_at = 0
+pr.hold()
+check("adapter: ...and while a scene plays (hold)", ("state", 0x48) in fp.ir.calls, fp.ir.calls)
 check("adapter: session time", pr.session_time() == 547.72)
 fp.ir.calls.clear()
 fp.ir.deaf = True
 check("adapter: a jump that never lands -> False after one retry, no play", pr.seek(3, 100.0) is False
       and [c[0] for c in fp.ir.calls] == ["speed", "search", "search"], fp.ir.calls)
 pr.restore()
+check("adapter: restore switches iRacing's auto camera back on, UI stays hidden",
+      fp.ir.vals["CamCameraState"] & 0x10 and fp.ir.vals["CamCameraState"] & 0x08, fp.ir.vals["CamCameraState"])
 check("adapter: restore puts REGIE / focus / auto-replays back", fp.director_enabled and fp.focus_leader
       and fp.auto_replay and fp.auto_replay_overtakes and fp.director_calls == [False, True])
 check("pick_group: no TV -> Gyro, never Chase / Cockpit / Scenic",

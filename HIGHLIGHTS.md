@@ -49,7 +49,11 @@ Höchstens 5 Überholmanöver und 4 Zwischenfälle, über das Rennen verteilt, k
    **■ Stop** bricht ab und beendet die Aufnahme sauber.
 
 Während der Aufnahme sind REGIE, Auto-Follow, Fokus-Modi und Auto-Replays aus;
-danach wieder wie vorher.
+danach wieder wie vorher. Die **iRacing-UI** (Replay-Leiste usw.) wird vor jeder
+Szene und laufend während der Aufnahme geprüft und versteckt, iRacings eigene
+Automatik-Kamera („Most Exciting“) ist während der Aufnahme aus und danach wieder
+wie vorher. (Die Maus nicht über das iRacing-Fenster bewegen — das zeigt die
+Replay-Leiste kurz an.)
 
 ## Gabi Intro / Outro
 
