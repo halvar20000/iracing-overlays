@@ -661,6 +661,32 @@ r16.prepare()
 check("avatar: without a sync.so key nothing is ordered, 5 min lead", not fr_off.ensured
       and r16._due(dt.datetime(2026, 10, 15, 19, 30)) is None and r16._due(dt.datetime(2026, 10, 15, 19, 36)) == "prepare")
 check("avatar: with it the script is written 20 min ahead", r15._due(dt.datetime(2026, 10, 15, 19, 21)) == "prepare")
+# Abspann: the goodbye is written at the chequered flag (Gabi's video ordered
+# then) and kept word for word when the script is written again at the start
+calls19, now19 = [0], [1000.0]
+def script19(f, segs):
+    calls19[0] += 1
+    n = calls19[0]
+    return {s: f"{s} Fassung {n}." for s in segs}, "t"
+fr19 = FakeRenderer(set())
+r19 = sr.ShowRunner(sr.load_config(), None, Speaker(), facts_fn=lambda: pf, script_fn=script19,
+                    director_on=lambda: None, kind="post", avatar=fr19, clock=lambda: now19[0])
+r19.prepare_early()
+early19 = [x for x in fr19.ensured if x[1] == "goodbye"]
+check("Abspann: at the flag the goodbye is written and its video ordered",
+      early19 == [("post", "goodbye", "goodbye Fassung 1.")], fr19.ensured)
+now19[0] += 120                                       # post_delay_s later: the real start
+r19.prepare()
+check("Abspann start: new results, the SAME goodbye (its video fits, not paid twice)",
+      r19.script["goodbye"] == "goodbye Fassung 1." and r19.script["results_pro"] == "results_pro Fassung 2."
+      and {x[2] for x in fr19.ensured if x[1] == "goodbye"} == {"goodbye Fassung 1."}, (r19.script, fr19.ensured))
+now19[0] += sr.EARLY_GOODBYE_S + 1                    # a goodbye from long ago is not kept
+r19.prepare()
+check("an old early goodbye is not kept", r19.script["goodbye"] == "goodbye Fassung 3.", r19.script)
+r20 = sr.ShowRunner(sr.load_config(), None, Speaker(), facts_fn=lambda: facts, script_fn=script19,
+                    director_on=lambda: None, kind="pre", avatar=FakeRenderer(set()))
+r20.prepare_early()
+check("prepare_early does nothing for the moderation before the race", r20.early_goodbye is None and not r20.script)
 # the renderer itself
 rd_calls = []
 def fake_ls(data, name, out_name=None, **k):

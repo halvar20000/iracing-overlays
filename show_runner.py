@@ -45,6 +45,7 @@ HERE = Path(__file__).resolve().parent
 CONFIG_FILE = HERE / "show_config.json"
 SCRIPT_FILE = HERE / "show_script.json"   # the last script (incl. hand edits), survives a restart
 EDIT_KEEP_S = 12 * 3600                   # an edited script is never rewritten automatically within this
+EARLY_GOODBYE_S = 1800                    # Abspann: the goodbye written at the flag is kept this long
 DEFAULT_CONFIG = {
     "obs": {"host": "127.0.0.1", "port": 4455, "password": ""},
     "scenes": {"moderator": "Moderator", "iracing": "iRacing"},
@@ -1019,6 +1020,7 @@ class ShowRunner:
         self._items = None             # source names in the Moderator scene (read at start)
         self.order: list = []          # all segments the script was written for (an emptied one is skipped)
         self.edited = False            # changed by hand on /show -> no automatic rewrite
+        self.early_goodbye = None      # Abspann: (text, clock) written at the chequered flag
         self.store = store             # Path to keep the script across restarts (None = memory only)
         self.points_fn = points_fn     # facts -> (talking points, source)
         self.kind = kind               # "pre" = before quali, "post" = Abspann after the race
@@ -1124,6 +1126,12 @@ class ShowRunner:
             segs = (available_post_segments(self.cfg, facts) if self.kind == "post"
                     else available_segments(self.cfg, facts))
             script, source = self.script_fn(facts, segs)
+            early = self.early_goodbye
+            if (self.kind == "post" and early and "goodbye" in segs
+                    and self.clock() - early[1] < EARLY_GOODBYE_S):
+                # the goodbye of the flag (its Gabi video is already being made):
+                # the same words, so the video fits and is not paid twice
+                script = dict(script, goodbye=early[0])
             points = []
             if self.points_fn:
                 try:
@@ -1148,6 +1156,22 @@ class ShowRunner:
             with self._lock:
                 if self.state == "preparing":
                     self.state = prev if prev != "preparing" else "idle"
+
+    def prepare_early(self):
+        """Abspann, at the chequered flag: write the script once ahead of time
+        so Gabi's goodbye video is ordered now — the Abspann starts
+        post_delay_s later and sync.so needs ~2 min for it (it used to be
+        ordered only at the start, ready just in time if at all). The goodbye
+        does not depend on the result; prepare() at the start keeps it."""
+        if self.kind != "post" or self.state == "running":
+            return
+        self.early_goodbye = None
+        self.prepare()
+        text = (self.script or {}).get("goodbye")
+        if text:
+            self.early_goodbye = (text, self.clock())
+            self._note("Abschied an der Zielflagge geschrieben"
+                       + (" – Gabi-Video bestellt" if self._avatar_on() and "goodbye" in self._avatar_segs() else ""))
 
     def start(self):
         with self._lock:

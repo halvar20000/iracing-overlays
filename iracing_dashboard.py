@@ -1954,6 +1954,8 @@ class TelemetryPoller:
         if self._chequered_at is None:
             self._chequered_at = now
             print(f"[abspann] chequered flag - Abspann in {cfg.get('post_delay_s', 120)} s")
+            # write the goodbye now -> Gabi's video is made during the wait
+            threading.Thread(target=self.post_show.prepare_early, daemon=True).start()
         if now - self._chequered_at >= float(cfg.get("post_delay_s") or 120):
             self._post_key = key
             threading.Thread(target=self.start_post_show, daemon=True).start()

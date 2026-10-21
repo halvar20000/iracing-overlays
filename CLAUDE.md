@@ -195,6 +195,15 @@ which do not follow the class pin; told Thomas to use the _solid loaders.
 Tests: test_race_director +3, test_show_runner +1 (idle on to the end),
 both pages checked in Edge (page transparent, table rgb(20,20,28)).
 Restart 5000, 5002, 5010.
+FOLLOW-UP same day (Gabi's Abspann goodbye was ordered only at the Abspann
+START — sync.so ~2 min vs ~2.5-3 min of Abspann before it, often too late):
+dashboard `_maybe_post_show` calls `post_show.prepare_early()` at the
+chequered flag (thread): a full Abspann script ahead of time → the goodbye's
+video is ordered during post_delay_s; `early_goodbye` (text, clock) is kept
+and `prepare()` at the start reuses it word for word for `EARLY_GOODBYE_S`
+(30 min), so AvatarRenderer.ensure sees the same text (no second render, no
+second payment). test_show_runner +4 (123 PASS; the 2 Windows-only fails as
+before).
 
 **October 20, 2026, after the race (caution + voice mood + pit-exit
 false spins; WCT Indianapolis):** (1) every pit exit was "moved backwards

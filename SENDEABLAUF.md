@@ -185,12 +185,16 @@ spricht die Stimme, während Gabi ruhig im Studio sitzt.
      Ausgeblendet lassen. „Wiedergabe neu starten, wenn Quelle aktiv wird“ **aus**,
      Audio: „Audioüberwachung → Überwachen und ausgeben“ wie bei der Stimme.
    - Die VTube-Studio-Aufnahme in dieser Szene kann raus.
-3. **Zeitplan:** Mit Schlüssel wird das Skript **20 Minuten** vor dem Start
+3. **Abschied im Abspann:** Schon **an der Zielflagge** schreibt der Abspann
+   Gabis Verabschiedung und bestellt ihr Video. Beim Start des Abspanns
+   (2 Minuten später) kommen die endgültigen Ergebnisse dazu, der Abschied bleibt
+   wortgleich. So ist das Video in der Regel fertig, wenn sie dran ist.
+4. **Zeitplan:** Mit Schlüssel wird das Skript **20 Minuten** vor dem Start
    geschrieben (statt 5), denn sync.so braucht ca. 2 Minuten pro 10 Sekunden
    Video. Auf `/show` steht bei jedem Abschnitt „🎬 Gabi: Video fertig“ oder
    „wird erzeugt“. Ist ein Video zum Zeitpunkt nicht fertig, spricht dort einfach
    die Stimme. Wer das Skript ändert, bekommt das Video neu erzeugt.
-4. Andere Abschnitte für Gabi oder aus: `show_config.json`
+5. Andere Abschnitte für Gabi oder aus: `show_config.json`
    `{"avatar": {"segments": ["intro", "outro", "goodbye"]}}` bzw.
    `{"avatar": {"enabled": false}}`. Kosten: sync.so-Credits pro Sekunde Video.
 
