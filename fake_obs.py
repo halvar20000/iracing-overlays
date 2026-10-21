@@ -1,6 +1,6 @@
 """
 Fake OBS (obs-websocket v5) for the tests — a tiny in-process server with
-scenes, scene items, media inputs and stream status. Not used at runtime.
+scenes, scene items, media inputs, stream and record status. Not used at runtime.
 Needs the `websockets` package (already in requirements.txt for racecontrol).
 """
 
@@ -27,6 +27,10 @@ class FakeObs:
         self.media = {k: {"duration": d, "started": None} for k, d in (media or {}).items()}
         self.current = next(iter(self.scenes))
         self.streaming = False
+        self.recording = False       # StartRecord / PauseRecord / ResumeRecord / StopRecord
+        self.rec_paused = False
+        self.rec_segments = []       # [[start, end]] wall-clock spans actually recorded
+        self.rec_path = "C:/Videos/fake_recording.mp4"
         self.password = password
         self.calls = []          # (requestType, requestData)
         self.port = port
@@ -130,4 +134,31 @@ class FakeObs:
             return True, None, None
         if rt == "GetStreamStatus":
             return True, {"outputActive": self.streaming}, None
+        if rt == "GetRecordStatus":
+            return True, {"outputActive": self.recording, "outputPaused": self.rec_paused}, None
+        if rt == "StartRecord":
+            if self.recording:
+                return False, None, "Output already active"
+            self.recording, self.rec_paused = True, False
+            self.rec_segments.append([time.time(), None])
+            return True, None, None
+        if rt == "PauseRecord":
+            if not self.recording or self.rec_paused:
+                return False, None, "Not recording or already paused"
+            self.rec_paused = True
+            self.rec_segments[-1][1] = time.time()
+            return True, None, None
+        if rt == "ResumeRecord":
+            if not self.recording or not self.rec_paused:
+                return False, None, "Not paused"
+            self.rec_paused = False
+            self.rec_segments.append([time.time(), None])
+            return True, None, None
+        if rt == "StopRecord":
+            if not self.recording:
+                return False, None, "Output not active"
+            if not self.rec_paused:
+                self.rec_segments[-1][1] = time.time()
+            self.recording = self.rec_paused = False
+            return True, {"outputPath": self.rec_path}, None
         return False, None, f"unknown request {rt}"

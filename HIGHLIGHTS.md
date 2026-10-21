@@ -1,0 +1,74 @@
+# Highlight-Video aus Replay + Race-Logger
+
+Aus dem Log des Race-Loggers sucht das Dashboard die besten Szenen eines Rennens
+(3–5 Minuten), spielt sie im iRacing-Replay ab und nimmt sie mit OBS als **ein**
+Video auf. Seite: **http://localhost:5000/highlights** (Stream-Deck-Bild
+`streamdeck_icons/dashboard/highlights_page.png`).
+
+## Was ausgewählt wird
+
+Immer dabei, in dieser Reihenfolge am Anfang: **Startaufstellung** (Quali-Ergebnis
+als Grafik über den letzten 15 s der Einführungsrunde hinter dem Safety Car), dann
+nahtlos — ohne Schnitt — **der Start** (grüne Flagge). Außerdem **Gelbphase** und
+**Restart** sowie der **Zieleinlauf** des Siegers. Dazu, nach Wichtigkeit, bis die Länge erreicht ist:
+
+- **Überholmanöver** um die Führung, das Podium und die Klassenführung (PRO/AM in
+  der WCT) — berechnet aus den sekündlichen Positionen aller Autos. Nicht gezählt:
+  unter Gelb, Boxenstopps, Seite-an-Seite-Wechsel, die keine 5 s halten, und nach
+  der Zielflagge. In Multiclass-Rennen nur innerhalb einer Klasse.
+- **Kontakte und Dreher** — ohne die falschen „Dreher“ an jeder Boxenausfahrt, die
+  der Dashboard-Detektor vor dem 21.10.2026 meldete (stehen noch in alten Logs).
+- **Schnellste Runde** (das Ende der Runde), **Fahrer des Tages** (sein bestes
+  Überholmanöver), **Klassensieger AM**.
+
+Höchstens 5 Überholmanöver und 4 Zwischenfälle, über das Rennen verteilt, keine
+Überschneidungen. Kamera: TV1/TV2/TV3 (bei schnellster Runde / DotD auch Gyro),
+**nie** Scenic, Cockpit oder eine Chase-Kamera.
+
+## Ablauf
+
+1. iRacing: das Rennen als **Replay** öffnen (gleiche Session, wie im Log).
+2. Launcher: **Dashboard** starten. OBS läuft, obs-websocket an (wie beim
+   Sendeablauf, `show_config.json` → `obs`).
+3. In OBS, Szene **iRacing**: Browserquelle **Startaufstellung**
+   (`obs_loaders/grid.html`, versteckt; im Launcher das **Grid**-Overlay 5001
+   starten — es liest das Quali-Ergebnis auch im Replay). Fehlt sie, läuft nur die
+   Einführungsrunde (Hinweis im Protokoll). Optional, ebenfalls Szene iRacing: Browserquelle **Highlight Titel**
+   (`obs_loaders/highlight_card.html`) — zeigt am Anfang jeder Szene Titel + Satz,
+   sonst unsichtbar. Für die Stimme die Quelle **Kommentar Stimme**
+   (`commentary_voice.html`) wie bei der REGIE.
+4. Seite `/highlights`: Rennen wählen, Länge (Standard 240 s), **Szenen wählen**.
+5. Liste prüfen: ◀5 = 5 s früher anfangen, 5▶ = länger, −5 = kürzer, ▲▼ =
+   Reihenfolge, 👁 = im Replay ansehen (ohne Aufnahme), ✕ = raus. Der Text jeder
+   Szene ist änderbar (Titelkarte / Stimme).
+6. Häkchen: **Aufnahme (OBS)** (ohne = Probelauf), **Titelkarte**, **Stimme**,
+   **Gabi Intro / Outro**.
+7. **▶ Start**. Pro Szene: Replay anhalten → hinspulen → Kamera → Play 1× →
+   Aufnahme läuft → am Szenenende Aufnahme pausiert. Am Schluss stoppt die
+   Aufnahme; der Pfad der MP4 steht oben (OBS-Aufnahmeordner und -Format).
+   **■ Stop** bricht ab und beendet die Aufnahme sauber.
+
+Während der Aufnahme sind REGIE, Auto-Follow, Fokus-Modi und Auto-Replays aus;
+danach wieder wie vorher.
+
+## Gabi Intro / Outro
+
+Texte stehen vorgeschlagen in den Feldern (änderbar). **Gabi-Videos bestellen**
+lässt sync.so die beiden Videos machen (dauert Minuten, kostet Credits — kurz
+halten). Fertig → Gabi spricht sie in der Szene **Moderator** (Quellen „Gabi“ /
+„Gabi Ruhe“ wie im Sendeablauf). Nicht fertig → die Stimme sagt den Text; ohne
+Stimme fällt Intro/Outro weg.
+
+## Einstellungen (optional)
+
+`show_config.json` → `"highlights"`: `scenes` (`race`, `moderator`), `sources`
+(`grid`, `avatar_talk`, `avatar_idle`), `preroll_s` (1.5), `card_s` (5), `cam_every_s`
+(12 = nächste TV-Kamera in langen Szenen).
+
+## Gut zu wissen
+
+- OBS darf beim Start nicht schon aufnehmen (sonst Abbruch mit Meldung).
+- Das Video zeigt, was OBS in der Szene iRacing zeigt — Overlays, die nicht ins
+  Highlight-Video gehören, dort vorher ausblenden.
+- Kommandozeile ohne Dashboard: `python highlights.py <log.jsonl> [Sekunden]`
+  listet die gewählten Szenen.

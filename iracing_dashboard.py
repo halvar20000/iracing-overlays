@@ -28,6 +28,8 @@ from cls_proam import ProAmRoster
 from race_voice import Voice
 import race_qa
 import show_runner
+import highlights
+import highlight_runner
 from obs_ws import ObsClient
 from pathlib import Path
 
@@ -47,6 +49,18 @@ class _ShowSpeaker:
 
     def cancel(self, ids):
         self.c.cancel(ids)
+
+
+class _HighlightSpeaker:
+    """Highlight video: each scene's line as a queued voice line with a mood."""
+    def __init__(self, commentator):
+        self.c = commentator
+
+    def say(self, text, mood="normal"):
+        return self.c.say_show(text, "highlight", mood)
+
+    def is_done(self, line_id):
+        return self.c.is_done(line_id)
 
 # Windows cp1252 stdout + Unicode in prints = UnicodeEncodeError that can
 # kill the poller thread silently. Force UTF-8 like the other overlays do.
@@ -265,6 +279,12 @@ class TelemetryPoller:
             avatar=self.avatar_renderer)
         self._race_story: list = []       # this race told by its live commentary (Abspann summary)
         self.avatar_test = avatar_sync.AvatarTest(self.voice)   # /avatar: sync.so lip-sync test
+        # HIGHLIGHT VIDEO (highlight_runner.py, 2026-10-21): scenes from a race
+        # log played from the replay and recorded with OBS (/highlights)
+        self.highlights_active = False
+        self.highlights = highlight_runner.HighlightRunner(
+            highlight_runner.PollerReplay(self), self.show_obs, speaker=_HighlightSpeaker(self.commentator),
+            avatar=self.avatar_renderer, cfg=scfg.get("highlights"))
         # FRAG CLAUDE (race_qa.py, 2026-10-20): the streamer asks by voice
         # (Stream Deck push-to-talk), the answer is spoken by the same voice
         self.qa = race_qa.RaceQA(self.commentator.cfg,
@@ -5609,6 +5629,341 @@ def ask_action(action):
     return jsonify({"ok": True, "msg": fn()})
 
 
+HIGHLIGHTS_HTML = r"""<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><title>Highlight-Video</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  /* HIGHLIGHT VIDEO (highlights.py + highlight_runner.py, 2026-10-21): scenes from a
+     race log, played from the iRacing replay, recorded by OBS into one video */
+  :root { --bg: #14161b; --panel: #1d2027; --line: #2c3039; --text: #e8e8ec; --dim: #9aa0ab;
+          --acc: #f59e0b; --bad: #f87171; --ok: #34d399; --rec: #ef4444; --cy: #22d3ee; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 'Segoe UI', Arial, sans-serif; }
+  main { max-width: 1180px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 0 0 10px; } h1 span { color: var(--acc); }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .pill { padding: 4px 12px; border-radius: 99px; background: var(--panel); border: 1px solid var(--line); font-weight: 600; }
+  .pill.running { background: var(--rec); border-color: var(--rec); color: #fff; }
+  .pill.done { background: var(--ok); border-color: var(--ok); color: #111; }
+  .pill.error { background: var(--bad); border-color: var(--bad); color: #111; }
+  button { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+           padding: 8px 13px; font-size: 14px; cursor: pointer; }
+  button.main { border-color: var(--acc); font-size: 16px; padding: 10px 18px; }
+  button.stop { border-color: var(--rec); }
+  button.s { padding: 3px 7px; font-size: 12px; }
+  button:disabled { opacity: .45; cursor: default; }
+  select, input, textarea { background: #15171c; color: var(--text); border: 1px solid var(--line);
+          border-radius: 6px; padding: 7px; font: inherit; }
+  textarea { width: 100%; min-height: 44px; resize: vertical; }
+  .dim { color: var(--dim); font-size: 13px; } .err { color: var(--bad); }
+  .box { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; color: var(--dim); font-weight: 600; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+  td { padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  td input.tx { width: 100%; padding: 4px 6px; }
+  tr.cur { background: #3a2a10; } tr.fertig td { color: var(--dim); }
+  .k { display: inline-block; white-space: nowrap; padding: 1px 7px; border-radius: 4px; font-size: 12px; font-weight: 700; background: #333; }
+  .k.grid { background: #334155; } .k.start, .k.restart { background: #166534; } .k.finish, .k.class_finish { background: #f4f4f6; color: #111; }
+  .k.caution { background: #ca8a04; color: #111; } .k.pass { background: #0e7490; }
+  .k.contact, .k.spin { background: #b91c1c; } .k.fastest { background: #7e22ce; } .k.dotd { background: #c2410c; }
+  .prog { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; flex: 1; min-width: 160px; }
+  .prog i { display: block; height: 100%; width: 0; background: var(--acc); transition: width .4s; }
+  pre { white-space: pre-wrap; margin: 0; font-size: 12px; color: var(--dim); max-height: 220px; overflow: auto; }
+  label { white-space: nowrap; }
+  .nowrap { white-space: nowrap; }
+</style></head><body><main>
+<h1>Highlight-<span>Video</span></h1>
+<div class="box">
+  <div class="bar">
+    <select id="log" style="flex:1;min-width:260px"></select>
+    <label>Länge <input id="budget" type="number" value="240" min="60" max="600" step="10" style="width:80px"> s</label>
+    <button class="main" onclick="pick()">Szenen wählen</button>
+  </div>
+  <div id="info" class="dim">Rennen wählen (Race-Logger-Datei) – das gleiche Rennen muss in iRacing als Replay offen sein.</div>
+</div>
+<div class="box">
+  <div class="bar">
+    <label><input type="checkbox" id="o_record" checked> Aufnahme (OBS)</label>
+    <label><input type="checkbox" id="o_card" checked> Titelkarte</label>
+    <label><input type="checkbox" id="o_voice"> Stimme</label>
+    <label><input type="checkbox" id="o_gabi"> Gabi Intro / Outro</label>
+    <button onclick="orderGabi()">Gabi-Videos bestellen</button>
+    <span id="gabi" class="dim"></span>
+  </div>
+  <div class="bar" style="align-items:flex-start">
+    <div style="flex:1;min-width:260px"><div class="dim">Intro</div><textarea id="intro"></textarea></div>
+    <div style="flex:1;min-width:260px"><div class="dim">Outro</div><textarea id="outro"></textarea></div>
+  </div>
+</div>
+<div class="bar">
+  <span id="st" class="pill">bereit</span>
+  <button class="main" id="go" onclick="start()" disabled>▶ Start</button>
+  <button class="stop" onclick="stop()">■ Stop</button>
+  <div class="prog"><i id="pb"></i></div>
+  <span id="pr" class="dim nowrap"></span>
+</div>
+<div id="out" class="box" style="display:none"></div>
+<div class="box">
+  <table><thead><tr><th>#</th><th>Zeit</th><th>Länge</th><th>Art</th><th>Fahrer</th><th style="width:44%">Text (Titelkarte / Stimme)</th><th></th></tr></thead>
+  <tbody id="tb"><tr><td colspan="7" class="dim">noch keine Szenen</td></tr></tbody></table>
+  <div id="tot" class="dim" style="margin-top:6px"></div>
+</div>
+<div class="box"><pre id="lg"></pre></div>
+<script>
+let scenes = [], status = null;
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function fmt(t) { t = Math.max(0, Math.round(t)); const h = Math.floor(t/3600), m = Math.floor(t/60)%60, s = t%60;
+  return (h ? h + ':' + String(m).padStart(2,'0') : m) + ':' + String(s).padStart(2,'0'); }
+const KIND = {grid:'Startaufstellung', start:'Start', restart:'Restart', caution:'Gelb', finish:'Ziel', class_finish:'Klassensieg', pass:'Überholen',
+              contact:'Kontakt', spin:'Dreher', fastest:'Schnellste Runde', dotd:'Fahrer des Tages'};
+async function loadLogs() {
+  const d = await (await fetch('/highlights/logs')).json();
+  $('log').innerHTML = (d.logs || []).map(l => `<option value="${esc(l.path)}">${esc(l.path.replace(/^logs\//,''))}</option>`).join('')
+    || '<option value="">keine Race-Logs in logs/</option>';
+}
+async function pick() {
+  $('info').textContent = 'wähle Szenen …';
+  const r = await fetch('/highlights/pick?log=' + encodeURIComponent($('log').value) + '&budget=' + $('budget').value);
+  const d = await r.json();
+  if (!d.ok) { $('info').innerHTML = '<span class="err">' + esc(d.error) + '</span>'; return; }
+  scenes = d.scenes;
+  const i = d.info;
+  $('info').textContent = `${i.track || ''} ${i.config || ''} · Sieger ${i.winner || '?'} · ${i.drivers} Fahrer · Session ${i.session_num}`
+    + (i.proam ? ' · Pro/Am' : '') + ` · ${scenes.length} Szenen aus ${d.candidates} Kandidaten`;
+  if (!$('intro').value || $('intro').dataset.auto === '1') { $('intro').value = d.texts.intro; $('intro').dataset.auto = '1'; }
+  if (!$('outro').value || $('outro').dataset.auto === '1') { $('outro').value = d.texts.outro; $('outro').dataset.auto = '1'; }
+  render();
+}
+['intro','outro'].forEach(id => document.addEventListener('input', e => { if (e.target.id === id) e.target.dataset.auto = '0'; }));
+function render() {
+  const running = status && status.state === 'running';
+  const st = (status && status.scenes) || [];
+  $('tb').innerHTML = scenes.map((s, i) => {
+    const ss = running && st[i] ? st[i].state : '';
+    const cls = (running && status.current === i ? 'cur' : '') + (ss === 'fertig' ? ' fertig' : '');
+    return `<tr class="${cls}"><td>${i+1}</td><td class="nowrap">${fmt(s.t_start)}</td>
+      <td class="nowrap">${(s.t_end - s.t_start).toFixed(0)} s</td>
+      <td><span class="k ${esc(s.kind)}">${esc(KIND[s.kind] || s.kind)}</span></td>
+      <td class="nowrap">#${esc(s.car_number)} ${esc(s.driver)}</td>
+      <td><input class="tx" value="${esc(s.text)}" onchange="scenes[${i}].text=this.value"></td>
+      <td class="nowrap">${ss ? '<span class="dim">' + esc(ss) + '</span>' :
+        `<button class="s" title="früher anfangen" onclick="adj(${i},-5,0)">◀5</button><button class="s" title="länger" onclick="adj(${i},0,5)">5▶</button><button class="s" title="kürzer" onclick="adj(${i},0,-5)">−5</button>
+        <button class="s" onclick="mv(${i},-1)">▲</button><button class="s" onclick="mv(${i},1)">▼</button>
+        <button class="s" title="im Replay ansehen (ohne Aufnahme)" onclick="prev(${i})">👁</button><button class="s" onclick="del(${i})">✕</button>`}</td></tr>`;
+  }).join('') || '<tr><td colspan="7" class="dim">keine Szenen</td></tr>';
+  const tot = scenes.reduce((a, s) => a + s.t_end - s.t_start, 0);
+  $('tot').textContent = scenes.length ? `${scenes.length} Szenen · ${fmt(tot)} Video` : '';
+  $('go').disabled = running || !scenes.length;
+}
+function adj(i, a, b) { const s = scenes[i]; s.t_start = Math.max(0, s.t_start + a); s.t_end = Math.max(s.t_start + 3, s.t_end + b); render(); }
+function mv(i, d) { const j = i + d; if (j < 0 || j >= scenes.length) return; [scenes[i], scenes[j]] = [scenes[j], scenes[i]]; render(); }
+function del(i) { scenes.splice(i, 1); render(); }
+async function prev(i) {
+  const d = await (await fetch('/highlights/preview', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(scenes[i])})).json();
+  if (!d.ok) alert(d.error);
+}
+function opts() { return {record: $('o_record').checked, card: $('o_card').checked, voice: $('o_voice').checked,
+  gabi: $('o_gabi').checked, intro: $('intro').value, outro: $('outro').value}; }
+async function start() {
+  const d = await (await fetch('/highlights/start', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(Object.assign({scenes}, opts()))})).json();
+  if (!d.ok) alert(d.msg);
+  tick();
+}
+async function stop() { await fetch('/highlights/stop', {method:'POST'}); tick(); }
+async function orderGabi() {
+  const d = await (await fetch('/highlights/avatar', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({intro: $('intro').value, outro: $('outro').value})})).json();
+  if (!d.ok) alert(d.error);
+}
+const STATE = {idle:'bereit', running:'Aufnahme läuft', done:'fertig', stopped:'gestoppt', error:'Fehler'};
+async function tick() {
+  let d; try { d = await (await fetch('/highlights/status')).json(); } catch (e) { return; }
+  status = d;
+  $('st').textContent = (STATE[d.state] || d.state) + (d.phase ? ' – ' + d.phase : '') + (d.connected ? '' : ' · iRacing nicht verbunden');
+  $('st').className = 'pill ' + d.state;
+  const tot = d.total_s || 0;
+  const doneS = (d.scenes || []).filter(s => s.state === 'fertig').reduce((a, s) => a + s.t_end - s.t_start, 0);
+  $('pb').style.width = (tot ? Math.min(100, 100 * doneS / tot) : 0) + '%';
+  $('pr').textContent = d.state === 'idle' ? '' : `aufgenommen ${fmt(d.recorded_s)} · ${d.recording ? '● REC' : 'Pause'}`;
+  if (d.state === 'running' && d.scenes && d.scenes.length && !scenes.length) scenes = d.scenes;
+  $('lg').textContent = (d.log || []).join('\n');
+  $('out').style.display = (d.output || d.error) ? '' : 'none';
+  $('out').innerHTML = d.error ? '<span class="err">' + esc(d.error) + '</span>' : 'Video: <b>' + esc(d.output) + '</b>';
+  const av = d.avatar || {};
+  $('gabi').textContent = Object.keys(av).map(k => `${k}: ${av[k].state}${av[k].error ? ' (' + av[k].error + ')' : ''}`).join(' · ');
+  render();
+}
+loadLogs(); tick(); setInterval(tick, 1000);
+</script></main></body></html>
+"""
+
+
+HL_CARD_HTML = r"""<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><title>Highlight Titelkarte</title>
+<style>
+    /* HIGHLIGHT VIDEO title card (2026-10-21): during a highlight recording
+       (/highlights) the scene's title + line slide in for the first seconds of
+       each scene. Transparent otherwise. ?zoom=, ?debug=1 / H, ?demo=1. */
+    :root { --bg: rgba(20,22,28,0.97); --text: #f4f4f6; --tag: #f59e0b; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: rgba(0,0,0,0); overflow: hidden; }
+    body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; color: var(--text); padding: 8px; }
+    body.debug-mode { background: #23262b; }
+    .c { display: inline-flex; flex-direction: column; max-width: 1100px; opacity: 0;
+         transform: translateX(-30px); transition: opacity .3s ease, transform .4s cubic-bezier(.2,.9,.3,1.2); }
+    .c.show { opacity: 1; transform: none; }
+    .top { display: flex; align-items: stretch; }
+    .tag { background: var(--tag); color: #111; font-weight: 800; letter-spacing: 1.5px; font-size: 15px;
+           text-transform: uppercase; padding: 6px 14px; }
+    .no { background: #000; color: #fff; font-weight: 800; font-size: 15px; padding: 6px 10px; }
+    .tx { background: var(--bg); font-size: 25px; font-weight: 600; line-height: 1.3; padding: 9px 16px; }
+    .k-start, .k-restart { --tag: #22c55e; } .k-finish, .k-class_finish { --tag: #f4f4f6; }
+    .k-caution { --tag: #facc15; } .k-pass { --tag: #22d3ee; } .k-contact, .k-spin { --tag: #ef4444; }
+    .k-fastest { --tag: #a855f7; } .k-dotd { --tag: #fb923c; }
+</style></head>
+<body>
+<div class="c" id="c"><div class="top"><div class="tag" id="tag"></div><div class="no" id="no"></div></div><div class="tx" id="tx"></div></div>
+<script>
+const qs = new URLSearchParams(location.search);
+if (qs.get('debug') === '1') document.body.classList.add('debug-mode');
+const zoom = parseFloat(qs.get('zoom') || '1');
+if (zoom > 0 && zoom !== 1) document.body.style.zoom = zoom;
+document.addEventListener('keydown', e => { if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('debug-mode'); });
+const c = document.getElementById('c');
+let shown = null;
+function show(card) {
+  const key = card ? card.n + '|' + card.title : null;
+  if (key === shown) return;
+  shown = key;
+  if (!card) { c.classList.remove('show'); return; }
+  c.className = 'c k-' + card.kind;
+  document.getElementById('tag').textContent = card.title || '';
+  document.getElementById('no').textContent = card.number ? '#' + card.number : '';
+  document.getElementById('tx').textContent = card.text || card.driver || '';
+  void c.offsetWidth; c.classList.add('show');
+}
+async function tick() {
+  if (qs.get('demo') === '1') { show({n: 1, title: 'Überholmanöver', kind: 'pass', number: '49',
+      text: 'Maurice Becker geht an Wonnenberg vorbei — Platz 2!'}); return; }
+  try { const d = await (await fetch('/highlights/status', {cache: 'no-store'})).json(); show(d.card); } catch (e) {}
+}
+tick(); setInterval(tick, 300);
+</script></body></html>
+"""
+
+
+HL_LOG_ROOT = (Path(__file__).resolve().parent / "logs")
+
+
+def _hl_log_path(p):
+    """A race log path from the page -> Path inside logs/, else None."""
+    try:
+        path = (Path(__file__).resolve().parent / (p or "")).resolve()
+        path.relative_to(HL_LOG_ROOT.resolve())
+    except Exception:
+        return None
+    return path if path.is_file() and path.name.endswith("_race.jsonl") else None
+
+
+@app.route("/highlights")
+def highlights_page():
+    from flask import Response
+    return Response(HIGHLIGHTS_HTML, mimetype="text/html")
+
+
+@app.route("/highlights/card")
+def highlights_card():
+    from flask import Response
+    return Response(HL_CARD_HTML, mimetype="text/html")
+
+
+@app.route("/highlights/logs")
+def highlights_logs():
+    base = Path(__file__).resolve().parent
+    out = []
+    for d in highlights.list_logs(HL_LOG_ROOT):
+        d["path"] = Path(d["path"]).resolve().relative_to(base).as_posix()
+        out.append(d)
+    return jsonify({"logs": out})
+
+
+@app.route("/highlights/pick")
+def highlights_pick():
+    path = _hl_log_path(request.args.get("log"))
+    if path is None:
+        return jsonify({"ok": False, "error": "Log nicht gefunden (nur *_race.jsonl unter logs/)"}), 404
+    try:
+        budget = float(request.args.get("budget") or highlights.DEFAULT_BUDGET_S)
+        res = highlights.pick_file(path, budget, Path(__file__).resolve().parent / "proam_cache.json")
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
+    res["log"] = request.args.get("log")
+    res["texts"] = highlight_runner.default_texts(res["info"])
+    return jsonify(dict(res, ok=True))
+
+
+@app.route("/highlights/status")
+def highlights_status():
+    return jsonify(dict(poller.highlights.status(), connected=bool(poller.connected)))
+
+
+@app.route("/highlights/start", methods=["POST"])
+def highlights_start():
+    body = request.get_json(silent=True) or {}
+    scenes = []
+    for s in (body.get("scenes") or [])[:60]:
+        try:
+            scenes.append({**s, "t_start": float(s["t_start"]), "t_end": float(s["t_end"]),
+                           "car_number": str(s["car_number"]), "text": str(s.get("text") or "")[:300]})
+        except (KeyError, TypeError, ValueError):
+            return jsonify({"ok": False, "error": "Szene unvollständig"}), 400
+    opts = {k: bool(body.get(k)) for k in ("record", "card", "voice", "gabi")}
+    opts.update({k: str(body.get(k) or "")[:400] for k in ("intro", "outro")})
+    ok, msg = poller.highlights.start(scenes, opts)
+    return jsonify({"ok": ok, "msg": msg})
+
+
+@app.route("/highlights/stop", methods=["POST"])
+def highlights_stop():
+    poller.highlights.stop()
+    return jsonify({"ok": True})
+
+
+@app.route("/highlights/avatar", methods=["POST"])
+def highlights_avatar():
+    import avatar_sync
+    if not avatar_sync.api_key():
+        return jsonify({"ok": False, "error": "kein sync.so-Schlüssel in commentary_config.json"})
+    body = request.get_json(silent=True) or {}
+    poller.highlights.prepare_avatar(str(body.get("intro") or "")[:400], str(body.get("outro") or "")[:400])
+    return jsonify({"ok": True})
+
+
+@app.route("/highlights/preview", methods=["POST"])
+def highlights_preview():
+    """Jump the replay to one scene (no recording) — to check it before the run."""
+    if poller.highlights.state == "running":
+        return jsonify({"ok": False, "error": "Aufnahme läuft"})
+    if not poller.connected:
+        return jsonify({"ok": False, "error": "iRacing nicht verbunden"})
+    s = request.get_json(silent=True) or {}
+    try:
+        rp = poller.highlights.replay
+        g = highlight_runner.pick_group(s.get("kind") or "pass", rp.camera_groups())
+        rp.hold()
+        rp.seek(s.get("session_num"), float(s["t_start"]))
+        if g is not None:
+            rp.switch(str(s["car_number"]), int(g["id"]))
+        rp.play()
+        if g is not None:
+            rp.switch(str(s["car_number"]), int(g["id"]))
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{e}"})
+    return jsonify({"ok": True})
+
+
 @app.route("/avatar")
 def avatar_page():
     from flask import Response
@@ -6164,6 +6519,7 @@ if __name__ == "__main__":
     print("  Sendeablauf       http://localhost:5000/show   (Stream Deck: /streamdeck/show_start|show_next|show_stop)")
     print("  Frag Claude       http://localhost:5000/ask    (Stream Deck: /streamdeck/ask = Frage an / beantworten)")
     print("  Abspann           http://localhost:5000/abspann (Stream Deck: /streamdeck/post_start|post_next|post_stop)")
+    print("  Highlight-Video   http://localhost:5000/highlights (Titelkarte in OBS: /highlights/card)")
     print("  List cameras      http://localhost:5000/cameras?format=text")
     print("  Driver next/prev  http://localhost:5000/streamdeck/driver_next")
     print("  Toggle follow     http://localhost:5000/streamdeck/toggle_auto_follow")

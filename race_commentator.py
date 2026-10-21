@@ -405,13 +405,16 @@ class Commentator:
             self._seen_log.clear()
 
     # -- moderation (show_runner.py): spoken in full, in order -----------------
-    def say_show(self, text: str, segment: str = "") -> int:
+    def say_show(self, text: str, segment: str = "", mood: str | None = None) -> int:
         """A moderation sentence: never replaced, never skipped by the voice
-        page (it plays them one after the other and reports each one)."""
+        page (it plays them one after the other and reports each one).
+        mood (race_voice.MOODS) e.g. "hype" for the highlight video's scenes."""
         now = time.time()
         with self._lock:
             line = {"id": self._next_id, "t": round(now, 1), "text": text, "kind": "show",
                     "source": "show", "queue": True, "segment": segment}
+            if mood:
+                line["mood"] = mood
             self.lines.appendleft(line)
             self._next_id += 1
         if self.on_line is not None:

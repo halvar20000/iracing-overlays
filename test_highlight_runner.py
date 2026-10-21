@@ -1,0 +1,385 @@
+"""Highlight video run (highlight_runner.py) against a fake replay + fake_obs.py.
+
+Needs `websockets` + `websocket-client` (fake OBS server / real obs_ws client).
+The fake replay plays SessionTime SPEED x faster than real time, so a 4-minute
+reel runs in seconds. Checks: seek / camera / play order per scene, recording
+on exactly while the replay is inside the scene, one StartRecord, Pause /
+Resume between scenes, StopRecord + output path, never Scenic / Chase /
+Cockpit, stop mid-run, OBS already recording, rehearsal without OBS, stalled
+replay kicked, voice lines with mood, intro by voice and by Gabi's video,
+the dashboard adapter (PollerReplay) on a fake poller + fake irsdk.
+"""
+import os
+import sys
+import threading
+import time
+
+import highlight_runner as R
+from fake_obs import FakeObs
+from obs_ws import ObsClient
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+fails, passes = [], 0
+
+
+def check(name, ok, info=""):
+    global passes
+    if ok:
+        passes += 1
+    else:
+        fails.append(f"{name} {info}")
+
+
+GROUPS = [{"id": 1, "name": "Scenic"}, {"id": 2, "name": "TV1"}, {"id": 3, "name": "TV2"},
+          {"id": 4, "name": "TV3"}, {"id": 5, "name": "Chase"}, {"id": 6, "name": "Far Chase"},
+          {"id": 7, "name": "Cockpit"}, {"id": 8, "name": "Gyro"}, {"id": 9, "name": "Rear Chase"}]
+NAME = {g["id"]: g["name"] for g in GROUPS}
+
+
+class FakeReplay:
+    def __init__(self, speed=20.0, ignore_first_plays=0):
+        self.speed = speed
+        self.base, self.play_at, self.playing = 0.0, None, False
+        self.calls = []
+        self.ignore = ignore_first_plays
+        self.prepared = self.restored = 0
+        self.lock = threading.Lock()
+
+    def connected(self):
+        return True
+
+    def camera_groups(self):
+        return GROUPS
+
+    def session_time(self):
+        with self.lock:
+            if self.playing:
+                return self.base + (time.time() - self.play_at) * self.speed
+            return self.base
+
+    def prepare(self):
+        self.prepared += 1
+
+    def restore(self):
+        self.restored += 1
+
+    def hold(self):
+        pass
+
+    def seek(self, sn, t):
+        with self.lock:
+            self.calls.append(("seek", sn, round(t, 2)))
+            self.base, self.playing = t, False
+
+    def play(self):
+        with self.lock:
+            self.calls.append(("play",))
+            if self.ignore > 0:
+                self.ignore -= 1
+                return
+            if not self.playing:
+                self.play_at, self.playing = time.time(), True
+
+    def pause(self):
+        with self.lock:
+            self.calls.append(("pause",))
+            if self.playing:
+                self.base += (time.time() - self.play_at) * self.speed
+            self.playing = False
+
+    def switch(self, car, gid):
+        self.calls.append(("cam", str(car), NAME[gid]))
+
+
+class TracingObs(ObsClient):
+    """Real client; remembers the replay's SessionTime at every record call."""
+    def __init__(self, port, replay):
+        super().__init__("127.0.0.1", port)
+        self.replay, self.trace = replay, []
+
+    def call(self, rt, data=None):
+        if "Record" in rt:
+            self.trace.append((rt, self.replay.session_time()))
+        return super().call(rt, data)
+
+
+class Speaker:
+    def __init__(self):
+        self.said, self.t = [], {}
+
+    def say(self, text, mood="normal"):
+        self.said.append((text, mood))
+        self.t[len(self.said)] = time.time()
+        return len(self.said)
+
+    def is_done(self, lid):
+        return time.time() - self.t[lid] > 0.3
+
+
+SCENES = [
+    {"kind": "start", "title": "Der Start", "t": 268.5, "t_start": 260.5, "t_end": 298.5, "car_number": "49",
+     "driver": "Maurice Becker", "session_num": 3, "text": "Grüne Flagge!"},
+    {"kind": "pass", "title": "Überholmanöver", "t": 3319, "t_start": 3307, "t_end": 3325, "car_number": "49",
+     "driver": "Maurice Becker", "session_num": 3, "text": "Becker geht vorbei!"},
+    {"kind": "finish", "title": "Zieleinlauf", "t": 3882, "t_start": 3857, "t_end": 3887, "car_number": "01",
+     "driver": "Mike Zocher", "session_num": 3, "text": "Zocher gewinnt!"},
+]
+CFG = {"settle_s": 0.05, "cam_every_s": 0.5, "card_s": 0.6, "stall_s": 0.5}
+OBS_SCENES = {"iRacing": {"Kommentar Stimme": True, "Startaufstellung": True}, "Moderator": {"Gabi Ruhe": False, "Gabi": False}}
+
+
+def run(scenes, opts, replay=None, obs_scenes=OBS_SCENES, speaker=None, avatar=None, media=None, pre=None):
+    fake = FakeObs(obs_scenes, media=media or {"Gabi": 0.8})
+    if pre:
+        pre(fake)
+    rp = replay or FakeReplay()
+    obs = TracingObs(fake.port, rp)
+    r = R.HighlightRunner(rp, obs, speaker=speaker, avatar=avatar, cfg=CFG)
+    ok, msg = r.start(scenes, opts)
+    return fake, rp, obs, r, ok
+
+
+# ---------------------------------------------------------------- full run
+fake, rp, obs, r, ok = run(SCENES, {"record": True, "card": True})
+check("start accepted", ok)
+time.sleep(0.3)
+st = r.status()
+check("card shown at the start of a scene", st["card"] and st["card"]["title"] == "Der Start", st["card"])
+r.wait(30)
+st = r.status()
+check("run done", st["state"] == "done", st)
+rec_calls = [c for c, _ in obs.trace]
+check("record calls: Start, Pause, Resume, Pause, Resume, Pause, Stop",
+      rec_calls == ["GetRecordStatus", "StartRecord", "PauseRecord", "ResumeRecord", "PauseRecord",
+                    "ResumeRecord", "PauseRecord", "StopRecord"], rec_calls)
+check("OBS recorded 3 segments", len(fake.rec_segments) == 3 and not fake.recording, fake.rec_segments)
+check("output path reported", st["output"] == "C:/Videos/fake_recording.mp4", st["output"])
+# recording on exactly while the replay is inside each scene
+ons = [t for c, t in obs.trace if c in ("StartRecord", "ResumeRecord")]
+offs = [t for c, t in obs.trace if c == "PauseRecord"]
+for sc, a, b in zip(SCENES, ons, offs):
+    # (tolerance: ~0.15 s of wall-clock latency x the fake replay's speed 20)
+    check(f"{sc['kind']}: record on at scene start", sc["t_start"] - 1.5 <= a <= sc["t_start"] + 3.0, (a, sc["t_start"]))
+    check(f"{sc['kind']}: record off at scene end", sc["t_end"] <= b <= sc["t_end"] + 3.0, (b, sc["t_end"]))
+seeks = [c for c in rp.calls if c[0] == "seek"]
+check("seek per scene with session_num, 1.5 s before", seeks == [("seek", 3, s["t_start"] - 1.5) for s in SCENES], seeks)
+cams = [c for c in rp.calls if c[0] == "cam"]
+check("camera never Scenic / Chase / Cockpit", all(not any(x in c[2].upper() for x in ("SCENIC", "CHASE", "COCKPIT"))
+                                                   for c in cams), cams)
+check("camera follows the scene's car", {c[1] for c in cams} == {"49", "01"}, cams)
+check("TV camera rotated inside the long start scene", len({c[2] for c in cams if c[1] == "49"}) >= 2, cams)
+first = rp.calls.index(seeks[0])
+check("seek -> cam -> play order", [c[0] for c in rp.calls[first:first + 3]] == ["seek", "cam", "play"], rp.calls[:4])
+check("replay prepared + restored once", rp.prepared == 1 and rp.restored == 1)
+check("scene states all fertig", [s["state"] for s in st["scenes"]] == ["fertig"] * 3, st["scenes"])
+check("program scene set to iRacing", ("SetCurrentProgramScene", {"sceneName": "iRacing"}) in fake.calls)
+check("recorded seconds ~ reel length in wall time",
+      0.5 < st["recorded_s"] < (sum(s["t_end"] - s["t_start"] for s in SCENES) / 20.0) * 2 + 3, st["recorded_s"])
+
+# ---------------------------------------------------------------- starting grid -> start, seamless
+GRID = [{"kind": "grid", "title": "Startaufstellung", "t": 268.5, "t_start": 245.5, "t_end": 260.5, "car_number": "49",
+         "driver": "Maurice Becker", "session_num": 3, "text": "Die Startaufstellung", "overlay": "grid"},
+        dict(SCENES[0])]
+fake, rp, obs, r, ok = run(GRID, {"record": True, "card": True})
+time.sleep(0.3)
+check("grid: source Startaufstellung visible, no title card over it",
+      fake.scenes["iRacing"]["Startaufstellung"] and r.status()["card"] is None, r.status()["card"])
+r.wait(30)
+st = r.status()
+check("grid: done", st["state"] == "done", st["error"])
+rc = [c for c, _ in obs.trace]
+check("grid: one recording, no pause between grid and start", rc == ["GetRecordStatus", "StartRecord",
+      "PauseRecord", "StopRecord"], rc)
+check("grid: one seek only (start plays on from the grid)", [c for c in rp.calls if c[0] == "seek"]
+      == [("seek", 3, 244.0)], rp.calls)
+check("grid: source hidden again", not fake.scenes["iRacing"]["Startaufstellung"])
+vis = [d["sceneItemEnabled"] for rt, d in fake.calls if rt == "SetSceneItemEnabled"]
+check("grid: hidden at run start, shown, hidden", vis == [False, True, False], vis)
+gcam = [c for c in rp.calls if c[0] == "cam"][0]
+check("grid: wide camera, not TV1 (no Blimp here -> TV2)", gcam[2] == "TV2", gcam)
+check("grid: start scene still gets its title card", any("Der Start" in l or "start" in l for l in st["log"]))
+fake, rp, obs, r, ok = run(GRID, {"record": True}, obs_scenes={"iRacing": {}, "Moderator": {}})
+r.wait(30)
+check("grid: missing source -> hint, run goes on", r.status()["state"] == "done"
+      and any("obs_loaders/grid.html" in l for l in r.status()["log"]), r.status()["log"])
+
+# ---------------------------------------------------------------- stop mid-run
+fake, rp, obs, r, ok = run(SCENES, {"record": True})
+time.sleep(0.8)
+r.stop()
+r.wait(10)
+st = r.status()
+check("stop: state stopped", st["state"] == "stopped", st["state"])
+check("stop: recording stopped", "StopRecord" in [c for c, _ in obs.trace] and not fake.recording)
+check("stop: not all scenes ran", sum(1 for s in st["scenes"] if s["state"] == "fertig") < 3, st["scenes"])
+check("stop: replay restored", rp.restored == 1)
+
+# ---------------------------------------------------------------- OBS already recording
+fake, rp, obs, r, ok = run(SCENES, {"record": True}, pre=lambda f: setattr(f, "recording", True))
+r.wait(10)
+st = r.status()
+check("already recording -> error, nothing touched", st["state"] == "error" and "nimmt schon auf" in st["error"]
+      and "StartRecord" not in [c for c, _ in obs.trace] and not rp.calls, st)
+
+# ---------------------------------------------------------------- rehearsal
+rp2 = FakeReplay(speed=40)
+r = R.HighlightRunner(rp2, None, cfg=CFG)
+r.start(SCENES[:2], {"record": True})      # no OBS -> rehearsal
+r.wait(20)
+check("no OBS: plays the scenes anyway", r.status()["state"] == "done"
+      and len([c for c in rp2.calls if c[0] == "seek"]) == 2, r.status())
+
+# ---------------------------------------------------------------- stalled replay
+rp3 = FakeReplay(speed=20, ignore_first_plays=2)
+fake, rp, obs, r, ok = run(SCENES[1:2], {"record": True}, replay=rp3)
+r.wait(20)
+check("stalled replay: play kicked again, scene done", r.status()["state"] == "done"
+      and sum(1 for c in rp3.calls if c[0] == "play") >= 3
+      and any("Replay steht" in l for l in r.status()["log"]), r.status()["log"])
+
+# ---------------------------------------------------------------- voice + intro by voice
+sp = Speaker()
+fake, rp, obs, r, ok = run(SCENES[:2], {"record": True, "voice": True, "intro": "Willkommen!", "outro": "Tschüss!"},
+                           speaker=sp)
+r.wait(30)
+st = r.status()
+check("voice: done", st["state"] == "done", st)
+check("voice: intro, 2 scene lines, outro", [t for t, _ in sp.said] == ["Willkommen!", "Grüne Flagge!",
+                                                                         "Becker geht vorbei!", "Tschüss!"], sp.said)
+check("voice: scene lines hype, moderation normal", [m for _, m in sp.said] == ["normal", "hype", "hype", "normal"])
+scs = [d["sceneName"] for rt, d in fake.calls if rt == "SetCurrentProgramScene"]
+check("voice: Moderator -> iRacing -> Moderator", scs == ["Moderator", "iRacing", "Moderator"], scs)
+check("voice: 4 recorded segments (intro, 2 scenes, outro)", len(fake.rec_segments) == 4, fake.rec_segments)
+check("voice: Gabi idle loop switched on", fake.scenes["Moderator"]["Gabi Ruhe"])
+
+
+# ---------------------------------------------------------------- Gabi intro video
+class Avatar:
+    def __init__(self):
+        self.ordered = []
+
+    def available(self):
+        return True
+
+    def ensure(self, kind, seg, text):
+        self.ordered.append((kind, seg, text))
+
+    def get(self, kind, seg, text):
+        return "C:/avatar/out/highlights_intro.mp4" if seg == "intro" else None
+
+    def status(self, kind):
+        return {"intro": {"state": "ready"}}
+
+
+av = Avatar()
+fake, rp, obs, r, ok = run(SCENES[:1], {"record": True, "gabi": True, "intro": "Hallo!", "outro": "Ciao!"}, avatar=av)
+r.prepare_avatar("Hallo!", "Ciao!")
+r.wait(30)
+st = r.status()
+check("gabi: done", st["state"] == "done", st)
+check("gabi: videos ordered for intro + outro", [(k, s) for k, s, _ in av.ordered] == [("highlights", "intro"),
+                                                                                    ("highlights", "outro")])
+check("gabi: intro video put into source Gabi", ("SetInputSettings",
+      {"inputName": "Gabi", "inputSettings": {"local_file": "C:/avatar/out/highlights_intro.mp4"}}) in fake.calls)
+check("gabi: video restarted and hidden afterwards", any(rt == "TriggerMediaInputAction" for rt, _ in fake.calls)
+      and not fake.scenes["Moderator"]["Gabi"])
+check("gabi: outro skipped without video and voice", any("outro nicht fertig" in l for l in st["log"])
+      and len(fake.rec_segments) == 2, (st["log"], fake.rec_segments))
+
+# ---------------------------------------------------------------- real reel (Indianapolis), when the log is here
+INDY = "logs/WCT/indianapolis/20261020-195328_indianapolis_motor_speedway_road_course_race.jsonl"
+if os.path.exists(INDY):
+    import highlights as H
+    reel = H.pick_file(INDY, 240)["scenes"]
+    fake, rp, obs, r, ok = run(reel, {"record": True, "card": True}, replay=FakeReplay(speed=60))
+    r.wait(60)
+    st = r.status()
+    check("Indy reel: done", st["state"] == "done", st["error"])
+    joined = sum(1 for a, b in zip(reel, reel[1:]) if R.HighlightRunner._contiguous(a, b))
+    check("Indy reel: grid runs into the start", reel[0]["kind"] == "grid" and joined >= 1)
+    check("Indy reel: one segment per scene, grid + start as one",
+          len(fake.rec_segments) == len(reel) - joined, (len(fake.rec_segments), len(reel), joined))
+    caution = next(s for s in reel if s["kind"] == "caution")
+    fake, rp, obs, r, ok = run([caution], {"record": True}, replay=FakeReplay(speed=4))
+    r.wait(30)
+    on = [t for c, t in obs.trace if c in ("StartRecord", "ResumeRecord")]
+    off = [t for c, t in obs.trace if c == "PauseRecord"]
+    check("Indy reel: the recorded caution covers 547.7 s", on and on[0] <= 547.72 <= off[0], (on, off))
+else:
+    print("SKIP Indy reel: log not present")
+
+
+# ---------------------------------------------------------------- PollerReplay (dashboard adapter)
+class FakeIR:
+    def __init__(self):
+        self.calls = []
+        self.vals = {"SessionTime": 123.4, "SessionNum": 2}
+
+    def __getitem__(self, k):
+        return self.vals.get(k)
+
+    def replay_set_play_speed(self, s, slow):
+        self.calls.append(("speed", s))
+
+    def replay_search_session_time(self, sn, ms):
+        self.calls.append(("search", sn, ms))
+
+    def cam_switch_num(self, car, grp, cam):
+        self.calls.append(("cam", car, grp, cam))
+
+
+class FakePoller:
+    def __init__(self):
+        self.ir = FakeIR()
+        self.connected = True
+        self._camera_groups = GROUPS
+        self.director_enabled = True
+        self.auto_follow = False
+        self.focus_leader = True
+        self.focus_crashes = False
+        self.auto_replay = True
+        self.auto_replay_overtakes = True
+        self._manual_override_until = 0.0
+        self._own_replay_until = 0.0
+        self._own_replay_from = 0.0
+        self._current_cam_group = 0
+        self.director_calls, self.hud = [], 0
+
+    def set_director(self, on):
+        self.director_calls.append(on)
+        self.director_enabled = on
+
+    def set_auto_camera(self, on):
+        pass
+
+    def _reassert_ui_hide(self):
+        self.hud += 1
+
+
+fp = FakePoller()
+pr = R.PollerReplay(fp, sleep=lambda s: None)
+pr.prepare()
+check("adapter: REGIE / focus / auto-replays off", not fp.director_enabled and not fp.focus_leader
+      and not fp.auto_replay and not fp.auto_replay_overtakes and fp.director_calls == [False])
+check("adapter: watchdog held back", fp._manual_override_until > time.time() + 20)
+pr.seek(3, 547.72)
+pr.switch("01", 2)
+pr.play()
+check("adapter: pause -> search(session_num, ms) -> cam -> play 1x",
+      fp.ir.calls == [("speed", 0), ("search", 3, 547720), ("cam", "01", 2, 0), ("speed", 1)], fp.ir.calls)
+check("adapter: HUD re-hidden after camera / play", fp.hud == 2)
+check("adapter: session time", pr.session_time() == 123.4)
+pr.restore()
+check("adapter: restore puts REGIE / focus / auto-replays back", fp.director_enabled and fp.focus_leader
+      and fp.auto_replay and fp.auto_replay_overtakes and fp.director_calls == [False, True])
+check("pick_group: no TV -> Gyro, never Chase / Cockpit / Scenic",
+      R.pick_group("pass", [g for g in GROUPS if not g["name"].startswith("TV")])["name"] == "Gyro")
+check("pick_group: only forbidden cams -> None",
+      R.pick_group("pass", [g for g in GROUPS if g["name"] in ("Scenic", "Chase", "Cockpit")]) is None)
+
+print(f"\n{passes} PASS, {len(fails)} FAIL")
+for f in fails:
+    print("  FAIL", f)
+sys.exit(1 if fails else 0)

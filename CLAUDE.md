@@ -177,6 +177,49 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 21, 2026 (HIGHLIGHT VIDEO from replay + race log):** NEW
+`highlights.py` (pure picker) + `highlight_runner.py` (run) + dashboard page
+`5000/highlights` (German operator UI) and title card `5000/highlights/card`
+(loader highlight_card.html, 50 loaders; icons overlays/highlight_card +
+dashboard/highlights_page, "film" glyph). Picker: running order rebuilt from
+the per-second `pos` events — laps counted from the pct WRAP, not from the lap
+events (iRacing logs "lap 0" both on the pace lap and after the green, and the
+counter flips a tick off the pct); at the green a car with pct > 0.5 is still
+behind the line (lap −1); towed cars resynced to CarIdxLap mid-lap. Passes =
+swaps held 5 s between cars ≤ 0.03 laps apart, not under caution, not near
+either car's pit stay, not after the checkered, churn dropped, multiclass only
+inside a class (car_class, else guessed from the car name). False pit-exit
+spins ("moved backwards" within 20 s of the car's pit exit) + pace car
+dropped. Scenes: start / caution / restart / finish always, then pass (lead,
+class lead, podium), contact / spin, fastest lap (lap end = the consecutive
+crossings whose difference matches the best lap — the lap events' lap_time
+lags a lap), DotD (his best non-start pass), AM class winner; greedy by prio
+with a crowding penalty (180 s) and ≤ 2 per car, ≤ 5 passes / 4 incidents,
+overlaps merged if ≤ 36 s. Indy 20.10. → 11 scenes / 230 s incl. caution
+547.7 and restart 916. Run: per scene pause → seek (log session_num, 1.5 s
+preroll) → cam (TV1-3, Gyro for fastest / DotD, never NEVER_CAMS) → play 1x →
+OBS StartRecord / ResumeRecord when the replay reaches the scene → wait on
+SessionTime (stall → play again, TV rotation every 12 s) → PauseRecord; at
+the end StopRecord (outputPath shown). Options: card, voice (say_show with
+`mood`, new optional arg), Gabi intro / outro (AvatarRenderer kind
+"highlights", Moderator scene, voice fallback), record off = rehearsal.
+PollerReplay turns REGIE / auto-follow / focus / auto-replays off and holds
+the watchdog, restores afterwards. fake_obs.py gained Start/Pause/Resume/
+Stop/GetRecordStatus. Tests: test_highlights.py 44 (real Indy log + synthetic),
+test_highlight_runner.py 50 (fake replay at 20x + FakeObs: record timing per
+scene, stop, already recording, stall, voice, Gabi, adapter on a fake poller);
+scratchpad integ: real dashboard Flask app + fake IR + FakeObs 19/19; page and
+card rendered. NOT tried: real iRacing replay, real OBS. Guide HIGHLIGHTS.md.
+FOLLOW-UP same day (Thomas: grid first, then always the start): scene kind
+`grid` (must, overlay "grid") = the last 15 s of the pace lap ending where the
+start scene begins; the runner shows OBS source sources["grid"]
+("Startaufstellung" = obs_loaders/grid.html, 5001 reads the quali result in a
+replay too) on the race scene, no title card over it, Blimp / Chopper / TV2;
+contiguous scenes (b.t_start − a.t_end ≤ 1 s) play on without seek or record
+pause, so grid → start is one take. Missing source = hint in the log.
+Tests 45 / 60, integ 19.
+Restart 5000.
+
 **October 21, 2026 (launcher: "Update & restart" button missing unless the
 window was dragged very wide):** the banner packed its LABEL first and the
 buttons after; pack hands out space in packing order, and the commit list

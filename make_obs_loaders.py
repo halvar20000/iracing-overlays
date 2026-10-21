@@ -81,6 +81,8 @@ OVERLAYS = [
     ("commentary_voice", "Commentary Voice (REGIE)", 5000, "/commentary/voice", "redirect"),
     # where the track is: satellite map, flies onto the circuit (AI moderation)
     ("location",      "Track Location Map", 5007, "/location", "redirect"),
+    # highlight video (2026-10-21): scene title card during the recording
+    ("highlight_card", "Highlight Title Card", 5000, "/highlights/card"),
     # Note: racecontrol (iCASControl, port 8080) is an interactive steward
     # web app, opened directly in a browser — NOT an OBS browser source — so
     # it intentionally has no loader page here.

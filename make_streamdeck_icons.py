@@ -113,6 +113,7 @@ G = {
     "speaker": '<path d="M3.5 9.5h4l5-4.5v14l-5-4.5h-4z"/><path d="M16 9a4 4 0 0 1 0 6M18.8 6.2a8 8 0 0 1 0 11.6"/>',
     "stop": '<rect x="3" y="3" width="18" height="18" rx="4"/><rect x="8.5" y="8.5" width="7" height="7" rx="1" class="F"/>',
     "play": '<rect x="2" y="5" width="20" height="14" rx="4"/><path d="M10 9v6l5-3z" class="F"/>',
+    "film": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 8h4M3 12h4M3 16h4M17 8h4M17 12h4M17 16h4"/><path d="M10.5 9.5v5l4-2.5z" class="F"/>',
     "curve": '<path d="M4 20c0-6 3-8 8-8s8-3 8-8"/><path d="M16.5 4H20v3.5"/>',
     "camera": '<path d="M3 8.5a1.5 1.5 0 0 1 1.5-1.5H7l1.6-2.5h6.8L17 7h2.5A1.5 1.5 0 0 1 21 8.5v10a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/>'
               '<circle cx="12" cy="13" r="3.7"/>',
@@ -183,6 +184,7 @@ OVERLAY_ICONS = [
     ("results_lite",  "post",   "list",      "Ergebnis Lite"),
     ("results_solid", "post",   "podium",    "Ergebnis Abspann"),
     ("champ_solid",   "post",   "trophy",    "Meisterschaft Abspann"),
+    ("highlight_card", "post",  "film",      "Highlight Titel"),
     ("dashboard",     "tool",   "gauge",     "Dashboard"),
     ("logger",        "tool",   "doc",       "Race Logger"),
     ("line",          "tool",   "curve",     "Corner Cues"),
@@ -215,6 +217,7 @@ DASH_ICONS = [
     ("ot_panel",          "tool",   "overtake",    "Überhol Fenster",   "/overtakes/panel"),
     ("show_page",         "tool",   "list",        "Sendeablauf",       "/show"),
     ("ask_page",          "tool",   "chat",        "Fragen",            "/ask"),
+    ("highlights_page",   "tool",   "film",        "Highlight Video",   "/highlights"),
 ]
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8"><style>

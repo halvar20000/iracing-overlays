@@ -76,6 +76,7 @@ Loader-Datei verwenden).
 | Rennergebnis (Lite) | 5003 | `results_lite.html` | ≈ 780 × 900 |
 | Rennergebnis, deckend (Abspann) | 5002 `/solid` | `results_solid.html` | ✓ 1920 × 1080 |
 | Meisterschaft, deckend (Abspann) | 5010 `/overlay/solid` | `champ_solid.html` | ✓ 1920 × 1080 (`?zoom=`) |
+| Highlight-Video Titelkarte (nur während der Aufnahme, HIGHLIGHTS.md) | 5000 `/highlights/card` | `highlight_card.html` | ≈ 1100 × 110 (`?zoom=`) |
 
 ## Bedienseiten (nicht für den Stream)
 

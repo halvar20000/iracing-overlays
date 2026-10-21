@@ -137,6 +137,7 @@ jeweilige Overlay muss im Launcher gestartet sein (das Dashboard für das
 | `dashboard/ot_panel.png` | `http://localhost:5000/overtakes/panel` | Überhol-Fenster: Replay 10 s / 20 s, Kamera, Auto-Replay, Go Live |
 | `dashboard/show_page.png` | `http://localhost:5000/show` | Sendeablauf: Skript lesen, starten, weiter, stoppen, OBS prüfen |
 | `dashboard/ask_page.png` | `http://localhost:5000/ask` | Frag Claude: letzte Fragen + Antworten, Frage tippen |
+| `dashboard/highlights_page.png` | `http://localhost:5000/highlights` | Highlight-Video: Rennen wählen, Szenen bearbeiten, Aufnahme starten (HIGHLIGHTS.md) |
 | `overlays/dashboard.png` | `http://localhost:5000` | ganzes Dashboard |
 | `overlays/logger.png` | `http://localhost:5009` | Race Logger Monitor |
 | — | `http://localhost:8080` | Race Control (Stewards) |
