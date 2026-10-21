@@ -104,6 +104,8 @@ COLOR_WARN      = "#ffd166"
 COLOR_BAD       = "#ff4d6d"
 COLOR_IDLE      = "#3a3a4a"
 
+BANNER_LINE_MAX = 110   # update banner: a longer commit subject is cut with "…"
+
 
 # ---------------------------------------------------------------------------
 # OverlayController — wraps one subprocess and exposes start/stop/status
@@ -323,25 +325,30 @@ class LauncherApp(tk.Tk):
         # --- update banner (hidden until a check finds something) ---
         self._banner = tk.Frame(self, bg="#1f2a1f", highlightthickness=1,
                                 highlightbackground=COLOR_OK)
-        self._banner_text = tk.Label(
-            self._banner, text="", bg="#1f2a1f", fg=COLOR_TEXT, justify="left",
-            anchor="w", font=("Segoe UI", 9),
-        )
-        self._banner_text.pack(side="left", fill="x", expand=True, padx=12, pady=8)
+        # The buttons are packed FIRST: pack hands out space in packing order,
+        # and the commit list (long subjects) used to take the whole width and
+        # push "Update & restart" out of a normal-sized window (2026-10-21).
         self._banner_later = tk.Button(
             self._banner, text="Later", command=self._hide_banner,
             bg="#1f2a1f", fg=COLOR_MUTED, activebackground="#1f2a1f",
             activeforeground=COLOR_TEXT, relief="flat", cursor="hand2",
             font=("Segoe UI", 9), padx=10, pady=4,
         )
-        self._banner_later.pack(side="right", padx=(4, 10))
+        self._banner_later.pack(side="right", anchor="n", padx=(4, 10), pady=8)
         self._banner_btn = tk.Button(
             self._banner, text="Update & restart", command=self._do_update,
             bg=COLOR_OK, fg="#0a0a0f", activebackground="#6be898",
             activeforeground="#0a0a0f", relief="flat", cursor="hand2",
             font=("Segoe UI", 9, "bold"), padx=14, pady=4,
         )
-        self._banner_btn.pack(side="right", padx=(4, 0))
+        self._banner_btn.pack(side="right", anchor="n", padx=(4, 0), pady=8)
+        self._banner_text = tk.Label(
+            self._banner, text="", bg="#1f2a1f", fg=COLOR_TEXT, justify="left",
+            anchor="w", font=("Segoe UI", 9), wraplength=420,
+        )
+        self._banner_text.pack(side="left", fill="x", expand=True, padx=12, pady=8)
+        # the text wraps in whatever room the buttons leave
+        self._banner.bind("<Configure>", self._wrap_banner)
         self._banner_anchor = tk.Frame(self, bg=COLOR_BG, height=0)
         self._banner_anchor.pack(fill="x")
 
@@ -623,13 +630,20 @@ class LauncherApp(tk.Tk):
             head = "Update available: %s new change%s." % (n if n is not None else "some",
                                                            "" if n == 1 else "s")
         msgs = info.get("commits") or []
-        lines = ["  • " + m for m in msgs[:6]]
+        lines = ["  • " + (m if len(m) <= BANNER_LINE_MAX else m[:BANNER_LINE_MAX - 1].rstrip() + "…")
+                 for m in msgs[:6]]
         if len(msgs) > 6:
             lines.append("  … and %d more" % (len(msgs) - 6))
         self._banner_text.configure(text="\n".join([head] + lines))
         self._banner_btn.configure(state="normal")
         self._banner.pack(fill="x", padx=16, pady=(4, 2), after=self._banner_anchor)
         self._append_log("update", head)
+
+    def _wrap_banner(self, event=None):
+        """Wrap the commit list to the room left of the buttons."""
+        room = (self._banner.winfo_width() - self._banner_btn.winfo_reqwidth()
+                - self._banner_later.winfo_reqwidth() - 60)
+        self._banner_text.configure(wraplength=max(200, room))
 
     def _hide_banner(self):
         self._banner.pack_forget()

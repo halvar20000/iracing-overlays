@@ -177,6 +177,16 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 21, 2026 (launcher: "Update & restart" button missing unless the
+window was dragged very wide):** the banner packed its LABEL first and the
+buttons after; pack hands out space in packing order, and the commit list
+(long subjects, no wraplength) claimed the whole width — at 780 px both
+buttons were not even mapped (measured with real Tk on the old code). Now the
+buttons are packed first (anchor n), the label wraps to the room left of them
+(`_wrap_banner` on <Configure>), and each commit line is cut at
+`BANNER_LINE_MAX` 110 chars. Checked at 780 px: both buttons inside the
+window, text wrapped.
+
 **October 21, 2026 (Andreas's feedback on the WCT Indianapolis show):**
 (1) "Gabi vanished after the greeting" — the recording shows the EMPTY studio
 during every page: the idle loop was not on, and the code never touched it.
