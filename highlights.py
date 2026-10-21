@@ -31,7 +31,7 @@ Selection: the four "always" scenes first, then the rest by priority while
 the total stays under the budget (default 240 s), at most MAX_PASSES passes
 and MAX_INCIDENTS incidents, no overlaps (an overlapping scene is merged
 into its neighbour when the result stays short, else dropped). Output is
-chronological.
+chronological — except the Driver of the Day, announced right before the finish.
 """
 from __future__ import annotations
 
@@ -725,6 +725,13 @@ def select(cands: list[dict], budget_s=DEFAULT_BUDGET_S) -> list[dict]:
             elif s["kind"] in ("contact", "spin"):
                 n["inc"] += 1
     chosen.sort(key=lambda c: c["t_start"])
+    # Driver of the Day is ANNOUNCED right before the finish (Thomas,
+    # 2026-10-21), whenever his scene happened in the race
+    dotd = [c for c in chosen if c["kind"] == "dotd"]
+    if dotd and any(c["kind"] == "finish" for c in chosen):
+        chosen.remove(dotd[0])
+        fin = next(i for i, c in enumerate(chosen) if c["kind"] == "finish")
+        chosen.insert(fin, dotd[0])
     for i, c in enumerate(chosen):
         c["id"] = i + 1
         c["t_start"] = max(0.0, c["t_start"])

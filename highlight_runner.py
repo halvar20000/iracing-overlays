@@ -15,6 +15,12 @@ Optional per run:
            the quali result) on the race scene while the pace lap plays, then
            hides it. A scene that starts where the previous one ended (grid ->
            start) runs on without seek or record pause.
+  fade   — scenes are joined by a fade through black (default on): OBS's own
+           fade transition to an empty scene scenes["black"] ("Highlight
+           Schwarz", created if missing) before the record pauses, and from
+           it into the next scene once the record runs again; Moderator <->
+           race the same way. OBS's transition is put back afterwards.
+           (Thomas, 2026-10-21: "transitions are choppy, not smooth")
   card   — the title card page (/highlights/card on the dashboard) shows the
            scene's title + line for the first CARD_S seconds of each scene
            (it reads status()["card"]; nothing to switch in OBS)
@@ -43,16 +49,18 @@ import time
 from race_director import NEVER_CAMS
 
 DEFAULTS = {
-    "scenes": {"race": "iRacing", "moderator": "Moderator"},
+    "scenes": {"race": "iRacing", "moderator": "Moderator", "black": "Highlight Schwarz"},
     "sources": {"avatar_talk": "Gabi", "avatar_idle": "Gabi Ruhe", "grid": "Startaufstellung"},
     "preroll_s": 1.5,       # seek this much before the scene: camera settles off the record
     "card_s": 5.0,          # title card on screen at the start of each scene
     "cam_every_s": 12.0,    # next TV camera inside a long scene
     "stall_s": 4.0,         # replay time not moving this long -> kick play again
     "settle_s": 0.4,        # after a camera switch before recording
+    "fade_s": 0.6,          # fade through black between scenes (OBS fade transition); 0 = hard cuts
 }
 
-# camera plans per scene kind (names; Gyro = in-car, never Cockpit)
+# camera plans per scene kind (names) — TV only: the in-car Gyro showed a dark
+# cockpit in the first real reel (2026-10-21); never Scenic / Cockpit / Chase
 HL_CAMS = {
     "grid":    ["Blimp", "Chopper", "TV2", "TV1"],
     "start":   ["TV1", "TV2", "TV3"],
@@ -63,8 +71,8 @@ HL_CAMS = {
     "pass":    ["TV1", "TV2", "TV3"],
     "contact": ["TV1", "TV2", "TV3"],
     "spin":    ["TV1", "TV2", "TV3"],
-    "fastest": ["TV1", "Gyro", "TV2"],
-    "dotd":    ["TV1", "Gyro", "TV2"],
+    "fastest": ["TV1", "TV2", "TV3"],
+    "dotd":    ["TV1", "TV2", "TV3"],
 }
 
 MOOD = {"fastest": "normal", "caution": "hype", "restart": "hype", "start": "hype", "finish": "hype"}
@@ -121,6 +129,7 @@ class HighlightRunner:
         self.rec_paused = False
         self.rec_seconds = 0.0
         self._rec_from = None
+        self._fade_ok, self._fade_saved, self._program = False, None, None
         self._card_until = 0.0
         self._card = None
 
@@ -136,7 +145,7 @@ class HighlightRunner:
             for i, s in enumerate(self.scenes):
                 s["id"] = i + 1
                 s["state"] = "wartet"
-            self.opts = {"record": True, "card": True, "voice": False, "gabi": False,
+            self.opts = {"record": True, "card": True, "voice": False, "gabi": False, "fade": True,
                          "intro": "", "outro": "", **(opts or {})}
             self._stop.clear()
             self.state, self.phase, self.current, self.error, self.output = "running", "start", -1, "", ""
@@ -144,6 +153,7 @@ class HighlightRunner:
             self.rec_started = self.rec_paused = False
             self.rec_seconds, self._rec_from = 0.0, None
             self.started_at, self.ended_at = self.clock(), None
+            self._fade_ok, self._fade_saved, self._program = False, None, None
             self._thread = threading.Thread(target=self._run, daemon=True, name="Highlights")
             self._thread.start()
         return True, "gestartet"
@@ -228,15 +238,14 @@ class HighlightRunner:
                     self._overlay(sc, False)
             self._note(f"{len(self.scenes)} Szenen, {sum(s['t_end'] - s['t_start'] for s in self.scenes):.0f} s"
                        + (" – Aufnahme" if rec else " – Probelauf ohne Aufnahme"))
-            on_mod = False
+            self._fade_setup()
+            if self._fade_ok:
+                self._show("black", wait=False)       # everything starts out of black
             if self.opts.get("intro") and (self.opts.get("gabi") or self.opts.get("voice")):
-                on_mod = self._moderation("intro", self.opts["intro"], rec)
+                self._moderation("intro", self.opts["intro"], rec)
             for i, sc in enumerate(self.scenes):
                 if self._stop.is_set():
                     break
-                if on_mod or i == 0:
-                    self._obs(lambda: self.obs.set_scene(self.cfg["scenes"]["race"]), "Szene iRacing")
-                    on_mod = False
                 self.current = i
                 nxt = self.scenes[i + 1] if i + 1 < len(self.scenes) else None
                 self._scene(sc, i, rec, cont_prev=self._contiguous(self.scenes[i - 1] if i else None, sc),
@@ -250,6 +259,9 @@ class HighlightRunner:
             self._note(f"FEHLER: {e}")
         finally:
             self._card = None
+            if (rec and self.rec_started and self._fade_ok and self._program != "black"
+                    and not self.rec_paused and self.state != "error"):
+                self._show("black")                   # fade out at the very end
             if rec and self.rec_started:
                 self._rec_resume_clock(False)
                 res = self._obs(lambda: self.obs.call("StopRecord"), "Aufnahme beenden") or {}
@@ -264,9 +276,62 @@ class HighlightRunner:
                     self.replay.restore()
                 except Exception as e:
                     self._note(f"Dashboard zurücksetzen: {e}")
+            if self._fade_ok:
+                if self._program == "black":          # never leave the program on black
+                    self._show("race", wait=False)
+                self._fade_restore()
             self.phase = ""
             self.current = -1
             self.ended_at = self.clock()
+
+    # fades: OBS fade transition through an empty black scene
+    def _show(self, key: str, wait: bool = True):
+        """Program scene by key (race / moderator / black); with fades on the
+        switch IS the fade and we wait it out."""
+        if self.obs is None or self._program == key:
+            return
+        name = self.cfg["scenes"][key]
+        self._obs(lambda: self.obs.set_scene(name), f"Szene {name}")
+        self._program = key
+        if wait and self._fade_ok:
+            self.sleep(float(self.cfg["fade_s"]) + 0.1)
+
+    def _fade_setup(self):
+        self._fade_ok = False
+        fade_s = float(self.cfg.get("fade_s") or 0)
+        if self.obs is None or not self.opts.get("fade") or fade_s <= 0:
+            return
+        try:
+            lst = self.obs.call("GetSceneTransitionList")
+            fade = next((t["transitionName"] for t in lst.get("transitions") or []
+                         if t.get("transitionKind") == "fade_transition"), None)
+            if not fade:
+                self._note("Kein Überblenden-Übergang in OBS – harte Schnitte")
+                return
+            cur = self.obs.call("GetCurrentSceneTransition")
+            self._fade_saved = (cur.get("transitionName"), cur.get("transitionDuration"))
+            black = self.cfg["scenes"]["black"]
+            if black not in self.obs.scenes():
+                self.obs.call("CreateScene", {"sceneName": black})
+                self._note(f"OBS-Szene „{black}“ angelegt (leer = schwarz, für die Blenden)")
+            self.obs.call("SetCurrentSceneTransition", {"transitionName": fade})
+            self.obs.call("SetCurrentSceneTransitionDuration", {"transitionDuration": int(fade_s * 1000)})
+            self._fade_ok = True
+        except Exception as e:
+            self._note(f"Blenden aus ({e}) – harte Schnitte")
+            self._fade_restore()
+
+    def _fade_restore(self):
+        if not self._fade_saved:
+            return
+        name, dur = self._fade_saved
+        self._fade_saved = None
+        if name:
+            self._obs(lambda: self.obs.call("SetCurrentSceneTransition", {"transitionName": name}),
+                      "Übergang zurücksetzen")
+        if dur:
+            self._obs(lambda: self.obs.call("SetCurrentSceneTransitionDuration",
+                                            {"transitionDuration": int(dur)}), "Übergangsdauer zurücksetzen")
 
     # recording on / off around each scene
     # OBS starts / pauses its recording output ASYNCHRONOUSLY: StartRecord
@@ -387,13 +452,16 @@ class HighlightRunner:
             self.replay.play()
             self.replay.switch(sc["car_number"], int(g["id"]))   # again while playing: a paused replay may ignore it
             # record from the scene start: stop waiting a camera-settle early
-            self._wait_time(t0 - 0.2 - float(self.cfg["settle_s"]), float(self.cfg["preroll_s"]) + 8.0)
+            # (and a fade earlier, so the fade-in has finished at t_start)
+            fade = float(self.cfg["fade_s"]) if self._fade_ok else 0.0
+            self._wait_time(t0 - 0.2 - float(self.cfg["settle_s"]) - fade, float(self.cfg["preroll_s"]) + 8.0)
             self.sleep(float(self.cfg["settle_s"]))
         if self._stop.is_set():
             sc["state"] = "abgebrochen"
             return
         self._overlay(sc, True)
         self._rec_on(rec)
+        self._show("race", wait=False)                   # fade in from black (or the cut)
         sc["state"] = "läuft"
         self.phase = f"Szene {i + 1}: {sc.get('title')}"
         self._note(f"Szene {i + 1} {sc['kind']} #{sc['car_number']} {sc.get('driver', '')} "
@@ -413,9 +481,13 @@ class HighlightRunner:
             sc["state"] = "abgebrochen"
         else:
             sc["state"] = "fertig" if ok else "Zeit überschritten"
-        self._overlay(sc, False)
         if not (cont_next and ok and not self._stop.is_set()):
+            if self._fade_ok and not self._stop.is_set():
+                self._show("black")                      # fade out, still recording
+            self._overlay(sc, False)
             self._rec_off(rec)
+        else:
+            self._overlay(sc, False)
 
     def _wait_time(self, target: float, timeout: float) -> bool:
         """Wait until the replay's SessionTime reaches `target`. Kicks play
@@ -521,11 +593,11 @@ class HighlightRunner:
         mod = self.cfg["scenes"]["moderator"]
         src = self.cfg["sources"]
         self.phase = "Intro" if seg == "intro" else "Outro"
-        self._obs(lambda: self.obs.set_scene(mod), "Szene Moderator")
         if src.get("avatar_idle"):
             self._obs(lambda: self.obs.set_visible(mod, src["avatar_idle"], True), "Gabi Ruhe")
         self._card = None
         self._rec_on(rec)
+        self._show("moderator")                           # fade in from black (or the cut)
         self._note(f"{self.phase}: " + ("Gabi-Video" if path else "Stimme"))
         played = False
         if path is not None and src.get("avatar_talk"):
@@ -540,6 +612,8 @@ class HighlightRunner:
                     break
                 self.sleep(0.2)
             self.sleep(0.6)
+        if self._fade_ok and not self._stop.is_set():
+            self._show("black")                           # fade out, still recording
         self._rec_off(rec)
         return True
 

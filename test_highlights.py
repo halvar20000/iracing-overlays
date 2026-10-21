@@ -82,8 +82,13 @@ if os.path.exists(INDY):
     check("finish scene: Zocher crossing the line", len(fin) == 1 and covers(fin[0], 3881.98)
           and fin[0]["driver"] == "Mike Zocher", fin)
     check("finish scene is the last racing scene", sc.index(fin[0]) >= len(sc) - 3)
-    check("chronological", all(a["t_start"] <= b["t_start"] for a, b in zip(sc, sc[1:])))
-    check("no overlaps", all(a["t_end"] <= b["t_start"] for a, b in zip(sc, sc[1:])))
+    chrono = sorted(sc, key=lambda s: s["t_start"])
+    check("chronological apart from the DotD", [s for s in sc if s["kind"] != "dotd"]
+          == [s for s in chrono if s["kind"] != "dotd"])
+    check("no overlaps", all(a["t_end"] <= b["t_start"] for a, b in zip(chrono, chrono[1:])))
+    di = next(i for i, s in enumerate(sc) if s["kind"] == "dotd")
+    check("Driver of the Day announced right before the finish", sc[di + 1]["kind"] == "finish",
+          [s["kind"] for s in sc])
     check("every scene has a car + session_num", all(s["car_number"] and s["session_num"] == 3 for s in sc))
     check("ids 1..n", [s["id"] for s in sc] == list(range(1, len(sc) + 1)))
     check("passes <= 5, incidents <= 4", kinds.count("pass") <= 5

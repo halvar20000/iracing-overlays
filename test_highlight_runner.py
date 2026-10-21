@@ -458,6 +458,89 @@ for n in (1, 2):
 check("Gabi is only hidden at the end, never stopped", not any(
     rt == "TriggerMediaInputAction" and d["mediaAction"].endswith("STOP") for rt, d in so.calls))
 
+# ---------------------------------------------------------------- fades through black
+# (Thomas, 2026-10-21: "transitions between scenes are choppy, not smooth")
+class FadeObs(FakeObs):
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.transition, self.duration = "Schnitt", 300
+        self.program_log = []            # (scene, recording and not paused, replay time)
+        self.replay = None
+
+    def handle(self, rt, rd):
+        if rt == "GetSceneTransitionList":
+            self.calls.append((rt, rd))
+            return True, {"transitions": [{"transitionName": "Schnitt", "transitionKind": "cut_transition"},
+                                          {"transitionName": "Überblenden", "transitionKind": "fade_transition"}]}, None
+        if rt == "GetCurrentSceneTransition":
+            self.calls.append((rt, rd))
+            return True, {"transitionName": self.transition, "transitionDuration": self.duration}, None
+        if rt == "SetCurrentSceneTransition":
+            self.calls.append((rt, rd))
+            self.transition = rd["transitionName"]
+            return True, None, None
+        if rt == "SetCurrentSceneTransitionDuration":
+            self.calls.append((rt, rd))
+            self.duration = rd["transitionDuration"]
+            return True, None, None
+        if rt == "CreateScene":
+            self.calls.append((rt, rd))
+            self.scenes[rd["sceneName"]] = {}
+            return True, None, None
+        if rt == "SetCurrentProgramScene" and rd["sceneName"] in self.scenes:
+            self.program_log.append((rd["sceneName"], self.recording and not self.rec_paused,
+                                     self.replay.session_time() if self.replay else None))
+        return super().handle(rt, rd)
+
+
+fo = FadeObs(OBS_SCENES)
+rp = FakeReplay(speed=10)
+fo.replay = rp
+r = R.HighlightRunner(rp, TracingObs(fo.port, rp), cfg=dict(CFG, fade_s=0.3))
+r.start(SCENES[:2], {"record": True})
+r.wait(40)
+st = r.status()
+pl = fo.program_log
+check("fade: run done", st["state"] == "done", st["error"])
+check("fade: black scene created once", [d["sceneName"] for rt, d in fo.calls if rt == "CreateScene"]
+      == ["Highlight Schwarz"])
+check("fade: OBS fade transition used, then put back", ("SetCurrentSceneTransition", {"transitionName": "Überblenden"})
+      in fo.calls and fo.transition == "Schnitt" and fo.duration == 300, (fo.transition, fo.duration))
+check("fade: black -> race -> black -> race -> black -> race (back at the end)",
+      [p[0] for p in pl] == ["Highlight Schwarz", "iRacing", "Highlight Schwarz", "iRacing", "Highlight Schwarz",
+                             "iRacing"], [p[0] for p in pl])
+check("fade: every fade in / out is RECORDED (record running at the switch)",
+      all(p[1] for p in pl[1:5]), pl)
+ins = [p[2] for p in pl if p[0] == "iRacing"][:2]
+check("fade: fade-in starts before the scene start", all(t <= sc["t_start"] + 0.5 for t, sc in zip(ins, SCENES)),
+      (ins, [s["t_start"] for s in SCENES]))
+outs = [p[2] for p in pl if p[0] == "Highlight Schwarz"][1:3]
+check("fade: fade-out after the scene end", all(t >= sc["t_end"] - 0.5 for t, sc in zip(outs, SCENES)),
+      (outs, [s["t_end"] for s in SCENES]))
+# the fade-out is recorded, THEN the record pauses: the pause comes after the switch to black
+pause_t = [t for c, t in r.obs.trace if c == "PauseRecord"][0]
+check("fade: pause only after the fade to black", pause_t >= outs[0], (pause_t, outs[0]))
+
+fo2 = FadeObs(OBS_SCENES)
+rp2 = FakeReplay(speed=10)
+r = R.HighlightRunner(rp2, TracingObs(fo2.port, rp2), cfg=dict(CFG, fade_s=0.3))
+r.start(SCENES[:1], {"record": True, "fade": False})
+r.wait(30)
+check("fade off: hard cuts, OBS transition untouched", r.status()["state"] == "done"
+      and not any(rt in ("CreateScene", "SetCurrentSceneTransition") for rt, _ in fo2.calls))
+
+sp = Speaker()
+fo3 = FadeObs(OBS_SCENES)
+rp3 = FakeReplay(speed=10)
+fo3.replay = rp3
+r = R.HighlightRunner(rp3, TracingObs(fo3.port, rp3), speaker=sp, cfg=dict(CFG, fade_s=0.3))
+r.start(SCENES[:1], {"record": True, "voice": True, "intro": "Hallo!", "outro": "Tschüss!"})
+r.wait(40)
+check("fade + moderation: black -> Moderator -> black -> race -> black -> Moderator -> black -> race",
+      [p[0] for p in fo3.program_log] == ["Highlight Schwarz", "Moderator", "Highlight Schwarz", "iRacing",
+                                          "Highlight Schwarz", "Moderator", "Highlight Schwarz", "iRacing"],
+      [p[0] for p in fo3.program_log])
+
 # ---------------------------------------------------------------- OBS that cannot pause (Simple output,
 # Recording Quality "Same as stream" - Thomas's profile, 2026-10-21): stop before recording
 class SameAsStreamObs(FakeObs):

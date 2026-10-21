@@ -292,6 +292,17 @@ cursor (0.05-1.5 s and rising — the first readings can carry the old run's
 cursor), give up after 6 s (-> voice). Played = cursor moved; never stopped,
 only hidden. Real OBS: 3 runs in a row incl. a STOP between, 7.0 / 7.0 /
 8.1 s each. StickyObs test fails on the old code like the real run; 86.
+EIGHTH (first good reel, 4:15; Thomas: DotD came "mid-race", cuts choppy):
+(1) select() moves the dotd scene right before "finish". (2) FADES: OBS's own
+fade transition through an empty scene "Highlight Schwarz" (CreateScene if
+missing): scene end -> program black (recorded) -> PauseRecord -> seek ->
+ResumeRecord on black -> program race (fade in, the wait ends fade_s earlier so
+it is done at t_start); Moderator <-> race the same; starts and ends on black,
+program back to race and OBS's transition / duration restored afterwards;
+fade_s 0.6, page checkbox "Blenden", no fade transition in OBS -> hard cuts.
+(3) Gyro dropped from the plans (a dark cockpit in the reel). Real test on
+Thomas's OBS + replay (2 scenes, recorded): luma 57 -> 15 -> 75 across the
+cut, fade in / out at start / end. Tests 47 / 96.
 Restart 5000.
 
 **October 21, 2026 (launcher: "Update & restart" button missing unless the

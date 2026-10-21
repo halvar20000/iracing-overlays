@@ -22,8 +22,8 @@ nahtlos — ohne Schnitt — **der Start** (grüne Flagge). Außerdem **Gelbphas
   Überholmanöver), **Klassensieger AM**.
 
 Höchstens 5 Überholmanöver und 4 Zwischenfälle, über das Rennen verteilt, keine
-Überschneidungen. Kamera: TV1/TV2/TV3 (bei schnellster Runde / DotD auch Gyro),
-**nie** Scenic, Cockpit oder eine Chase-Kamera.
+Überschneidungen. Kamera: nur TV1/TV2/TV3 (Blimp / Chopper für die Startaufstellung),
+**nie** Scenic, Cockpit, Gyro oder eine Chase-Kamera.
 
 ## Ablauf
 
@@ -47,6 +47,12 @@ Höchstens 5 Überholmanöver und 4 Zwischenfälle, über das Rennen verteilt, k
    Aufnahme läuft → am Szenenende Aufnahme pausiert. Am Schluss stoppt die
    Aufnahme; der Pfad der MP4 steht oben (OBS-Aufnahmeordner und -Format).
    **■ Stop** bricht ab und beendet die Aufnahme sauber.
+
+Zwischen den Szenen wird **weich über Schwarz geblendet** (Häkchen **Blenden**):
+dafür legt der Ablauf in OBS einmal die leere Szene **„Highlight Schwarz“** an und
+benutzt OBS' Übergang „Fade“ (0,6 s); danach steht der Übergang wieder wie vorher.
+Gabi ↔ Rennen wird genauso geblendet. **Fahrer des Tages** kommt direkt vor dem
+Zieleinlauf.
 
 Während der Aufnahme sind REGIE, Auto-Follow, Fokus-Modi und Auto-Replays aus;
 danach wieder wie vorher. Die **iRacing-UI** (Replay-Leiste usw.) wird vor jeder

@@ -5700,6 +5700,7 @@ HIGHLIGHTS_HTML = r"""<!DOCTYPE html>
   <div class="bar">
     <label><input type="checkbox" id="o_record" checked> Aufnahme (OBS)</label>
     <label><input type="checkbox" id="o_card" checked> Titelkarte</label>
+    <label title="weiche Blende über Schwarz zwischen den Szenen (OBS-Übergang Fade)"><input type="checkbox" id="o_fade" checked> Blenden</label>
     <label><input type="checkbox" id="o_voice"> Stimme</label>
     <label><input type="checkbox" id="o_gabi"> Gabi Intro / Outro</label>
     <button onclick="orderGabi()">Gabi-Videos bestellen</button>
@@ -5790,6 +5791,7 @@ async function prev(i) {
   if (!d.ok) alert(d.error);
 }
 function opts() { return {record: $('o_record').checked, card: $('o_card').checked, voice: $('o_voice').checked,
+  fade: $('o_fade').checked,
   gabi: $('o_gabi').checked, intro: $('intro').value, outro: $('outro').value}; }
 async function start() {
   const d = await (await fetch('/highlights/start', {method:'POST', headers:{'Content-Type':'application/json'},
@@ -5950,7 +5952,7 @@ def highlights_start():
                            "car_number": str(s["car_number"]), "text": str(s.get("text") or "")[:300]})
         except (KeyError, TypeError, ValueError):
             return jsonify({"ok": False, "error": "Szene unvollständig"}), 400
-    opts = {k: bool(body.get(k)) for k in ("record", "card", "voice", "gabi")}
+    opts = {k: bool(body.get(k)) for k in ("record", "card", "voice", "gabi", "fade")}
     opts.update({k: str(body.get(k) or "")[:400] for k in ("intro", "outro")})
     ok, msg = poller.highlights.start(scenes, opts)
     return jsonify({"ok": ok, "msg": msg})
