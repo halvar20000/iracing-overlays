@@ -177,6 +177,22 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 21, 2026 (Abspann: PRO / AM segments showed the MIXED table):**
+Thomas: the Abspann showed the overall table, not per class. Two causes in
+the code / OBS: (1) `race_summary` shares the "Ergebnis" page with
+results_pro / _am but had NO class → unpinned = mixed field for ~35 s; now
+`ShowRunner._seg_class()` pins it to the class of the following segment on the
+same page (PRO). (2) only the `_solid` pages follow the pin; a source still on
+results.html / champ.html shows the mixed field under every class segment.
+`ShowRunner._solid_pages()` at the show start reads GetInputSettings of
+"Ergebnis" / "Meisterschaft" and, if needed, points them at
+results_solid.html / champ_solid.html (same folder as the old loader, else
+this install's obs_loaders/) or the /solid URL (`solid_fix`, `SOLID_PAGES`),
+with a log line; "OBS prüfen" shows the same as a red hint. obs_ws
+`input_settings()`, fake_obs `browsers=`. test_show_runner 131 PASS,
+highlight_runner 115, obs_ws pass. Not tried against the real OBS (its
+websocket was not reachable from Unraid). Restart 5000.
+
 **October 21, 2026 (Gabi's clip played ~1.5 times — the "intro started
 again" of the race night too):** read from Thomas's OBS over the LAN
 (obs-websocket 192.168.86.138:4455): source "Gabi" had `looping: True`

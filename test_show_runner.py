@@ -538,7 +538,9 @@ sr.claude_script(sr.load_config(), {"api_key": "k"}, pf, ["goodbye"], post=post2
                  system=sr.POST_SYSTEM, briefs=sr.POST_BRIEF)
 check("post script prompt is the Abspann one", "Abspann" in pcalls2[0]["system"]
       and "goodbye" in json.loads(pcalls2[0]["messages"][0]["content"])["segmente"])
-obs13 = FakeObs({"Moderator": {"Ergebnis": False, "Meisterschaft": True}, "iRacing": {}}, media={})
+obs13 = FakeObs({"Moderator": {"Ergebnis": False, "Meisterschaft": True}, "iRacing": {}}, media={},
+                browsers={"Ergebnis": {"is_local_file": True, "local_file": "C:/x/obs_loaders/results.html"},
+                          "Meisterschaft": {"is_local_file": False, "url": "http://localhost:5010/overlay"}})
 obs13.current = "iRacing"
 c13 = sr.load_config(); c13["obs"] = {"host": "127.0.0.1", "port": obs13.port}
 ev13 = []
@@ -561,13 +563,27 @@ check("Abspann: REGIE off, Moderator scene, table left on hidden", ev13 == ["off
 check("Abspann runs to the end, stays on Moderator, no REGIE", wait_for(lambda: r13.state == "done", 20, tick=w13)
       and obs13.current == "Moderator" and ev13 == ["off"], r13.status()["log"])
 check("Abspann: a picture for every voice segment (result from the summary on), none for the goodbye",
-      ("race_summary", True, False, None) in vis13 and ("results_pro", True, False, "pro") in vis13
+      ("race_summary", True, False, "pro") in vis13 and ("results_pro", True, False, "pro") in vis13
       and ("results_am", True, False, "am") in vis13 and ("standings_after_pro", False, True, "pro") in vis13
       and ("standings_after_am", False, True, "am") in vis13
       and all(not e and not t for s_, e, t, _ in vis13 if s_ in ("goodbye", None)), vis13)
 check("Abspann: the result page stays up summary -> PRO -> AM (no blink), class released at the end",
       [e for s_, e, t, _ in vis13 if s_ in ("race_summary", "results_pro", "results_am")] == [True] * len(
           [1 for s_, *_ in vis13 if s_ in ("race_summary", "results_pro", "results_am")]) and pin13[0] is None, vis13)
+check("Abspann: the race summary on the result page is pinned to PRO (unpinned = the mixed field)",
+      [p for s_, e, t, p in vis13 if s_ == "race_summary"] == ["pro"], vis13)
+check("Abspann: sources on the plain pages pointed at the class-following ones",
+      obs13.browsers["Ergebnis"]["local_file"].endswith("results_solid.html")
+      and obs13.browsers["Meisterschaft"]["url"] == "http://localhost:5010/overlay/solid"
+      and any("umgestellt" in l["msg"] for l in r13.status()["log"]), obs13.browsers)
+check("solid_fix: a solid page is left alone, a loader next to the old one is used",
+      sr.solid_fix("results", "browser_source", {"url": "http://localhost:5002/solid"}) is None
+      and sr.solid_fix("standings_after", "browser_source", {"is_local_file": True,
+                                                             "local_file": "/x/champ_solid.html"}) is None
+      and sr.solid_fix("results", "ffmpeg_source", {}) is None
+      and sr.solid_fix("results", "browser_source", {"is_local_file": True,
+                       "local_file": str(sr.HERE / "obs_loaders" / "results.html")})
+          == {"local_file": str(sr.HERE / "obs_loaders" / "results_solid.html")})
 # Gabi's idle loop: switched ON at the start (it was off) and left on to the end
 # (Andreas, 2026-10-21: after the greeting she vanished from the studio)
 obs18 = FakeObs({"Moderator": {"Ergebnis": False, "Meisterschaft": False, "Gabi Ruhe": False}, "iRacing": {}},

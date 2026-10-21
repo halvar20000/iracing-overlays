@@ -5360,7 +5360,8 @@ async function check() {
                     (i.found ? '✓ ' : i.optional ? '– nicht da (optional: Pro/Am-Klasse, Saisonplan, Streckenort, Grafik während der REGIE, Abspann): ' : '✗ fehlt: ') +
                     esc(i.what) + ' „' + esc(i.name) + '“' +
                     (!i.found && i.near && i.near.length ? ' <span class="dim">– in OBS gibt es: ' +
-                        i.near.map(n => '„' + esc(n) + '“').join(', ') + '</span>' : '') + '</li>').join('') + '</ul>';
+                        i.near.map(n => '„' + esc(n) + '“').join(', ') + '</span>' : '') +
+                    (i.warn ? ' <span class="err">– ' + esc(i.warn) + '</span>' : '') + '</li>').join('') + '</ul>';
 }
 async function tick() {
     let d; try { d = await (await fetch(BASE + '/status')).json(); } catch (e) { return; }
@@ -5473,6 +5474,14 @@ def show_check():
                                           or key in ("track_location", "results", "standings_after", "avatar_idle"),
                               "near": [] if real else [h for h in srcs if h and any(
                                   w in h.casefold() for w in name.casefold().split() if len(w) >= 4)][:4]})
+                if real and key in show_runner.SOLID_PAGES:     # Abspann page that follows the class?
+                    try:
+                        info = poller.show_obs.input_settings(real)
+                        if show_runner.solid_fix(key, info["kind"], info["settings"]):
+                            items[-1]["warn"] = (f"zeigt nicht die Klassen-Seite – wird beim Abspann auf "
+                                                 f"{show_runner.SOLID_PAGES[key][0]} umgestellt")
+                    except Exception:
+                        pass
         gcfg = poller.graphics.cfg                       # GRAFIK sources on the iRacing scene
         gscene = gcfg.get("scene") or cfg["scenes"].get("iracing")
         gsrcs = poller.show_obs.scene_items(gscene) if gscene in scenes else {}

@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import os
 import re
 import threading
 import time
@@ -133,6 +134,32 @@ PROAM_SPLIT = {"last_race": ["last_race_pro", "last_race_am"],
 # the Abspann's split (5002 /solid and 5010 /overlay/solid follow the pin)
 POST_PROAM_SPLIT = {"results": ["results_pro", "results_am"],
                     "standings_after": ["standings_after_pro", "standings_after_am"]}
+# the Abspann pages that follow the class pin: only the _solid pages do — the
+# plain results.html / champ.html show the mixed field (2026-10-21: PRO / AM
+# segments showed the overall table). (loader, page when the source is a URL)
+SOLID_PAGES = {"results": ("results_solid.html", "http://localhost:5002/solid"),
+               "standings_after": ("champ_solid.html", "http://localhost:5010/overlay/solid")}
+
+
+def solid_fix(key: str, kind: str, settings: dict, here: Path = HERE) -> dict | None:
+    """Settings that point an Abspann browser source at its class-following
+    page, or None when it already does / it is no browser source."""
+    if key not in SOLID_PAGES or kind != "browser_source":
+        return None
+    loader, url = SOLID_PAGES[key]
+    if settings.get("is_local_file"):
+        lf = settings.get("local_file") or ""
+        if "solid" in os.path.basename(lf).casefold():
+            return None
+        d = os.path.dirname(lf)
+        new = os.path.join(d, loader) if d and os.path.exists(os.path.join(d, loader)) \
+            else str(here / "obs_loaders" / loader)
+        return {"local_file": new}
+    if "solid" in (settings.get("url") or "").casefold():
+        return None
+    return {"url": url}
+
+
 WORDS_PER_S = 2.4                     # edge-tts at +10 %: ~2.4 German words / second
 DEADLINE_PAD_S = 15.0                 # a segment moves on this long after its speech should have ended
 
@@ -1210,6 +1237,7 @@ class ShowRunner:
                     self._source(key, False)
             if self._items is not None and self._has("avatar_idle"):
                 self._source("avatar_idle", True)     # Gabi sits in the studio the whole show
+            self._solid_pages()
             self._shown = None
             self._pin(None)
             self.seg_i = -1
@@ -1406,6 +1434,39 @@ class ShowRunner:
             return match_name(name, self._items) or name
         return name
 
+    def _solid_pages(self):
+        """The Abspann's result / table sources must show the page that follows
+        the class pin — a source still on results.html / champ.html shows the
+        mixed field under a PRO / AM segment. Pointed there before the show."""
+        for key in SOLID_PAGES:
+            name = self._name(key)
+            if not (name and any(SEGMENT_SOURCES.get(s) == key for s in self.segments) and self._has(key)):
+                continue
+            try:
+                info = self.obs.input_settings(name)
+                fix = solid_fix(key, info["kind"], info["settings"])
+                if fix:
+                    self.obs.set_input_settings(name, fix)
+                    self._note(f"Quelle {name} zeigte nicht die Klassen-Seite – umgestellt auf "
+                               + (os.path.basename(fix["local_file"]) if "local_file" in fix else fix["url"]))
+            except Exception as e:
+                self._note(f"Quelle {name} prüfen: {e}")
+
+    def _seg_class(self, sid):
+        """Class pinned while a segment runs. A segment without its own class
+        that shares the page with the class segments after it (the race
+        summary on the result page) shows the first of those classes — the
+        unpinned page is the mixed field."""
+        cls = SEGMENT_CLASS.get(sid)
+        key = SEGMENT_SOURCES.get(sid)
+        if cls is None and key:
+            for s in self.segments[self.seg_i + 1:]:
+                if SEGMENT_SOURCES.get(s) != key:
+                    break
+                if SEGMENT_CLASS.get(s):
+                    return SEGMENT_CLASS[s]
+        return cls
+
     def _pin(self, cls):
         try:
             self.pin(cls)
@@ -1427,7 +1488,7 @@ class ShowRunner:
         text = self.script.get(sid) or ""
         seg = {"id": sid, "ids": [], "started": self.clock(), "media": None}
         if sid in SEGMENT_SOURCES:
-            self._pin(SEGMENT_CLASS.get(sid))
+            self._pin(self._seg_class(sid))
             key = self._src_key(sid)
             if self._shown != key:
                 if self._shown:

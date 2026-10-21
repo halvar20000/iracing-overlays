@@ -15,8 +15,10 @@ from obs_ws import auth_string
 
 
 class FakeObs:
-    def __init__(self, scenes: dict, media: dict | None = None, password: str = "", port: int = 0):
-        # scenes: {scene: {source: enabled}}, media: {source: duration_s}
+    def __init__(self, scenes: dict, media: dict | None = None, password: str = "", port: int = 0,
+                 browsers: dict | None = None):
+        # scenes: {scene: {source: enabled}}, media: {source: duration_s},
+        # browsers: {source: browser_source settings (url / is_local_file / local_file)}
         self.scenes = {k: dict(v) for k, v in scenes.items()}
         self.ids = {}
         n = 1
@@ -25,6 +27,7 @@ class FakeObs:
                 self.ids[(sc, src)] = n
                 n += 1
         self.media = {k: {"duration": d, "started": None} for k, d in (media or {}).items()}
+        self.browsers = {k: dict(v) for k, v in (browsers or {}).items()}
         self.current = next(iter(self.scenes))
         self.streaming = False
         self.recording = False       # StartRecord / PauseRecord / ResumeRecord / StopRecord
@@ -129,6 +132,16 @@ class FakeObs:
             state = "OBS_MEDIA_STATE_ENDED" if el >= m["duration"] else "OBS_MEDIA_STATE_PLAYING"
             return True, {"mediaState": state, "mediaDuration": int(m["duration"] * 1000),
                           "mediaCursor": int(min(el, m["duration"]) * 1000)}, None
+        if rt == "GetInputSettings":
+            if rd["inputName"] in self.browsers:
+                return True, {"inputKind": "browser_source", "inputSettings": dict(self.browsers[rd["inputName"]])}, None
+            m = self.media.get(rd["inputName"])
+            if m is None:
+                return False, None, "No input"
+            return True, {"inputKind": "ffmpeg_source", "inputSettings": {"local_file": m.get("file", "")}}, None
+        if rt == "SetInputSettings" and rd["inputName"] in self.browsers:
+            self.browsers[rd["inputName"]].update(rd.get("inputSettings") or {})
+            return True, None, None
         if rt == "SetInputSettings":
             m = self.media.get(rd["inputName"])
             if m is None:

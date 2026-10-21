@@ -140,6 +140,11 @@ class ObsClient:
         """Change some settings of a source; the others stay (overlay)."""
         self.call("SetInputSettings", {"inputName": source, "inputSettings": settings})
 
+    def input_settings(self, source: str) -> dict:
+        """{kind: inputKind, settings: inputSettings} of a source."""
+        d = self.call("GetInputSettings", {"inputName": source})
+        return {"kind": d.get("inputKind") or "", "settings": d.get("inputSettings") or {}}
+
     def media_stop(self, source: str):
         self.call("TriggerMediaInputAction", {"inputName": source,
                                               "mediaAction": "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_STOP"})
