@@ -163,6 +163,14 @@ class HighlightRunner:
             if (text or "").strip():
                 self.avatar.ensure("highlights", seg, text)
 
+    def check_avatar(self, intro: str, outro: str) -> None:
+        """Look for videos made earlier for these texts (free) — shown as ready."""
+        if self.avatar is None:
+            return
+        for seg, text in (("intro", intro), ("outro", outro)):
+            if (text or "").strip():
+                self.avatar.get("highlights", seg, text)
+
     def status(self) -> dict:
         now = self.clock()
         rec = self.rec_seconds + ((now - self._rec_from) if self._rec_from is not None else 0.0)

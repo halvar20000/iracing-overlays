@@ -230,6 +230,13 @@ right after StartRecord was accepted but lost, so ResumeRecord got 503 (not
 paused). Every record step now waits for GetRecordStatus (active / paused),
 and a resume when OBS is not paused just goes on. Test RealishObs (start lag,
 lost pause, OPENING −1) fails on the old code exactly like the real run; 67.
+THIRD (Thomas: "why do we lose the rendered video every time — too
+expensive"): avatar_sync.AvatarRenderer now REUSES the file on disk
+(avatar/out/<kind>_<seg>_<sha1 of the text>.mp4) — ensure() adopts it
+instead of ordering, get() finds it after a restart; download goes to .part
+then os.replace. Highlights page looks for saved videos after "Szenen
+wählen" / a text edit (POST /highlights/avatar {check}). Helps the show's
+intro / outro / goodbye too. Test 73 (restart = new renderer: no order).
 Restart 5000.
 
 **October 21, 2026 (launcher: "Update & restart" button missing unless the

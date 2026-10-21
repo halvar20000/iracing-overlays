@@ -59,6 +59,11 @@ halten). Fertig → Gabi spricht sie in der Szene **Moderator** (Quellen „Gabi
 „Gabi Ruhe“ wie im Sendeablauf). Nicht fertig → die Stimme sagt den Text; ohne
 Stimme fällt Intro/Outro weg.
 
+Fertige Videos werden **aufgehoben** (`avatar/out/highlights_intro_<Kennung>.mp4`)
+und für denselben Text wiederverwendet — auch nach einem Neustart oder Update des
+Dashboards. Nach „Szenen wählen“ steht dann „ready (gespeichert, kostenlos)“, und
+„Gabi-Videos bestellen“ kostet nichts. Nur ein geänderter Text wird neu bestellt.
+
 ## Einstellungen (optional)
 
 `show_config.json` → `"highlights"`: `scenes` (`race`, `moderator`), `sources`

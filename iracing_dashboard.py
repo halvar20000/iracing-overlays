@@ -5733,6 +5733,7 @@ async function pick() {
     + (i.proam ? ' · Pro/Am' : '') + ` · ${scenes.length} Szenen aus ${d.candidates} Kandidaten`;
   if (!$('intro').value || $('intro').dataset.auto === '1') { $('intro').value = d.texts.intro; $('intro').dataset.auto = '1'; }
   if (!$('outro').value || $('outro').dataset.auto === '1') { $('outro').value = d.texts.outro; $('outro').dataset.auto = '1'; }
+  checkGabi();
   render();
 }
 ['intro','outro'].forEach(id => document.addEventListener('input', e => { if (e.target.id === id) e.target.dataset.auto = '0'; }));
@@ -5772,6 +5773,11 @@ async function start() {
   tick();
 }
 async function stop() { await fetch('/highlights/stop', {method:'POST'}); tick(); }
+async function checkGabi() {     // videos made earlier for these texts? (free)
+  await fetch('/highlights/avatar', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({check: true, intro: $('intro').value, outro: $('outro').value})});
+}
+['intro','outro'].forEach(id => document.addEventListener('change', e => { if (e.target.id === id) checkGabi(); }));
 async function orderGabi() {
   const d = await (await fetch('/highlights/avatar', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({intro: $('intro').value, outro: $('outro').value})})).json();
@@ -5792,7 +5798,7 @@ async function tick() {
   $('out').style.display = (d.output || d.error) ? '' : 'none';
   $('out').innerHTML = d.error ? '<span class="err">' + esc(d.error) + '</span>' : 'Video: <b>' + esc(d.output) + '</b>';
   const av = d.avatar || {};
-  $('gabi').textContent = Object.keys(av).map(k => `${k}: ${av[k].state}${av[k].error ? ' (' + av[k].error + ')' : ''}`).join(' · ');
+  $('gabi').textContent = Object.keys(av).map(k => `${k}: ${av[k].state}${av[k].saved ? ' (gespeichert, kostenlos)' : ''}${av[k].error ? ' (' + av[k].error + ')' : ''}`).join(' · ');
   render();
 }
 loadLogs(); tick(); setInterval(tick, 1000);
@@ -5934,9 +5940,12 @@ def highlights_stop():
 @app.route("/highlights/avatar", methods=["POST"])
 def highlights_avatar():
     import avatar_sync
+    body = request.get_json(silent=True) or {}
+    if body.get("check"):                 # only look for videos made earlier (free)
+        poller.highlights.check_avatar(str(body.get("intro") or "")[:400], str(body.get("outro") or "")[:400])
+        return jsonify({"ok": True})
     if not avatar_sync.api_key():
         return jsonify({"ok": False, "error": "kein sync.so-Schlüssel in commentary_config.json"})
-    body = request.get_json(silent=True) or {}
     poller.highlights.prepare_avatar(str(body.get("intro") or "")[:400], str(body.get("outro") or "")[:400])
     return jsonify({"ok": True})
 

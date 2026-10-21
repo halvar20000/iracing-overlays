@@ -78,11 +78,13 @@ def lipsync(audio: bytes, audio_name: str, clip: Path = DEFAULT_CLIP, model: str
     say("lade Ergebnis …")
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out = OUT_DIR / f"{out_name}.mp4"
+    part = out.with_suffix(".part")          # a broken download never looks like a finished video
     with requests.get(g["outputUrl"], stream=True, timeout=120) as d:
         d.raise_for_status()
-        with open(out, "wb") as f:
+        with open(part, "wb") as f:
             for chunk in d.iter_content(1 << 16):
                 f.write(chunk)
+    os.replace(part, out)
     say(f"fertig: {out.name} ({int(time.time() - t0)} s)")
     return out
 
@@ -93,11 +95,17 @@ class AvatarRenderer:
     ensure(kind, seg, text) starts a render unless one for exactly this text
     is ready / running; get(kind, seg, text) -> Path of a finished video for
     this text or None (then the show speaks the segment with the voice only).
-    One render at a time (sync.so takes ~2 min per 10 s of video)."""
+    One render at a time (sync.so takes ~2 min per 10 s of video).
 
-    def __init__(self, voice, lipsync_fn=None):
+    Videos are KEPT and reused: avatar/out/<kind>_<seg>_<hash of the text>.mp4.
+    Before ordering, ensure() / get() look for that file — a dashboard restart
+    or the same text again costs nothing (Thomas, 2026-10-21: the paid intro
+    was ordered again after every update). Delete the file to force a new one."""
+
+    def __init__(self, voice, lipsync_fn=None, out_dir=None):
         self.voice = voice
         self.lipsync = lipsync_fn or lipsync
+        self.out_dir = Path(out_dir) if out_dir else OUT_DIR
         self.jobs: dict = {}            # (kind, seg) -> {text, state, file, error, at}
         self._q: list = []
         self._lock = threading.Lock()
@@ -108,6 +116,18 @@ class AvatarRenderer:
         import hashlib
         return hashlib.sha1(text.strip().encode("utf-8")).hexdigest()[:10]
 
+    def _saved(self, kind: str, seg: str, text: str) -> Path | None:
+        """The video made earlier for exactly this text, if it is on disk."""
+        p = self.out_dir / f"{kind}_{seg}_{self._tag(text)}.mp4"
+        try:
+            return p if p.is_file() and p.stat().st_size > 0 else None
+        except OSError:
+            return None
+
+    def _adopt(self, kind, seg, text, path):
+        self.jobs[(kind, seg)] = {"text": text, "state": "ready", "file": str(path), "error": "",
+                                  "at": time.time(), "saved": True}
+
     def ensure(self, kind: str, seg: str, text: str):
         text = (text or "").strip()
         if not text:
@@ -116,6 +136,10 @@ class AvatarRenderer:
         with self._lock:
             j = self.jobs.get(key)
             if j and j["text"] == text and j["state"] in ("queued", "rendering", "ready"):
+                return
+            saved = self._saved(kind, seg, text)
+            if saved is not None:                 # paid for already: no new order
+                self._adopt(kind, seg, text, saved)
                 return
             self.jobs[key] = {"text": text, "state": "queued", "file": None, "error": "", "at": time.time()}
             self._q.append(key)
@@ -127,13 +151,21 @@ class AvatarRenderer:
         return bool(api_key())
 
     def get(self, kind: str, seg: str, text: str) -> Path | None:
+        text = (text or "").strip()
         j = self.jobs.get((kind, seg))
-        if j and j["state"] == "ready" and j["text"] == (text or "").strip() and j["file"] and Path(j["file"]).exists():
+        if j and j["state"] == "ready" and j["text"] == text and j["file"] and Path(j["file"]).exists():
             return Path(j["file"])
+        if text and not (j and j["text"] == text and j["state"] in ("queued", "rendering")):
+            saved = self._saved(kind, seg, text)
+            if saved is not None:
+                with self._lock:
+                    self._adopt(kind, seg, text, saved)
+                return saved
         return None
 
     def status(self, kind: str) -> dict:
-        return {seg: {"state": j["state"], "error": j["error"], "file": Path(j["file"]).name if j["file"] else None}
+        return {seg: {"state": j["state"], "error": j["error"], "file": Path(j["file"]).name if j["file"] else None,
+                      "saved": bool(j.get("saved"))}
                 for (k, seg), j in list(self.jobs.items()) if k == kind}
 
     def _run(self):

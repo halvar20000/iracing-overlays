@@ -14,6 +14,8 @@ import sys
 import threading
 import time
 
+from pathlib import Path
+
 import highlight_runner as R
 from fake_obs import FakeObs
 from obs_ws import ObsClient
@@ -363,6 +365,44 @@ check("realistic OBS: run done, no 503", st["state"] == "done", st["error"])
 check("realistic OBS: Gabi spoke her whole clip (>= 1.5 s after it opened)", t_intro is not None and t_intro >= 1.8,
       t_intro)
 check("realistic OBS: intro + 2 scenes = 3 recorded segments", len(ro.rec_segments) == 3, ro.rec_segments)
+
+# ---------------------------------------------------------------- Gabi videos are kept (Thomas, 2026-10-21:
+# every dashboard restart / update meant ordering - and paying for - the same intro again)
+import tempfile
+import avatar_sync
+with tempfile.TemporaryDirectory() as td:
+    orders = []
+
+    def fake_lipsync(data, name, out_name=None, **k):
+        orders.append(out_name)
+        p = Path(td) / f"{out_name}.mp4"
+        p.write_bytes(b"video")
+        return p
+
+    vox = type("V", (), {"synth": lambda self, t: (b"a", "audio/mpeg", "edge")})()
+    a1 = avatar_sync.AvatarRenderer(vox, lipsync_fn=fake_lipsync, out_dir=td)
+    a1.ensure("highlights", "intro", "Willkommen!")
+    t0 = time.time()
+    while a1.jobs[("highlights", "intro")]["state"] != "ready" and time.time() - t0 < 5:
+        time.sleep(0.05)
+    check("saved: first order renders once", len(orders) == 1 and a1.get("highlights", "intro", "Willkommen!"))
+    a2 = avatar_sync.AvatarRenderer(vox, lipsync_fn=fake_lipsync, out_dir=td)     # = dashboard restarted
+    r2 = R.HighlightRunner(FakeReplay(), None, avatar=a2, cfg=CFG)
+    r2.check_avatar("Willkommen!", "")
+    st2 = r2.status()["avatar"]
+    check("saved: after a restart the video is found without an order",
+          st2.get("intro", {}).get("state") == "ready" and st2["intro"]["saved"] and len(orders) == 1, (st2, orders))
+    r2.prepare_avatar("Willkommen!", "")
+    time.sleep(0.2)
+    check("saved: ordering the same text again costs nothing", len(orders) == 1, orders)
+    a3 = avatar_sync.AvatarRenderer(vox, lipsync_fn=fake_lipsync, out_dir=td)
+    check("saved: the run finds it even without a check", a3.get("highlights", "intro", "Willkommen!") is not None)
+    a3.ensure("highlights", "intro", "Willkommen zurück!")
+    t0 = time.time()
+    while len(orders) < 2 and time.time() - t0 < 5:
+        time.sleep(0.05)
+    check("saved: a changed text is ordered", len(orders) == 2, orders)
+    check("saved: same text in another segment is its own video", a3.get("highlights", "outro", "Willkommen!") is None)
 
 # ---------------------------------------------------------------- real reel (Indianapolis), when the log is here
 INDY = "logs/WCT/indianapolis/20261020-195328_indianapolis_motor_speedway_road_course_race.jsonl"
