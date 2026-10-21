@@ -5962,7 +5962,8 @@ def highlights_preview():
         rp = poller.highlights.replay
         g = highlight_runner.pick_group(s.get("kind") or "pass", rp.camera_groups())
         rp.hold()
-        rp.seek(s.get("session_num"), float(s["t_start"]))
+        if rp.seek(s.get("session_num"), float(s["t_start"])) is False:
+            return jsonify({"ok": False, "error": "Replay springt nicht zu dieser Stelle (richtiges Rennen offen?)"})
         if g is not None:
             rp.switch(str(s["car_number"]), int(g["id"]))
         rp.play()

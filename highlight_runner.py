@@ -218,6 +218,9 @@ class HighlightRunner:
                 st = self._obs(lambda: self.obs.call("GetRecordStatus"), "Aufnahme-Status", required=True)
                 if st.get("outputActive"):
                     raise RuntimeError("OBS nimmt schon auf — erst die laufende Aufnahme beenden")
+                why = self._pause_blocked()
+                if why:
+                    raise RuntimeError(why)
             self.replay.prepare()
             prepared = True
             for sc in self.scenes:
@@ -270,6 +273,31 @@ class HighlightRunner:
     # answers before the output runs, and a PauseRecord sent in that moment is
     # lost (first real run: Gabi's intro ended at once -> ResumeRecord "503 not
     # paused"). Every step therefore waits until GetRecordStatus shows it.
+    def _pause_blocked(self) -> str:
+        """OBS cannot PAUSE a recording that shares the stream encoder (Simple
+        output: Recording Quality "Same as stream"; Advanced: recording encoder
+        "Use stream encoder") — PauseRecord is accepted and nothing happens, so
+        every seek between scenes lands in the video (real run 2026-10-21).
+        Read from the active OBS profile; '' = fine or unknown."""
+        def param(cat, name):
+            try:
+                d = self.obs.call("GetProfileParameter", {"parameterCategory": cat, "parameterName": name})
+                return d.get("parameterValue") or d.get("defaultParameterValue") or ""
+            except Exception:
+                return None
+        mode = param("Output", "Mode")
+        if mode is None:
+            return ""
+        if (mode or "Simple").lower() == "simple":
+            if (param("SimpleOutput", "RecQuality") or "") == "Stream":
+                return ("OBS kann so nicht pausieren: Einstellungen → Ausgabe → Aufnahme → Aufnahmequalität "
+                        "steht auf „Gleich wie Stream“. Bitte z. B. „Hohe Qualität, mittlere Dateigröße“ "
+                        "wählen, dann neu starten.")
+        elif (param("AdvOut", "RecEncoder") or "") == "none":
+            return ("OBS kann so nicht pausieren: Einstellungen → Ausgabe → Aufnahme → Video-Encoder steht auf "
+                    "„Stream-Encoder verwenden“. Bitte einen eigenen Encoder wählen, dann neu starten.")
+        return ""
+
     def _rec_status(self):
         st = self._obs(lambda: self.obs.call("GetRecordStatus"), "Aufnahme-Status") or {}
         return bool(st.get("outputActive")), bool(st.get("outputPaused"))
@@ -352,7 +380,9 @@ class HighlightRunner:
         else:
             sc["state"] = "spult"
             self.phase = f"Szene {i + 1}: spulen"
-            self.replay.seek(sn, max(0.0, t0 - float(self.cfg["preroll_s"])))
+            if self.replay.seek(sn, max(0.0, t0 - float(self.cfg["preroll_s"]))) is False:
+                raise RuntimeError(f"Replay springt nicht zu Session {sn}, {t0:.0f} s — ist das richtige "
+                                   f"Rennen als Replay offen? (iRacing-Replay einmal anklicken / Play)")
             self.replay.switch(sc["car_number"], int(g["id"]))
             self.replay.play()
             self.replay.switch(sc["car_number"], int(g["id"]))   # again while playing: a paused replay may ignore it
@@ -549,13 +579,37 @@ class PollerReplay:
             p.set_director(True)
         self._saved = None
 
-    def seek(self, session_num, t):
+    LAND_TOL_S = 3.0      # the playhead is "there" within this many seconds
+    LAND_WAIT_S = 6.0     # per try; a jump into ANOTHER session takes iRacing ~2.5 s
+
+    def seek(self, session_num, t) -> bool:
+        """Pause, jump, and WAIT until iRacing really is at (session, time).
+
+        Real run 2026-10-21 (replay opened in practice, reel in the race =
+        session 3): a jump into another session takes iRacing ~2.5 s, and a
+        play / camera command sent meanwhile (we sent them after 0.3 s) left
+        the replay stuck — speed 1, time frozen, still in practice. Nothing
+        else is sent until the playhead has landed; one retry. False = never
+        landed (the caller stops the run instead of recording a still)."""
         ir = self.p.ir
         sn = int(session_num) if session_num is not None else int(ir["SessionNum"] or 0)
+        target = max(0.0, float(t))
         ir.replay_set_play_speed(0, False)
         self.sleep(0.10)
-        ir.replay_search_session_time(sn, int(max(0.0, float(t)) * 1000))
-        self.sleep(0.30)                 # let iRacing load the frames at the new playhead
+        for _ in range(2):
+            ir.replay_search_session_time(sn, int(target * 1000))
+            waited = 0.0
+            while waited < self.LAND_WAIT_S:
+                self.sleep(0.25)
+                waited += 0.25
+                try:
+                    cur_sn, cur_t = ir["SessionNum"], ir["SessionTime"]
+                except Exception:
+                    continue
+                if cur_sn == sn and cur_t is not None and abs(float(cur_t) - target) <= self.LAND_TOL_S:
+                    self.sleep(0.3)      # frames at the new playhead loaded
+                    return True
+        return False
 
     def play(self):
         self.p.ir.replay_set_play_speed(1, False)

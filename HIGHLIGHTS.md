@@ -72,6 +72,13 @@ Dashboards. Nach „Szenen wählen“ steht dann „ready (gespeichert, kostenlo
 
 ## Gut zu wissen
 
+- **OBS muss pausieren können:** Einstellungen → Ausgabe → Aufnahme →
+  Aufnahmequalität **nicht** „Gleich wie Stream“ (z. B. „Hohe Qualität, mittlere
+  Dateigröße“); im erweiterten Modus einen eigenen Video-Encoder statt „Stream-Encoder
+  verwenden“. Sonst bricht der Start mit diesem Hinweis ab — OBS würde das Spulen
+  zwischen den Szenen mit aufnehmen.
+- Das Replay darf in einer anderen Session stehen (z. B. Training): der Sprung ins
+  Rennen dauert ~2–3 s, das Dashboard wartet ihn ab.
 - OBS darf beim Start nicht schon aufnehmen (sonst Abbruch mit Meldung).
 - Das Video zeigt, was OBS in der Szene iRacing zeigt — Overlays, die nicht ins
   Highlight-Video gehören, dort vorher ausblenden.

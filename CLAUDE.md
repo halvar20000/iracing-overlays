@@ -237,6 +237,19 @@ instead of ordering, get() finds it after a restart; download goes to .part
 then os.replace. Highlights page looks for saved videos after "Szenen
 wählen" / a text edit (POST /highlights/avatar {check}). Helps the show's
 intro / outro / goodbye too. Test 73 (restart = new renderer: no order).
+FOURTH (third real run, "nur Standbilder", tower said PRACTICE): this PC IS
+the stream PC (dashboard on localhost:5000, read with pyirsdk directly).
+(1) A replay_search_session_time into ANOTHER session takes iRacing ~2.5 s;
+our play + cam_switch 0.3 s later left the replay stuck in practice (speed 1,
+time frozen) — measured by hand: the same jump alone lands. PollerReplay.seek
+now waits until SessionNum / SessionTime are there (±3 s, 6 s, one retry),
+returns False otherwise -> run stops with a hint. Checked against the real
+replay: 5 jumps practice <-> race land, rehearsal of grid + start + caution
+plays. (2) Thomas's OBS profile: Simple output, RecQuality "Stream" (= same as
+stream) — OBS cannot PAUSE then (PauseRecord accepted, nothing happens), so
+the seeks were recorded. The run reads the profile (GetProfileParameter)
+before StartRecord and stops with a German hint (also Advanced + "use stream
+encoder"). Tests 79.
 Restart 5000.
 
 **October 21, 2026 (launcher: "Update & restart" button missing unless the

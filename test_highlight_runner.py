@@ -404,6 +404,65 @@ with tempfile.TemporaryDirectory() as td:
     check("saved: a changed text is ordered", len(orders) == 2, orders)
     check("saved: same text in another segment is its own video", a3.get("highlights", "outro", "Willkommen!") is None)
 
+# ---------------------------------------------------------------- OBS that cannot pause (Simple output,
+# Recording Quality "Same as stream" - Thomas's profile, 2026-10-21): stop before recording
+class SameAsStreamObs(FakeObs):
+    PARAMS = {("Output", "Mode"): "Simple", ("SimpleOutput", "RecQuality"): "Stream"}
+
+    def handle(self, rt, rd):
+        if rt == "GetProfileParameter":
+            self.calls.append((rt, rd))
+            return True, {"parameterValue": self.PARAMS.get((rd["parameterCategory"], rd["parameterName"])),
+                          "defaultParameterValue": None}, None
+        return super().handle(rt, rd)
+
+
+so = SameAsStreamObs(OBS_SCENES)
+rp = FakeReplay()
+r = R.HighlightRunner(rp, TracingObs(so.port, rp), cfg=CFG)
+r.start(SCENES[:1], {"record": True})
+r.wait(10)
+st = r.status()
+check("same as stream: stopped with the OBS hint, nothing recorded", st["state"] == "error"
+      and "Gleich wie Stream" in st["error"] and not so.rec_segments and not rp.calls, st["error"])
+
+
+class AdvStreamEncObs(SameAsStreamObs):
+    PARAMS = {("Output", "Mode"): "Advanced", ("AdvOut", "RecEncoder"): "none"}
+
+
+so = AdvStreamEncObs(OBS_SCENES)
+r = R.HighlightRunner(FakeReplay(), TracingObs(so.port, rp), cfg=CFG)
+r.start(SCENES[:1], {"record": True})
+r.wait(10)
+check("advanced + stream encoder: hint too", "Stream-Encoder" in r.status()["error"], r.status()["error"])
+
+
+class GoodObs(SameAsStreamObs):
+    PARAMS = {("Output", "Mode"): "Simple", ("SimpleOutput", "RecQuality"): "Small"}
+
+
+so = GoodObs(OBS_SCENES)
+rp = FakeReplay()
+r = R.HighlightRunner(rp, TracingObs(so.port, rp), cfg=CFG)
+r.start(SCENES[:1], {"record": True})
+r.wait(20)
+check("own recording quality: runs", r.status()["state"] == "done" and len(so.rec_segments) == 1, r.status()["error"])
+
+
+# ---------------------------------------------------------------- the replay never lands (wrong replay open)
+class DeafReplay(FakeReplay):
+    def seek(self, sn, t):
+        self.calls.append(("seek", sn, round(t, 2)))
+        return False
+
+
+fake, rp, obs, r, ok = run(SCENES, {"record": True}, replay=DeafReplay())
+r.wait(20)
+st = r.status()
+check("seek never lands: run stops with a hint, recording closed", st["state"] == "error"
+      and "springt nicht" in st["error"] and not fake.recording and len(fake.rec_segments) <= 1, st)
+
 # ---------------------------------------------------------------- real reel (Indianapolis), when the log is here
 INDY = "logs/WCT/indianapolis/20261020-195328_indianapolis_motor_speedway_road_course_race.jsonl"
 if os.path.exists(INDY):
@@ -441,6 +500,8 @@ class FakeIR:
 
     def replay_search_session_time(self, sn, ms):
         self.calls.append(("search", sn, ms))
+        if not getattr(self, "deaf", False):            # iRacing lands on the new playhead
+            self.vals["SessionNum"], self.vals["SessionTime"] = sn, ms / 1000.0
 
     def cam_switch_num(self, car, grp, cam):
         self.calls.append(("cam", car, grp, cam))
@@ -480,13 +541,18 @@ pr.prepare()
 check("adapter: REGIE / focus / auto-replays off", not fp.director_enabled and not fp.focus_leader
       and not fp.auto_replay and not fp.auto_replay_overtakes and fp.director_calls == [False])
 check("adapter: watchdog held back", fp._manual_override_until > time.time() + 20)
-pr.seek(3, 547.72)
+landed = pr.seek(3, 547.72)
+check("adapter: seek reports it landed", landed is True)
 pr.switch("01", 2)
 pr.play()
 check("adapter: pause -> search(session_num, ms) -> cam -> play 1x",
       fp.ir.calls == [("speed", 0), ("search", 3, 547720), ("cam", "01", 2, 0), ("speed", 1)], fp.ir.calls)
 check("adapter: HUD re-hidden after camera / play", fp.hud == 2)
-check("adapter: session time", pr.session_time() == 123.4)
+check("adapter: session time", pr.session_time() == 547.72)
+fp.ir.calls.clear()
+fp.ir.deaf = True
+check("adapter: a jump that never lands -> False after one retry, no play", pr.seek(3, 100.0) is False
+      and [c[0] for c in fp.ir.calls] == ["speed", "search", "search"], fp.ir.calls)
 pr.restore()
 check("adapter: restore puts REGIE / focus / auto-replays back", fp.director_enabled and fp.focus_leader
       and fp.auto_replay and fp.auto_replay_overtakes and fp.director_calls == [False, True])
