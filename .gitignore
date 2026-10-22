@@ -63,4 +63,7 @@ avatar/out/
 
 # zoom-in videos (make_track_zoom.py) + its tile cache
 /zoom_videos/
+# drone flights (make_drone_flight.py): Earth Studio project, voice clips, videos
+/drone/out/
+/drone_videos/
 /track_zoom/

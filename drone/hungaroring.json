@@ -1,0 +1,21 @@
+{
+  "title": "HUNGARORING",
+  "subtitle": "4,381 km · 14 Kurven · im Uhrzeigersinn",
+  "path": "hungaroring_path.json",
+  "start_say": "Willkommen am Hungaroring! Wir fliegen eine Runde: vier Komma vier Kilometer, vierzehn Kurven, im Uhrzeigersinn.",
+  "end_say": "",
+  "corners": [
+    {"turn": "1",     "name": "Piquet",         "at": 0.1384, "say": "Kurve eins, Pikee. Die härteste Bremszone der Strecke, hier wird am meisten überholt."},
+    {"turn": "2",     "name": "Hamilton",       "at": 0.2477, "say": "Kurve zwei, Hamilton. Benannt nach dem Rekordsieger, achtmal hat er hier gewonnen."},
+    {"turn": "3",     "name": "Spring",         "at": 0.3015, "say": "Kurve drei, Spring. Nach dem Tal der drei Quellen."},
+    {"turn": "4",     "name": "Mansell",        "at": 0.4126, "say": "Kurve vier, Mansell. Schnell und fast blind über die Kuppe."},
+    {"turn": "5",     "name": "Mogyoród",       "at": 0.4572, "say": "Kurve fünf, Modjorod. Benannt nach dem Ort direkt neben der Strecke."},
+    {"turn": "6 – 7", "name": "Driving Center", "at": 0.5428, "say": "Kurven sechs und sieben, Driving Center. Die enge Schikane."},
+    {"turn": "8 – 9", "name": "Buda · Pest",    "at": 0.5883, "say": "Kurven acht und neun, Buda und Pest."},
+    {"turn": "10",    "name": "Donau",          "at": 0.6676, "say": "Kurve zehn, Donau."},
+    {"turn": "11",    "name": "Alesi",          "at": 0.7031, "say": "Kurve elf, Alesi."},
+    {"turn": "12",    "name": "Schumacher",     "at": 0.8033, "say": "Kurve zwölf, Schumacher. Viermal hat Michael hier gewonnen."},
+    {"turn": "13",    "name": "Senna",          "at": 0.8543, "say": "Kurve dreizehn, Senna. Die letzte gute Chance zum Angreifen."},
+    {"turn": "14",    "name": "Szisz",          "at": 0.9135, "say": "Kurve vierzehn, Sis. Benannt nach dem Sieger des allerersten Grand Prix. Sauber raus, und dann Windschatten bis Kurve eins."}
+  ]
+}
