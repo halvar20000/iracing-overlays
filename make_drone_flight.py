@@ -14,7 +14,7 @@ Gabi's voice (edge-tts, de-DE-KatjaNeural = the moderation's voice).
 drone/<track>.json: title, subtitle, path (dense [lat, lon] lap starting at
 the S/F line, in driving direction), start_say, corners [{turn, name, at =
 lap fraction of the corner entry, say = what the voice reads}].
-Options for "esp": --height (m, default 70), --speed (m/s, default 22).
+Options for "esp": --height (m, default 35), --speed (m/s, default 22).
 Earth Studio's altitude is taken as height above sea level; if the camera
 sits too low / too high in the preview, re-run with another --height.
 Needs Pillow + numpy + ffmpeg; the voice needs the edge-tts package.
@@ -316,7 +316,7 @@ def main():
     ap.add_argument("cmd", choices=["esp", "finish"])
     ap.add_argument("config")
     ap.add_argument("frames", nargs="?")
-    ap.add_argument("--height", type=float, default=70.0)
+    ap.add_argument("--height", type=float, default=35.0)
     ap.add_argument("--speed", type=float, default=22.0)
     a = ap.parse_args()
     name = os.path.splitext(os.path.basename(a.config))[0]
