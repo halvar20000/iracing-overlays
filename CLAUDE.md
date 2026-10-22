@@ -473,6 +473,16 @@ all pass; real mic capture (Elgato Wave XLR) works; /ask rendered.
 NOT tried: a real Claude answer (no key on this PC), sound through OBS.
 Trigger is the Stream Deck BUTTON only — Thomas decided: no wake word,
 not even later; a few seconds' wait is fine. Not built: Andreas via Discord.
+FOLLOW-UP 2026-10-22 (first real answers, no iRacing running): "the WCT race
+at Indianapolis" got PCCD data — round_info / league_table only read 5010,
+which knows ONE league (manual mode, pinned to PCCD 5th; auto-detect needs a
+grid). Both now take optional `liga` (CLS slug) + `runde` → CLS
+/api/overlay/round-info and /standings directly (`beforeRound` = runde + 1),
+new tool `cls_leagues` (/api/overlay/leagues), `qa_cls_url`; runde without
+liga = the league 5010 is on; nothing given = the old 5010 path. Prompt: no
+league named = the session's league, else cls_leagues → liga, say which
+league. test_race_qa.py 73/73; checked against live CLS (WCT R5 Indy, R3
+Zandvoort, table after R4 — all uncut).
 
 **October 20, 2026, later (Abspann PRO / AM pictures, WCT GT3 race at
 Indianapolis that evening):** the Abspann talked per class but showed mixed

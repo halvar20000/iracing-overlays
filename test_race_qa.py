@@ -265,6 +265,71 @@ ri, lt = qs.run_tool("round_info"), qs.run_tool("league_table")
 check("round_info = last round only", "R3" in ri and "Bastian" not in ri, ri)
 check("league_table = table, no duplicate rounds", "Bastian" in lt and "R3" not in lt and '"rounds"' not in lt, lt)
 
+# 16c) any CAS league straight from CLS (5010 only knows one league — 2026-10-22:
+#      "the WCT race at Indianapolis" was answered from PCCD data)
+seen = []
+def cls_fetch(url):
+    seen.append(url)
+    if "/api/overlay/leagues" in url:
+        return {"ok": True, "leagues": [{"slug": "cas-gt3-wct", "name": "CAS GT3 WCT",
+                                         "seasons": [{"id": "s14", "name": "GT3 WCT 14th Season"}]}]}
+    if "/api/overlay/round-info" in url:
+        return {"league": {"slug": "cas-gt3-wct"}, "lastRound": {"name": "Round 5",
+                "track": "Indianapolis Motor Speedway", "races": [{"results": [
+                    {"position": 1, "name": "Mike Zocher", "proAmClass": "PRO"}]}]}}
+    if "/api/overlay/standings" in url:
+        return {"standings": [{"rank": 1, "name": "Andreas Bastian", "points": 182}],
+                "rounds": [{"number": 1}], "scoring": {"pointsTable": [35, 30]}}
+    if "5010/api/roundinfo" in url:
+        return {"info": {"league": {"slug": "cas-pccd"}}}
+    raise OSError("nicht erreichbar")
+qc = qa.RaceQA(dict(CFG), session_fn=lambda: {}, fetch=cls_fetch)
+out = qc.run_tool("cls_leagues")
+check("cls_leagues lists the leagues", "cas-gt3-wct" in out and seen[-1].endswith("/api/overlay/leagues"), seen[-1:])
+out = qc.run_tool("round_info", {"liga": "cas-gt3-wct"})
+check("round_info with liga asks CLS directly", seen[-1] == "https://league.simracing-hub.com/api/overlay/"
+      "round-info?league=cas-gt3-wct" and "Mike Zocher" in out, seen[-1])
+qc.run_tool("round_info", {"liga": "cas-gt3-wct", "runde": 4})
+check("runde 4 = beforeRound 5", seen[-1].endswith("league=cas-gt3-wct&beforeRound=5"), seen[-1])
+out = qc.run_tool("league_table", {"liga": "cas-gt3-wct", "runde": 3})
+check("league_table with liga + runde -> CLS standings after that round",
+      "/api/overlay/standings?league=cas-gt3-wct&beforeRound=4" in seen[-1] and "Bastian" in out
+      and '"rounds"' not in out, (seen[-1], out[:120]))
+qc.run_tool("league_table", {"runde": 2})
+check("runde without liga = the league 5010 is on", "5010/api/roundinfo" in seen[-2]
+      and seen[-1].endswith("standings?league=cas-pccd&beforeRound=3"), seen[-2:])
+qn = qa.RaceQA(dict(CFG), session_fn=lambda: {}, fetch=lambda u: {"info": {}})
+try:
+    qn.run_tool("round_info", {"runde": 2})
+    check("no league known -> error", False)
+except ValueError as e:
+    check("no league known -> error", "liga" in str(e))
+seen.clear()
+qc.run_tool("round_info", {})
+check("no liga / runde = old path via 5010", seen == ["http://127.0.0.1:5010/api/roundinfo"], seen)
+qo = qa.RaceQA(dict(CFG, qa_cls_url="http://cls.test/"), session_fn=lambda: {}, fetch=cls_fetch)
+qo.run_tool("cls_leagues")
+check("qa_cls_url override", seen[-1] == "http://cls.test/api/overlay/leagues", seen[-1])
+tl = {t["name"]: t for t in qa.TOOLS}
+check("round_info / league_table take liga + runde", all(
+    set(tl[n]["input_schema"]["properties"]) == {"liga", "runde"} for n in ("round_info", "league_table")))
+check("prompt explains several leagues", "cls_leagues" in qa.SYSTEM_PROMPT and "liga" in qa.SYSTEM_PROMPT)
+# the whole loop: Claude asks for the WCT round, the answer is spoken
+seen.clear()
+api = FakeAPI([{"stop_reason": "tool_use", "content": [
+                  {"type": "tool_use", "id": "a", "name": "cls_leagues", "input": {}}]},
+               {"stop_reason": "tool_use", "content": [
+                  {"type": "tool_use", "id": "b", "name": "round_info", "input": {"liga": "cas-gt3-wct"}}]},
+               text("Im WCT-Rennen in Indianapolis hat Mike Zocher gewonnen.")])
+spoken2 = []
+ql = qa.RaceQA(dict(CFG), speak=lambda t: spoken2.append(t) or 1, session_fn=lambda: {},
+               fetch=cls_fetch, api_post=api)
+ql.ask_text("Wer hat das WCT-Rennen in Indianapolis gewonnen?", wait=True)
+check("loop: leagues, then the WCT round from CLS", any("round-info?league=cas-gt3-wct" in u for u in seen)
+      and ql.items[0]["tools"] == ["cls_leagues", "round_info"], (seen, ql.items[0]["tools"]))
+check("loop: tool result carries the WCT winner", "Mike Zocher" in api.calls[2]["messages"][-1]["content"][0]["content"])
+check("loop: answer spoken", spoken2 == ["Im WCT-Rennen in Indianapolis hat Mike Zocher gewonnen."], spoken2)
+
 # 17) track notes tool (show_runner.find_notes) + live_session
 with tempfile.TemporaryDirectory() as d:
     Path(d, "indianapolis-notes.md").write_text("Die F1 fuhr hier von 2000 bis 2007.", encoding="utf-8")

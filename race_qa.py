@@ -16,6 +16,11 @@ Tools (all read-only, all local HTTP to the other overlays):
                      + combined, Pro/Am), DotD, next round, season calendar
   • league_table   — 5010 /api/roundinfo "standings": the CLS table before
                      this round (split from round_info so neither half is cut)
+    Both take an optional `liga` (CLS slug) and `runde`: then they ask CLS
+    directly (/api/overlay/round-info, /standings with beforeRound) — 5010
+    only knows ONE league (the one on the grid or pinned), so "the WCT race
+    at Indianapolis" was unanswerable while 5010 sat on PCCD (2026-10-22).
+  • cls_leagues    — CLS /api/overlay/leagues: every CAS league + season
   • track_notes    — show_notes/<track>.md (show_runner.find_notes)
   • web_search     — Anthropic's server tool, for track history / trivia
                      ("qa_web_search": false switches it off)
@@ -42,6 +47,7 @@ import json
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections import deque
 from datetime import date
@@ -69,6 +75,7 @@ DEFAULTS = {
     "qa_stt_model": "small",
     "qa_mic": "",
     "qa_max_record_s": 20.0,
+    "qa_cls_url": "https://league.simracing-hub.com",
 }
 
 SYSTEM_PROMPT = (
@@ -87,7 +94,12 @@ SYSTEM_PROMPT = (
     "- Rundenzeiten wie 1:39,512, Abstände mit Komma (0,4 Sekunden).\n"
     "- Für Geschichte und Trivia der Strecke (z. B. Formel-1-Rennen dort) zuerst "
     "track_notes, dann web_search, falls vorhanden. Ligadaten (letztes Rennen, Tabelle, "
-    "Fahrer des Tages) nur aus round_info / championship / race_results.\n"
+    "Fahrer des Tages) nur aus round_info / league_table / championship / race_results.\n"
+    "- Es gibt mehrere CAS-Ligen (z. B. GT3 WCT, PCC/PCCD, SFL, IEC, Combined Cup, Fun League). "
+    "Ohne Angabe gilt die Liga der laufenden Session. Nennt die Frage eine Liga oder ein Rennen, "
+    "das nicht dazu passt, hol dir mit cls_leagues den slug und frag round_info / league_table "
+    "mit liga. Für eine bestimmte Runde gib runde an (Nummern und Strecken stehen im "
+    "Saisonkalender von round_info). Sag dazu, welche Liga du meinst.\n"
     "- Wiederhole die Frage nicht und fang nicht mit \"Gute Frage\" an."
 )
 
@@ -111,11 +123,24 @@ TOOLS = [
     {"name": "round_info",
      "description": "Liga-Daten von CLS zur LETZTEN gefahrenen Runde: Ergebnisse je Rennen und "
                     "kombiniert (Pro/Am, Startplatz, schnellste Runde, Punkte), Fahrer des Tages, "
-                    "nächste Runde, Teilnehmerzahlen, Saisonkalender mit Strecken.",
-     "input_schema": {"type": "object", "properties": {}}},
+                    "nächste Runde, Teilnehmerzahlen, Saisonkalender mit Strecken. Mit runde: "
+                    "die Ergebnisse genau dieser Runde.",
+     "input_schema": {"type": "object", "properties": {
+         "liga": {"type": "string", "description": "CLS-Liga-slug aus cls_leagues, z. B. cas-gt3-wct; "
+                                                   "leer = Liga der laufenden Session"},
+         "runde": {"type": "integer", "description": "Rundennummer der Saison; leer = die letzte "
+                                                    "gefahrene Runde"}}}},
     {"name": "league_table",
      "description": "Meisterschaftstabelle der Liga von CLS VOR dieser Runde (Rang, Punkte, Pro/Am, "
-                    "Team, Incidents, gefahrene Runden) und das Punkteschema.",
+                    "Team, Incidents, gefahrene Runden) und das Punkteschema. Mit runde: die "
+                    "Tabelle NACH dieser Runde.",
+     "input_schema": {"type": "object", "properties": {
+         "liga": {"type": "string", "description": "CLS-Liga-slug aus cls_leagues, z. B. cas-gt3-wct; "
+                                                   "leer = Liga der laufenden Session"},
+         "runde": {"type": "integer", "description": "Rundennummer der Saison; leer = die letzte "
+                                                    "gefahrene Runde"}}}},
+    {"name": "cls_leagues",
+     "description": "Alle CAS-Ligen bei CLS mit slug, Name und aktueller Saison.",
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "track_notes",
      "description": "Vorbereitete Notizen zur aktuellen Strecke (Geschichte, Fakten, Kurven, "
@@ -466,6 +491,11 @@ class RaceQA:
             s = self.session_fn() or {}
             notes = find_notes(self.notes_dir, s.get("strecke") or "", s.get("layout") or "")
             return notes or "Keine Notizen zu dieser Strecke vorhanden."
+        args = args or {}
+        if name == "cls_leagues":
+            return _dumps(compact(self.fetch(self._cls("leagues"))))
+        if name in ("round_info", "league_table") and (args.get("liga") or args.get("runde")):
+            return self._cls_round(name, args)
         key = {"live_standings": "standings", "race_results": "results",
                "championship": "championship", "round_info": "roundinfo",
                "league_table": "roundinfo"}.get(name)
@@ -478,6 +508,30 @@ class RaceQA:
             data = data["info"]
         elif name == "league_table" and isinstance(data, dict):
             data = {k: v for k, v in (data.get("standings") or {}).items() if k != "rounds"}
+        return _dumps(compact(data))
+
+    def _cls(self, path: str, **params) -> str:
+        base = (self.cfg.get("qa_cls_url") or DEFAULTS["qa_cls_url"]).rstrip("/")
+        q = urllib.parse.urlencode({k: v for k, v in params.items() if v not in (None, "")})
+        return f"{base}/api/overlay/{path}" + (f"?{q}" if q else "")
+
+    def _cls_round(self, name: str, args: dict) -> str:
+        """round_info / league_table for ANY league (and round), straight from CLS."""
+        slug = str(args.get("liga") or "").strip()
+        if not slug:                    # only a round given: the league 5010 is on
+            info = (self.fetch(self._src("roundinfo")) or {}).get("info") or {}
+            slug = (info.get("league") or {}).get("slug") or ""
+            if not slug:
+                raise ValueError("keine Liga bekannt — liga angeben (cls_leagues)")
+        before = None
+        if args.get("runde") not in (None, ""):
+            before = int(args["runde"]) + 1    # CLS: data as it stood BEFORE that round
+        if name == "round_info":
+            data = self.fetch(self._cls("round-info", league=slug, beforeRound=before))
+        else:
+            data = self.fetch(self._cls("standings", league=slug, beforeRound=before))
+            if isinstance(data, dict):
+                data = {k: v for k, v in data.items() if k != "rounds"}
         return _dumps(compact(data))
 
     def _tools(self) -> list:

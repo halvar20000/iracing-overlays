@@ -20,8 +20,15 @@ Websuche für Strecken-Trivia). Steht es nirgends, sagt er, dass er es nicht wei
 | live_standings | Tower (5005) | Wer führt? Abstand zwischen X und Y? Wer fuhr die schnellste Runde? |
 | race_results | Ergebnis (5002) | Wie ging das Rennen aus? Wie viele Plätze hat X gutgemacht? |
 | championship | Meisterschaft live (5010) | Wer führt die Meisterschaft, wenn das Rennen jetzt endet? |
-| round_info | CLS, letzte Runde (5010) | Welchen Platz hatte X letztes Mal? Wer war Fahrer des Tages? Wann ist die nächste Runde? |
-| league_table | CLS, Tabelle vor der Runde (5010) | Wie viele Punkte hat X? Wer führt bei den AM? |
+| round_info | CLS, letzte Runde (5010) — oder jede Liga / Runde direkt bei CLS | Welchen Platz hatte X letztes Mal? Wer war Fahrer des Tages? Wer hat das WCT-Rennen in Zandvoort gewonnen? |
+| league_table | CLS, Tabelle vor der Runde (5010) — oder jede Liga / nach jeder Runde | Wie viele Punkte hat X? Wer führt bei den AM in der WCT? |
+| cls_leagues | CLS, alle CAS-Ligen | (Claude sucht sich damit die richtige Liga) |
+
+**Mehrere Ligen:** Ohne Angabe meint Claude die Liga der laufenden Session (die
+das Meisterschafts-Overlay 5010 erkannt hat oder auf die es eingestellt ist).
+Nennst du eine andere Liga („im WCT-Rennen …", „in der SFL …") oder ein Rennen
+einer anderen Liga, schlägt er direkt bei CLS nach — auch ohne laufendes
+iRacing und für jede gefahrene Runde der Saison.
 | track_notes | `show_notes/<strecke>.md` | Was ist das Besondere an der Strecke? |
 | web_search | Websuche (Anthropic) | Wann fuhr die Formel 1 zuletzt hier? |
 
