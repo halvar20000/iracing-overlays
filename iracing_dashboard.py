@@ -4869,9 +4869,17 @@ def list_cameras():
         return "\n".join(lines) + "\n", 200, {
             "Content-Type": "text/plain; charset=utf-8"}
 
+    pb = snap.get("playback") or {}
     return jsonify({
         "count": len(groups),
         "current_cam_group": current,
+        # status for the /cameras/panel window
+        "connected": bool(snap.get("connected")),
+        "track": snap.get("track") or "",
+        "playback_mode": pb.get("mode") or "",
+        "active_driver": snap.get("active_driver"),
+        "director": bool((snap.get("director") or {}).get("enabled")),
+        "auto_camera": bool(snap.get("auto_camera_active")),
         "cameras": [
             {
                 "id": g["id"],
@@ -4882,6 +4890,133 @@ def list_cameras():
             for g in groups
         ],
     })
+
+
+# Camera panel (2026-10-22): every camera group of the loaded track as a big
+# button (custom sets bring their own: Turn 1, Drone T1 ...), plus driver
+# prev / next and Go Live — a small stand-alone window like /overtakes/panel.
+# Buttons fire the same /streamdeck GETs as the keys, so a click pauses REGIE
+# ~20 s exactly like a Stream Deck press. ?zoom=, F / ⛶ = fullscreen.
+CAM_PANEL_HTML = r"""<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><title>Kameras</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+    :root { --bg: #15161a; --card: #22242b; --card2: #2b2e37; --text: #f2f2f4; --muted: #a8abb8;
+            --cyan: #4fd8ff; --red: #ff5a5f; --amber: #ffb347; --up: #45f063; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: var(--bg); color: var(--text); height: 100%; }
+    body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; display: flex; flex-direction: column; }
+    header { padding: 8px 10px; background: #0e0f12; border-bottom: 2px solid var(--cyan); }
+    .row1 { display: flex; align-items: center; gap: 8px; }
+    h1 { font-size: 16px; letter-spacing: 1.5px; color: var(--cyan); flex: 1; }
+    .pill { font-size: 12px; font-weight: 800; padding: 3px 8px; border-radius: 3px; background: var(--card2); color: var(--muted); }
+    .pill.live { background: var(--red); color: #fff; }
+    .pill.replay { background: var(--amber); color: #1a1205; }
+    .pill.regie { background: #3a2a55; color: #d9c2ff; display: none; }
+    .pill.regie.on { display: inline-block; }
+    button.fs { padding: 2px 8px; font-size: 17px; line-height: 1.2; }
+    .meta { font-size: 12px; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .who { font-size: 17px; font-weight: 700; margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .num { background: var(--card2); padding: 0 6px; border-radius: 3px; font-size: 14px; margin-right: 6px; }
+    .ctrl { display: flex; gap: 6px; margin-top: 8px; }
+    .ctrl button { flex: 1 1 0; }
+    button { font: inherit; font-size: 14px; font-weight: 700; color: var(--text); background: var(--card2);
+             border: 1px solid #3a3e4a; border-radius: 4px; padding: 8px 10px; cursor: pointer; }
+    button:hover { border-color: var(--muted); }
+    button.live { background: var(--red); border-color: var(--red); }
+    #grid { flex: 1; overflow-y: auto; padding: 8px; display: grid; gap: 7px; align-content: start;
+            grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); }
+    .cam { font-size: 15px; padding: 14px 6px; min-height: 52px; background: var(--card); line-height: 1.2;
+           word-break: break-word; }
+    .cam.cur { background: var(--cyan); color: #04212b; border-color: var(--cyan); }
+    .cam.never { opacity: .55; }
+    .cam.flash { border-color: var(--up); }
+    .empty { grid-column: 1 / -1; color: var(--muted); text-align: center; padding: 30px 10px; font-size: 14px; line-height: 1.5; }
+</style></head>
+<body>
+<header>
+    <div class="row1"><h1>KAMERAS</h1><span class="pill regie" id="regie" title="Ein Klick pausiert die REGIE ca. 20 s">REGIE</span>
+        <span class="pill" id="mode">—</span>
+        <button class="fs" id="fs" onclick="toggleFs()" title="Vollbild an/aus (Taste F)">⛶</button></div>
+    <div class="meta" id="meta">Verbinde…</div>
+    <div class="who" id="who">&nbsp;</div>
+    <div class="ctrl">
+        <button onclick="sd('driver_prev')" title="Vorheriger Fahrer">◀ Fahrer</button>
+        <button onclick="sd('driver_next')" title="Nächster Fahrer">Fahrer ▶</button>
+        <button class="live" onclick="sd('go_live')">Go Live</button>
+    </div>
+</header>
+<div id="grid"><div class="empty">Warte auf iRacing…</div></div>
+<script>
+const qs = new URLSearchParams(location.search);
+const zoom = parseFloat(qs.get('zoom') || '1');
+if (zoom > 0 && zoom !== 1) document.body.style.zoom = zoom;
+function toggleFs() {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen().catch(() => {});
+}
+document.addEventListener('fullscreenchange', () => {
+    document.getElementById('fs').textContent = document.fullscreenElement ? '✕' : '⛶';
+});
+document.addEventListener('keydown', e => { if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.altKey) toggleFs(); });
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+// the REGIE never uses these (race_director.NEVER_CAMS) — shown dimmed, still clickable
+const NEVER = ['SCENIC', 'COCKPIT', 'CHASE'];
+async function sd(action) {
+    try { await fetch('/streamdeck/' + action, { cache: 'no-store' }); } catch (e) {}
+    setTimeout(tick, 250);
+}
+const grid = document.getElementById('grid');
+let current = null;
+function mark() {
+    grid.querySelectorAll('.cam').forEach(b => b.classList.toggle('cur', +b.dataset.id === current));
+}
+function render(cams) {
+    const sig = cams.map(c => c.id + ':' + c.name).join('|');
+    if (grid.dataset.sig !== sig) {
+        grid.dataset.sig = sig;
+        if (!cams.length) { grid.innerHTML = '<div class="empty">Keine Kameragruppen.<br>iRacing starten und eine Session laden.</div>'; }
+        else {
+            grid.innerHTML = '';
+            for (const c of cams) {
+                const b = document.createElement('button');
+                const up = String(c.name || '').toUpperCase();
+                b.className = 'cam' + (NEVER.some(n => up.includes(n)) ? ' never' : '');
+                b.dataset.id = c.id;
+                b.textContent = c.name;
+                b.onclick = () => { current = c.id; mark(); sd('cam/' + c.id); };
+                grid.appendChild(b);
+            }
+        }
+    }
+    mark();
+}
+async function tick() {
+    let d;
+    try { d = await (await fetch('/cameras', { cache: 'no-store' })).json(); }
+    catch (e) { document.getElementById('meta').textContent = 'Dashboard-Server nicht erreichbar'; return; }
+    const m = document.getElementById('mode');
+    if (!d.connected) { m.className = 'pill'; m.textContent = 'OFFLINE';
+                        document.getElementById('meta').textContent = 'Warte auf iRacing…'; }
+    else { const live = d.playback_mode === 'live';
+           m.className = 'pill ' + (live ? 'live' : 'replay'); m.textContent = live ? 'LIVE' : 'REPLAY';
+           document.getElementById('meta').textContent = (d.track || '') + (d.auto_camera ? ' · Most Exciting an' : ''); }
+    document.getElementById('regie').classList.toggle('on', !!d.director);
+    const a = d.active_driver;
+    document.getElementById('who').innerHTML = a
+        ? `<span class="num">#${esc(a.car_number)}</span>${esc(a.name)}` : '&nbsp;';
+    current = d.current_cam_group;
+    render(d.cameras || []);
+}
+setInterval(tick, 1000); tick();
+</script></body></html>
+"""
+
+
+@app.route("/cameras/panel")
+def cameras_panel():
+    from flask import Response
+    return Response(CAM_PANEL_HTML, mimetype="text/html")
 
 
 @app.route("/auto_camera", methods=["POST"])
@@ -6682,6 +6817,7 @@ if __name__ == "__main__":
     print("  Driver next/prev  http://localhost:5000/streamdeck/driver_next")
     print("  Toggle follow     http://localhost:5000/streamdeck/toggle_auto_follow")
     print("  Overtake panel    http://localhost:5000/overtakes/panel")
+    print("  Camera panel      http://localhost:5000/cameras/panel")
     print("  Open in browser:  http://localhost:5000")
     print("  - TOP: race progress (laps + time remaining)")
     print("  - LEFT: drivers, starred, auto-follow")

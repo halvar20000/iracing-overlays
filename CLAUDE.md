@@ -177,6 +177,8 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 22, 2026 (camera panel `5000/cameras/panel`):** stand-alone window like /overtakes/panel: every camera group of the loaded track as a button (custom sets bring Turn 1 … / Drone T1 …), current one cyan, NEVER_CAMS names greyed (still clickable), driver ◀ ▶, Go Live, LIVE/REPLAY + REGIE pills, ⛶ / F, ?zoom=. Buttons fire the /streamdeck GETs (cam/<id>, driver_next/prev, go_live), so a click pauses REGIE ~20 s like a key. /cameras JSON gained connected / track / playback_mode / active_driver / director / auto_camera. Icon dashboard/cam_panel.png, README + OBS_OVERLAYS + OVERLAY_TABLE rows. Tested with the Flask test client (stubbed poller) and rendered with The Bend's 35 FCP groups. Custom cams need an iRacing RESTART after copying the .cam files (Thomas). Restart 5000.
+
 **October 21, 2026 (Abspann: PRO / AM segments showed the MIXED table):**
 Thomas: the Abspann showed the overall table, not per class. Two causes in
 the code / OBS: (1) `race_summary` shares the "Ergebnis" page with

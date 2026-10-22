@@ -216,6 +216,7 @@ DASH_ICONS = [
     ("ask",               "auto",   "mic",         "Frag Claude",       "ask"),
     # PAGES, not /streamdeck commands: Website action without "background"
     ("ot_panel",          "tool",   "overtake",    "Überhol Fenster",   "/overtakes/panel"),
+    ("cam_panel",         "tool",   "camera",      "Kamera Fenster",    "/cameras/panel"),
     ("show_page",         "tool",   "list",        "Sendeablauf",       "/show"),
     ("ask_page",          "tool",   "chat",        "Fragen",            "/ask"),
     ("highlights_page",   "tool",   "film",        "Highlight Video",   "/highlights"),
@@ -378,6 +379,8 @@ def write_table():
               "overlays overlays_off`" % name)
     rows += ["", "Bedienseiten (kein OBS): Überhol-Fenster `http://localhost:5000/overtakes/panel` "
              '<img src="streamdeck_icons/dashboard/ot_panel.png" width="48" alt="Überhol-Fenster">, '
+             "Kamera-Fenster `http://localhost:5000/cameras/panel` "
+             '<img src="streamdeck_icons/dashboard/cam_panel.png" width="48" alt="Kamera-Fenster">, '
              "Race Control `http://localhost:8080`. Kamera- und Replay-Tasten: "
              "[streamdeck_icons/README.md](streamdeck_icons/README.md).", ""]
     TABLE.write_text("\n".join(rows), encoding="utf-8")

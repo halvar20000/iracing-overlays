@@ -84,6 +84,7 @@ Loader-Datei verwenden).
 |---|---|---|
 | Dashboard (Kameras, Replays, Vorfälle) | `http://localhost:5000` | `dashboard.html` existiert, ist aber deine Regie-Oberfläche, ≈ 1920 × 1080 |
 | Überhol-Fenster (nur die Überholungen, klein) | `http://localhost:5000/overtakes/panel` | Dashboard muss laufen, seine Seite nicht offen sein. Replay 10 s / 20 s, Kamera, Auto-Replay, Go Live; ab ≈ 340 px breit. ⛶ oder Taste F = Vollbild, `?zoom=1.5` = größer |
+| Kamera-Fenster (nur die Kameras, klein) | `http://localhost:5000/cameras/panel` | Dashboard muss laufen. Jede Kameragruppe der geladenen Strecke als Taste (Custom Cams: Turn 1, Drone T1 …), aktive cyan; Chase / Cockpit / Scenic grau (REGIE nimmt sie nie). Fahrer ◀ ▶, Go Live; ein Klick pausiert die REGIE ~20 s. ⛶ oder Taste F = Vollbild, `?zoom=1.5` = größer |
 | Race Logger Monitor | `http://localhost:5009` | `logger.html` existiert, Bedienseite |
 | Meisterschaft – Liga/Saison wählen | `http://localhost:5010/` | Konfiguration |
 | YouTube – Video wählen | `http://localhost:5005/youtube/setup` | Konfiguration |
