@@ -1,6 +1,8 @@
 """Zoom-in video onto a track: world -> country -> circuit, Esri satellite
 imagery + borders/places labels, track outline drawn at the end.
-usage: python make_track_zoom.py tracks/<track>.json track_zoom/<track>.mp4 "<TITLE>" "<subtitle>"
+usage: python make_track_zoom.py tracks/<track>.json "<TITLE>" "<subtitle>"
+  -> zoom_videos/<track>.mp4 (own folder, gitignored like show_notes/videos/;
+  the old form with an output path as the 2nd argument still works).
 Needs Pillow + ffmpeg on PATH, internet for the tiles (cached in track_zoom/tilecache).
 First made for the PCCD finale at the Hungaroring (2026-10-22): 1080p30, 21 s.
 """
@@ -11,7 +13,9 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 W, H, FPS = 1920, 1080, 30
 IMG = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
 REF = "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
-CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "track_zoom", "tilecache")
+HERE = os.path.dirname(os.path.abspath(__file__))
+CACHE = os.path.join(HERE, "track_zoom", "tilecache")
+VIDEOS = os.path.join(HERE, "zoom_videos")
 FONT_B = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
@@ -89,7 +93,12 @@ def ease(t):
 
 
 def main():
-    track_file, out, title, sub = sys.argv[1:5]
+    if len(sys.argv) >= 5:
+        track_file, out, title, sub = sys.argv[1:5]
+    else:
+        track_file, title, sub = sys.argv[1:4]
+        out = os.path.join(VIDEOS, os.path.splitext(os.path.basename(track_file))[0] + ".mp4")
+    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     tr = json.load(open(track_file))
     pts = tr["ontrack"]
     lats, lons = [p[0] for p in pts], [p[1] for p in pts]
