@@ -4568,8 +4568,17 @@ def incidents_feed():
     incidents into the per-race JSONL alongside lap completions.
     Same data that's embedded inside /telemetry under the 'incidents'
     key, just smaller payload for tools that only need this slice.
+    The status fields are for the /incidents/panel window.
     """
-    return jsonify({"incidents": list(poller._incidents)})
+    snap = poller.get()
+    pb = snap.get("playback") or {}
+    return jsonify({
+        "incidents": list(poller._incidents),
+        "connected": bool(snap.get("connected")),
+        "track": snap.get("track") or "",
+        "auto_replay": poller.auto_replay,
+        "playback_mode": pb.get("mode") or "",
+    })
 
 
 @app.route("/overtakes")
@@ -5017,6 +5026,254 @@ setInterval(tick, 1000); tick();
 def cameras_panel():
     from flask import Response
     return Response(CAM_PANEL_HTML, mimetype="text/html")
+
+
+# Driver + incident panels (2026-10-22): the dashboard's other two columns as
+# stand-alone windows, same frame as /overtakes/panel and /cameras/panel.
+# Header, fullscreen and ?zoom= are shared; each page fills in its own body.
+PANEL_FRAME = r"""<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><title>%(title)s</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+    :root { --bg: #15161a; --card: #22242b; --card2: #2b2e37; --text: #f2f2f4; --muted: #a8abb8;
+            --up: #45f063; --red: #ff5a5f; --amber: #ffb347; --cyan: #4fd8ff; --accent: %(accent)s; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: var(--bg); color: var(--text); height: 100%%; }
+    body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; display: flex; flex-direction: column;
+           font-variant-numeric: tabular-nums; }
+    header { padding: 8px 10px; background: #0e0f12; border-bottom: 2px solid var(--accent); }
+    .row1 { display: flex; align-items: center; gap: 8px; }
+    h1 { font-size: 16px; letter-spacing: 1.5px; color: var(--accent); flex: 1; }
+    .pill { font-size: 12px; font-weight: 800; padding: 3px 8px; border-radius: 3px; background: var(--card2); color: var(--muted); }
+    .pill.live { background: var(--red); color: #fff; }
+    .pill.replay { background: var(--amber); color: #1a1205; }
+    button.fs { padding: 2px 8px; font-size: 17px; line-height: 1.2; }
+    .meta { font-size: 12px; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ctrl { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+    .ctrl button { flex: 1 1 auto; }
+    button { font: inherit; font-size: 14px; font-weight: 700; color: var(--text); background: var(--card2);
+             border: 1px solid #3a3e4a; border-radius: 4px; padding: 7px 10px; cursor: pointer; }
+    button:hover { border-color: var(--muted); }
+    button.on { background: var(--accent); color: #0d1a10; border-color: var(--accent); }
+    button.live { background: var(--red); border-color: var(--red); }
+    #list { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+    .num { background: var(--card2); padding: 0 6px; border-radius: 3px; font-size: 13px; margin-right: 5px; }
+    .empty { color: var(--muted); text-align: center; padding: 30px 10px; font-size: 14px; line-height: 1.5; }
+%(css)s
+</style></head>
+<body>
+<header>
+    <div class="row1"><h1>%(heading)s</h1><span class="pill" id="mode">—</span>
+        <button class="fs" id="fs" onclick="toggleFs()" title="Vollbild an/aus (Taste F)">⛶</button></div>
+    <div class="meta" id="meta">Verbinde…</div>
+    <div class="ctrl">%(controls)s</div>
+</header>
+<div id="list"><div class="empty">%(empty)s</div></div>
+<script>
+const qs = new URLSearchParams(location.search);
+const zoom = parseFloat(qs.get('zoom') || '1');
+if (zoom > 0 && zoom !== 1) document.body.style.zoom = zoom;
+function toggleFs() {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen().catch(() => {});
+}
+document.addEventListener('fullscreenchange', () => {
+    document.getElementById('fs').textContent = document.fullscreenElement ? '✕' : '⛶';
+});
+document.addEventListener('keydown', e => { if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.altKey) toggleFs(); });
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+async function post(url, body) {
+    try {
+        const r = await fetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'},
+                                     body: JSON.stringify(body || {}) });
+        return await r.json();
+    } catch (e) { return null; }
+}
+// header: OFFLINE / LIVE / REPLAY + track
+function status(d, extra) {
+    const m = document.getElementById('mode');
+    if (!d.connected) { m.className = 'pill'; m.textContent = 'OFFLINE';
+                        document.getElementById('meta').textContent = 'Warte auf iRacing…'; return false; }
+    const live = (d.playback_mode || (d.playback || {}).mode) === 'live';
+    m.className = 'pill ' + (live ? 'live' : 'replay'); m.textContent = live ? 'LIVE' : 'REPLAY';
+    document.getElementById('meta').textContent = (d.track || '') + (extra || '');
+    return true;
+}
+const host = document.getElementById('list');
+%(js)s
+</script></body></html>
+"""
+
+DRIVER_PANEL_HTML = PANEL_FRAME % {
+    "title": "Fahrer", "heading": "FAHRER", "accent": "#61b4ff",
+    "empty": "Warte auf iRacing…",
+    "controls": """
+        <button id="star" onclick="toggleStarOnly()" title="Nur Fahrer mit ★ zeigen">★ nur</button>
+        <button id="follow" onclick="toggleFollow()" title="Kamera folgt automatisch den ★-Fahrern / Duellen">Auto-Follow</button>
+        <button class="live" onclick="post('/go_live')">Go Live</button>""",
+    "css": """
+    .drv { display: grid; grid-template-columns: 26px 42px auto 1fr auto auto; align-items: center; gap: 6px;
+           background: var(--card); border-left: 4px solid transparent; border-radius: 4px; padding: 8px 8px;
+           cursor: pointer; font-size: 15px; }
+    .drv:hover { background: var(--card2); }
+    .drv.cur { border-left-color: var(--cyan); background: #173039; }
+    .drv.out { opacity: .5; }
+    .st { color: var(--muted); font-size: 18px; text-align: center; }
+    .st.on { color: var(--amber); }
+    .pos { font-weight: 800; color: var(--accent); }
+    .nm { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pit { background: var(--amber); color: #1a1205; font-size: 10px; font-weight: 800; padding: 1px 5px;
+           border-radius: 3px; margin-left: 6px; }
+    .best { color: var(--muted); font-size: 13px; }
+    .gap { min-width: 52px; text-align: right; font-size: 14px; }
+    .gap.battle { color: var(--up); font-weight: 800; }""",
+    "js": r"""
+// the ★ set is the dashboard's own (same localStorage key, same server list)
+const STARRED_KEY = "iracing_dashboard_starred_v1";
+function loadStarred() {
+    try { const raw = localStorage.getItem(STARRED_KEY); return new Set(raw ? JSON.parse(raw) : []); }
+    catch (e) { return new Set(); }
+}
+let starred = loadStarred(), starOnly = false, follow = false;
+function saveStarred() {
+    try { localStorage.setItem(STARRED_KEY, JSON.stringify([...starred])); } catch (e) {}
+    post('/starred', { car_idxs: [...starred] });
+}
+window.addEventListener('storage', e => { if (e.key === STARRED_KEY) { starred = loadStarred(); host.dataset.sig = ''; } });
+function toggleStarOnly() { starOnly = !starOnly; document.getElementById('star').classList.toggle('on', starOnly); host.dataset.sig = ''; tick(); }
+async function toggleFollow() {
+    const d = await post('/auto_follow', { enabled: !follow });
+    if (d) { follow = !!d.enabled; document.getElementById('follow').classList.toggle('on', follow); }
+}
+function fmtLap(s) { if (!s || s <= 0) return '--:--.---'; const m = Math.floor(s / 60);
+                     return m + ':' + (s - m * 60).toFixed(3).padStart(6, '0'); }
+function fmtGap(s) { return (!s || s <= 0) ? '—' : '+' + s.toFixed(s < 10 ? 2 : 1); }
+function render(drivers, activeIdx) {
+    const pool = starOnly ? drivers.filter(d => starred.has(d.car_idx)) : drivers;
+    const sig = pool.map(d => [d.car_idx, d.position, d.on_pit_road, d.in_world, (d.gap_ahead || 0).toFixed(1),
+                               (d.best_lap || 0).toFixed(3), starred.has(d.car_idx)].join(':')).join('|') + '|' + activeIdx;
+    if (host.dataset.sig === sig) return;
+    host.dataset.sig = sig;
+    if (!pool.length) { host.innerHTML = '<div class="empty">' + (starOnly ? 'Kein Fahrer mit ★.' : 'Keine Fahrer.') + '</div>'; return; }
+    host.innerHTML = '';
+    for (const d of pool) {
+        const row = document.createElement('div');
+        row.className = 'drv' + (d.car_idx === activeIdx ? ' cur' : '') + (d.in_world === false ? ' out' : '');
+        const on = starred.has(d.car_idx);
+        row.innerHTML = `<span class="st${on ? ' on' : ''}" title="★ merken">${on ? '★' : '☆'}</span>
+            <span class="pos">${d.position > 0 ? 'P' + d.position : '—'}</span>
+            <span class="num">#${esc(d.car_number)}</span>
+            <span class="nm" title="${esc(d.name)}">${esc(d.name)}${d.on_pit_road ? '<span class="pit">PIT</span>' : ''}</span>
+            <span class="best">${fmtLap(d.best_lap)}</span>
+            <span class="gap${d.gap_ahead > 0 && d.gap_ahead < 1 ? ' battle' : ''}">${fmtGap(d.gap_ahead)}</span>`;
+        row.onclick = () => { post('/switch_car', { car_number: d.car_number }); host.dataset.sig = '';
+                              render(drivers, d.car_idx); };
+        row.querySelector('.st').onclick = ev => {
+            ev.stopPropagation();
+            if (starred.has(d.car_idx)) starred.delete(d.car_idx); else starred.add(d.car_idx);
+            saveStarred(); host.dataset.sig = ''; render(drivers, activeIdx);
+        };
+        host.appendChild(row);
+    }
+}
+async function tick() {
+    let d;
+    try { d = await (await fetch('/telemetry', { cache: 'no-store' })).json(); }
+    catch (e) { document.getElementById('meta').textContent = 'Dashboard-Server nicht erreichbar'; return; }
+    if (!status(d)) return;
+    if (follow !== !!d.auto_follow) { follow = !!d.auto_follow; document.getElementById('follow').classList.toggle('on', follow); }
+    render(d.drivers || [], (d.active_driver || {}).car_idx);
+}
+post('/starred', { car_idxs: [...starred] });
+setInterval(tick, 1000); tick();
+""",
+}
+
+INCIDENT_PANEL_HTML = PANEL_FRAME % {
+    "title": "Incidents", "heading": "INCIDENTS", "accent": "#ef4444",
+    "empty": "Noch keine Zwischenfälle.",
+    "controls": """
+        <button id="auto" onclick="toggleAuto()" title="Dreher und Kollisionen automatisch als Replay zeigen">Auto-Replay</button>
+        <button class="live" onclick="post('/go_live')">Go Live</button>
+        <button onclick="clearAll()">Alle löschen</button>""",
+    "css": """
+    button.on { color: #fff; }
+    .inc { background: var(--card); border-left: 4px solid var(--accent); border-radius: 4px; padding: 8px 10px; }
+    .inc.lost_control { border-left-color: #c084fc; }
+    .inc.off_track { border-left-color: #a89b3e; opacity: .62; }
+    .inc.done { opacity: .72; }
+    .top { display: flex; align-items: center; gap: 8px; }
+    .ty { font-weight: 800; font-size: 13px; letter-spacing: 1px; color: var(--accent); }
+    .inc.lost_control .ty { color: #c084fc; }
+    .inc.off_track .ty { color: #a89b3e; }
+    .inc.stopped .ty { color: #f87171; }
+    .inc.yellow .ty { color: #facc15; }
+    .time { color: var(--muted); font-size: 12px; flex: 1; }
+    .badge { font-size: 11px; font-weight: 800; color: var(--up); }
+    .x { background: none; border: none; color: var(--muted); font-size: 16px; padding: 0 4px; }
+    .who { font-size: 16px; font-weight: 700; margin-top: 4px; }
+    .det { color: var(--muted); font-size: 13px; margin-top: 2px; }
+    .btns { display: flex; gap: 6px; margin-top: 7px; }
+    .btns button { flex: 1; padding: 6px 4px; }
+    .btns .rp { background: #3a1d1f; border-color: #5a2c2f; }""",
+    "js": r"""
+const LABELS = { off_track: 'OFF TRACK', lost_control: 'DREHER', collision: 'KOLLISION',
+                 incident_points: 'INCIDENT', stopped: 'STEHT / CRASH', yellow: 'GELB' };
+let auto = false;
+async function toggleAuto() {
+    const d = await post('/auto_replay', { enabled: !auto });
+    if (d) { auto = !!d.enabled; document.getElementById('auto').classList.toggle('on', auto); }
+}
+async function clearAll() { await post('/incidents/clear'); tick(); }
+function hhmmss(wall) { return new Date(wall * 1000).toTimeString().slice(0, 8); }
+function render(list) {
+    const sig = list.map(o => o.id + (o.replayed ? 'r' : '')).join('|');
+    if (host.dataset.sig === sig) return;
+    host.dataset.sig = sig;
+    if (!list.length) { host.innerHTML = '<div class="empty">Noch keine Zwischenfälle.<br>Dreher, Kollisionen und Off-Tracks erscheinen hier.</div>'; return; }
+    host.innerHTML = '';
+    for (const o of list) {
+        const d = document.createElement('div');
+        d.className = 'inc ' + o.type + (o.replayed ? ' done' : '');
+        d.innerHTML = `
+            <div class="top"><span class="ty">${LABELS[o.type] || esc(String(o.type).toUpperCase())}</span>
+                <span class="time">${hhmmss(o.wall_clock)}</span>
+                ${o.replayed ? '<span class="badge">▶ gezeigt</span>' : ''}
+                <button class="x" title="Entfernen">✕</button></div>
+            <div class="who"><span class="num">#${esc(o.car_number)}</span>${esc(o.name)}</div>
+            ${o.details ? `<div class="det">${esc(o.details)}</div>` : ''}
+            <div class="btns"><button class="rp" data-s="10">▶ 10s</button><button class="rp" data-s="20">▶ 20s</button>
+                <button data-a="jump">Kamera</button></div>`;
+        d.querySelector('.x').onclick = async () => { await post('/incidents/dismiss', { id: o.id }); tick(); };
+        d.querySelectorAll('[data-s]').forEach(b => b.onclick = async () => {
+            await post('/replay_5s', { car_number: o.car_number, incident_id: o.id, replay_seconds: +b.dataset.s }); tick(); });
+        d.querySelector('[data-a=jump]').onclick = () => post('/switch_car', { car_number: o.car_number });
+        host.appendChild(d);
+    }
+}
+async function tick() {
+    let d;
+    try { d = await (await fetch('/incidents', { cache: 'no-store' })).json(); }
+    catch (e) { document.getElementById('meta').textContent = 'Dashboard-Server nicht erreichbar'; return; }
+    status(d);
+    if (auto !== !!d.auto_replay) { auto = !!d.auto_replay; document.getElementById('auto').classList.toggle('on', auto); }
+    render(d.incidents || []);
+}
+setInterval(tick, 1000); tick();
+""",
+}
+
+
+@app.route("/drivers/panel")
+def drivers_panel():
+    from flask import Response
+    return Response(DRIVER_PANEL_HTML, mimetype="text/html")
+
+
+@app.route("/incidents/panel")
+def incidents_panel():
+    from flask import Response
+    return Response(INCIDENT_PANEL_HTML, mimetype="text/html")
 
 
 @app.route("/auto_camera", methods=["POST"])
@@ -6818,6 +7075,8 @@ if __name__ == "__main__":
     print("  Toggle follow     http://localhost:5000/streamdeck/toggle_auto_follow")
     print("  Overtake panel    http://localhost:5000/overtakes/panel")
     print("  Camera panel      http://localhost:5000/cameras/panel")
+    print("  Driver panel      http://localhost:5000/drivers/panel")
+    print("  Incident panel    http://localhost:5000/incidents/panel")
     print("  Open in browser:  http://localhost:5000")
     print("  - TOP: race progress (laps + time remaining)")
     print("  - LEFT: drivers, starred, auto-follow")

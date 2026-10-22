@@ -136,6 +136,8 @@ jeweilige Overlay muss im Launcher gestartet sein (das Dashboard für das
 |---|---|---|
 | `dashboard/ot_panel.png` | `http://localhost:5000/overtakes/panel` | Überhol-Fenster: Replay 10 s / 20 s, Kamera, Auto-Replay, Go Live |
 | `dashboard/cam_panel.png` | `http://localhost:5000/cameras/panel` | Kamera-Fenster: alle Kameragruppen der Strecke als Tasten (auch Custom Cams), Fahrer vor / zurück, Go Live |
+| `dashboard/driver_panel.png` | `http://localhost:5000/drivers/panel` | Fahrer-Fenster: Fahrerliste live (Pos, #, Name, PIT, Bestzeit, Abstand), Klick = Kamera, ★ merken / nur ★, Auto-Follow, Go Live |
+| `dashboard/incident_panel.png` | `http://localhost:5000/incidents/panel` | Incident-Fenster: Dreher / Kollisionen / Off-Tracks, Replay 10 s / 20 s, Kamera, Auto-Replay, Go Live |
 | `dashboard/show_page.png` | `http://localhost:5000/show` | Sendeablauf: Skript lesen, starten, weiter, stoppen, OBS prüfen |
 | `dashboard/ask_page.png` | `http://localhost:5000/ask` | Frag Claude: letzte Fragen + Antworten, Frage tippen |
 | `dashboard/highlights_page.png` | `http://localhost:5000/highlights` | Highlight-Video: Rennen wählen, Szenen bearbeiten, Aufnahme starten (HIGHLIGHTS.md) |

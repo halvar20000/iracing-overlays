@@ -119,6 +119,7 @@ G = {
               '<circle cx="12" cy="13" r="3.7"/>',
     "next": '<path d="M5 5l8 7-8 7M13 5l8 7-8 7"/>',
     "prev": '<path d="M19 5l-8 7 8 7M11 5l-8 7 8 7"/>',
+    "drivers": '<circle cx="9" cy="8" r="3.4"/><path d="M3 20c.6-3.6 3-5.5 6-5.5s5.4 1.9 6 5.5M16 7h5M16 11.5h5M17.5 16h3.5"/>',
     "driver_next": '<circle cx="9" cy="8" r="3.4"/><path d="M3 20c.6-3.6 3-5.5 6-5.5s5.4 1.9 6 5.5M16.5 9l4 3.5-4 3.5"/>',
     "driver_prev": '<circle cx="15" cy="8" r="3.4"/><path d="M21 20c-.6-3.6-3-5.5-6-5.5s-5.4 1.9-6 5.5M7.5 9l-4 3.5 4 3.5"/>',
     "replay": '<path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M3.5 3.5v4.2h4.2"/><path d="M10 9v6l4.8-3z" class="F"/>',
@@ -217,6 +218,8 @@ DASH_ICONS = [
     # PAGES, not /streamdeck commands: Website action without "background"
     ("ot_panel",          "tool",   "overtake",    "Überhol Fenster",   "/overtakes/panel"),
     ("cam_panel",         "tool",   "camera",      "Kamera Fenster",    "/cameras/panel"),
+    ("driver_panel",      "tool",   "drivers",     "Fahrer Fenster",    "/drivers/panel"),
+    ("incident_panel",    "tool",   "crash",       "Incident Fenster",  "/incidents/panel"),
     ("show_page",         "tool",   "list",        "Sendeablauf",       "/show"),
     ("ask_page",          "tool",   "chat",        "Fragen",            "/ask"),
     ("highlights_page",   "tool",   "film",        "Highlight Video",   "/highlights"),
@@ -381,6 +384,10 @@ def write_table():
              '<img src="streamdeck_icons/dashboard/ot_panel.png" width="48" alt="Überhol-Fenster">, '
              "Kamera-Fenster `http://localhost:5000/cameras/panel` "
              '<img src="streamdeck_icons/dashboard/cam_panel.png" width="48" alt="Kamera-Fenster">, '
+             "Fahrer-Fenster `http://localhost:5000/drivers/panel` "
+             '<img src="streamdeck_icons/dashboard/driver_panel.png" width="48" alt="Fahrer-Fenster">, '
+             "Incident-Fenster `http://localhost:5000/incidents/panel` "
+             '<img src="streamdeck_icons/dashboard/incident_panel.png" width="48" alt="Incident-Fenster">, '
              "Race Control `http://localhost:8080`. Kamera- und Replay-Tasten: "
              "[streamdeck_icons/README.md](streamdeck_icons/README.md).", ""]
     TABLE.write_text("\n".join(rows), encoding="utf-8")
