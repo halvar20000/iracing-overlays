@@ -290,7 +290,7 @@ class TelemetryPoller:
         # (Stream Deck push-to-talk), the answer is spoken by the same voice
         self.qa = race_qa.RaceQA(self.commentator.cfg,
                                  speak=lambda text: self.commentator.say_show(text, "frage"),
-                                 session_fn=self._qa_session)
+                                 session_fn=self._qa_session, is_done=self.commentator.is_done)
         self._story_key = None
         self._post_key = None             # race the Abspann ran for (once per race)
         self._chequered_at = None
@@ -5560,8 +5560,13 @@ ASK_HTML = r"""<!DOCTYPE html>
           font-weight: 600; }
   .pill.recording { background: var(--rec); border-color: var(--rec); color: #fff; animation: p 1s infinite; }
   .pill.transcribing, .pill.thinking { background: var(--warn); border-color: var(--warn); color: #111; }
-  .pill.speaking { background: var(--ok); border-color: var(--ok); color: #111; }
+  .pill.speaking { background: var(--acc); border-color: var(--acc); color: #111; }
+  .pill.ready { background: var(--ok); border-color: var(--ok); color: #111; animation: p 1s infinite; }
   @keyframes p { 50% { opacity: .6; } }
+  .ready-box { display: none; background: #12261d; border: 1px solid var(--ok); border-radius: 8px;
+               padding: 10px 12px; margin-bottom: 12px; }
+  .ready-box .a { margin: 4px 0 8px; }
+  button.play { border-color: var(--ok); }
   button { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
            padding: 9px 14px; font-size: 15px; cursor: pointer; }
   button.main { border-color: var(--acc); font-size: 17px; padding: 12px 20px; }
@@ -5584,13 +5589,21 @@ ASK_HTML = r"""<!DOCTYPE html>
   <button onclick="send()">Senden</button>
 </div>
 <div id="warn" class="err"></div>
+<div id="ready" class="ready-box">
+  <div class="dim">Antwort bereit — wartet auf dich:</div>
+  <div class="q" id="rq"></div><div class="a" id="ra"></div>
+  <button class="play main" onclick="act('play')">▶ Abspielen</button>
+  <button onclick="act('cancel')">Verwerfen</button>
+</div>
 <div id="list"></div>
 <div class="dim">Stream Deck (Website, im Hintergrund): /streamdeck/ask = drücken zum Zuhören, nochmal
-drücken zum Antworten · /streamdeck/ask_start + ask_stop zum Halten · /streamdeck/ask_cancel.
+drücken zum Antworten; ist die Antwort fertig („Antwort bereit“), spielt dieselbe Taste sie ab ·
+/streamdeck/ask_play spielt ab · /streamdeck/ask_cancel bricht ab bzw. verwirft die Antwort ·
+/streamdeck/ask_start + ask_stop zum Halten. Status für OBS: /ask/overlay (obs_loaders/ask_status.html).
 Die Antwort spricht die Stimme (OBS-Quelle commentary_voice.html).</div>
 <script>
 const NAMES = {idle: 'bereit', recording: '● hört zu', transcribing: 'versteht …', thinking: 'denkt nach …',
-               speaking: 'spricht'};
+               ready: '✓ Antwort bereit', speaking: 'spricht'};
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 async function act(a) { await fetch('/ask/' + a, {method: 'POST'}); tick(); }
 async function send() {
@@ -5612,11 +5625,18 @@ async function tick() {
   if (d.voice && !d.voice.listening) w.push('Keine Stimme hört zu – OBS-Quelle commentary_voice.html fehlt oder ist aus. Antworten bleiben stumm.');
   if (d.last_error) w.push(d.last_error);
   document.getElementById('warn').innerHTML = w.map(esc).join('<br>');
+  const rb = document.getElementById('ready');
+  rb.style.display = d.pending ? 'block' : 'none';
+  if (d.pending) {
+    document.getElementById('rq').textContent = d.pending.question;
+    document.getElementById('ra').textContent = d.pending.answer;
+  }
   const s = JSON.stringify(d.items);
   if (s === sig) return; sig = s;
   document.getElementById('list').innerHTML = d.items.map(i =>
     `<div class="item"><div class="q">${i.typed ? '⌨' : '🎙'} ${esc(i.question)}</div>
      <div class="a">${i.answer ? esc(i.answer) : (i.error ? '' : '…')}</div>
+     ${i.discarded ? '<div class="dim">verworfen</div>' : i.expired ? '<div class="dim">nicht abgespielt (abgelaufen)</div>' : ''}
      ${i.error ? `<div class="err">${esc(i.error)}</div>` : ''}
      <div class="dim">${new Date(i.t * 1000).toLocaleTimeString('de-DE')}
        ${i.took_s != null ? ' · ' + i.took_s + ' s' : ''}
@@ -5625,6 +5645,98 @@ async function tick() {
 setInterval(tick, 700); tick();
 </script></main></body></html>
 """
+
+
+ASK_OVERLAY_HTML = r"""<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><title>Frag Claude Status</title>
+<style>
+  /* FRAG CLAUDE status for OBS / a small window (2026-10-22): shows that Claude
+     listens, thinks, has the answer READY (then the streamer presses the key)
+     or speaks. Hidden while idle. ?text=1 also shows question + answer (for a
+     window only the streamer sees), ?zoom=, ?debug=1 / H, ?demo=1. */
+  html, body { margin: 0; background: rgba(0,0,0,0); overflow: hidden;
+               font-family: 'Segoe UI', Arial, sans-serif; }
+  body.debug { background: #333; }
+  #wrap { position: absolute; left: 12px; top: 12px; transform-origin: top left; }
+  .card { display: none; align-items: center; gap: 12px; padding: 10px 18px 10px 12px; border-radius: 10px;
+          background: rgba(16,18,24,0.96); color: #fff; border-left: 6px solid #9aa0ab;
+          box-shadow: 0 4px 16px rgba(0,0,0,.5); max-width: 640px; }
+  .card.on { display: flex; }
+  .ic { width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center;
+        justify-content: center; font-size: 19px; font-weight: 900; flex: none; }
+  .t1 { font-size: 20px; font-weight: 800; letter-spacing: .5px; white-space: nowrap; }
+  .t2 { font-size: 14px; color: #d4d4de; margin-top: 2px; }
+  .txt .q { font-size: 14px; color: #22d3ee; margin-top: 6px; }
+  .txt .a { font-size: 15px; color: #fff; margin-top: 2px; }
+  .recording { border-color: #ef4444; } .recording .ic { background: #ef4444; animation: pulse 1s infinite; }
+  .thinking { border-color: #fbbf24; } .thinking .ic { background: #fbbf24; color: #111; }
+  .thinking .ic::after { content: ''; width: 16px; height: 16px; border: 3px solid #111;
+                         border-top-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+  .ready { border-color: #34d399; } .ready .ic { background: #34d399; color: #111; animation: pulse .9s infinite; }
+  .ready .t1 { color: #34d399; }
+  .speaking { border-color: #22d3ee; } .speaking .ic { background: #22d3ee; color: #111; }
+  .error { border-color: #f87171; } .error .ic { background: #f87171; }
+  @keyframes pulse { 50% { opacity: .45; transform: scale(.9); } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style></head><body>
+<div id="wrap"><div id="c" class="card"><div class="ic" id="ic"></div>
+  <div><div class="t1" id="t1"></div><div class="t2" id="t2"></div>
+  <div class="txt" id="txt"></div></div></div></div>
+<script>
+const P = new URLSearchParams(location.search);
+const SHOW_TEXT = P.get('text') === '1', DEMO = P.get('demo') === '1';
+if (P.get('debug') === '1') document.body.classList.add('debug');
+document.addEventListener('keydown', e => { if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('debug'); });
+const z = parseFloat(P.get('zoom') || '1'); if (z > 0) document.getElementById('wrap').style.transform = `scale(${z})`;
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+let errUntil = 0, errMsg = '', lastErrItem = null;
+function show(kind, icon, t1, t2, txt) {
+  const c = document.getElementById('c');
+  c.className = 'card on ' + kind;
+  document.getElementById('ic').textContent = icon;
+  document.getElementById('t1').textContent = t1;
+  document.getElementById('t2').textContent = t2 || '';
+  document.getElementById('txt').innerHTML = txt || '';
+}
+function hide() { document.getElementById('c').className = 'card'; }
+function render(d) {
+  const it = (d.items || [])[0];
+  if (it && it.error && it.id !== lastErrItem) {           // a new failed question: say so briefly
+    if (lastErrItem !== null) { errMsg = it.error; errUntil = Date.now() + 6000; }
+    lastErrItem = it.id;
+  } else if (lastErrItem === null) lastErrItem = it ? it.id : 0;
+  const s = d.state;
+  if (s === 'recording') return show('recording', '●', 'HÖRT ZU', (d.recording_s || 0).toFixed(0) + ' s — Taste drücken, wenn die Frage fertig ist');
+  if (s === 'transcribing' || s === 'thinking')
+    return show('thinking', '', 'CLAUDE DENKT NACH …', s === 'transcribing' ? 'Frage wird verstanden' : 'sucht die Antwort');
+  if (s === 'ready') {
+    const p = d.pending || {};
+    return show('ready', '✓', 'ANTWORT BEREIT', 'Taste drücken zum Abspielen · wartet ' + Math.round(p.waiting_s || 0) + ' s',
+                SHOW_TEXT ? `<div class="q">${esc(p.question)}</div><div class="a">${esc(p.answer)}</div>` : '');
+  }
+  if (s === 'speaking') return show('speaking', '🔊', 'CLAUDE ANTWORTET', '');
+  if (Date.now() < errUntil) return show('error', '✕', 'KEINE ANTWORT', errMsg.slice(0, 90));
+  if (document.body.classList.contains('debug')) return show('', '·', 'bereit', '');
+  hide();
+}
+async function tick() {
+  try { render(await (await fetch('/ask/status', {cache: 'no-store'})).json()); } catch (e) { hide(); }
+}
+if (DEMO) {
+  const steps = [{state: 'recording', recording_s: 3}, {state: 'thinking'},
+                 {state: 'ready', pending: {question: 'Wer hat das WCT-Rennen in Indianapolis gewonnen?',
+                  answer: 'Mike Zocher hat gewonnen, vor Maurice Becker.', waiting_s: 4}},
+                 {state: 'speaking'}];
+  let i = 0; const go = () => render(steps[i++ % steps.length]); go(); setInterval(go, 3000);
+} else { setInterval(tick, 400); tick(); }
+</script></body></html>
+"""
+
+
+@app.route("/ask/overlay")
+def ask_overlay():
+    from flask import Response
+    return Response(ASK_OVERLAY_HTML, mimetype="text/html")
 
 
 @app.route("/ask")
@@ -5648,7 +5760,8 @@ def ask_text():
 @app.route("/ask/<action>", methods=["POST"])
 def ask_action(action):
     fn = {"toggle": poller.qa.toggle, "start": poller.qa.start_listen,
-          "stop": poller.qa.stop_listen, "cancel": poller.qa.cancel}.get(action)
+          "stop": poller.qa.stop_listen, "cancel": poller.qa.cancel,
+          "play": poller.qa.play}.get(action)
     if fn is None:
         return jsonify({"ok": False, "msg": f"unknown action: {action}"}), 404
     return jsonify({"ok": True, "msg": fn()})
@@ -6415,8 +6528,10 @@ def streamdeck(action, param=None):
         ok, msg = True, f"ask: {poller.qa.start_listen()}"
     elif action == "ask_stop":            # ... key up
         ok, msg = True, f"ask: {poller.qa.stop_listen()}"
-    elif action == "ask_cancel":
+    elif action == "ask_cancel":          # also drops an answer that waits
         ok, msg = True, f"ask: {poller.qa.cancel()}"
+    elif action == "ask_play":            # play the waiting answer (the ask key does it too)
+        ok, msg = True, f"ask: {poller.qa.play()}"
 
     elif action == "toggle_auto_replay":
         poller.set_auto_replay(not poller.auto_replay)
@@ -6560,7 +6675,7 @@ if __name__ == "__main__":
     print("  Commentary (OBS)  http://localhost:5000/commentary/overlay")
     print("  Voice (OBS audio) http://localhost:5000/commentary/voice")
     print("  Sendeablauf       http://localhost:5000/show   (Stream Deck: /streamdeck/show_start|show_next|show_stop)")
-    print("  Frag Claude       http://localhost:5000/ask    (Stream Deck: /streamdeck/ask = Frage an / beantworten)")
+    print("  Frag Claude       http://localhost:5000/ask    (Stream Deck: /streamdeck/ask = Frage / Antwort / abspielen)")
     print("  Abspann           http://localhost:5000/abspann (Stream Deck: /streamdeck/post_start|post_next|post_stop)")
     print("  Highlight-Video   http://localhost:5000/highlights (Titelkarte in OBS: /highlights/card)")
     print("  List cameras      http://localhost:5000/cameras?format=text")

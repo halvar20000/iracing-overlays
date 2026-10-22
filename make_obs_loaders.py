@@ -83,6 +83,8 @@ OVERLAYS = [
     ("location",      "Track Location Map", 5007, "/location", "redirect"),
     # highlight video (2026-10-21): scene title card during the recording
     ("highlight_card", "Highlight Title Card", 5000, "/highlights/card"),
+    # Frag Claude (2026-10-22): listens / thinks / answer READY / speaks
+    ("ask_status",    "Frag Claude Status", 5000, "/ask/overlay"),
     # Note: racecontrol (iCASControl, port 8080) is an interactive steward
     # web app, opened directly in a browser — NOT an OBS browser source — so
     # it intentionally has no loader page here.

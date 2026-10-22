@@ -22,6 +22,15 @@ def check(name, ok, extra=""):
         fails += 1
 
 
+def wait_ready(q, timeout=3.0):
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        if q.state == "ready":
+            return True
+        time.sleep(0.02)
+    return False
+
+
 def wait_idle(q, timeout=3.0):
     t0 = time.time()
     while time.time() - t0 < timeout:
@@ -95,7 +104,9 @@ class Clock:
         return self.t
 
 
-CFG = {"api_key": "k", "qa_model": "claude-haiku-5-5", "qa_web_search": True, "qa_max_record_s": 20}
+# qa_hold off: these checks are about the answer itself, spoken at once (hold: 19)
+CFG = {"api_key": "k", "qa_model": "claude-haiku-5-5", "qa_web_search": True, "qa_max_record_s": 20,
+       "qa_hold": False}
 
 
 def make(responses, cfg=None, **kw):
@@ -355,6 +366,53 @@ ln = com.lines[0]
 check("answer is a queued show line (played in full)", ln["text"] == "Remo Cursio wurde Zweiter." and ln.get("queue")
       and ln.get("segment") == "frage", ln)
 check("voice callback got it", heard and heard[0]["id"] == ln["id"] == q.items[0]["line_id"])
+
+# 19) HOLD (default): the answer waits as "ready", the streamer plays it when it suits him
+check("hold is the default", qa.DEFAULTS["qa_hold"] is True)
+clock = Clock()
+rec = FakeRecorder()
+done = set()
+qh, api, spoken, _ = make([text("Mike Zocher hat gewonnen."), text("Zweite Antwort.")],
+                          cfg={"qa_hold": True}, recorder=rec, stt=FakeSTT("Wer hat gewonnen?"),
+                          clock=clock)
+qh.is_done = lambda lid: lid in done
+qh.toggle(); clock.t += 2; qh.toggle()
+check("hold: answer waits instead of being spoken", wait_ready(qh) and spoken == [], (qh.state, spoken))
+st = qh.status()
+check("hold: status ready + pending answer", st["state"] == "ready" and st["pending"]
+      and st["pending"]["answer"] == "Mike Zocher hat gewonnen." and st["hold"] is True, st["pending"])
+clock.t += 4
+check("hold: waiting seconds counted", qh.status()["pending"]["waiting_s"] == 4.0, qh.status()["pending"])
+check("hold: a new question is refused while one waits", qh.start_listen().startswith("Antwort wartet")
+      and qh.ask_text("x").startswith("Antwort wartet") and rec.started == 1)
+check("hold: same key plays it", qh.toggle() == "spielt ab" and spoken == ["Mike Zocher hat gewonnen."], spoken)
+st = qh.status()
+check("hold: speaking until the voice page played it", st["state"] == "speaking" and st["pending"] is None, st["state"])
+check("hold: line id + spoken flag on the item", qh.items[0]["line_id"] == 1 and qh.items[0].get("spoken"))
+done.add(1)
+check("hold: idle once played", qh.status()["state"] == "idle")
+check("hold: play with nothing waiting", qh.play().startswith("keine Antwort bereit"))
+# cancel drops the waiting answer, nothing spoken
+qh.ask_text("Noch eine?", wait=True)
+check("hold: typed question waits too", qh.state == "ready")
+check("hold: cancel drops it", qh.cancel() == "Antwort verworfen" and qh.state == "idle"
+      and qh.items[0].get("discarded") and spoken == ["Mike Zocher hat gewonnen."], spoken)
+# an answer nobody plays is dropped after qa_hold_max_s
+qe, api, spoken3, _ = make([text("Alt.")], cfg={"qa_hold": True, "qa_hold_max_s": 60}, clock=clock)
+qe.ask_text("x", wait=True)
+clock.t += 61
+check("hold: unplayed answer expires", qe.status()["state"] == "idle" and qe.items[0].get("expired")
+      and qe.play().startswith("keine Antwort bereit") and spoken3 == [])
+# speaking falls back to a timeout without a voice page report
+qs, api, spoken4, _ = make([text("Kurz.")], cfg={"qa_hold": True}, clock=clock)
+qs.is_done = lambda lid: False
+qs.ask_text("x", wait=True); qs.play()
+clock.t += qa.SPEAKING_MAX_S + 1
+check("hold: speaking ends after SPEAKING_MAX_S", qs.status()["state"] == "idle")
+# errors are not held
+qx, api, spoken5, _ = make([RuntimeError("HTTP 529: overloaded")], cfg={"qa_hold": True}, clock=clock)
+qx.ask_text("x", wait=True)
+check("hold: an error does not wait", qx.state == "idle" and qx.status()["pending"] is None)
 
 print()
 print("ALL PASS" if not fails else f"{fails} FAILED")

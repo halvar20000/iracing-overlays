@@ -76,7 +76,10 @@ DEFAULTS = {
     "qa_mic": "",
     "qa_max_record_s": 20.0,
     "qa_cls_url": "https://league.simracing-hub.com",
+    "qa_hold": True,            # answer waits ("ready") until the streamer plays it
+    "qa_hold_max_s": 300.0,     # ...and is dropped after this long unplayed
 }
+SPEAKING_MAX_S = 90.0           # "speaking" shown until the voice page reports the line played
 
 SYSTEM_PROMPT = (
     "Du bist Co-Kommentator bei einem iRacing-Ligarennen der CAS-Community auf Twitch. "
@@ -286,14 +289,19 @@ class WhisperSTT:
 
 # --- the co-commentator --------------------------------------------------------
 class RaceQA:
-    """State machine idle -> recording -> transcribing -> thinking -> idle.
-    One question at a time; a new press while busy is ignored (status says why)."""
+    """State machine idle -> recording -> transcribing -> thinking -> ready -> idle.
+    With qa_hold (default) a finished answer WAITS as "ready" — the status
+    overlay (5000/ask/overlay) shows it, and the streamer plays it with the
+    same key (or ask_play) when it suits his commentary; cancel drops it.
+    Without qa_hold it is spoken at once. One question at a time; a new press
+    while busy is ignored (status says why)."""
 
     def __init__(self, config: dict | None = None, speak=None, session_fn=None, fetch=None,
                  recorder=None, stt=None, api_post=None, notes_dir: Path | None = None,
-                 clock=time.time):
+                 clock=time.time, is_done=None):
         self.cfg = merged_config(config)
         self.speak = speak                       # callable(text) -> line id (voice)
+        self.is_done = is_done                   # callable(line id) -> voice page played it
         self.session_fn = session_fn or (lambda: {})
         self.fetch = fetch or http_json
         self.recorder = recorder
@@ -311,6 +319,9 @@ class RaceQA:
         self._thinking_off_ok = True
         self._preloaded = False
         self.stt_ready = False
+        self._pending = None                     # the answer waiting to be played
+        self._ready_at = 0.0
+        self._speaking = None                    # (line id, since) of the answer being spoken
 
     # -- public ---------------------------------------------------------------
     @property
@@ -318,8 +329,27 @@ class RaceQA:
         return bool(self.cfg.get("api_key"))
 
     def status(self) -> dict:
+        self._expire()
         with self._lock:
-            return {"state": self.state, "items": [dict(i) for i in self.items],
+            state = self.state
+            now = self.clock()
+            if state == "idle" and self._speaking:
+                line_id, since = self._speaking
+                done = False
+                try:
+                    done = self.is_done(line_id) if self.is_done else now - since > 8
+                except Exception:
+                    pass
+                if done or now - since > SPEAKING_MAX_S:
+                    self._speaking = None
+                else:
+                    state = "speaking"
+            pend = self._pending
+            return {"state": state, "items": [dict(i) for i in self.items],
+                    "pending": {"id": pend["id"], "question": pend["question"],
+                                "answer": pend["answer"],
+                                "waiting_s": round(now - self._ready_at, 1)} if pend else None,
+                    "hold": bool(self.cfg.get("qa_hold")),
                     "ai": self.ai_enabled, "model": self.cfg.get("qa_model"),
                     "web_search": bool(self.cfg.get("qa_web_search")),
                     "stt_model": self.cfg.get("qa_stt_model"), "stt_ready": self.stt_ready,
@@ -329,13 +359,30 @@ class RaceQA:
                     "last_error": self.last_error}
 
     def toggle(self) -> str:
-        """One Stream Deck key: listen / answer."""
+        """One Stream Deck key: listen / answer / play the waiting answer."""
         if self.state == "recording":
             return self.stop_listen()
+        if self.state == "ready":
+            return self.play()
         return self.start_listen()
 
-    def start_listen(self) -> str:
+    def play(self) -> str:
+        """Speak the answer that is waiting (qa_hold)."""
+        self._expire()
         with self._lock:
+            item = self._pending
+            if self.state != "ready" or item is None:
+                return f"keine Antwort bereit ({self.state})"
+            self._pending = None
+            self.state = "idle"
+        self._speak(item)
+        return "spielt ab"
+
+    def start_listen(self) -> str:
+        self._expire()
+        with self._lock:
+            if self.state == "ready":
+                return "Antwort wartet — erst abspielen oder verwerfen"
             if self.state != "idle":
                 return f"beschäftigt ({self.state})"
             self.state = "recording"
@@ -377,6 +424,12 @@ class RaceQA:
     def cancel(self) -> str:
         with self._lock:
             was = self.state
+            if was == "ready":                   # drop the waiting answer
+                if self._pending is not None:
+                    self._pending["discarded"] = True
+                self._pending = None
+                self.state = "idle"
+                return "Antwort verworfen"
             if was == "recording":
                 self._rec_token += 1
         if was == "recording":
@@ -393,7 +446,10 @@ class RaceQA:
         question = (question or "").strip()
         if not question:
             return "leer"
+        self._expire()
         with self._lock:
+            if self.state == "ready":
+                return "Antwort wartet — erst abspielen oder verwerfen"
             if self.state != "idle":
                 return f"beschäftigt ({self.state})"
             self.state = "thinking"
@@ -425,6 +481,24 @@ class RaceQA:
     def _auto_stop(self, token):
         if self.state == "recording" and token == self._rec_token:
             self.stop_listen()
+
+    def _expire(self):
+        """A waiting answer nobody played for qa_hold_max_s goes (the key must not stay stuck)."""
+        with self._lock:
+            if (self.state == "ready" and self._pending is not None
+                    and self.clock() - self._ready_at > float(self.cfg.get("qa_hold_max_s") or 300)):
+                self._pending["expired"] = True
+                self._pending = None
+                self.state = "idle"
+
+    def _speak(self, item):
+        try:
+            item["line_id"] = self.speak(item["answer"])
+            item["spoken"] = True
+            with self._lock:
+                self._speaking = (item["line_id"], self.clock())
+        except Exception as e:
+            item["error"] = f"Stimme: {e}"
 
     def _fail(self, msg: str):
         self.last_error = msg[:400]
@@ -470,12 +544,13 @@ class RaceQA:
             self.last_error = item["error"]
         item["took_s"] = round(self.clock() - t0, 1)
         if item["answer"] and self.speak is not None:
-            with self._lock:
-                self.state = "speaking"
-            try:
-                item["line_id"] = self.speak(item["answer"])
-            except Exception as e:
-                item["error"] = f"Stimme: {e}"
+            if self.cfg.get("qa_hold"):
+                with self._lock:                 # wait for the streamer's key
+                    self._pending = item
+                    self._ready_at = self.clock()
+                    self.state = "ready"
+                return
+            self._speak(item)
         with self._lock:
             self.state = "idle"
 

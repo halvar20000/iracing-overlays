@@ -57,10 +57,27 @@ statt zu raten.
 
 - **Taste drücken** → „● hört zu" → Frage stellen → **Taste nochmal drücken**.
   Spätestens nach 20 Sekunden hört er von selbst auf.
+- Claude sucht die Antwort. Ist sie fertig, wird sie **nicht sofort gesprochen**,
+  sondern wartet: die Status-Anzeige zeigt grün **„ANTWORT BEREIT“**. Dann
+  **dieselbe Taste noch einmal drücken** → die Antwort wird abgespielt. So
+  sprichst du in Ruhe weiter und holst die Antwort, wenn sie passt.
+  `/streamdeck/ask_cancel` verwirft eine wartende Antwort; nach 5 Minuten
+  verfällt sie von selbst. Solange eine Antwort wartet, nimmt die Taste keine
+  neue Frage an (erst abspielen oder verwerfen).
+- **Status-Anzeige:** `obs_loaders/ask_status.html` (Port 5000, `/ask/overlay`)
+  zeigt „HÖRT ZU“ (rot), „CLAUDE DENKT NACH …“ (gelb), „ANTWORT BEREIT“ (grün,
+  blinkt) und „CLAUDE ANTWORTET“; sonst ist sie unsichtbar. Als OBS-Quelle nur
+  in einer Szene/Vorschau, die du siehst — oder als kleines Browserfenster auf
+  deinem Monitor: `http://localhost:5000/ask/overlay?debug=1&text=1` (`text=1`
+  zeigt dir Frage und Antwort schon vorab zum Mitlesen, `zoom=1.5` größer).
+- Lieber sofort sprechen lassen wie vorher? `"qa_hold": false` in
+  `commentary_config.json`.
 - Zum **Halten** (Taste gedrückt = zuhören) braucht es ein Stream-Deck-Plugin,
   das beim Drücken und beim Loslassen je eine URL aufruft:
   `/streamdeck/ask_start` und `/streamdeck/ask_stop`.
 - **Abbrechen**: `/streamdeck/ask_cancel` (oder der Knopf auf /ask).
+- Eigene **Abspiel-Taste** (optional, die Frage-Taste kann es auch):
+  `/streamdeck/ask_play`.
 - Die Seite **/ask** zeigt den Zustand, die letzten Fragen und Antworten, welche
   Quellen Claude benutzt hat und wie lange es dauerte. Dort kann man eine
   Frage auch **tippen** (geht ohne Mikrofon — gut zum Ausprobieren).
@@ -80,6 +97,8 @@ etwas länger. Kurz vorher „Fragen wir mal Claude …" sagen überbrückt das 
 | `qa_stt_model` | `small` | Whisper-Größe: `base` schneller/ungenauer, `medium` genauer/langsamer |
 | `qa_max_record_s` | `20` | längste Aufnahme |
 | `qa_timeout_s` | `25` | Wartezeit auf Claude |
+| `qa_hold` | `true` | fertige Antwort wartet auf deinen Tastendruck (`false` = sofort sprechen) |
+| `qa_hold_max_s` | `300` | so lange wartet eine Antwort, dann verfällt sie |
 | `qa_sources` | — | andere Adressen für `standings` / `results` / `championship` / `roundinfo` |
 
 Fahrernamen versteht die Spracherkennung besser, weil ihr das aktuelle

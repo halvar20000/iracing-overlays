@@ -185,6 +185,7 @@ OVERLAY_ICONS = [
     ("results_solid", "post",   "podium",    "Ergebnis Abspann"),
     ("champ_solid",   "post",   "trophy",    "Meisterschaft Abspann"),
     ("highlight_card", "post",  "film",      "Highlight Titel"),
+    ("ask_status",    "live",   "mic",       "Frag Claude Status"),
     ("dashboard",     "tool",   "gauge",     "Dashboard"),
     ("logger",        "tool",   "doc",       "Race Logger"),
     ("line",          "tool",   "curve",     "Corner Cues"),

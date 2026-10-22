@@ -483,6 +483,25 @@ liga = the league 5010 is on; nothing given = the old 5010 path. Prompt: no
 league named = the session's league, else cls_leagues → liga, say which
 league. test_race_qa.py 73/73; checked against live CLS (WCT R5 Indy, R3
 Zandvoort, table after R4 — all uncut).
+FOLLOW-UP 2026-10-22 (Thomas: "a sign when the answer is there, then I play
+it"): HOLD mode, `qa_hold` default true — a finished answer becomes state
+"ready" (`_pending`, not spoken); the SAME ask key (toggle) or
+`/streamdeck/ask_play` / POST /ask/play speaks it, ask_cancel drops it,
+`qa_hold_max_s` 300 expires it; while one waits, a new question is refused
+("Antwort wartet"). Status "speaking" until the voice page reports the line
+played (`is_done` = Commentator.is_done, SPEAKING_MAX_S 90 fallback). NEW OBS
+page `5000/ask/overlay` (ASK_OVERLAY_HTML: HÖRT ZU red / DENKT NACH amber /
+ANTWORT BEREIT green pulsing / ANTWORTET cyan / "KEINE ANTWORT" 6 s on an
+error, hidden when idle; ?text=1 question + answer for the streamer, ?zoom,
+?debug=1 / H, ?demo=1); loader ask_status.html (51), icon overlays(_off)/
+ask_status ("mic", live), OVERLAY_TABLE; /ask shows the waiting answer with
+▶ Abspielen / Verwerfen. test_race_qa.py 88/88 (old checks with qa_hold off,
+new block 19); scratchpad: real dashboard Flask app — voice question → ready,
+nothing queued, same key plays, speaking until /commentary/played, cancel,
+ask_play — 12/12; overlay demo rendered. Icons rendered with local CHROME:
+Edge had a pending update (two versions side by side) and its headless
+wrote no file. make_obs_loaders.py regenerates delta_own.html WITHOUT the
+committed comments (old drift) — restored it with git checkout.
 
 **October 20, 2026, later (Abspann PRO / AM pictures, WCT GT3 race at
 Indianapolis that evening):** the Abspann talked per class but showed mixed
