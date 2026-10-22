@@ -37,7 +37,10 @@ def tile(url, z, x, y, rgba):
             return _mem[key]
     path = os.path.join(CACHE, "ref" if url is REF else "img", str(z), str(x), f"{y}.png")
     if not os.path.exists(path):
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+        except FileExistsError:                    # two threads, same folder (Unraid shfs)
+            pass
         req = urllib.request.Request(url.format(z=z, x=x, y=y), headers={"User-Agent": "cas-zoom-video"})
         for _ in range(3):
             try:
@@ -47,7 +50,9 @@ def tile(url, z, x, y, rgba):
                 data = None
         if not data:
             return None
-        Image.open(io.BytesIO(data)).convert("RGBA" if rgba else "RGB").save(path)
+        tmp = f"{path}.{threading.get_ident()}.part"
+        Image.open(io.BytesIO(data)).convert("RGBA" if rgba else "RGB").save(tmp, "PNG")
+        os.replace(tmp, path)
     im = Image.open(path).convert("RGBA" if rgba else "RGB")
     with _lock:
         if len(_mem) > 3000:
@@ -103,7 +108,10 @@ def main():
     pts = tr["ontrack"]
     lats, lons = [p[0] for p in pts], [p[1] for p in pts]
     tlat, tlon = (min(lats) + max(lats)) / 2, (min(lons) + max(lons)) / 2
-    slat, slon = 38.0, 5.0                             # start: Europe / Atlantic / Africa
+    # start: wide view with the target off-centre by the same amount as at the
+    # Hungaroring (start there = Europe / Atlantic / Africa); mirrored south of
+    # the equator so the start shows land, not Antarctica
+    slat, slon = tlat - math.copysign(9.583, tlat), tlon - 14.249
     if pts[0] != pts[-1]:
         pts = pts + [pts[0]]
 
