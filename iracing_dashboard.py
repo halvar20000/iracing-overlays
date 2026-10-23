@@ -21,6 +21,7 @@ import urllib.request
 from collections import deque
 from flask import Flask, jsonify, render_template_string, request
 from race_director import RaceDirector
+from iracing_sdk_base import StartLapGate
 from race_commentator import Commentator
 import race_commentator
 from race_graphics import GraphicsDirector, weather_line, dotd_line
@@ -404,6 +405,9 @@ class TelemetryPoller:
         self._ot_prev_rank = {}          # car_idx -> live race rank last tick
         self._caution_seen = False       # a full-course yellow is on (until the green)
         self._ot_pending = {}            # (x,y) -> {"t0":…, "pos":…}
+        # laps 1-2: overtakes go to the feed, but never to the /ticker
+        self._ot_gate = StartLapGate(2.0)
+        self._ot_early = False
         self._ot_pair_last = {}          # (x,y) -> last emit t_session
         self._ot_last_swap = {}          # frozenset({x,y}) -> last rank-swap t
         self._last_auto_replay_priority = 0
@@ -1062,6 +1066,8 @@ class TelemetryPoller:
             prog[idx] = (lap or 0) + max(pct, 0.0)
         order = sorted(prog, key=lambda i: -prog[i])
         rank = {idx: r + 1 for r, idx in enumerate(order)}
+        if order:
+            self._ot_early = self._ot_gate.early(prog[order[0]])
         if self._caution_phase() is not None:
             # full-course yellow: places change through the pits and the
             # pace-car queue, not by passing — no overtakes until the green
@@ -1139,6 +1145,8 @@ class TelemetryPoller:
             "passed_idx": y_idx,
             "passed_name": yi["name"],
             "passed_number": yi["car_number"],
+            # first 2 laps of the race: in the feed, never on the ticker
+            "start_laps": bool(self._ot_early),
             "replayed": False,
         })
         print(f"[overtake] #{xi['car_number']} {xi['name']} passed "
@@ -1184,6 +1192,7 @@ class TelemetryPoller:
         self._ot_pending.clear()
         self._ot_pair_last.clear()
         self._ot_last_swap.clear()
+        self._ot_gate.reset()
 
     def _update_incidents(self):
         t_now = self.ir["SessionTime"] or 0.0
@@ -4802,6 +4811,7 @@ async function tick() {
     for (const o of list) {
         if (seen.has(o.id)) continue;
         seen.add(o.id);
+        if (o.start_laps) continue;            // never in laps 1-2 (start chaos)
         if (queue.length < 5) queue.push(o);   // a start-chaos burst never builds a minute of backlog
     }
     if (!busy) next();

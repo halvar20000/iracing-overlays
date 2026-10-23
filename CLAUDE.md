@@ -177,6 +177,17 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 23, 2026 (New Race Leader + overtake ticker: never in laps 1-2):**
+NEW `iracing_sdk_base.StartLapGate` — fed the leader's live progress
+(lap + pct); the first racing tick anchors on floor(progress), so the gate
+ends at the start of lap 3 whether iRacing counts the opening lap as 0 or 1;
+first seen in lap >= 3 (started mid-race) = no gate. Leader overlay (5018):
+`LeaderState.update(quiet=)` tracks a lead change silently while the gate is
+on (the leader after lap 2 is not news either); /state `start_quiet`.
+Dashboard: overtake records carry `start_laps` (feed + operator panel keep
+them), /ticker skips them. test_race_leader.py +1 (needs an irsdk stub on
+Unraid), test_overtakes ALL PASS. Restart 5000 + 5018.
+
 **October 23, 2026 (trackmap — thicker track, bigger dots):** Thomas: car
 numbers hard to read. SVG road stroke 19 → 28 (viewBox 1000×600), pit 3 → 5,
 centre dash 2 px; car dots r 8 → 13, camera car 11/12 → 17, number font

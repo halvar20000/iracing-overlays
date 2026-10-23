@@ -50,7 +50,7 @@ import time
 
 from flask import Flask, jsonify, render_template_string, request
 
-from iracing_sdk_base import SDKPoller, setup_utf8_stdout
+from iracing_sdk_base import SDKPoller, StartLapGate, setup_utf8_stdout
 setup_utf8_stdout()
 
 
@@ -63,6 +63,10 @@ SESSION_STATE_RACING = 4
 # leader. At 4 Hz, 3 polls ~= 0.75 s — long enough to reject side-by-side
 # progress jitter, short enough to feel instant on a clean pass.
 STABLE_POLLS = 3
+
+# No banner in the first laps of the race (Thomas 2026-10-23: never in laps
+# 1-2) — lead changes there are tracked silently.
+START_QUIET_LAPS = 2.0
 
 # Seconds the banner stays on screen (client-side timer mirrors this).
 BANNER_SECONDS = 10
@@ -101,7 +105,7 @@ class LeaderState:
         self._cand_count = 0
 
     def update(self, is_racing: bool, candidate_idx, candidate_name: str,
-               now: float | None = None) -> bool:
+               now: float | None = None, quiet: bool = False) -> bool:
         """Feed one poll's front-runner in.
 
         Args:
@@ -109,6 +113,9 @@ class LeaderState:
             candidate_idx:   CarIdx of the current front-runner, or None.
             candidate_name:  that driver's display name.
             now:             timestamp for the event (defaults to monotonic).
+            quiet:           True in the first laps of the race (StartLapGate):
+                             a lead change is tracked but NOT announced, so
+                             the leader at the end of lap 2 is not news either.
 
         Returns True iff this call produced a NEW-leader event (i.e. a real
         lead change, not the silent first set).
@@ -143,8 +150,10 @@ class LeaderState:
         first_of_race = self.leader_idx is None
         self.leader_idx = candidate_idx
         self.leader_name = candidate_name
-        if first_of_race:
-            # Taking the green from pole is not a "new leader" event.
+        if first_of_race or quiet:
+            # Taking the green from pole is not a "new leader" event, and
+            # neither is a lead change in the first laps (Thomas: never in
+            # laps 1-2).
             return False
 
         self.change_id += 1
@@ -170,6 +179,7 @@ class LeaderPoller(SDKPoller):
     def __init__(self, poll_hz: int = 4):
         super().__init__(poll_interval=1.0 / poll_hz)
         self.state = LeaderState()
+        self.gate = StartLapGate(START_QUIET_LAPS)
         self._session_key = None   # (SessionUniqueID, SessionNum)
         self._is_race_cache = {}   # session_key -> bool (Race?)
 
@@ -213,7 +223,8 @@ class LeaderPoller(SDKPoller):
         return is_race
 
     def _leading_car(self, ir, names: dict):
-        """Return (car_idx, name) of the overall front-runner, or (None, '').
+        """Return (car_idx, name, progress) of the overall front-runner, or
+        (None, '', None).
 
         Front-runner = greatest track progress (CarIdxLap + CarIdxLapDistPct)
         among cars that are in the world and have a known driver.
@@ -238,8 +249,8 @@ class LeaderPoller(SDKPoller):
                 best_prog = prog
                 best_idx = cidx
         if best_idx is None:
-            return None, ""
-        return best_idx, names[best_idx][0]
+            return None, "", None
+        return best_idx, names[best_idx][0], best_prog
 
     # ---- poll -----------------------------------------------------------
     def _read_snapshot(self) -> dict:
@@ -255,21 +266,25 @@ class LeaderPoller(SDKPoller):
         if session_key != self._session_key:
             self._session_key = session_key
             self.state.reset()
+            self.gate.reset()
 
         is_race = self._is_race_session(ir, session_key, sess_num)
         sess_state = ir["SessionState"]
         is_racing = bool(is_race) and (sess_state == SESSION_STATE_RACING)
 
         names = self._driver_names(ir)
-        lead_idx, lead_name = self._leading_car(ir, names) if is_racing else (None, "")
+        lead_idx, lead_name, lead_prog = (self._leading_car(ir, names) if is_racing
+                                          else (None, "", None))
+        early = is_racing and lead_idx is not None and self.gate.early(lead_prog)
 
-        self.state.update(is_racing, lead_idx, lead_name)
+        self.state.update(is_racing, lead_idx, lead_name, quiet=early)
 
         snap = {
             "connected":     True,
             "is_race":       bool(is_race),
             "session_state": int(sess_state) if sess_state is not None else None,
             "is_racing":     is_racing,
+            "start_quiet":   early,
             "banner_seconds": BANNER_SECONDS,
         }
         snap.update(self.state.snapshot())

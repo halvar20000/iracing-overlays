@@ -91,6 +91,21 @@ def test_leader_out_of_world_then_back():
     print("ok  same leader returning after a gap does not re-fire")
 
 
+def test_no_banner_in_first_two_laps():
+    """Thomas 2026-10-23: never in laps 1-2. A lead change there is tracked
+    silently; the leader at the end of lap 2 is not news afterwards."""
+    from iracing_sdk_base import StartLapGate
+    s, g = LeaderState(stable_polls=1), StartLapGate(2.0)
+    fires = [s.update(True, i, n, now=0.0, quiet=g.early(p))
+             for i, n, p in ((1, "A", 1.01), (2, "B", 1.6), (2, "B", 3.1), (3, "C", 3.4))]
+    assert fires == [False, False, False, True], fires
+    assert s.change_id == 1 and s.event_name == "C"
+    g0 = StartLapGate(2.0)                            # opening lap counted as 0
+    assert [g0.early(p) for p in (0.02, 1.9, 2.0)] == [True, True, False]
+    assert StartLapGate().early(7.3) is False          # attached mid-race: no gate
+    print("ok  no new-leader banner in laps 1-2")
+
+
 if __name__ == "__main__":
     test_silent_init()
     test_real_lead_change_fires_once()
@@ -98,4 +113,5 @@ if __name__ == "__main__":
     test_not_racing_never_fires()
     test_session_reset()
     test_leader_out_of_world_then_back()
+    test_no_banner_in_first_two_laps()
     print("\nALL TESTS PASSED")

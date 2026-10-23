@@ -308,6 +308,35 @@ class GridBaseline:
         return start - current_class_pos
 
 
+class StartLapGate:
+    """"The first N laps of a race" — Thomas (2026-10-23): the new-leader
+    banner and the overtake ticker must never show in laps 1-2 (start chaos).
+
+    Fed the LEADER's live progress (CarIdxLap + CarIdxLapDistPct) on every
+    racing tick. The first tick anchors on the lap boundary the leader was
+    on (floor), so the gate ends at the start of lap N+1 whether iRacing
+    counts the opening lap as 0 or 1. Seen first in lap 3 or later (overlay
+    started mid-race) → no gate at all. reset() on a session change.
+    """
+
+    MID_RACE_LAP = 3
+
+    def __init__(self, laps: float = 2.0):
+        self.laps = laps
+        self.reset()
+
+    def reset(self) -> None:
+        self.anchor = None
+
+    def early(self, leader_progress) -> bool:
+        if leader_progress is None:
+            return self.anchor is None
+        if self.anchor is None:
+            a = int(leader_progress // 1)
+            self.anchor = -1e9 if a >= self.MID_RACE_LAP else a
+        return leader_progress < self.anchor + self.laps
+
+
 class SDKPoller:
     """Base poller — connects to iRacing, runs a loop, stores snapshots.
 
