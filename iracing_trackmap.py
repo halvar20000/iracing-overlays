@@ -753,7 +753,7 @@ TRACKMAP_HTML = r"""
     .car.cam.pro, .car.cam.am { fill: #facc15; fill-opacity: 1; }
     .car-label {
         font-family: 'Segoe UI', sans-serif;
-        font-size: 15px;
+        font-size: 19px;
         font-weight: 800;
         fill: #0a0a0f;
         text-anchor: middle;
@@ -910,7 +910,7 @@ function renderCars(d) {
         if (!xy) continue;
         const pa  = c.proam === 'PRO' ? ' pro' : c.proam === 'AM' ? ' am' : '';
         const cls = 'car' + pa + (c.cam ? ' cam' : '') + (c.on_pit ? ' pit' : '');
-        const r   = c.cam ? 17 : 13;
+        const r   = c.cam ? 22 : 17;
         parts.push(`<circle class="${cls}" cx="${xy[0].toFixed(1)}" cy="${xy[1].toFixed(1)}" r="${r}"></circle>`);
         parts.push(`<text class="car-label" x="${xy[0].toFixed(1)}" y="${xy[1].toFixed(1)}">${esc(c.num)}</text>`);
     }

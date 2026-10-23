@@ -192,7 +192,8 @@ Unraid), test_overtakes ALL PASS. Restart 5000 + 5018.
 numbers hard to read. SVG road stroke 19 → 28 (viewBox 1000×600), pit 3 → 5,
 centre dash 2 px; car dots r 8 → 13, camera car 11/12 → 17, number font
 10 → 15 px bold 800 (three digits still fit). Rendered on the Hungaroring.
-Restart 5007.
+SAME DAY, Thomas wanted the dots bigger still: r 17, camera car 22, font
+19 px. Restart 5007.
 
 **October 22, 2026 (driver + incident panels `5000/drivers/panel`, `5000/incidents/panel`):** the dashboard's other two columns as stand-alone windows; both share `PANEL_FRAME` (header, LIVE/REPLAY pill, ⛶ / F, ?zoom=). Drivers: from /telemetry, click = /switch_car, ★ uses the dashboard's own localStorage key + POST /starred (shared with the dashboard in the same browser), "★ nur" filter, Auto-Follow, Go Live. Incidents: /incidents now also carries connected / track / auto_replay / playback_mode (the logger only reads `incidents`); replay 10 / 20 s, camera, dismiss, clear, Auto-Replay. Icons driver_panel / incident_panel (new symbol "drivers"). Tested with the Flask test client + rendered at 1024 and 360 px. Restart 5000.
 
