@@ -177,6 +177,13 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 23, 2026 (tower: no brand logo in a one-make field):** Thomas: with
+one car model (PCCD) the logo behind the flag says nothing. TOWER_HTML
+`brandColumn()` — every row of the WHOLE field (before ?rows= trims it) the
+same brand → column width `--bw` 0 and no logo; `?brand=1|0` forces it.
+CODE_VERSION "2026-10-23 one-make-no-brand". Rendered one-make vs mixed.
+Restart 5005.
+
 **October 23, 2026 (New Race Leader + overtake ticker: never in laps 1-2):**
 NEW `iracing_sdk_base.StartLapGate` — fed the leader's live progress
 (lap + pct); the first racing tick anchors on floor(progress), so the gate

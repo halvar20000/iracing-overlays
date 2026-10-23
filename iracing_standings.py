@@ -1535,14 +1535,14 @@ TOWER_HTML = r"""<!DOCTYPE html>
     /* --- table ------------------------------------------------------------ */
     .grid {
         display: grid; align-items: center;
-        grid-template-columns: 28px 14px minmax(0, 1fr) 26px 28px 82px 82px;
+        grid-template-columns: 28px 14px minmax(0, 1fr) 26px var(--bw, 28px) 82px 82px;
         column-gap: 0;
     }
-    .race .grid { grid-template-columns: 28px 14px minmax(0, 1fr) 26px 28px 76px 76px 40px; }
+    .race .grid { grid-template-columns: 28px 14px minmax(0, 1fr) 26px var(--bw, 28px) 76px 76px 40px; }
     /* Team events: no flag column (it would be the CURRENT driver's country,
        meaningless for a team) — the team name gets the room instead. */
-    .teams .grid { grid-template-columns: 28px 14px minmax(0, 1fr) 28px 82px 82px; }
-    .teams.race .grid { grid-template-columns: 28px 14px minmax(0, 1fr) 28px 76px 76px 40px; }
+    .teams .grid { grid-template-columns: 28px 14px minmax(0, 1fr) var(--bw, 28px) 82px 82px; }
+    .teams.race .grid { grid-template-columns: 28px 14px minmax(0, 1fr) var(--bw, 28px) 76px 76px 40px; }
     .head {
         height: 24px; background: var(--head);
         font-size: 14px; font-weight: 500; color: var(--text);
@@ -1666,6 +1666,16 @@ function infoBar(d) {
 
 // Team events show the TEAM (?names=driver keeps the driver).
 let TEAM_MODE = false;
+// One-make field (every car the same brand, e.g. PCCD Porsche Cup): the logo
+// says nothing, so the column is dropped (Thomas 2026-10-23). ?brand=1 / 0
+// forces it on / off.
+let SHOW_BRAND = true;
+function brandColumn(all) {
+    const q = qs.get('brand');
+    if (q === '1') return true;
+    if (q === '0') return false;
+    return new Set(all.map(r => r.brand || '')).size > 1;
+}
 function label(r) {
     return (TEAM_MODE && r.team_name) ? r.team_name : abbrev(r.name || 'Unknown');
 }
@@ -1688,7 +1698,7 @@ function rowHtml(r, isRace) {
     else if (!r.in_world) tags += `<span class="tag out">${r.left ? 'LEFT' : 'OUT'}</span>`;
     const flag = TEAM_MODE ? ''
         : r.country ? `<img class="flag" src="/flag/${encodeURIComponent(r.country)}.svg" alt="">` : '<div></div>';
-    const brand = (r.brand && r.brand_logo) ? `<img class="brand" src="/brand/${encodeURIComponent(r.brand)}" alt="">` : '<div></div>';
+    const brand = (SHOW_BRAND && r.brand && r.brand_logo) ? `<img class="brand" src="/brand/${encodeURIComponent(r.brand)}" alt="">` : '<div></div>';
     const lastCls = r.last_is_pb ? 'pb' : '';
     const last = `<div class="t ${lastCls}">${fmtLap(r.last_lap)}</div>`;
     let cells;
@@ -1728,6 +1738,8 @@ function render(d) {
     }
     const isRace = d.session_type === 'Race';
     let rows = d.standings || [];
+    SHOW_BRAND = brandColumn(rows);       // whole field, before ?rows= trims it
+    el.style.setProperty('--bw', SHOW_BRAND ? '28px' : '0px');
     // ?rows=N: top N positions only. The car on camera is kept visible — if it
     // is further back it takes the last slot (after a thin gap).
     const ROWS = parseInt(qs.get('rows') || '0', 10);
@@ -2590,7 +2602,7 @@ def standings():
 # Bump on every change: http://localhost:5005/version shows which code the
 # running process actually loaded (the stream PC gets this folder through
 # Nextcloud, so a restart can still pick up the previous file).
-CODE_VERSION = "2026-10-15 replay-quali-times"
+CODE_VERSION = "2026-10-23 one-make-no-brand"
 
 
 @app.route("/version")
