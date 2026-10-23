@@ -99,11 +99,27 @@ etwas länger. Kurz vorher „Fragen wir mal Claude …" sagen überbrückt das 
 | `qa_timeout_s` | `25` | Wartezeit auf Claude |
 | `qa_hold` | `true` | fertige Antwort wartet auf deinen Tastendruck (`false` = sofort sprechen) |
 | `qa_hold_max_s` | `300` | so lange wartet eine Antwort, dann verfällt sie |
+| `qa_log` | `true` | jede Frage und Antwort in `logs/frag_claude_<Datum>.jsonl` |
 | `qa_sources` | — | andere Adressen für `standings` / `results` / `championship` / `roundinfo` |
 
 Fahrernamen versteht die Spracherkennung besser, weil ihr das aktuelle
 Fahrerfeld als Hinweis mitgegeben wird; Claude ordnet einen falsch erkannten
 Namen dem ähnlichsten Fahrer zu.
+
+## Nachlesen nach dem Stream
+
+Jede Frage landet mit Uhrzeit in `logs/frag_claude_<Datum>.jsonl` (eine Zeile pro
+Ereignis): `answer` = Frage, Antwort, Quellen, Sekunden, Fehler; dann `played`
+(abgespielt), `discarded` (verworfen) oder `expired` (nicht abgespielt). Eine Zeile
+mit `"übersetzt"` in den Quellen heißt: Claude hatte englisch geantwortet und die
+Antwort wurde vor dem Abspielen ins Deutsche gebracht.
+
+## So fragst du am besten
+
+- **„Tabelle“, „Meisterschaft“, „Punkte“** = Meisterschaftstabelle. Für die
+  Reihenfolge im laufenden Rennen „im Rennen“, „gerade“ oder „aktuell“ sagen.
+- **Namen:** Vor- oder Nachname reicht, wenn er im Feld / in der Tabelle eindeutig
+  ist („der André“). Den Fahrer im Bild nimmt Claude nur, wenn du „der im Bild“ sagst.
 
 ## Grenzen (Version 1)
 

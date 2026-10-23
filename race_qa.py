@@ -78,15 +78,29 @@ DEFAULTS = {
     "qa_cls_url": "https://league.simracing-hub.com",
     "qa_hold": True,            # answer waits ("ready") until the streamer plays it
     "qa_hold_max_s": 300.0,     # ...and is dropped after this long unplayed
+    "qa_log": True,             # every question / answer -> logs/frag_claude_<date>.jsonl
 }
+LOG_DIR = HERE / "logs"           # tests point this at a temp folder
 SPEAKING_MAX_S = 90.0           # "speaking" shown until the voice page reports the line played
 
 SYSTEM_PROMPT = (
     "Du bist Co-Kommentator bei einem iRacing-Ligarennen der CAS-Community auf Twitch. "
-    "Der Streamer kommentiert selbst und stellt dir live eine Frage (per Spracherkennung "
-    "– Namen können falsch erkannt sein, ordne sie dem ähnlichsten Fahrer aus den Daten zu). "
+    "Der Streamer kommentiert selbst und stellt dir live eine Frage (per Spracherkennung). "
     "Deine Antwort wird vorgelesen und ist im Stream zu hören.\n"
     "Regeln:\n"
+    "- Antworte IMMER auf Deutsch, auch wenn Quellen oder Suchergebnisse englisch sind "
+    "(übersetze sie).\n"
+    "- Schreibe vor und zwischen Werkzeugaufrufen KEINEN Text und erkläre nie, wie du "
+    "vorgehst oder was du zuordnest – nur die fertige Antwort wird vorgelesen.\n"
+    "- Namen können von der Spracherkennung falsch geschrieben sein: nimm den Fahrer aus "
+    "Fahrerfeld oder Tabelle, dessen Name am ähnlichsten klingt (\"André\" = André Brechmann, "
+    "falls es nur einen André gibt). Nimm NIE einfach den Fahrer im Bild, außer die Frage "
+    "meint ihn ausdrücklich (\"der im Bild\"). Passt kein Fahrer eindeutig, sag kurz, wen "
+    "du nicht zuordnen kannst.\n"
+    "- \"Tabelle\", \"Meisterschaft\", \"Gesamtwertung\", \"Punkte\" meinen die "
+    "Meisterschaftstabelle (championship bzw. league_table), NICHT die Reihenfolge im "
+    "laufenden Rennen. Die Live-Reihenfolge (live_standings) nur, wenn nach dem Rennen, "
+    "der aktuellen Position, Abständen oder \"gerade\" gefragt wird.\n"
     "- Hole dir die Fakten mit den Werkzeugen. Antworte NUR mit dem, was in den "
     "Werkzeug-Ergebnissen steht. Erfinde nie Ergebnisse, Platzierungen, Punkte, Zeiten, "
     "Daten oder Namen.\n"
@@ -105,6 +119,44 @@ SYSTEM_PROMPT = (
     "Saisonkalender von round_info). Sag dazu, welche Liga du meinst.\n"
     "- Wiederhole die Frage nicht und fang nicht mit \"Gute Frage\" an."
 )
+
+GERMAN_PROMPT = (
+    "Übersetze die folgende Antwort eines Co-Kommentators ins Deutsche. Lass jede "
+    "Überlegung, jede Beschreibung des Vorgehens und jeden Satz über die Frage selbst weg – "
+    "nur die eigentliche Antwort in 1 bis 3 kurzen gesprochenen Sätzen, nichts hinzufügen. "
+    "Kein Markdown, keine Anführungszeichen."
+)
+
+_TOOL_BLOCKS = ("tool_use", "server_tool_use", "web_search_tool_result", "tool_result",
+                "web_fetch_tool_result")
+_EN = {"the", "and", "is", "are", "was", "were", "of", "this", "that", "which", "about", "with",
+       "not", "but", "user", "asks", "question", "result", "results", "won", "race", "year",
+       "it", "they", "has", "have", "from", "for", "in"}
+_DE = {"der", "die", "das", "und", "ist", "hat", "nicht", "mit", "auf", "den", "dem", "ein",
+       "eine", "im", "zu", "von", "es", "sich", "auch", "er", "sie", "wurde", "war", "noch",
+       "für", "platz", "rennen", "punkte"}
+
+
+def final_text(content: list) -> str:
+    """The answer = the text blocks AFTER the last tool block of the final reply.
+    With the web search (a server tool, run inside the same reply) Claude often
+    writes a short English plan before searching — Hungaroring 22.10.: "The user
+    asks about Formel 1 ... the track notes contain F1 history, but ..." was read
+    out before the German answer."""
+    last = -1
+    for i, b in enumerate(content):
+        if b.get("type") in _TOOL_BLOCKS:
+            last = i
+    return " ".join(b.get("text", "").strip() for b in content[last + 1:]
+                    if b.get("type") == "text").strip()
+
+
+def looks_english(text: str) -> bool:
+    words = [w.strip(".,;:!?\"'()").lower() for w in text.split()]
+    en = sum(w in _EN for w in words)
+    de = sum(w in _DE for w in words)
+    return en >= 3 and en > 2 * de
+
 
 TOOLS = [
     {"name": "live_session",
@@ -298,10 +350,11 @@ class RaceQA:
 
     def __init__(self, config: dict | None = None, speak=None, session_fn=None, fetch=None,
                  recorder=None, stt=None, api_post=None, notes_dir: Path | None = None,
-                 clock=time.time, is_done=None):
+                 clock=time.time, is_done=None, log_dir: Path | None = None):
         self.cfg = merged_config(config)
         self.speak = speak                       # callable(text) -> line id (voice)
         self.is_done = is_done                   # callable(line id) -> voice page played it
+        self.log_dir = log_dir or LOG_DIR
         self.session_fn = session_fn or (lambda: {})
         self.fetch = fetch or http_json
         self.recorder = recorder
@@ -427,6 +480,7 @@ class RaceQA:
             if was == "ready":                   # drop the waiting answer
                 if self._pending is not None:
                     self._pending["discarded"] = True
+                    self._log("discarded", self._pending)
                 self._pending = None
                 self.state = "idle"
                 return "Antwort verworfen"
@@ -488,13 +542,32 @@ class RaceQA:
             if (self.state == "ready" and self._pending is not None
                     and self.clock() - self._ready_at > float(self.cfg.get("qa_hold_max_s") or 300)):
                 self._pending["expired"] = True
+                self._log("expired", self._pending)
                 self._pending = None
                 self.state = "idle"
+
+    def _log(self, event: str, item: dict):
+        """logs/frag_claude_<date>.jsonl — every question and what became of it."""
+        if not self.cfg.get("qa_log") or self.log_dir is None:
+            return
+        try:
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+            rec = {"event": event, "t_wall": time.strftime("%Y-%m-%d %H:%M:%S"),
+                   **{k: item.get(k) for k in ("id", "question", "typed", "answer", "tools",
+                                               "error", "took_s")}}
+            if event == "answer":
+                rec["model"] = self.cfg.get("qa_model")
+            f = self.log_dir / f"frag_claude_{time.strftime('%Y-%m-%d')}.jsonl"
+            with open(f, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except Exception:
+            pass                                 # a log problem never stops an answer
 
     def _speak(self, item):
         try:
             item["line_id"] = self.speak(item["answer"])
             item["spoken"] = True
+            self._log("played", item)
             with self._lock:
                 self._speaking = (item["line_id"], self.clock())
         except Exception as e:
@@ -543,6 +616,7 @@ class RaceQA:
             item["error"] = str(e)[:400]
             self.last_error = item["error"]
         item["took_s"] = round(self.clock() - t0, 1)
+        self._log("answer", item)
         if item["answer"] and self.speak is not None:
             if self.cfg.get("qa_hold"):
                 with self._lock:                 # wait for the streamer's key
@@ -649,10 +723,26 @@ class RaceQA:
                 continue
             if stop == "refusal":
                 raise RuntimeError("Claude hat die Antwort abgelehnt")
-            text = " ".join(b.get("text", "").strip() for b in content
-                            if b.get("type") == "text").strip()
+            text = final_text(content)
+            if text and looks_english(text):    # an English answer would be read by a German voice
+                text = self._to_german(text) or text
+                used.append("übersetzt")
             return text.strip('"„“'), used
         raise RuntimeError("zu viele Werkzeug-Runden")
+
+    def _to_german(self, text: str) -> str | None:
+        """One extra call without tools: the same answer, in German."""
+        payload = {"model": self.cfg.get("qa_model") or DEFAULTS["qa_model"],
+                   "max_tokens": 600, "system": GERMAN_PROMPT,
+                   "messages": [{"role": "user", "content": text}]}
+        if self._thinking_off_ok:
+            payload["thinking"] = {"type": "disabled"}
+        try:
+            data = self._api_post(payload)
+        except Exception:
+            return None
+        out = final_text(data.get("content") or [])
+        return out if out and not looks_english(out) else None
 
     # -- API ------------------------------------------------------------------
     def _call(self, messages: list) -> dict:

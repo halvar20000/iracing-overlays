@@ -10,6 +10,9 @@ import time
 from pathlib import Path
 
 import race_qa as qa
+
+_LOGTMP = tempfile.mkdtemp(prefix="qa_log_")
+qa.LOG_DIR = Path(_LOGTMP)   # never write into the real logs/
 from race_commentator import Commentator
 
 fails = 0
@@ -413,6 +416,105 @@ check("hold: speaking ends after SPEAKING_MAX_S", qs.status()["state"] == "idle"
 qx, api, spoken5, _ = make([RuntimeError("HTTP 529: overloaded")], cfg={"qa_hold": True}, clock=clock)
 qx.ask_text("x", wait=True)
 check("hold: an error does not wait", qx.state == "idle" and qx.status()["pending"] is None)
+
+# 20) the Hungaroring stream (22.10.): what went wrong live
+EN_PLAN = ("The user asks about Formel 1 Rennen in Ungarn this year. The context is the CAS Porsche "
+           "Cup league, not F1. The track notes contain F1 history, but not this year's F1 result. "
+           "The question is about a real world F1 race result in 2026 which I need to search.")
+DE_ANSWER = "Das Formel-1-Rennen in Ungarn hat in diesem Jahr Lando Norris gewonnen."
+search_reply = {"stop_reason": "end_turn", "content": [
+    {"type": "text", "text": EN_PLAN},
+    {"type": "server_tool_use", "id": "s1", "name": "web_search", "input": {"query": "F1 Ungarn 2026 Sieger"}},
+    {"type": "web_search_tool_result", "tool_use_id": "s1", "content": [{"type": "web_search_result", "title": "x"}]},
+    {"type": "text", "text": "Das Formel-1-Rennen in Ungarn hat in diesem Jahr "},
+    {"type": "text", "text": "Lando Norris gewonnen."}]}
+check("final_text: only the text after the last tool block",
+      qa.final_text(search_reply["content"]) == DE_ANSWER, qa.final_text(search_reply["content"]))
+check("final_text: no tool block = all text", qa.final_text([{"type": "text", "text": "Hallo."}]) == "Hallo.")
+check("final_text: tool block last = no answer", qa.final_text(search_reply["content"][:3]) == "")
+check("looks_english: the live plan is English", qa.looks_english(EN_PLAN))
+for de in (DE_ANSWER, "Die Meisterschaft CAS PCC zeigt vor dem laufenden Rennen André Brechmann auf Rang 3 "
+                      "mit 208 Punkten und Jan Tobias Schrader auf Rang 4 mit 206 Punkten.",
+           "Norris hat gewonnen.", "Das Rennen in The Bend hat Mike Zocher gewonnen.",
+           "Das habe ich leider nicht in meinen Daten."):
+    check(f"looks_english: German stays German ({de[:30]})", not qa.looks_english(de))
+api = FakeAPI([search_reply])
+spoken6 = []
+qf = qa.RaceQA(dict(CFG), speak=lambda t: spoken6.append(t) or 1, session_fn=lambda: {},
+               fetch=lambda u: {}, api_post=api)
+qf.ask_text("Gabi, wer hat dieses Jahr das Formel-1-Rennen in Ungarn gewonnen?", wait=True)
+check("F1 question: only the German answer is spoken", spoken6 == [DE_ANSWER], spoken6)
+check("F1 question: no English plan in the answer", "user asks" not in qf.items[0]["answer"])
+check("F1 question: web search listed, no extra call", qf.items[0]["tools"] == ["web_search"]
+      and len(api.calls) == 1, (qf.items[0]["tools"], len(api.calls)))
+# an answer that comes back English is rewritten once, without tools
+api = FakeAPI([text("Lando Norris won the Hungarian Grand Prix this year, and it was his third win of the season."),
+               text("Lando Norris hat in diesem Jahr den Großen Preis von Ungarn gewonnen.")])
+spoken7 = []
+qg = qa.RaceQA(dict(CFG), speak=lambda t: spoken7.append(t) or 1, session_fn=lambda: {},
+               fetch=lambda u: {}, api_post=api)
+qg.ask_text("Wer hat in Ungarn gewonnen?", wait=True)
+check("English answer -> German rewrite spoken", spoken7 == ["Lando Norris hat in diesem Jahr den Großen Preis von Ungarn gewonnen."], spoken7)
+check("rewrite call: German prompt, no tools", api.calls[1]["system"] == qa.GERMAN_PROMPT
+      and "tools" not in api.calls[1] and api.calls[1].get("thinking") == {"type": "disabled"}, api.calls[1].keys())
+check("rewrite marked in the sources", "übersetzt" in qg.items[0]["tools"])
+api = FakeAPI([text("Lando Norris won the Hungarian Grand Prix this year, and it was his third win of the season."),
+               RuntimeError("HTTP 529: overloaded")])
+qh2 = qa.RaceQA(dict(CFG), speak=lambda t: 1, session_fn=lambda: {}, fetch=lambda u: {}, api_post=api)
+qh2.ask_text("x", wait=True)
+check("rewrite fails -> original kept, no error", qh2.items[0]["answer"].startswith("Lando Norris won")
+      and not qh2.items[0]["error"], qh2.items[0])
+# the prompt carries the three live lessons
+P_ = qa.SYSTEM_PROMPT
+check("prompt: always German, translate sources", "IMMER auf Deutsch" in P_ and "übersetze" in P_)
+check("prompt: no text before tools / no explaining", "KEINEN Text" in P_ and "zuordnest" in P_)
+check("prompt: never just the driver on camera", "NIE einfach den Fahrer im Bild" in P_)
+check("prompt: Tabelle = championship, not the live order", "Meisterschaftstabelle" in P_
+      and "NICHT die Reihenfolge im laufenden Rennen" in P_)
+check("prompt: old 'closest driver' line gone", "ordne sie dem ähnlichsten Fahrer aus den Daten zu" not in P_)
+
+# 21) log of every question: answer / played / discarded, one file per day
+import json as _json, shutil
+logdir = Path(tempfile.mkdtemp(prefix="qa_log_t_"))
+clock = Clock()
+ql2 = qa.RaceQA(dict(CFG, qa_hold=True), speak=lambda t: 7, session_fn=lambda: {}, fetch=lambda u: ROUNDINFO,
+                api_post=FakeAPI([tool_use("round_info"), text("Becker gewann."), text("Zweite.")]),
+                clock=clock, log_dir=logdir)
+ql2.ask_text("Wer gewann?", wait=True)
+ql2.play()
+ql2.ask_text("Und dann?", wait=True)
+ql2.cancel()
+files = list(logdir.glob("frag_claude_*.jsonl"))
+recs = [_json.loads(l) for f in files for l in f.read_text(encoding="utf-8").splitlines()]
+check("log: one file per day", len(files) == 1 and files[0].name.startswith("frag_claude_20"), files)
+check("log: answer, played, answer, discarded", [r["event"] for r in recs] == ["answer", "played", "answer", "discarded"],
+      [r["event"] for r in recs])
+check("log: question, answer, sources, seconds, model", recs[0]["question"] == "Wer gewann?"
+      and recs[0]["answer"] == "Becker gewann." and recs[0]["tools"] == ["round_info"]
+      and "took_s" in recs[0] and recs[0]["model"] == "claude-haiku-5-5" and "t_wall" in recs[0], recs[0])
+qe2 = qa.RaceQA(dict(CFG, qa_hold=True, qa_hold_max_s=10), speak=lambda t: 1, session_fn=lambda: {},
+                fetch=lambda u: {}, api_post=FakeAPI([text("Alt.")]), clock=clock, log_dir=logdir)
+qe2.ask_text("x", wait=True); clock.t += 11; qe2.status()
+recs = [_json.loads(l) for f in logdir.glob("*.jsonl") for l in f.read_text(encoding="utf-8").splitlines()]
+check("log: expired answer logged", recs[-1]["event"] == "expired", recs[-1])
+qx2 = qa.RaceQA(dict(CFG), speak=lambda t: 1, session_fn=lambda: {}, fetch=lambda u: {},
+                api_post=FakeAPI([RuntimeError("HTTP 529: overloaded")]), log_dir=logdir)
+qx2.ask_text("x", wait=True)
+recs = [_json.loads(l) for f in logdir.glob("*.jsonl") for l in f.read_text(encoding="utf-8").splitlines()]
+check("log: a failed question keeps its error", recs[-1]["event"] == "answer" and "529" in recs[-1]["error"], recs[-1])
+off = Path(tempfile.mkdtemp(prefix="qa_log_off_"))
+qo2 = qa.RaceQA(dict(CFG, qa_log=False), speak=lambda t: 1, session_fn=lambda: {}, fetch=lambda u: {},
+                api_post=FakeAPI([text("Ja.")]), log_dir=off)
+qo2.ask_text("x", wait=True)
+check("log: qa_log false writes nothing", not list(off.glob("*")))
+bad = logdir / "frag_claude_blocker"
+bad.write_text("x")
+qb = qa.RaceQA(dict(CFG), speak=lambda t: 1, session_fn=lambda: {}, fetch=lambda u: {},
+               api_post=FakeAPI([text("Ja.")]), log_dir=bad / "sub")
+qb.ask_text("x", wait=True)
+check("log: an unwritable folder never stops the answer", qb.items[0]["answer"] == "Ja." and qb.state == "idle")
+check("tests never touch the real logs/", qa.LOG_DIR != qa.HERE / "logs")
+shutil.rmtree(logdir, ignore_errors=True); shutil.rmtree(off, ignore_errors=True)
 
 print()
 print("ALL PASS" if not fails else f"{fails} FAILED")

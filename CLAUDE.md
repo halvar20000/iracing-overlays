@@ -506,6 +506,27 @@ ask_play — 12/12; overlay demo rendered. Icons rendered with local CHROME:
 Edge had a pending update (two versions side by side) and its headless
 wrote no file. make_obs_loaders.py regenerates delta_own.html WITHOUT the
 committed comments (old drift) — restored it with git checkout.
+FOLLOW-UP 2026-10-23 (Hungaroring PCCD stream 22.10., checked against Thomas's
+Twitch transcript — the Q&A was only in memory then): (1) the F1 question was
+read out with an ENGLISH plan first ("The user asks about Formel 1 … the track
+notes contain F1 history, but …") — with web_search (a SERVER tool, run inside
+the same reply) Claude writes text BEFORE the search, and ask_claude joined all
+text blocks. Now `final_text()` = only the text after the last tool block;
+`looks_english()` (stop-word count) → one extra call without tools
+(`GERMAN_PROMPT`, `_to_german`), source "übersetzt"; a failed rewrite keeps the
+original. (2) "wie viele Rennen ist der André gefahren" → it took the CAMERA car
+(Remo) and said so aloud; (3) "Tabelle Platz 3 und 4" → live order. Prompt now:
+always German (translate sources), no text before / between tool calls and no
+explaining, names → closest driver in field / table, NEVER just the camera car
+unless asked, "Tabelle / Meisterschaft / Punkte" = championship, live_standings
+only for "im Rennen / gerade / aktuell". (4) LOG: `logs/frag_claude_<date>.jsonl`
+(`qa_log`, `LOG_DIR`), events answer / played / discarded / expired with
+question, answer, tools, error, took_s, model; a log error never stops an
+answer; tests point LOG_DIR at a temp dir. test_race_qa.py 117/117 (block 20 =
+the three live cases, 21 = log); real dashboard Flask run 12/12.
+Also seen in the transcript (NOT changed): Gabi's greeting replayed when Thomas
+switched back to the Moderator scene at the end — the OBS source "Gabi" restarts
+its last clip on scene activation (restart_on_activate on the source he used).
 
 **October 20, 2026, later (Abspann PRO / AM pictures, WCT GT3 race at
 Indianapolis that evening):** the Abspann talked per class but showed mixed
