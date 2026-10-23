@@ -30,6 +30,7 @@ OVERLAYS = [
     ("results_lite",  "Results Lite",     5003),
     ("live",          "Live Indicator",   5004),
     ("standings",     "Standings",        5005),
+    ("standings_nodelta", "Standings (no +/-)", 5005, "/nodelta"),
     ("livery",        "Livery",           5006),
     ("trackmap",      "Track Map",        5007),
     ("flag",          "Flag",             5008),

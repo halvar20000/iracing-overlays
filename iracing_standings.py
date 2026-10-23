@@ -1543,6 +1543,9 @@ TOWER_HTML = r"""<!DOCTYPE html>
        meaningless for a team) — the team name gets the room instead. */
     .teams .grid { grid-template-columns: 28px 14px minmax(0, 1fr) var(--bw, 28px) 82px 82px; }
     .teams.race .grid { grid-template-columns: 28px 14px minmax(0, 1fr) var(--bw, 28px) 76px 76px 40px; }
+    /* /nodelta (or ?delta=0): race view without the +/- column */
+    .nodelta .race .grid { grid-template-columns: 28px 14px minmax(0, 1fr) 26px var(--bw, 28px) 82px 82px; }
+    .nodelta .teams.race .grid { grid-template-columns: 28px 14px minmax(0, 1fr) var(--bw, 28px) 82px 82px; }
     .head {
         height: 24px; background: var(--head);
         font-size: 14px; font-weight: 500; color: var(--text);
@@ -1670,6 +1673,10 @@ let TEAM_MODE = false;
 // says nothing, so the column is dropped (Thomas 2026-10-23). ?brand=1 / 0
 // forces it on / off.
 let SHOW_BRAND = true;
+// Variant without the +/- (places gained / lost vs the grid) column:
+// /nodelta or ?delta=0 (Thomas 2026-10-23).
+const SHOW_DELTA = !(location.pathname.replace(/\/+$/, '') === '/nodelta' || qs.get('delta') === '0');
+if (!SHOW_DELTA) document.body.classList.add('nodelta');
 function brandColumn(all) {
     const q = qs.get('brand');
     if (q === '1') return true;
@@ -1684,7 +1691,8 @@ function headRow(isRace) {
     return `<div class="grid head">
         <div></div><div></div><div class="c-name">${TEAM_MODE ? 'team' : 'driver name'}</div>${TEAM_MODE ? '' : '<div></div>'}<div></div>
         ${isRace
-            ? '<div class="r">interval</div><div class="r">last</div><div class="r" style="text-align:center;padding:0">+/-</div>'
+            ? '<div class="r">interval</div><div class="r">last</div>'
+              + (SHOW_DELTA ? '<div class="r" style="text-align:center;padding:0">+/-</div>' : '')
             : '<div class="r">fastest</div><div class="r">last</div>'}
     </div>`;
 }
@@ -1715,7 +1723,7 @@ function rowHtml(r, isRace) {
             : pd > 0 ? `<div class="d up">▲${pd}</div>`
             : pd < 0 ? `<div class="d down">▼${-pd}</div>`
             : '<div class="d same">=</div>';
-        cells = `<div class="t ${ivCls}">${iv}</div>${last}${dHtml}`;
+        cells = `<div class="t ${ivCls}">${iv}</div>${last}${SHOW_DELTA ? dHtml : ''}`;
     } else {
         const best = r.best_lap > 0
             ? `<div class="t best ${r.session_best ? 'sb' : ''}">${fmtLap(r.best_lap)}</div>`
@@ -1783,6 +1791,12 @@ poll();
 </body>
 </html>
 """
+
+
+@app.route("/nodelta")
+def index_nodelta():
+    # same tower, the page drops the +/- column itself (reads the path)
+    return Response(TOWER_HTML, mimetype="text/html")
 
 
 @app.route("/")
@@ -2602,7 +2616,7 @@ def standings():
 # Bump on every change: http://localhost:5005/version shows which code the
 # running process actually loaded (the stream PC gets this folder through
 # Nextcloud, so a restart can still pick up the previous file).
-CODE_VERSION = "2026-10-23 one-make-no-brand"
+CODE_VERSION = "2026-10-23 nodelta"
 
 
 @app.route("/version")

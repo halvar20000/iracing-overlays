@@ -7,6 +7,7 @@ Automatisch erzeugt von `make_streamdeck_icons.py` (nicht von Hand √§ndern). Gr√
 | Gruppe | Overlay | Port / Pfad | OBS-Loader | Symbol an | Symbol aus |
 |---|---|---|---|:---:|:---:|
 | Live | **Tower**<br>Standings | `5005` | [`standings.html`](obs_loaders/standings.html) | <img src="streamdeck_icons/overlays/standings.png" width="64" alt="Tower"> | <img src="streamdeck_icons/overlays_off/standings.png" width="64" alt="Tower aus"> |
+| Live | **Tower ohne +/-**<br>Standings (no +/-) | `5005` `/nodelta` | [`standings_nodelta.html`](obs_loaders/standings_nodelta.html) | <img src="streamdeck_icons/overlays/standings_nodelta.png" width="64" alt="Tower ohne +/-"> | <img src="streamdeck_icons/overlays_off/standings_nodelta.png" width="64" alt="Tower ohne +/- aus"> |
 | Live | **Schnellste Runde**<br>Fastest Lap | `5005` `/fastest` | [`fastest.html`](obs_loaders/fastest.html) | <img src="streamdeck_icons/overlays/fastest.png" width="64" alt="Schnellste Runde"> | <img src="streamdeck_icons/overlays_off/fastest.png" width="64" alt="Schnellste Runde aus"> |
 | Live | **Movers**<br>Biggest Movers | `5005` `/movers` | [`movers.html`](obs_loaders/movers.html) | <img src="streamdeck_icons/overlays/movers.png" width="64" alt="Movers"> | <img src="streamdeck_icons/overlays_off/movers.png" width="64" alt="Movers aus"> |
 | Live | **Gap Bar** | `5005` `/gapbar` | [`gapbar.html`](obs_loaders/gapbar.html) | <img src="streamdeck_icons/overlays/gapbar.png" width="64" alt="Gap Bar"> | <img src="streamdeck_icons/overlays_off/gapbar.png" width="64" alt="Gap Bar aus"> |

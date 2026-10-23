@@ -138,6 +138,7 @@ G = {
 # (file name, category, symbol, label) — file names match obs_loaders/*.html.
 OVERLAY_ICONS = [
     ("standings",     "live",   "tower",     "Tower"),
+    ("standings_nodelta", "live", "tower",   "Tower ohne +/-"),
     ("fastest",       "live",   "stopwatch", "Schnellste Runde"),
     ("movers",        "live",   "updown",    "Movers"),
     ("gapbar",        "live",   "gapbar",    "Gap Bar"),

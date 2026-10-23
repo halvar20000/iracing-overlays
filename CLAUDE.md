@@ -177,6 +177,12 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 23, 2026 (tower variant without +/-):** `5005/nodelta` (or any
+tower URL with `?delta=0`) = the tower without the +/- (places gained / lost
+vs the grid) column — the race grid gets 82 px time columns instead. Loader
+standings_nodelta.html (52), icons "Tower ohne +/-", OVERLAY_TABLE.
+CODE_VERSION "2026-10-23 nodelta". Both variants rendered. Restart 5005.
+
 **October 23, 2026 (tower: no brand logo in a one-make field):** Thomas: with
 one car model (PCCD) the logo behind the flag says nothing. TOWER_HTML
 `brandColumn()` — every row of the WHOLE field (before ?rows= trims it) the
