@@ -651,9 +651,9 @@ def track_svg(track_file: str):
         f'viewBox="0 0 {track["view_w"]} {track["view_h"]}" '
         f'preserveAspectRatio="xMidYMid meet">'
         f'<style>'
-        f'.pit {{ fill:none; stroke:#6a6a7a; stroke-width:3; stroke-linecap:round; stroke-linejoin:round; }}'
-        f'.road {{ fill:none; stroke:#e8e8f0; stroke-width:19; stroke-linecap:round; stroke-linejoin:round; }}'
-        f'.inner {{ fill:none; stroke:#4ade80; stroke-width:1.5; stroke-dasharray:4 6; stroke-linecap:round; }}'
+        f'.pit {{ fill:none; stroke:#6a6a7a; stroke-width:5; stroke-linecap:round; stroke-linejoin:round; }}'
+        f'.road {{ fill:none; stroke:#e8e8f0; stroke-width:28; stroke-linecap:round; stroke-linejoin:round; }}'
+        f'.inner {{ fill:none; stroke:#4ade80; stroke-width:2; stroke-dasharray:5 8; stroke-linecap:round; }}'
         f'</style>'
         + polyline(track["onpitroad_xy"], "pit")
         + polyline(track["ontrack_xy"], "road")
@@ -736,12 +736,12 @@ TRACKMAP_HTML = r"""
     .car {
         fill: #ff6b35;
         stroke: #1a1a24;
-        stroke-width: 1.5;
+        stroke-width: 2;
     }
     .car.cam {
         fill: #facc15;
         stroke: #0a0a0f;
-        stroke-width: 2;
+        stroke-width: 2.5;
         filter: drop-shadow(0 0 6px #facc15);
     }
     .car.pit { fill: #94a3b8; }
@@ -753,8 +753,8 @@ TRACKMAP_HTML = r"""
     .car.cam.pro, .car.cam.am { fill: #facc15; fill-opacity: 1; }
     .car-label {
         font-family: 'Segoe UI', sans-serif;
-        font-size: 10px;
-        font-weight: 700;
+        font-size: 15px;
+        font-weight: 800;
         fill: #0a0a0f;
         text-anchor: middle;
         dominant-baseline: central;
@@ -910,7 +910,7 @@ function renderCars(d) {
         if (!xy) continue;
         const pa  = c.proam === 'PRO' ? ' pro' : c.proam === 'AM' ? ' am' : '';
         const cls = 'car' + pa + (c.cam ? ' cam' : '') + (c.on_pit ? ' pit' : '');
-        const r   = c.cam ? (pa ? 12 : 11) : 8;
+        const r   = c.cam ? 17 : 13;
         parts.push(`<circle class="${cls}" cx="${xy[0].toFixed(1)}" cy="${xy[1].toFixed(1)}" r="${r}"></circle>`);
         parts.push(`<text class="car-label" x="${xy[0].toFixed(1)}" y="${xy[1].toFixed(1)}">${esc(c.num)}</text>`);
     }

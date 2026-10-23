@@ -177,6 +177,12 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 23, 2026 (trackmap — thicker track, bigger dots):** Thomas: car
+numbers hard to read. SVG road stroke 19 → 28 (viewBox 1000×600), pit 3 → 5,
+centre dash 2 px; car dots r 8 → 13, camera car 11/12 → 17, number font
+10 → 15 px bold 800 (three digits still fit). Rendered on the Hungaroring.
+Restart 5007.
+
 **October 22, 2026 (driver + incident panels `5000/drivers/panel`, `5000/incidents/panel`):** the dashboard's other two columns as stand-alone windows; both share `PANEL_FRAME` (header, LIVE/REPLAY pill, ⛶ / F, ?zoom=). Drivers: from /telemetry, click = /switch_car, ★ uses the dashboard's own localStorage key + POST /starred (shared with the dashboard in the same browser), "★ nur" filter, Auto-Follow, Go Live. Incidents: /incidents now also carries connected / track / auto_replay / playback_mode (the logger only reads `incidents`); replay 10 / 20 s, camera, dismiss, clear, Auto-Replay. Icons driver_panel / incident_panel (new symbol "drivers"). Tested with the Flask test client + rendered at 1024 and 360 px. Restart 5000.
 
 **October 22, 2026 (camera panel `5000/cameras/panel`):** stand-alone window like /overtakes/panel: every camera group of the loaded track as a button (custom sets bring Turn 1 … / Drone T1 …), current one cyan, NEVER_CAMS names greyed (still clickable), driver ◀ ▶, Go Live, LIVE/REPLAY + REGIE pills, ⛶ / F, ?zoom=. Buttons fire the /streamdeck GETs (cam/<id>, driver_next/prev, go_live), so a click pauses REGIE ~20 s like a key. /cameras JSON gained connected / track / playback_mode / active_driver / director / auto_camera. Icon dashboard/cam_panel.png, README + OBS_OVERLAYS + OVERLAY_TABLE rows. Tested with the Flask test client (stubbed poller) and rendered with The Bend's 35 FCP groups. Custom cams need an iRacing RESTART after copying the .cam files (Thomas). Restart 5000.
