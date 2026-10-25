@@ -1,0 +1,674 @@
+"""
+iRacing "Race Control" banner overlay (port 5019)
+-------------------------------------------------
+An F1-style violet RACE CONTROL banner for OBS, fed from two sources:
+
+1. iRacing itself (always works, no setup):
+     - full course yellow / safety car in this lap / green flag / red flag
+       (SessionFlags; race sessions only)
+     - per car: black flag (penalty), warning (furled black), meatball
+       (repair), disqualified (CarIdxSessionFlags), end of line, wave
+       around, free pass (CarIdxPaceFlags) — with car number, team (team
+       events) or driver name and the class colour of the tower / trackmap.
+   iRacing does NOT say which penalty a black flag is (drive-through,
+   stop & go …) and the SDK has no chat — the text of the stewards'
+   messages has to come from the race control software:
+
+2. iRaceControl (iracecontrol.com) via its ATVO integration: iRaceControl
+   sends race control messages, incidents under review and penalties to an
+   "ATVO Race Control Server" over TCP. This overlay IS such a server
+   (default TCP port 5020, rc_config.json "atvo_port"): in iRaceControl
+   Settings > CACS enter this PC's address + the port, switch ATVO on and
+   route the message types to ATVO. The wire format is not documented, so
+   (2026-10-25, built before the first test) EVERYTHING that arrives is
+   written raw to logs/atvo_capture_<date>.log, and the text is pulled out
+   tolerantly (JSON, XML, text lines, printable strings in binary data).
+   Check /panel during the first test — it shows the raw bytes too.
+
+Pages:
+    /          the banner (OBS browser source, transparent; ?secs= ?zoom=
+               ?debug=1 / H, ?demo=1, ?flags=0 hides the iRacing flags,
+               ?atvo=0 hides the iRaceControl messages)
+    /panel     operator page: ATVO status + raw capture, message log, a
+               field to send a message by hand, test button
+    /rc/state  JSON for both
+
+Requirements:  pip install pyirsdk flask
+Run:           python iracing_rc_banner.py
+"""
+
+import datetime
+import json
+import os
+import re
+import socket
+import threading
+import time
+from collections import deque
+
+from flask import Flask, jsonify, request
+
+from iracing_sdk_base import SDKPoller, setup_utf8_stdout
+from class_colors import class_colors, text_on
+setup_utf8_stdout()
+
+PORT = 5019
+HERE = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = os.path.join(HERE, "rc_config.json")
+LOG_DIR = os.path.join(HERE, "logs")
+DEFAULT_CONFIG = {"atvo_port": 5020, "atvo_enabled": True}
+
+SESSION_STATE_RACING = 4
+
+# irsdk Flags
+F_GREEN, F_RED = 0x0004, 0x0010
+F_ONE_TO_GREEN = 0x0200
+F_CAUTION, F_CAUTION_WAVING = 0x4000, 0x8000
+F_BLACK, F_DQ, F_FURLED, F_REPAIR = 0x10000, 0x20000, 0x80000, 0x100000
+# irsdk PaceFlags
+P_EOL, P_FREE_PASS, P_WAVED = 0x01, 0x02, 0x04
+
+CAR_FLAGS = [   # (bit, kind, headline)
+    (F_DQ,     "dq",      "DISQUALIFIED"),
+    (F_BLACK,  "penalty", "BLACK FLAG · PENALTY"),
+    (F_FURLED, "warning", "WARNING"),
+    (F_REPAIR, "repair",  "MEATBALL FLAG · REPAIR"),
+]
+PACE_FLAGS = [
+    (P_EOL,       "pace", "END OF LINE"),
+    (P_WAVED,     "pace", "WAVE AROUND"),
+    (P_FREE_PASS, "pace", "FREE PASS"),
+]
+CAR_REPEAT_S = 30.0       # same flag for the same car: once per 30 s
+
+
+def load_config() -> dict:
+    cfg = dict(DEFAULT_CONFIG)
+    try:
+        with open(CONFIG_FILE, encoding="utf-8") as f:
+            cfg.update(json.load(f))
+    except (OSError, ValueError):
+        pass
+    return cfg
+
+
+# =============================================================================
+# Message feed (shared by both sources)
+# =============================================================================
+class Feed:
+    def __init__(self, maxlen: int = 60):
+        self._lock = threading.Lock()
+        self._msgs = deque(maxlen=maxlen)
+        self._id = 0
+
+    def add(self, source: str, kind: str, headline: str, text: str = "",
+            car: dict | None = None) -> dict:
+        with self._lock:
+            self._id += 1
+            m = {"id": self._id, "t": time.time(), "source": source,
+                 "kind": kind, "headline": headline, "text": text, "car": car}
+            self._msgs.append(m)
+        print(f"[rc] {source}: {headline} {text} "
+              f"{('#' + car['num'] + ' ' + car['label']) if car else ''}".rstrip())
+        return m
+
+    def list(self) -> list:
+        with self._lock:
+            return list(self._msgs)
+
+
+# =============================================================================
+# iRacing flags -> messages (pure: arrays in, messages out — unit-testable)
+# =============================================================================
+class FlagWatcher:
+    """Edge detector. The first tick of a session only records the state
+    (flags already flying when the overlay starts are not news)."""
+
+    def __init__(self, feed: Feed):
+        self.feed = feed
+        self.reset()
+
+    def reset(self):
+        self._primed = False
+        self._prev_sess = 0
+        self._prev_car: dict = {}
+        self._prev_pace: dict = {}
+        self._caution = False
+        self._last_car: dict = {}
+
+    def tick(self, is_race: bool, racing: bool, sess_flags: int,
+             car_flags: list, pace_flags: list, cars: dict, now: float):
+        """cars: car_idx -> {"num", "label", "color", "text"} (real cars)."""
+        sf = int(sess_flags or 0)
+        if not self._primed:
+            self._primed = True
+            self._prev_sess = sf
+            self._caution = bool(sf & (F_CAUTION | F_CAUTION_WAVING))
+            for i in cars:
+                self._prev_car[i] = int(car_flags[i]) if i < len(car_flags) else 0
+                self._prev_pace[i] = int(pace_flags[i]) if i < len(pace_flags) else 0
+            return
+
+        # ---- session: caution / restart / red (race only) --------------
+        if is_race:
+            rise = sf & ~self._prev_sess
+            cau = bool(sf & (F_CAUTION | F_CAUTION_WAVING))
+            if cau and not self._caution:
+                self.feed.add("iracing", "caution", "FULL COURSE YELLOW")
+            elif self._caution and rise & F_ONE_TO_GREEN:
+                self.feed.add("iracing", "caution", "SAFETY CAR IN THIS LAP")
+            elif self._caution and not cau and not (sf & F_ONE_TO_GREEN) and racing:
+                self.feed.add("iracing", "green", "GREEN FLAG", "Racing resumes")
+            if rise & F_RED:
+                self.feed.add("iracing", "red", "RED FLAG", "Session suspended")
+            # one-to-green keeps the caution phase open until the green
+            if cau:
+                self._caution = True
+            elif self._caution and not (sf & F_ONE_TO_GREEN) and racing:
+                self._caution = False
+        self._prev_sess = sf
+
+        # ---- per car ----------------------------------------------------
+        for i, car in cars.items():
+            cf = int(car_flags[i]) if i < len(car_flags) else 0
+            pf = int(pace_flags[i]) if i < len(pace_flags) else 0
+            rise_c = cf & ~self._prev_car.get(i, cf)
+            rise_p = pf & ~self._prev_pace.get(i, pf)
+            self._prev_car[i], self._prev_pace[i] = cf, pf
+            for bit, kind, head in CAR_FLAGS:
+                if rise_c & bit:
+                    self._car_msg(i, car, kind, head, now)
+                    if bit in (F_DQ, F_BLACK):
+                        break       # DQ also sets black; one line is enough
+            if is_race:
+                for bit, kind, head in PACE_FLAGS:
+                    if rise_p & bit:
+                        self._car_msg(i, car, kind, head, now)
+
+    def _car_msg(self, i, car, kind, head, now):
+        key = (i, head)
+        if now - self._last_car.get(key, -1e9) < CAR_REPEAT_S:
+            return
+        self._last_car[key] = now
+        self.feed.add("iracing", kind, head, "", dict(car))
+
+
+# =============================================================================
+# iRaceControl -> "ATVO Race Control Server" (TCP)
+# =============================================================================
+_PRINTABLE = re.compile(r"[ -~ -ɏ]{4,}")
+TEXT_KEYS = ("message", "msg", "text", "body", "content", "description",
+             "Message", "Text", "Body", "Content", "Description")
+HEAD_KEYS = ("headline", "title", "header", "Headline", "Title", "Header")
+
+
+def _from_json(obj):
+    """(headline, text) from a decoded JSON value, or None."""
+    if isinstance(obj, str):
+        return ("", obj)
+    if isinstance(obj, list):
+        for x in obj:
+            r = _from_json(x)
+            if r:
+                return r
+        return None
+    if not isinstance(obj, dict):
+        return None
+    head = next((str(obj[k]) for k in HEAD_KEYS if isinstance(obj.get(k), str)), "")
+    text = next((str(obj[k]) for k in TEXT_KEYS if isinstance(obj.get(k), str)), "")
+    if text or head:
+        return (head, text)
+    for v in obj.values():             # nested {"data": {"message": …}}
+        if isinstance(v, (dict, list)):
+            r = _from_json(v)
+            if r:
+                return r
+    return None
+
+
+def _looks_utf16(b: bytes) -> bool:
+    """.NET programs often send UTF-16: every other byte NUL."""
+    if len(b) < 4:
+        return False
+    odd = b[1::2]
+    return odd.count(0) >= len(odd) * 0.6
+
+
+def extract_text(chunk: bytes):
+    """Best guess at the human text in one received chunk.
+    Returns (headline, text, how) or None (nothing readable)."""
+    if _looks_utf16(chunk):
+        t = chunk[: len(chunk) // 2 * 2].decode("utf-16-le", "replace")
+        chunk = t.encode("utf-8")
+    raw = chunk.strip(b"\x00\r\n\t ")
+    if not raw:
+        return None
+    for enc in ("utf-8", "latin-1"):
+        try:
+            s = raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+        s = s.strip("\x00﻿ \r\n")
+        # JSON
+        if s[:1] in "{[":
+            try:
+                r = _from_json(json.loads(s))
+                if r:
+                    return (r[0].strip(), r[1].strip(), "json")
+            except ValueError:
+                pass
+        # XML-ish
+        if s.startswith("<") and ">" in s:
+            t = re.sub(r"<[^>]+>", " ", s)
+            t = re.sub(r"\s+", " ", t).strip()
+            if t:
+                return ("", t, "xml")
+        bad = sum(1 for c in s if ord(c) < 32 and c not in "\r\n\t")
+        if bad <= len(s) * 0.05:
+            t = re.sub(r"\s+", " ", s).strip()
+            if t:
+                return ("", t, "text")
+        break
+    # binary with embedded strings (e.g. length-prefixed fields)
+    runs = [m.group(0).strip() for m in _PRINTABLE.finditer(raw.decode("latin-1"))]
+    runs = [r for r in runs if r]
+    if runs:
+        return ("", " · ".join(runs), "strings")
+    return None
+
+
+def readable(text: str) -> bool:
+    """Worth putting on stream: a few letters, not a token / password."""
+    return len(text) >= 3 and sum(c.isalpha() for c in text) >= 3
+
+
+class AtvoReceiver:
+    """TCP server that accepts iRaceControl's ATVO connection. Logs every
+    byte, splits on newline / NUL (or a 0.4 s pause), extracts text."""
+
+    def __init__(self, feed: Feed, port: int, log_dir: str = LOG_DIR):
+        self.feed, self.port, self.log_dir = feed, port, log_dir
+        self.listening = False
+        self.error = ""
+        self.clients: dict = {}          # addr -> {"since", "bytes"}
+        self.raw = deque(maxlen=40)      # recent chunks for /panel
+        self._lock = threading.Lock()
+        self._sock = None
+
+    def start(self):
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def stop(self):
+        try:
+            if self._sock:
+                self._sock.close()
+        except OSError:
+            pass
+
+    def _log(self, addr, what: str, data: bytes = b""):
+        try:
+            os.makedirs(self.log_dir, exist_ok=True)
+            day = datetime.date.today().isoformat()
+            with open(os.path.join(self.log_dir, f"atvo_capture_{day}.log"), "a",
+                      encoding="utf-8") as f:
+                f.write(json.dumps({
+                    "t": datetime.datetime.now().isoformat(timespec="milliseconds"),
+                    "from": f"{addr[0]}:{addr[1]}", "event": what,
+                    "len": len(data), "hex": data.hex(),
+                    "text": data.decode("utf-8", "replace")}, ensure_ascii=False) + "\n")
+        except OSError as e:
+            print(f"[rc] capture log failed: {e}")
+
+    def _serve(self):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("0.0.0.0", self.port))
+            s.listen(5)
+            self._sock = s
+            self.listening = True
+            print(f"[rc] ATVO receiver listening on TCP {self.port}")
+        except OSError as e:
+            self.error = f"cannot listen on TCP {self.port}: {e}"
+            print(f"[rc] {self.error}")
+            return
+        while True:
+            try:
+                conn, addr = s.accept()
+            except OSError:
+                return
+            threading.Thread(target=self._client, args=(conn, addr), daemon=True).start()
+
+    def _client(self, conn, addr):
+        key = f"{addr[0]}:{addr[1]}"
+        with self._lock:
+            self.clients[key] = {"since": time.time(), "bytes": 0}
+        self._log(addr, "connect")
+        print(f"[rc] ATVO client connected: {key}")
+        conn.settimeout(0.4)
+        buf = b""
+        try:
+            while True:
+                try:
+                    data = conn.recv(65536)
+                except socket.timeout:
+                    if buf:                 # no delimiter, but it went quiet
+                        self._chunk(addr, buf)
+                        buf = b""
+                    continue
+                if not data:
+                    break
+                with self._lock:
+                    self.clients[key]["bytes"] += len(data)
+                self._log(addr, "data", data)
+                buf += data
+                if _looks_utf16(buf):       # split on a UTF-16 newline only
+                    parts = buf.split(b"\n\x00")
+                else:
+                    parts = re.split(rb"[\n\x00]", buf)
+                buf = parts.pop()
+                for p in parts:
+                    self._chunk(addr, p)
+        except OSError:
+            pass
+        finally:
+            if buf:
+                self._chunk(addr, buf)
+            conn.close()
+            with self._lock:
+                self.clients.pop(key, None)
+            self._log(addr, "disconnect")
+            print(f"[rc] ATVO client gone: {key}")
+
+    def _chunk(self, addr, chunk: bytes):
+        if not chunk.strip(b"\x00\r\n\t "):
+            return
+        r = extract_text(chunk)
+        entry = {"t": time.time(), "from": addr[0], "len": len(chunk),
+                 "hex": chunk[:400].hex(), "text": chunk[:400].decode("utf-8", "replace"),
+                 "parsed": None, "how": None, "shown": False}
+        if r:
+            head, text, how = r
+            entry["parsed"], entry["how"] = (head + " | " + text if head else text), how
+            if readable(text or head):
+                self.feed.add("atvo", "message", head or "", text or head)
+                entry["shown"] = True
+        with self._lock:
+            self.raw.append(entry)
+
+    def status(self) -> dict:
+        with self._lock:
+            return {"port": self.port, "listening": self.listening, "error": self.error,
+                    "clients": [{"addr": k, **v} for k, v in self.clients.items()],
+                    "raw": list(self.raw)[::-1]}
+
+
+# =============================================================================
+# iRacing poller
+# =============================================================================
+class RcPoller(SDKPoller):
+    tag = "rcmsg"
+
+    def __init__(self, feed: Feed):
+        super().__init__(poll_interval=0.25)
+        self.flags = FlagWatcher(feed)
+        self._key = None
+        self._race_cache: dict = {}
+        self._cars: dict = {}
+        self._cars_t = -1e9
+
+    def _car_map(self, ir) -> dict:
+        now = time.monotonic()
+        if now - self._cars_t < 5.0 and self._cars:
+            return self._cars
+        drivers = (ir["DriverInfo"] or {}).get("Drivers", []) or []
+        team = int((ir["WeekendInfo"] or {}).get("TeamRacing") or 0) == 1
+        cols = class_colors(drivers)
+        multi = len(cols) > 1
+        out = {}
+        for d in drivers:
+            if d.get("CarIsPaceCar") == 1 or d.get("IsSpectator") == 1:
+                continue
+            try:
+                i = int(d.get("CarIdx"))
+            except (TypeError, ValueError):
+                continue
+            name = d.get("UserName") or ""
+            tname = (d.get("TeamName") or "").strip()
+            col = cols.get(int(d.get("CarClassID") or 0)) if multi else None
+            out[i] = {"num": str(d.get("CarNumber") or "").strip('"'),
+                      "label": tname if team and tname else name,
+                      "driver": name if team and tname and tname != name else "",
+                      "class": (d.get("CarClassShortName") or "").strip() if multi else "",
+                      "color": col, "text": text_on(col) if col else None}
+        self._cars, self._cars_t = out, now
+        return out
+
+    def _is_race(self, ir, key, num) -> bool:
+        if key not in self._race_cache:
+            r = False
+            for s in (ir["SessionInfo"] or {}).get("Sessions", []) or []:
+                if s.get("SessionNum") == num:
+                    r = "race" in str(s.get("SessionType") or "").lower()
+            self._race_cache[key] = r
+        return self._race_cache[key]
+
+    def _read_snapshot(self) -> dict:
+        ir = self.ir
+        ir.freeze_var_buffer_latest()
+        num = ir["SessionNum"]
+        key = (ir["SessionUniqueID"], num)
+        if key != self._key:
+            self._key = key
+            self.flags.reset()
+            self._cars_t = -1e9
+        is_race = self._is_race(ir, key, num)
+        racing = is_race and ir["SessionState"] == SESSION_STATE_RACING
+        self.flags.tick(is_race, racing, ir["SessionFlags"] or 0,
+                        list(ir["CarIdxSessionFlags"] or []),
+                        list(ir["CarIdxPaceFlags"] or []),
+                        self._car_map(ir), time.monotonic())
+        return {"connected": True, "is_race": is_race, "racing": racing}
+
+
+# =============================================================================
+# Flask
+# =============================================================================
+app = Flask(__name__)
+feed = Feed()
+_cfg = load_config()
+atvo = AtvoReceiver(feed, int(_cfg.get("atvo_port") or 5020))
+poller = RcPoller(feed)
+
+
+@app.after_request
+def _no_cache(resp):
+    resp.headers["Cache-Control"] = "no-store, max-age=0"
+    return resp
+
+
+@app.route("/rc/state")
+def rc_state():
+    return jsonify({"iracing": poller.get(), "messages": feed.list(),
+                    "atvo": atvo.status() if request.args.get("raw") else
+                    {k: v for k, v in atvo.status().items() if k != "raw"},
+                    "now": time.time()})
+
+
+@app.route("/rc/say", methods=["POST"])
+def rc_say():
+    body = request.get_json(silent=True) or request.form
+    text = str(body.get("text") or "").strip()[:200]
+    if not text:
+        return jsonify({"ok": False, "error": "empty"}), 400
+    feed.add("manual", "message", str(body.get("headline") or "").strip()[:60], text)
+    return jsonify({"ok": True})
+
+
+@app.route("/rc/test", methods=["POST", "GET"])
+def rc_test():
+    feed.add("manual", "message", "", "TEST · Race Control overlay")
+    return jsonify({"ok": True})
+
+
+BANNER_HTML = r"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Race Control</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: transparent; overflow: hidden; }
+  body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; color: #fff; padding: 16px; }
+  body.debug { background: #3a3a40; }
+  #wrap { zoom: var(--z, 1); width: 900px; }
+  .rc { display: flex; align-items: stretch; min-height: 76px; border-radius: 6px; overflow: hidden;
+        background: rgba(18, 16, 28, 0.97); box-shadow: 0 6px 24px rgba(0,0,0,0.45);
+        transform: translateX(-24px); opacity: 0; transition: opacity .35s, transform .35s; }
+  .rc.show { opacity: 1; transform: none; }
+  .tag { width: 150px; flex: none; background: #7b2ff7; display: flex; flex-direction: column;
+         justify-content: center; padding: 0 14px; font-weight: 900; letter-spacing: 1px; line-height: 1.05; }
+  .tag small { font-size: 14px; opacity: .85; } .tag b { font-size: 22px; }
+  .rc.caution .tag { background: #f5c400; color: #111; }
+  .rc.green .tag { background: #1fbf4f; } .rc.red .tag { background: #e3242b; }
+  .rc.penalty .tag, .rc.dq .tag { background: #111; border-right: 4px solid #fff; }
+  .rc.repair .tag { background: #ff7a00; }
+  .body { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 10px 18px; min-width: 0; }
+  .head { font-size: 26px; font-weight: 900; letter-spacing: .5px; }
+  .text { font-size: 22px; font-weight: 600; color: #e6e2f5; margin-top: 2px; }
+  .head:empty, .text:empty { display: none; }
+  .head:empty + .text { font-size: 26px; font-weight: 800; color: #fff; }
+  .car { display: flex; align-items: center; gap: 10px; margin-top: 4px; font-size: 22px; font-weight: 700; }
+  .num { min-width: 46px; padding: 2px 8px; border-radius: 4px; text-align: center; font-weight: 900;
+         background: #fff; color: #111; }
+  .cls { font-size: 15px; font-weight: 800; padding: 2px 7px; border-radius: 3px; }
+  .drv { color: #b9b6c8; font-weight: 600; font-size: 18px; }
+</style></head>
+<body><div id="wrap"><div class="rc" id="rc"><div class="tag" id="tag"><small>RACE</small><b>CONTROL</b></div>
+<div class="body"><div class="head" id="head"></div><div class="text" id="text"></div><div class="car" id="car"></div></div></div></div>
+<script>
+const qs = new URLSearchParams(location.search);
+const SECS = parseFloat(qs.get('secs') || '8');
+const SHOW_FLAGS = qs.get('flags') !== '0', SHOW_ATVO = qs.get('atvo') !== '0';
+document.getElementById('wrap').style.setProperty('--z', qs.get('zoom') || '1');
+if (qs.get('debug') === '1') document.body.classList.add('debug');
+document.addEventListener('keydown', e => { if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('debug'); });
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let lastId = null; const queue = []; let busy = false;
+function wanted(m) { return m.source === 'iracing' ? SHOW_FLAGS : m.source === 'atvo' ? SHOW_ATVO : true; }
+function show(m) {
+  busy = true;
+  const rc = document.getElementById('rc');
+  rc.className = 'rc ' + (m.kind || '');
+  document.getElementById('head').textContent = m.headline || '';
+  document.getElementById('text').textContent = m.text || '';
+  const c = m.car;
+  document.getElementById('car').innerHTML = c ? `<span class="num"${c.color ? ` style="background:${esc(c.color)};color:${esc(c.text)}"` : ''}>#${esc(c.num)}</span>`
+      + `<span>${esc(c.label)}</span>${c.driver ? `<span class="drv">${esc(c.driver)}</span>` : ''}`
+      + (c.class ? `<span class="cls" style="background:${esc(c.color)};color:${esc(c.text)}">${esc(c.class)}</span>` : '') : '';
+  requestAnimationFrame(() => rc.classList.add('show'));
+  const words = ((m.headline || '') + ' ' + (m.text || '')).split(/\s+/).length;
+  const secs = Math.max(SECS, Math.min(20, words * 0.45));
+  setTimeout(() => { rc.classList.remove('show'); setTimeout(() => { busy = false; next(); }, 450); }, secs * 1000);
+}
+function next() { if (!busy && queue.length) show(queue.shift()); }
+async function poll() {
+  try {
+    const d = await (await fetch('/rc/state', {cache: 'no-store'})).json();
+    const ms = d.messages || [];
+    if (lastId === null) lastId = ms.length ? ms[ms.length - 1].id : 0;   // skip history on load
+    for (const m of ms) if (m.id > lastId) { lastId = m.id; if (wanted(m)) queue.push(m); }
+    while (queue.length > 6) queue.shift();
+    next();
+  } catch (e) {}
+  setTimeout(poll, 700);
+}
+if (qs.get('demo') === '1') {
+  const demo = [
+    {kind: 'caution', headline: 'FULL COURSE YELLOW'},
+    {kind: 'message', headline: '', text: 'Car #12 and #44 incident T1 under investigation'},
+    {kind: 'penalty', headline: 'BLACK FLAG · PENALTY', car: {num: '12', label: 'Proton Competition', driver: 'M. Becker', class: 'GT3', color: '#ffb020', text: '#0a0a0f'}},
+    {kind: 'caution', headline: 'SAFETY CAR IN THIS LAP'},
+    {kind: 'green', headline: 'GREEN FLAG', text: 'Racing resumes'}];
+  let i = 0; const go = () => { queue.push(demo[i++ % demo.length]); next(); }; go(); setInterval(go, 10000);
+} else poll();
+</script></body></html>"""
+
+
+PANEL_HTML = r"""<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><title>Race Control – Panel</title>
+<style>
+  body { background: #15151c; color: #e8e8f0; font: 15px 'Segoe UI', Arial, sans-serif; margin: 0; padding: 16px; }
+  h1 { font-size: 20px; margin: 0 0 12px; } h2 { font-size: 16px; margin: 18px 0 8px; color: #b9a6ff; }
+  .box { background: #1f1f29; border-radius: 6px; padding: 10px 12px; }
+  .ok { color: #45f063; } .bad { color: #ff6b6b; } .muted { color: #8a8a99; }
+  table { border-collapse: collapse; width: 100%; } td, th { text-align: left; padding: 4px 6px; border-bottom: 1px solid #2a2a36; vertical-align: top; }
+  code { font-size: 12px; color: #9fd; word-break: break-all; }
+  input[type=text] { width: 60%; padding: 6px; background: #0f0f15; color: #fff; border: 1px solid #444; border-radius: 4px; }
+  button { padding: 6px 12px; background: #7b2ff7; color: #fff; border: 0; border-radius: 4px; cursor: pointer; font-weight: 700; }
+</style></head><body>
+<h1>Race Control – Panel</h1>
+<div class="box" id="atvo"></div>
+<h2>Nachricht von Hand</h2>
+<div class="box"><input type="text" id="msg" placeholder="z.B. Incident T1 #12 / #44 under investigation" maxlength="200">
+<button onclick="say()">Senden</button> <button onclick="fetch('/rc/test',{method:'POST'})">Test</button></div>
+<h2>Meldungen (neueste oben)</h2><div class="box"><table id="msgs"></table></div>
+<h2>ATVO Rohdaten (was iRaceControl schickt)</h2><div class="box"><table id="raw"></table></div>
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const tm = t => new Date(t * 1000).toLocaleTimeString('de-DE');
+async function say() {
+  const el = document.getElementById('msg'); if (!el.value.trim()) return;
+  await fetch('/rc/say', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text: el.value})});
+  el.value = '';
+}
+document.getElementById('msg').addEventListener('keydown', e => { if (e.key === 'Enter') say(); });
+async function poll() {
+  try {
+    const d = await (await fetch('/rc/state?raw=1', {cache: 'no-store'})).json();
+    const a = d.atvo;
+    document.getElementById('atvo').innerHTML =
+      `<b>ATVO-Empfänger (iRaceControl):</b> ${a.listening ? `<span class="ok">bereit auf TCP-Port ${a.port}</span>` : `<span class="bad">${esc(a.error || 'nicht aktiv')}</span>`}<br>`
+      + (a.clients.length ? a.clients.map(c => `<span class="ok">verbunden: ${esc(c.addr)}</span> · ${c.bytes} Bytes`).join('<br>')
+                          : '<span class="muted">keine Verbindung — in iRaceControl unter Settings › CACS diese PC-Adresse + Port eintragen und ATVO einschalten</span>')
+      + `<br><span class="muted">iRacing: ${d.iracing.connected ? 'verbunden' : 'nicht verbunden'}${d.iracing.is_race ? ' · Rennen' : ''}</span>`;
+    document.getElementById('msgs').innerHTML = '<tr><th>Zeit</th><th>Quelle</th><th>Meldung</th></tr>' +
+      (d.messages || []).slice().reverse().map(m => `<tr><td>${tm(m.t)}</td><td>${esc(m.source)}</td><td><b>${esc(m.headline)}</b> ${esc(m.text)}${m.car ? ` · #${esc(m.car.num)} ${esc(m.car.label)}` : ''}</td></tr>`).join('');
+    document.getElementById('raw').innerHTML = '<tr><th>Zeit</th><th>Gelesen</th><th>Roh</th></tr>' +
+      (a.raw || []).map(r => `<tr><td>${tm(r.t)}<br><span class="muted">${r.len} B · ${esc(r.how || '?')}${r.shown ? ' · <span class=ok>angezeigt</span>' : ''}</span></td><td>${esc(r.parsed || '')}</td><td><code>${esc(r.text)}</code><br><code class="muted">${esc(r.hex)}</code></td></tr>`).join('');
+  } catch (e) {}
+  setTimeout(poll, 1500);
+}
+poll();
+</script></body></html>"""
+
+
+@app.route("/")
+def index():
+    return BANNER_HTML
+
+
+@app.route("/panel")
+def panel():
+    return PANEL_HTML
+
+
+@app.route("/status")
+def status():
+    return jsonify({"ok": True})
+
+
+if __name__ == "__main__":
+    if _cfg.get("atvo_enabled", True):
+        atvo.start()
+    threading.Thread(target=poller.run, daemon=True).start()
+    print("\n" + "=" * 60)
+    print("  iRacing Race Control banner")
+    print(f"  Banner (OBS):   http://localhost:{PORT}")
+    print(f"  Operator panel: http://localhost:{PORT}/panel")
+    print(f"  Preview:        http://localhost:{PORT}/?demo=1")
+    print(f"  iRaceControl -> ATVO server: this PC, TCP port {atvo.port}")
+    print("  Raw capture:    logs/atvo_capture_<date>.log")
+    print("=" * 60 + "\n")
+    try:
+        app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False, threaded=True)
+    finally:
+        poller.stop()
+        atvo.stop()

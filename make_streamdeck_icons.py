@@ -154,6 +154,7 @@ OVERLAY_ICONS = [
     ("location",      "pre",    "map",       "Streckenort"),
     ("flag",          "live",   "flag",      "Flaggen"),
     ("leader",        "live",   "crown",     "Neuer Führender"),
+    ("rc_banner",     "live",   "flag",      "Race Control"),
     ("weather",       "live",   "cloud",     "Wetter"),
     ("sess",          "live",   "clock",     "Restzeit"),
     ("live",          "live",   "broadcast", "LIVE / Replay"),

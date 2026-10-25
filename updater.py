@@ -63,6 +63,7 @@ PROTECTED = {
     "show_config.json",
     "vts_token.json",
     "show_script.json",
+    "rc_config.json",
 }
 PROTECTED_DIRS = ("logs/", ".git/")
 

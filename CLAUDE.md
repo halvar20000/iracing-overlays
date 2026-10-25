@@ -50,6 +50,7 @@ and run its test.
 | catch       | `iracing_catchup.py`          | 5015 | F1-style catch-up battle (gap + catch prediction) |
 | weather     | `iracing_weather.py`          | 5016 | Weather strip (temps, rain, wind, sky + live trends) |
 | driver      | `iracing_drivercard.py`       | 5017 | Driver card (name, team, iRating, license, laps, inc) |
+| rcmsg       | `iracing_rc_banner.py`        | 5019 | Race Control banner (iRacing flags + iRaceControl via ATVO TCP 5020) |
 | racectrl    | `iracing_racecontrol.py`      | 8080 | iCASControl steward dashboard (FastAPI; `racecontrol/`) |
 
 All overlays are Flask apps that read iRacing telemetry via `pyirsdk`,
@@ -176,6 +177,37 @@ an entry to `CAR_PREFIX_TO_BRAND` in `car_brands.py` if it's a car family
 that isn't already prefix-matched.
 
 ## Recent sessions
+
+**October 25, 2026 (NEW overlay `iracing_rc_banner.py` — Race Control
+banner, tag "rcmsg", port 5019):** Thomas: the stewards' race control
+software (iRaceControl, iracecontrol.com — used for IEC and GT3 WCT) writes
+violet race control messages into the iRacing chat and calls full cautions;
+show them on stream. The SDK has NO chat. Two sources: (1) iRacing flags,
+`FlagWatcher` (pure, edge-triggered, first tick of a session only records):
+caution → "FULL COURSE YELLOW", one-to-green AFTER a caution → "SAFETY CAR IN
+THIS LAP" (the pace-lap one-to-green before the start says nothing), green →
+"GREEN FLAG", red; per car CarIdxSessionFlags black / DQ / furled (warning) /
+repair, CarIdxPaceFlags EOL / wave around / free pass, 30 s per car + flag;
+car = number, team (TeamRacing) or driver, class colour (class_colors).
+iRacing does not say WHICH penalty a black flag is. (2) iRaceControl's manual:
+it can send race control messages, incidents under review and penalties to
+SDK Gaming or to an "ATVO Race Control Server" over TCP (Settings > CACS:
+address, port, password; routing per message type). `AtvoReceiver` IS such a
+server (TCP 5020, rc_config.json `atvo_port` — gitignored + PROTECTED). The
+wire format is UNDOCUMENTED: every byte → logs/atvo_capture_<date>.log (JSON
+lines: connect / data with hex + text / disconnect); chunks split on newline /
+NUL (UTF-16 = every other byte NUL → split on "\n\0" only) or a 0.4 s pause;
+`extract_text()` tries JSON (message/text/headline keys, nested), XML, plain
+text, UTF-16, printable runs in binary; `readable()` (≥ 3 letters) decides
+what goes on air. We never answer — if iRaceControl wants a handshake, the
+capture shows it. Banner `/` (violet; FCY yellow, green, red, black for
+penalties; queue, 8 s or longer for long text; ?flags=0 ?atvo=0 ?secs ?zoom
+?debug ?demo), operator `/panel` (ATVO status, clients, raw bytes + what was
+read, manual message POST /rc/say, test). Loader rc_banner.html (53), icon
+"Race Control", OVERLAY_TABLE, all launchers, guide RACE_CONTROL.md.
+test_rc_banner.py 30/30 (flag edges, extraction incl. UTF-16, real socket:
+split packets, NUL, pause flush, capture log; Flask). FIRST REAL TEST:
+GT3 WCT Tuesday 27.10. — get the capture log from Thomas and fit the parser.
 
 **October 25, 2026 (IEC multiclass: class colours on tower + trackmap,
 overtakes only inside a class):** NEW `class_colors.py` — one colour per car

@@ -47,6 +47,7 @@ OVERLAYS = [
     ("driver",        "Driver Card",      5017),
     ("driver_simple", "Driver Card (no iRating / SR)", 5017, "/simple"),
     ("leader",        "New Race Leader",  5018),
+    ("rc_banner",     "Race Control",     5019),
     # Extra pages on existing servers (2026-10-08) — no new ports.
     ("duel",          "Title Fight",      5010, "/duel"),
     ("fastest",       "Fastest Lap",      5005, "/fastest"),

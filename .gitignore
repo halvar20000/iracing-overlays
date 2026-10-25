@@ -55,6 +55,7 @@ commentary_config.json
 show_config.json
 vts_token.json
 show_script.json
+rc_config.json
 
 # per-track videos for the moderation (big, local)
 show_notes/videos/
