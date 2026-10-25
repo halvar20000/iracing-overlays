@@ -177,6 +177,7 @@ OVERLAY_ICONS = [
     ("grid",          "quali",  "grid",      "Start Grid"),
     ("grid_cars",     "quali",  "car",       "Grid Autos"),
     ("grid_row",      "quali",  "car",       "Grid Reihe"),
+    ("grid_row_top",  "quali",  "car",       "Grid Reihe oben"),
     ("sectors",       "quali",  "sectors",   "Beste Sektoren"),
     ("lastrace",      "pre",    "podium",    "Letzte Runde"),
     ("table",         "pre",    "table",     "Tabelle"),

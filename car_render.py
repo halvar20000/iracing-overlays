@@ -185,3 +185,91 @@ class CarRenderer:
                 for old in list(self._cache)[:CACHE_MAX // 3]:
                     self._cache.pop(old, None)
         return data
+
+
+# ---- livery colours for a drawn car (iRacing renders only the side view) ----
+
+def _hex(rgb) -> str:
+    return "#%02x%02x%02x" % tuple(int(c) for c in rgb[:3])
+
+
+def _design_colors(driver: dict) -> list:
+    parts = [p.strip() for p in (driver.get("CarDesignStr") or "").split(",")]
+    out = []
+    for p in parts[1:4]:
+        p = p.lstrip("#")
+        if len(p) == 6 and all(c in "0123456789abcdefABCDEF" for c in p):
+            out.append("#" + p.lower())
+    return out
+
+
+def paint_colors(png_or_path, top: int = 3) -> list:
+    """The main colours of a paint TGA: body first, then accents. Counted in
+    the middle band of the texture (where iRacing templates put the body
+    panels; the corners hold interior / mirror bits) on a coarse palette;
+    accents must differ from what was already picked and saturated colours
+    weigh more. [] without Pillow or on any error."""
+    try:
+        from PIL import Image
+        import colorsys
+        im = Image.open(png_or_path).convert("RGBA")
+        w, h = im.size
+        im = im.crop((0, int(h * 0.3), int(w * 0.95), int(h * 0.9))).resize((160, 96), Image.NEAREST)
+        counts: dict = {}
+        for r, g, b, a in im.getdata():
+            if a < 200:
+                continue
+            key = (r // 24 * 24 + 12, g // 24 * 24 + 12, b // 24 * 24 + 12)
+            counts[key] = counts.get(key, 0) + 1
+        if not counts:
+            return []
+        def vivid(c):            # saturation x brightness: red 0.94, template grey 0.1
+            _, s, v = colorsys.rgb_to_hsv(*(x / 255 for x in c))
+            return s * v
+        ranked = sorted(counts, key=counts.get, reverse=True)
+        picked = [ranked[0]]
+        total = sum(counts.values())
+        # accents: vivid colours or white only — the template's grey and the
+        # dull background colour of unused texture areas are not livery
+        rest = [c for c in ranked[1:] if vivid(c) > 0.25 or min(c) > 216]
+        rest.sort(key=lambda c: counts[c] * (0.15 + vivid(c)) ** 2, reverse=True)
+        for c in rest:
+            if len(picked) >= top:
+                break
+            if counts[c] < total * 0.004:
+                continue
+            if all(sum(abs(a - b) for a, b in zip(c, p)) > 110 for p in picked):
+                picked.append(c)
+        return [_hex(c) for c in picked]
+    except Exception:
+        return []
+
+
+_color_cache: dict = {}
+
+
+def livery_colors(driver: dict, team: bool = False, root: Path = None) -> dict:
+    """{body, accent, trim, source}: from the custom paint (Trading Paints)
+    when cached on disk, else iRacing's CarDesignStr colours."""
+    car_path = (driver.get("CarPath") or "").strip()
+    team_id = (driver.get("TeamID") or 0) if team else 0
+    paint = find_paint_file(car_path, driver.get("UserID"), team_id, root)
+    cols, source = [], "design"
+    if paint:
+        try:
+            key = (str(paint), paint.stat().st_mtime)
+        except OSError:
+            key = (str(paint), 0)
+        cols = _color_cache.get(key)
+        if cols is None:
+            cols = paint_colors(paint)
+            if len(_color_cache) > CACHE_MAX:
+                _color_cache.clear()
+            _color_cache[key] = cols
+        source = "paint" if cols else "design"
+    if not cols:
+        cols = _design_colors(driver)
+    for extra in ("#d8d8dc", "#c8202a", "#111111"):
+        if len(cols) < 3 and extra not in cols:
+            cols.append(extra)
+    return {"body": cols[0], "accent": cols[1], "trim": cols[2], "source": source}

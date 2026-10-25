@@ -178,7 +178,7 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
-**October 25, 2026 (grid ONE ROW at a time, 5001 `/row`):** from an F1 TV
+**October 25, 2026 (grid ONE ROW at a time, 5001 `/row` + `/row/top`):** from an F1 TV
 top-down grid picture: two cars = one grid row on asphalt (kerbs, chequered
 line, painted grid boxes, pole left + higher), plate below each car (position,
 name / team, number, brand chip, pole time or +gap / NO TIME), "STARTREIHE n"
@@ -186,11 +186,19 @@ name / team, number, brand chip, pole time or +gap / NO TIME), "STARTREIHE n"
 slot; title like /cars. 1000 × 680. BY HAND by default — the shared /nav
 next / prev / first (Stream Deck "Seite" keys, → ← Home in the page); ?auto=1
 ?secs=8 cycles. Liveries from the shared /car route (CarRenderer). iRacing's
-render server is only known to give the SIDE view (view 1); no top view is
-documented → ?view=N ?rot=-90 rotate a render, and `/row/views` shows one car
-in view 0..9 to find a top view ON THE STREAM PC (not checked). Loader
-grid_row.html (60), icon "Grid Reihe", OBS_OVERLAYS row. test_car_render G7/G8
-(31 PASS). Rendered with the fake render server. Restart 5001.
+render server gives ONLY the side view: checked on the stream PC over the LAN
+(192.168.86.138:5001/car/11.png?view=0..9 = byte-identical PNGs) — `view` is
+ignored. So FOLLOW-UP same day (Thomas: "not shown from above", chose "both"):
+`/row/top` = the cars DRAWN as an SVG GT3 seen from above (topCar(): body,
+tyres, splitter, wing, glass, number roundel on the roof, brand chip on the
+bonnet, shading) in the livery's colours from `/car/<idx>/colors` =
+car_render.livery_colors(): the custom paint TGA's main colours
+(paint_colors(): middle band of the texture, coarse palette, body = most
+pixels, accents = VIVID colours or white only — template grey and the dull
+background of unused texture areas are not livery; real Speed Monkeys BMW TGA
+→ black / red / gold), else CarDesignStr. /row stays the real side render.
+Loaders grid_row.html + grid_row_top.html (61), icons "Grid Reihe" / "Grid
+Reihe oben", OBS_OVERLAYS rows. test_car_render 36 PASS. Restart 5001.
 
 **October 25, 2026 (tower with car liveries `5005/cars`):** Thomas: the
 liveries of 5001/cars instead of the brand logos in the tower. `/cars` and

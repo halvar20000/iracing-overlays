@@ -12,8 +12,8 @@ Options: ?auto=0 ?per= ?zoom= ?title= ?round=LAUF ?race=RENNEN ?logo=<url>|0
 brand logo, number, gap to pole (DNLS look; ?view= render angle, ?head= /
 ?accent= hex colours, ?logo=<url>|0 league logo, same paging).
 /row = ONE grid row (two cars) on asphalt with painted grid boxes; next =
-the next row (by hand; ?auto=1 + ?secs=8 cycles). ?view= / ?rot=-90 for a
-top-down render; /row/views shows one car in every render angle.
+the next row (by hand; ?auto=1 + ?secs=8 cycles). /row/top = the cars DRAWN
+from above in each livery's colours (iRacing renders only the side view).
 
 Requirements:  pip install pyirsdk flask
 Run:           python iracing_grid.py
@@ -25,7 +25,7 @@ from flask import (Flask, Response, abort, jsonify, render_template_string,
                    request, send_file)
 
 from car_brands import detect_brand, resolve_logo
-from car_render import CarRenderer
+from car_render import CarRenderer, livery_colors
 from class_colors import class_colors
 from wct_board import EventInfo, PageNav
 
@@ -1182,7 +1182,7 @@ body.debug { background: #3a4a3a; }
 .carbox img { visibility: hidden; filter: drop-shadow(0 10px 12px rgba(0,0,0,.6)); }
 .carbox img.ok { visibility: visible; }
 .carbox.side img { max-width: 380px; max-height: 200px; }
-.carbox.top img { width: 320px; height: 190px; object-fit: contain; transform: rotate(var(--rot)); }
+.carbox svg.topcar { height: 318px; width: auto; filter: drop-shadow(0 12px 10px rgba(0,0,0,.65)); }
 .carbox .ph { width: 150px; height: 300px; border-radius: 40px 40px 26px 26px; background: rgba(255,255,255,.06);
               border: 2px dashed rgba(255,255,255,.18); }
 .plate { position: absolute; left: 0; right: 0; top: 368px; height: 92px; display: flex; }
@@ -1223,18 +1223,22 @@ const ROUND_WORD = QS.get("round") || "LAUF";
 const RACE_WORD = QS.get("race") || "RENNEN";
 const ROW_WORD = QS.get("row") || "STARTREIHE";
 const VIEW = QS.get("view") || "";
-const ROT = QS.get("rot");                          // e.g. -90: a render seen from above, nose up
+// /row/top: iRacing renders only the side view, so the car is DRAWN from
+// above in the livery's main colours (/car/<idx>/colors)
+const TOP = /\/top\/?$/.test(location.pathname) || QS.get("top") === "1";
+const colors = {};
 const DEMO = QS.get("demo") === "1";
 const hex = v => /^[0-9a-fA-F]{3,8}$/.test(v || "") ? "#" + v : "";
 if (hex(QS.get("head"))) document.documentElement.style.setProperty("--head", hex(QS.get("head")));
 if (hex(QS.get("accent"))) document.documentElement.style.setProperty("--accent", hex(QS.get("accent")));
-if (ROT !== null) document.documentElement.style.setProperty("--rot", (parseFloat(ROT) || 0) + "deg");
 const card = document.getElementById("card");
 const zoom = parseFloat(QS.get("zoom") || "1");
 if (zoom && zoom !== 1) card.style.transform = "scale(" + zoom + ")";
 let debug = QS.get("debug") === "1";
 document.body.classList.toggle("debug", debug);
 
+const DEMO_COLORS = [{ body: "#0c0c0c", accent: "#fc0c0c", trim: "#9c843c" }, { body: "#1aa7a0", accent: "#ffffff", trim: "#111111" },
+  { body: "#ff8a00", accent: "#333333", trim: "#ffffff" }, { body: "#2a4fa0", accent: "#ffffff", trim: "#c0c0c0" }];
 let data = null, pages = [], page = 0, sig = "", manual = !AUTO_PARAM, navSeq = null, timer = null, multi = false;
 
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
@@ -1269,6 +1273,58 @@ function buildPages(rows) {
 function carSrc(r) {
   return DEMO ? "" : "/car/" + r.car_idx + ".png?n=" + encodeURIComponent(r.car_number || "") + (VIEW ? "&view=" + encodeURIComponent(VIEW) : "");
 }
+// GT3-ish car seen from above, nose up (towards the start line)
+function topCar(r, c) {
+  const id = "c" + r.car_idx, num = esc(r.car_number);
+  const fs = num.length > 2 ? 26 : 32;
+  const brand = r.brand ? '<rect x="74" y="74" width="52" height="26" rx="4" fill="#f4f4f6"/>' +
+    '<image href="/brand/' + encodeURIComponent(r.brand) + '" x="78" y="76" width="44" height="22" preserveAspectRatio="xMidYMid meet"/>' : '';
+  const body = "M100 10 C62 10 38 20 33 46 L30 128 C29 158 40 176 42 200 L42 262 C40 284 28 300 28 330 L30 398 C32 418 62 426 100 426 C138 426 168 418 170 398 L172 330 C172 300 160 284 158 262 L158 200 C160 176 171 158 170 128 L167 46 C162 20 138 10 100 10 Z";
+  return '<svg class="topcar" viewBox="0 0 200 440" xmlns="http://www.w3.org/2000/svg">' +
+    '<defs><linearGradient id="sh' + id + '" x1="0" x2="1">' +
+      '<stop offset="0" stop-color="#000" stop-opacity=".45"/><stop offset=".22" stop-color="#000" stop-opacity="0"/>' +
+      '<stop offset=".5" stop-color="#fff" stop-opacity=".10"/><stop offset=".78" stop-color="#000" stop-opacity="0"/>' +
+      '<stop offset="1" stop-color="#000" stop-opacity=".45"/></linearGradient>' +
+      '<clipPath id="cl' + id + '"><path d="' + body + '"/></clipPath></defs>' +
+    // tyres
+    '<g fill="#2b2b2e" stroke="#0a0a0a" stroke-width="2"><rect x="10" y="62" width="30" height="64" rx="7"/><rect x="160" y="62" width="30" height="64" rx="7"/>' +
+    '<rect x="8" y="298" width="32" height="72" rx="7"/><rect x="160" y="298" width="32" height="72" rx="7"/></g>' +
+    // front splitter
+    '<path d="M44 16 L156 16 L162 26 L38 26 Z" fill="#151515"/>' +
+    '<path d="' + body + '" fill="' + c.body + '"/>' +
+    '<g clip-path="url(#cl' + id + ')">' +
+      // livery: accent sweep on both flanks + centre stripes in trim
+      '<path d="M20 120 C70 170 70 260 20 330 L20 360 C84 280 84 170 20 92 Z" fill="' + c.accent + '"/>' +
+      '<path d="M180 120 C130 170 130 260 180 330 L180 360 C116 280 116 170 180 92 Z" fill="' + c.accent + '"/>' +
+      '<rect x="86" y="0" width="7" height="440" fill="' + c.trim + '"/><rect x="107" y="0" width="7" height="440" fill="' + c.trim + '"/>' +
+      '<rect x="0" y="0" width="200" height="440" fill="url(#sh' + id + ')"/>' +
+    '</g>' +
+    // headlights, bonnet vents
+    '<path d="M44 34 L66 28 L64 40 L42 46 Z" fill="#fff6c8" opacity=".9"/><path d="M156 34 L134 28 L136 40 L158 46 Z" fill="#fff6c8" opacity=".9"/>' +
+    '<rect x="58" y="112" width="20" height="26" rx="3" fill="#000" opacity=".35"/><rect x="122" y="112" width="20" height="26" rx="3" fill="#000" opacity=".35"/>' +
+    brand +
+    // windscreen, roof with the number, rear window
+    '<path d="M58 160 C78 150 122 150 142 160 L136 212 C112 206 88 206 64 212 Z" fill="#1b2433"/>' +
+    '<path d="M66 162 C84 156 100 155 110 156 L104 168 C92 168 78 170 68 174 Z" fill="#fff" opacity=".18"/>' +
+    '<rect x="64" y="222" width="72" height="54" rx="8" fill="#f4f4f6"/>' +
+    '<text x="100" y="' + (249 + fs * 0.35) + '" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-weight="900" font-style="italic" font-size="' + fs + '" fill="#111">' + num + '</text>' +
+    '<path d="M64 286 C88 282 112 282 136 286 L132 318 C112 314 88 314 68 318 Z" fill="#1b2433"/>' +
+    // mirrors, rear wing
+    '<ellipse cx="34" cy="172" rx="9" ry="6" fill="' + c.body + '" stroke="#111" stroke-width="2"/><ellipse cx="166" cy="172" rx="9" ry="6" fill="' + c.body + '" stroke="#111" stroke-width="2"/>' +
+    '<rect x="96" y="380" width="8" height="30" fill="#111"/>' +
+    '<rect x="16" y="396" width="168" height="22" rx="4" fill="#161616"/><rect x="16" y="396" width="168" height="6" rx="3" fill="' + c.accent + '"/>' +
+    '<rect x="12" y="388" width="8" height="38" rx="2" fill="#0c0c0c"/><rect x="180" y="388" width="8" height="38" rx="2" fill="#0c0c0c"/>' +
+    '</svg>';
+}
+function loadColors(rows) {
+  rows.forEach(r => {
+    if (colors[r.car_idx] || DEMO) return;
+    colors[r.car_idx] = { body: "#d8d8dc", accent: "#c8202a", trim: "#111111", wait: true };
+    fetch("/car/" + r.car_idx + "/colors", { cache: "no-store" }).then(x => x.json()).then(c => {
+      colors[r.car_idx] = c; if (pages.length) draw();
+    }).catch(() => { delete colors[r.car_idx]; });
+  });
+}
 function slotHtml(r, i, pg) {
   const n = pg.start + i + 1;
   const nm = data.team_event && r.team_name ? r.team_name : r.name;
@@ -1276,13 +1332,17 @@ function slotHtml(r, i, pg) {
   if (!(r.best_time > 0)) { tm = "NO TIME"; none = true; }
   else if (n === 1 || !pg.pole || r.best_time <= pg.pole) tm = fmtLap(r.best_time);
   else tm = "+" + (r.best_time - pg.pole).toFixed(3);
-  const src = carSrc(r);
-  const car = src ? '<img src="' + src + '" alt="" onload="this.classList.add(\'ok\')">' : '<div class="ph"></div>';
+  let car;
+  if (TOP) car = topCar(r, colors[r.car_idx] || DEMO_COLORS[(r.car_idx || 0) % DEMO_COLORS.length]);
+  else {
+    const src = carSrc(r);
+    car = src ? '<img src="' + src + '" alt="" onload="this.classList.add(\'ok\')">' : '<div class="ph"></div>';
+  }
   const brand = r.brand ? '<span class="brand"><img src="/brand/' + encodeURIComponent(r.brand) + '" alt="" onerror="this.parentNode.remove()"></span>' : '';
   const numStyle = multi && r.class_color ? ' style="background:' + r.class_color + '"' : '';
   return '<div class="slot s' + i + ' in" style="animation-delay:' + (i * 0.18) + 's">' +
     '<div class="mark"></div>' +
-    '<div class="carbox ' + (ROT !== null ? 'top' : 'side') + '">' + car + '</div>' +
+    '<div class="carbox ' + (TOP ? 'top' : 'side') + '">' + car + '</div>' +
     '<div class="plate"><div class="pos">' + n + '</div><div class="info">' +
       '<div class="nm">' + esc(nm || "—") + '</div>' +
       '<div class="sub"><span class="num"' + numStyle + '>#' + esc(r.car_number) + '</span>' + brand +
@@ -1301,7 +1361,11 @@ function draw() {
   const pg = pages[page];
   tag.innerHTML = esc(ROW_WORD + " " + pg.row) +
     (multi && pg.cls ? '<span class="cls"' + (pg.color ? ' style="border-left-color:' + pg.color + '"' : '') + '>' + esc(pg.cls) + '</span>' : '');
-  slots.innerHTML = pg.rows.map((r, i) => slotHtml(r, i, pg)).join("");
+  if (TOP) loadColors(pg.rows);
+  const html = pg.rows.map((r, i) => slotHtml(r, i, pg)).join("");
+  const again = slots.dataset.page === String(page);
+  slots.dataset.page = String(page);
+  slots.innerHTML = again ? html.replace(/ in" style="animation-delay:[^"]*"/g, '"') : html;
   document.getElementById("hint").textContent = (manual ? "MANUELL" : "AUTO " + SECS + " s") + " · Reihe " + (page + 1) + "/" + pages.length;
 }
 function go(p) { page = p; draw(); schedule(); }
@@ -1381,28 +1445,6 @@ pollNav(); setInterval(pollNav, 300);
 </script></body></html>
 """
 
-# /row/views: one car rendered in every view number of iRacing's render
-# server, to find the top-down angle on the stream PC (render server only
-# runs with the sim).
-GRID_ROW_VIEWS_HTML = r"""<!DOCTYPE html>
-<html lang="de"><head><meta charset="UTF-8"><title>Render Views</title>
-<style>body{background:#222;color:#eee;font-family:Segoe UI,Arial,sans-serif;margin:16px}
-.w{display:flex;flex-wrap:wrap;gap:12px}.v{background:#333;padding:8px;border-radius:4px;width:300px}
-.v img{width:284px;height:180px;object-fit:contain;background:#444}</style></head><body>
-<h2>iRacing Render: Blickwinkel</h2>
-<p>Welche Nummer zeigt das Auto von oben? Dann in OBS: <code>http://localhost:5001/row?view=NUMMER&amp;rot=-90</code>
-(rot = Drehung, so dass die Nase nach oben zeigt: -90, 90 oder 180).</p>
-<div class="w" id="w"></div>
-<script>
-fetch("/grid").then(r => r.json()).then(d => {
-  const r = (d.grid || [])[0];
-  const w = document.getElementById("w");
-  if (!r) { w.textContent = "Kein Auto im Grid (iRacing läuft?)"; return; }
-  for (let v = 0; v <= 9; v++)
-    w.insertAdjacentHTML("beforeend", '<div class="v"><b>view=' + v + '</b><br><img src="/car/' + r.car_idx + '.png?view=' + v + '" alt="—"></div>');
-});
-</script></body></html>
-"""
 
 
 @app.route("/")
@@ -1425,9 +1467,19 @@ def row_page():
     return Response(GRID_ROW_HTML, mimetype="text/html")
 
 
-@app.route("/row/views")
-def row_views():
-    return Response(GRID_ROW_VIEWS_HTML, mimetype="text/html")
+@app.route("/row/top")
+def row_top():
+    # same page, cars drawn from above in the livery colours
+    return Response(GRID_ROW_HTML, mimetype="text/html")
+
+
+@app.route("/car/<int:cidx>/colors")
+def car_colors(cidx: int):
+    # body / accent / trim for the drawn top-down car on /row/top
+    d = poller.raw.get(cidx)
+    if not d:
+        return jsonify({"body": "#d8d8dc", "accent": "#c8202a", "trim": "#111111", "source": "none"})
+    return jsonify(livery_colors(d, team=bool(poller.get().get("team_event"))))
 
 
 @app.route("/car/<int:cidx>.png")
@@ -1497,7 +1549,7 @@ if __name__ == "__main__":
     print("  (Runs in parallel to iracing_dashboard.py on port 5000)")
     print("  Pages: auto every ?secs=10 s, or Stream Deck /nav/next | prev | first | auto")
     print("  With car liveries: http://localhost:5001/cars  (?view=0..3 render angle)")
-    print("  One grid row at a time: http://localhost:5001/row  (angles: /row/views)")
+    print("  One grid row at a time: http://localhost:5001/row  (drawn from above: /row/top)")
     print("  Old design: http://localhost:5001/?style=classic")
     print("  Press Ctrl+C to stop")
     print("=" * 60 + "\n")

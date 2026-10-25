@@ -80,6 +80,18 @@ try:
     opaque = Image.new("RGB", (50, 20), (9, 9, 9)); b2 = io.BytesIO(); opaque.save(b2, "PNG")
     check("R2 no alpha -> unchanged", cr.trim(b2.getvalue()) == b2.getvalue())
     check("R3 not an image -> unchanged", cr.trim(b"CAR") == b"CAR")
+    # paint colours: big black body, red stripes, template grey + dull brown
+    # background (not livery) must not become the accent
+    pi = Image.new("RGBA", (400, 400), (0, 0, 0, 0))
+    pi.paste((10, 10, 10, 255), (0, 120, 380, 360))
+    pi.paste((250, 10, 10, 255), (0, 300, 380, 330))
+    pi.paste((110, 110, 135, 255), (0, 200, 380, 260))
+    pi.paste((85, 60, 60, 255), (0, 330, 380, 360))
+    pi.paste((160, 135, 60, 255), (0, 290, 380, 300))
+    b3 = io.BytesIO(); pi.save(b3, "PNG"); b3.seek(0)
+    pc = cr.paint_colors(b3)
+    check("R4 paint colours: body black, accent red, then gold", len(pc) == 3 and pc[0].startswith("#0") and pc[1] == "#fc0c0c" and pc[2] == "#9c843c", str(pc))
+    check("R5 not an image -> []", cr.paint_colors(io.BytesIO(b"x")) == [])
 except ImportError:
     print("[SKIP] trim checks (no Pillow)")
 
@@ -98,7 +110,10 @@ check("G5 /brand unknown 404", c.get("/brand/zzz").status_code == 404)
 check("G6 default page unchanged", b"/grid" in c.get("/").data)
 rp = c.get("/row").data
 check("G7 /row page: one grid row, livery + nav", b"STARTREIHE" in rp and b"/car/" in rp and b"/nav" in rp)
-check("G8 /row/views angle finder", b"view=" in c.get("/row/views").data)
+check("G8 /row/top drawn from above", b"topCar" in c.get("/row/top").data)
+col = c.get("/car/3/colors").get_json()
+check("G9 colours from CarDesignStr", (col["body"], col["accent"], col["trim"], col["source"]) == ("#1aa7a0", "#ffffff", "#111111", "design"), str(col))
+check("G10 unknown car -> default colours", c.get("/car/9/colors").get_json()["source"] == "none")
 
 # ---- standings tower /cars (5005) -------------------------------------------
 import iracing_standings as st
