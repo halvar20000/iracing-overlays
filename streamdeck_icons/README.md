@@ -124,6 +124,10 @@ URL wie unten. Das Dashboard (Port 5000) muss laufen.
 | `show_next.png` | `http://localhost:5000/streamdeck/show_next` — nächster Moderations-Abschnitt |
 | `show_stop.png` | `http://localhost:5000/streamdeck/show_stop` — Moderation abbrechen |
 | `ask.png` | `http://localhost:5000/streamdeck/ask` — Frag Claude: drücken = Frage stellen, nochmal drücken = Antwort (FRAG_CLAUDE.md) |
+| `grid_next.png` | `http://localhost:5001/nav/next` — Startaufstellung: nächste Seite (schaltet das automatische Blättern aus) |
+| `grid_prev.png` | `http://localhost:5001/nav/prev` — Startaufstellung: Seite zurück |
+| `grid_first.png` | `http://localhost:5001/nav/first` — Startaufstellung: Seite 1 |
+| `grid_auto.png` | `http://localhost:5001/nav/auto` — Startaufstellung: automatisch blättern an/aus (grau: `dashboard_off/grid_auto.png`) |
 
 ## Seiten als Fenster öffnen (z. B. auf dem Hochkant-Monitor)
 

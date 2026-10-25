@@ -53,7 +53,7 @@ Loader-Datei verwenden).
 |---|---|---|---|
 | Quali-Delta (zur Pole) | 5014 | `delta.html` | ≈ 480 × 160 |
 | Quali-Delta (zur eigenen Bestzeit) | 5014 `/own` | `delta_own.html` | ≈ 480 × 160 |
-| Startaufstellung | 5001 | `grid.html` | ≈ 920 × 1000 |
+| Startaufstellung | 5001 | `grid.html` | 900 × 620 (`?zoom=` skaliert; Seiten per Stream Deck `5001/nav/next`) |
 | Beste Sektoren + theoretische Bestzeit | 5014 `/sectors` | `sectors.html` | ✓ 456 × 280 (3 Sektoren; +40 px je weiterem Sektor) |
 
 ## Vor dem Rennen / Moderatoren-Bildschirm (Daten aus CLS, deckende Panels)

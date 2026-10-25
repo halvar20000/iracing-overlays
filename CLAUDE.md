@@ -178,6 +178,31 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 25, 2026 (grid 5001 — WCT broadcast look, pages by Stream Deck):**
+Thomas sent the WCT "STARTING GRID" graphic (LAUF 5 - CAS GT3 WCT -
+INDIANAPOLIS RC) and wanted ours to look like it, paged by hand instead of
+the auto-scroll. NEW default page `GRID_HTML` (900 × 620, ?zoom=): blue
+STARTING GRID tab + title bar, orange rule, class tab(s) + page boxes
+("1–8", "9–16") on the left, two staggered columns of 4 (pos box + name over
+an orange line, blue car-number box + italic quali time / NO TIME), league
+logo at the bottom from CLS `https://league.simracing-hub.com/logos/<slug>.webp`
+(?logo=<url>|0), translucent veil (?veil=0). Title = "LAUF n[ · RENNEN 2] -
+<league> - <TrackDisplayShortName config>" from 5010 /api/roundinfo
+(`EventInfo` thread, 30 s; 5010 off = track only; ?title= / ?round= / ?race=
+override). Team event → team name; multiclass → one page set per class in
+grid order, numbers = CLASS grid position, class colour on the tab
+(class_colors). Pages of ?per=8: AUTO every ?secs=10 s, or by hand —
+`PageNav` on the server, `/nav/next|prev|first|auto|auto_on|auto_off` (Stream
+Deck Website action in background; icons dashboard/grid_next/_prev/_first/
+_auto (+ off)); next/prev/first switch to MANUAL (kept across page reloads)
+until auto; each open page polls /nav (300 ms) and applies each seq once
+(commands older than the page are ignored); keys → / ← / Home / A in the page
+send the same commands. Back to page 1 whenever OBS shows the source. Old
+design at `/?style=classic` (GRID_HTML_CLASSIC). Rendered 1-class (WCT) +
+3-class team field; nav tested in Chromium over CDP against a running server
+(SD next / wrap / prev / stays manual 11 s / first / key → / key A). Highlight
+reel grid scene (20 s) now shows page 1 then page 2. Restart 5001.
+
 **October 25, 2026 (NEW overlay `iracing_rc_banner.py` — Race Control
 banner, tag "rcmsg", port 5019):** Thomas: the stewards' race control
 software (iRaceControl, iracecontrol.com — used for IEC and GT3 WCT) writes

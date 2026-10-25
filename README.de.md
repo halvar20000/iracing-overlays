@@ -11,7 +11,7 @@ Alle Telemetriedaten werden lokal über `pyirsdk` aus dem iRacing SDK gelesen. E
 | Overlay | Skript | Port | Was es zeigt |
 |---|---|---|---|
 | Dashboard | `iracing_dashboard.py` | 5000 | Operator-Dashboard: Live-Telemetrie, Kamerasteuerung, Incident- & Overtake-Erkennung mit Auto-Replay |
-| Grid | `iracing_grid.py` | 5001 | Qualifying-Grid mit farbigen Auto-Silhouetten |
+| Grid | `iracing_grid.py` | 5001 | Startaufstellung im WCT-Look, Seiten zu 8 (automatisch oder per Stream Deck) |
 | Results | `iracing_results.py` | 5002 | Komplettes Rennergebnis (Abstände, Incidents, schnellste Runde) |
 | Results Lite | `iracing_results_lite.py` | 5003 | Minimales Ergebnis-Overlay |
 | Live Indicator | `iracing_live_indicator.py` | 5004 | LIVE- / REPLAY-Badge |

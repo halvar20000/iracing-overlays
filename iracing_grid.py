@@ -3,18 +3,24 @@ iRacing Qualifying Grid Display (v2)
 ------------------------------------
 Standalone companion to iracing_dashboard.py.
 
-v2 adds:
-  - Tighter column spacing
-  - Stylized car silhouette next to each driver, tinted with their
-    paint colors decoded from DriverInfo.CarDesignStr
+Default page (2026-10-25): the starting grid in the WCT broadcast look,
+pages of 8 — automatic (?secs=10) or by hand: Stream Deck
+http://localhost:5001/nav/next | prev | first | auto, keys → ← Home A.
+Options: ?auto=0 ?per= ?zoom= ?title= ?round=LAUF ?race=RENNEN ?logo=<url>|0
+?veil=0 ?debug=1 (H) ?demo=1. Old purple card: /?style=classic.
 
 Requirements:  pip install pyirsdk flask
 Run:           python iracing_grid.py
 Open:          http://localhost:5001
 """
 
+import json
 import threading
-from flask import Flask, jsonify, render_template_string
+import time
+import urllib.request
+from flask import Flask, Response, jsonify, render_template_string, request
+
+from class_colors import class_colors
 
 from iracing_sdk_base import SDKPoller, setup_utf8_stdout
 setup_utf8_stdout()
@@ -30,6 +36,7 @@ class GridPoller(SDKPoller):
     def _driver_map(self) -> dict:
         info = self.ir["DriverInfo"] or {}
         out = {}
+        ccol = class_colors(info.get("Drivers") or [])
         for d in info.get("Drivers", []) or []:
             cidx = d.get("CarIdx")
             if cidx is None:
@@ -46,6 +53,9 @@ class GridPoller(SDKPoller):
                 "irating":    d.get("IRating", 0) or 0,
                 "license":    d.get("LicString", "") or "",
                 "team_name":  d.get("TeamName", "") or "",
+                "class_id":   int(d.get("CarClassID") or 0),
+                "class_name": d.get("CarClassShortName") or "",
+                "class_color": ccol.get(int(d.get("CarClassID") or 0), ""),
                 "is_spectator": bool(d.get("IsSpectator", 0)),
             }
         return out
@@ -194,16 +204,87 @@ class GridPoller(SDKPoller):
                 })
 
         rows.sort(key=lambda d: (d["position"] == 0, d["position"]))
+        # single-class hosted sessions send an empty class name: one car
+        # model -> its name, else "GRID"
+        if rows and not any(r["class_name"] for r in rows):
+            cars = {r["car"] for r in rows}
+            label = next(iter(cars)) if len(cars) == 1 else "GRID"
+            for r in rows:
+                r["class_name"] = label
+
+        races = [n for n, _ in self._race_sessions(sessions)]
+        try:
+            race_no = races.index(int(race.get("SessionNum"))) + 1 if race else 0
+        except (TypeError, ValueError):
+            race_no = 0
 
         return {
             "connected":    True,
             "source":       source,
             "track":        weekend.get("TrackDisplayName", ""),
+            "track_short":  weekend.get("TrackDisplayShortName", "") or weekend.get("TrackDisplayName", ""),
             "track_config": weekend.get("TrackConfigName", ""),
+            "team_event":   str(weekend.get("TeamRacing", 0)) == "1",
+            "race_no":      race_no,
+            "races":        len(races),
             "num_cars":     len(rows),
             "grid":         rows,
         }
 
+
+
+class EventInfo:
+    """League + round for the title ("LAUF 5 - CAS GT3 WCT - …") from the
+    championship server (5010 /api/roundinfo: it detects the league from the
+    grid and knows a replayed earlier round). 5010 not running = no title
+    parts, the track name alone."""
+    URL = "http://127.0.0.1:5010/api/roundinfo"
+
+    def __init__(self):
+        self.data = {}
+
+    def run(self):
+        while True:
+            try:
+                with urllib.request.urlopen(self.URL, timeout=8) as r:
+                    d = json.loads(r.read().decode("utf-8"))
+                info = (d.get("info") or {}) if d.get("ok") else {}
+                league = info.get("league") or {}
+                self.data = {"league": league.get("name") or "", "slug": league.get("slug") or "",
+                             "round": (info.get("nextRound") or {}).get("number")} if league else {}
+            except Exception:
+                self.data = {}
+            time.sleep(30)
+
+
+class PageNav:
+    """Page commands from a Stream Deck / keyboard: every command gets a new
+    seq; each open grid page applies it once. `manual` stops the automatic
+    page change (also after a page reload) until "auto" is sent."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.state = {"seq": 0, "cmd": "", "manual": False}
+
+    def send(self, cmd):
+        with self._lock:
+            st = self.state
+            if cmd == "auto":                         # toggle
+                st["manual"] = not st["manual"]
+            elif cmd in ("auto_on", "auto_off"):
+                st["manual"] = cmd == "auto_off"
+            else:                                     # next / prev / first
+                st["manual"] = True
+            st["seq"] += 1
+            st["cmd"] = cmd
+            return dict(st)
+
+    def get(self):
+        with self._lock:
+            return dict(self.state)
+
+
+NAV_CMDS = ("next", "prev", "first", "auto", "auto_on", "auto_off")
 
 
 # -----------------------------------------------------------------------------
@@ -211,6 +292,8 @@ class GridPoller(SDKPoller):
 # -----------------------------------------------------------------------------
 app = Flask(__name__)
 poller = GridPoller()
+event = EventInfo()
+nav = PageNav()
 
 
 @app.after_request
@@ -226,7 +309,7 @@ def _no_cache(resp):
     return resp
 
 
-GRID_HTML = """
+GRID_HTML_CLASSIC = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -618,14 +701,261 @@ tick();
 """
 
 
+# Starting grid in the broadcast look of the WCT graphics (2026-10-25,
+# Thomas's screenshot "LAUF 5 - CAS GT3 WCT - INDIANAPOLIS RC"): blue
+# STARTING GRID tab + title bar, orange rule, class tab + page boxes on the
+# left, two staggered columns of 4 (pos box + name over an orange line, car
+# number + quali time), league logo at the bottom. Pages of ?per=8 instead
+# of the old scroll: automatic every ?secs=10 s, or by hand via the Stream
+# Deck (/nav/next | prev | first | auto) or the keys → ← Home A.
+GRID_HTML = r"""<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><title>Starting Grid</title>
+<style>
+:root { --blue: #3d8be8; --blue-d: #2a6fc4; --orange: #f2a531; --slot: rgba(44,44,50,.92);
+        --slot2: rgba(58,58,64,.88); --box: rgba(24,24,28,.96); --text: #f4f4f6; --muted: #d0d0d8; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: rgba(0,0,0,0); overflow: hidden; }
+body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; color: var(--text); }
+body.debug { background: #3a4a3a; }
+.card { position: relative; width: 900px; height: 620px; padding: 16px 26px 0; transform-origin: 0 0; }
+.card.veil { background: rgba(8,8,12,.55); }
+.top { display: flex; gap: 12px; height: 34px; }
+.tab { width: 200px; background: var(--blue); border-radius: 3px; display: flex; align-items: center;
+       justify-content: center; font-size: 18px; font-weight: 800; font-style: italic; letter-spacing: .5px;
+       box-shadow: 0 1px 0 rgba(255,255,255,.25) inset; }
+.title { flex: 1; min-width: 0; background: rgba(36,36,42,.88); display: flex; align-items: center; justify-content: center;
+         font-size: 18px; font-weight: 800; letter-spacing: .4px; white-space: nowrap; overflow: hidden;
+         text-overflow: ellipsis; padding: 0 14px; }
+.rule { height: 3px; background: var(--orange); margin: 10px 0 18px; }
+.main { display: flex; gap: 0; height: 410px; }
+.side { width: 76px; display: flex; flex-direction: column; gap: 6px; }
+.ctab { height: 22px; border-radius: 3px; background: var(--blue-d); opacity: .55; font-size: 11px; font-weight: 800;
+        display: flex; align-items: center; justify-content: center; white-space: nowrap; overflow: hidden;
+        padding: 0 4px; border-left: 4px solid transparent; }
+.ctab.on { background: var(--blue); opacity: 1; }
+.pbox { height: 20px; border-radius: 3px; background: var(--blue); opacity: .45; font-size: 10px; font-weight: 700;
+        display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,.85); transition: opacity .3s; }
+.pbox.on { opacity: 1; box-shadow: 0 0 0 2px rgba(255,255,255,.85) inset; color: #fff; }
+.cols { flex: 1; display: flex; gap: 30px; padding-left: 104px; }
+.col { width: 222px; display: flex; flex-direction: column; gap: 20px; }
+.col.right { padding-top: 30px; }
+.slot { height: 70px; }
+.slot.empty { visibility: hidden; }
+.r1, .r2 { display: flex; height: 33px; }
+.r1 { border-bottom: 3px solid var(--orange); margin-bottom: 1px; }
+.pos, .num { width: 34px; flex: none; display: flex; align-items: center; justify-content: center;
+             font-size: 15px; font-weight: 800; }
+.pos { background: var(--box); }
+.num { background: var(--blue); border-radius: 0 0 0 2px; }
+.name { flex: 1; min-width: 0; background: var(--slot); display: flex; align-items: center; justify-content: center;
+        font-size: 14px; font-weight: 800; letter-spacing: .3px; text-transform: uppercase; padding: 0 8px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.name span { overflow: hidden; text-overflow: ellipsis; }
+.time { flex: 1; background: var(--slot2); display: flex; align-items: center; justify-content: center;
+        font-size: 14px; font-style: italic; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+.time.none { font-style: normal; font-size: 11px; letter-spacing: 1px; color: #9a9aa4; }
+.slot.in { animation: slotIn .45s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes slotIn { from { opacity: 0; transform: translateX(-18px); } to { opacity: 1; transform: none; } }
+.foot { position: absolute; left: 0; right: 0; bottom: 0; height: 120px; border-top: 2px solid rgba(255,255,255,.08);
+        display: flex; align-items: center; justify-content: center; }
+.foot .lb { height: 96px; padding: 10px 40px; background: rgba(30,30,34,.85); display: flex; align-items: center; }
+.foot img { max-height: 76px; max-width: 420px; }
+.empty-msg { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 700;
+             color: #c8c8d0; background: rgba(36,36,42,.7); }
+.hint { position: absolute; right: 8px; bottom: 4px; font-size: 11px; color: #ffd166; display: none; }
+body.debug .hint { display: block; }
+</style></head>
+<body>
+<div class="card" id="card">
+  <div class="top"><div class="tab">STARTING GRID</div><div class="title" id="title">—</div></div>
+  <div class="rule"></div>
+  <div class="main" id="main"></div>
+  <div class="foot" id="foot"><div class="lb"><img id="logo" alt=""></div></div>
+  <div class="hint" id="hint"></div>
+</div>
+<script>
+const QS = new URLSearchParams(location.search);
+const PER = Math.max(2, parseInt(QS.get("per") || "8", 10));
+const SECS = Math.max(2, parseFloat(QS.get("secs") || "10"));
+const AUTO_PARAM = QS.get("auto") !== "0";
+const ROUND_WORD = QS.get("round") || "LAUF";
+const RACE_WORD = QS.get("race") || "RENNEN";
+const card = document.getElementById("card");
+if (QS.get("veil") !== "0") card.classList.add("veil");
+const zoom = parseFloat(QS.get("zoom") || "1");
+if (zoom && zoom !== 1) card.style.transform = "scale(" + zoom + ")";
+let debug = QS.get("debug") === "1";
+document.body.classList.toggle("debug", debug);
+
+let data = null, pages = [], page = 0, sig = "", manual = !AUTO_PARAM, navSeq = null, timer = null;
+
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function fmtLap(sec) {
+  if (!sec || sec <= 0) return "";
+  const m = Math.floor(sec / 60), s = (sec - m * 60).toFixed(3).padStart(6, "0");
+  return m + ":" + s;
+}
+function title(d) {
+  if (QS.get("title")) return QS.get("title");
+  const ev = d.event || {}, parts = [];
+  if (ev.round) parts.push(ROUND_WORD + " " + ev.round + (d.races > 1 && d.race_no > 1 ? " · " + RACE_WORD + " " + d.race_no : ""));
+  if (ev.league) parts.push(ev.league);
+  const trk = [d.track_short || d.track, d.track_config].filter(Boolean).join(" ");
+  if (trk) parts.push(trk);
+  return parts.join(" - ").toUpperCase() || "—";
+}
+function buildPages(rows) {
+  const order = [], by = {};
+  rows.forEach(r => {
+    const k = r.class_id || 0;
+    if (!by[k]) { by[k] = []; order.push(k); }
+    by[k].push(r);
+  });
+  const out = [];
+  order.forEach(k => {
+    const list = by[k];
+    for (let i = 0; i < list.length; i += PER)
+      out.push({ cls: k, name: list[0].class_name || "GRID", color: list[0].class_color || "",
+                 rows: list.slice(i, i + PER), from: i + 1, to: Math.min(i + PER, list.length), classStart: i });
+  });
+  return { pages: out, classes: order.map(k => ({ id: k, name: by[k][0].class_name || "GRID", color: by[k][0].class_color || "" })) };
+}
+let classes = [];
+function slotHtml(r, n, i) {
+  if (!r) return '<div class="slot empty"></div>';
+  const nm = data.team_event && r.team_name ? r.team_name : r.name;
+  const t = fmtLap(r.best_time);
+  return '<div class="slot in" style="animation-delay:' + (i * 0.06).toFixed(2) + 's">' +
+    '<div class="r1"><div class="pos">' + n + '</div><div class="name"' + (String(nm || "").length > 19 ? ' style="font-size:12px"' : '') + '><span>' + esc(nm || "—") + '</span></div></div>' +
+    '<div class="r2"><div class="num">' + esc(r.car_number) + '</div>' +
+    (t ? '<div class="time">' + t + '</div>' : '<div class="time none">NO TIME</div>') + '</div></div>';
+}
+function draw() {
+  const main = document.getElementById("main");
+  if (!pages.length) {
+    main.innerHTML = '<div class="empty-msg">' + (data && data.connected ? "Noch kein Startgrid" : "Warte auf iRacing …") + '</div>';
+    return;
+  }
+  page = ((page % pages.length) + pages.length) % pages.length;
+  const pg = pages[page];
+  const multi = classes.length > 1;
+  let side = classes.map(c => '<div class="ctab' + (c.id === pg.cls ? ' on' : '') + '"' +
+      (multi && c.color ? ' style="border-left-color:' + c.color + '"' : '') + '>' + esc(c.name) + '</div>').join("");
+  pages.forEach((p, i) => { if (p.cls === pg.cls) side += '<div class="pbox' + (i === page ? ' on' : '') + '">' + p.from + "–" + p.to + '</div>'; });
+  // class grid position (= overall in a single-class field)
+  const L = [], R = [];
+  for (let i = 0; i < PER; i++) {
+    const r = pg.rows[i], n = pg.classStart + i + 1;
+    (i % 2 === 0 ? L : R).push(slotHtml(r, multi ? n : (r ? r.position : n), i));
+  }
+  main.innerHTML = '<div class="side">' + side + '</div><div class="cols"><div class="col">' + L.join("") +
+                   '</div><div class="col right">' + R.join("") + '</div></div>';
+  document.getElementById("hint").textContent = (manual ? "MANUELL" : "AUTO " + SECS + " s") + " · Seite " + (page + 1) + "/" + pages.length;
+}
+function go(p) { page = p; draw(); schedule(); }
+function schedule() {
+  clearTimeout(timer);
+  if (!manual && pages.length > 1) timer = setTimeout(() => go(page + 1), SECS * 1000);
+}
+async function tick() {
+  try {
+    data = await (await fetch("/grid", { cache: "no-store" })).json();
+  } catch (e) { return; }
+  document.getElementById("title").textContent = title(data);
+  const logo = document.getElementById("logo"), foot = document.getElementById("foot");
+  const src = QS.get("logo") === "0" ? "" : (QS.get("logo") ||
+      (data.event && data.event.slug ? "https://league.simracing-hub.com/logos/" + data.event.slug + ".webp" : ""));
+  if (!src) foot.style.visibility = "hidden";
+  else if (logo.dataset.src !== src) {
+    logo.dataset.src = src; foot.style.visibility = "hidden";
+    logo.onload = () => foot.style.visibility = ""; logo.onerror = () => foot.style.visibility = "hidden";
+    logo.src = src;
+  }
+  const rows = data.grid || [];
+  const s = (data.team_event ? "T" : "") + rows.map(r => r.car_idx + ":" + r.position + ":" + (r.best_time || 0).toFixed(3) + ":" + r.class_id + ":" + r.name + ":" + r.team_name).join("|");
+  if (s === sig) return;
+  const first = sig === "";
+  sig = s;
+  const b = buildPages(rows);
+  pages = b.pages; classes = b.classes;
+  if (first) page = 0;
+  draw(); if (first) schedule();
+}
+async function pollNav() {
+  let st;
+  try { st = await (await fetch("/nav", { cache: "no-store" })).json(); } catch (e) { return; }
+  const wasManual = manual;
+  manual = !AUTO_PARAM || st.manual;
+  if (navSeq === null) { navSeq = st.seq; if (manual !== wasManual) schedule(); draw(); return; }  // older commands: not ours
+  if (st.seq !== navSeq) {
+    navSeq = st.seq;
+    if (st.cmd === "next") return go(page + 1);
+    if (st.cmd === "prev") return go(page - 1);
+    if (st.cmd === "first") return go(0);
+  }
+  if (manual !== wasManual) { schedule(); draw(); }
+}
+function send(cmd) { fetch("/nav/" + cmd, { method: "POST" }).then(pollNav).catch(() => {}); }
+document.addEventListener("keydown", e => {
+  const k = e.key;
+  if (k === "h" || k === "H") { debug = !debug; document.body.classList.toggle("debug", debug); }
+  else if (k === "ArrowRight" || k === "PageDown" || k === " " || k === "n" || k === "N") send("next");
+  else if (k === "ArrowLeft" || k === "PageUp" || k === "p" || k === "P") send("prev");
+  else if (k === "Home" || k === "1") send("first");
+  else if (k === "a" || k === "A") send("auto");
+  else return;
+  e.preventDefault();
+});
+// back to page 1 every time OBS shows the source (auto and manual)
+function restart() { if (pages.length) go(0); }
+window.addEventListener("obsSourceVisibleChanged", e => { if (!e.detail || e.detail.visible) restart(); });
+window.addEventListener("obsSourceActiveChanged", e => { if (!e.detail || e.detail.active) restart(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) restart(); });
+if (QS.get("demo") === "1") {
+  window.fetch = (u => async (url, o) => {
+    if (String(url).startsWith("/grid")) {
+      const names = ["Maurice Becker","Yannick Wonnenberg","Mike Zocher","Dennis Richter","Marius Becker","Tim Freudling","Andre Brechmann","Andreas Bastian","Remo Cursio","Bastian Kübler","Finn Zhou","Sven Maier"];
+      const nums = ["49","03","01","63","14","11","82","921","7","22","5","31"];
+      return { json: async () => ({ connected: true, source: "qualifying", track_short: "Indianapolis", track_config: "Road Course",
+        races: 1, race_no: 1, team_event: false, event: { league: "CAS GT3 WCT", slug: "cas-gt3-wct", round: 5 },
+        grid: names.map((n, i) => ({ car_idx: i, position: i + 1, name: n, car_number: nums[i], best_time: 82.563 + i * 0.1 + (i % 3) * 0.031,
+          class_id: 1, class_name: "GT3 2025", class_color: "", team_name: "" })) }) };
+    }
+    if (String(url).startsWith("/nav")) return { json: async () => ({ seq: 0, cmd: "", manual: false }) };
+    return u(url, o);
+  })(window.fetch);
+}
+tick(); setInterval(tick, 2000);
+pollNav(); setInterval(pollNav, 300);
+</script></body></html>
+"""
+
+
 @app.route("/")
 def index():
-    return render_template_string(GRID_HTML)
+    # ?style=classic = the old purple card with auto-scroll
+    if request.args.get("style") == "classic":
+        return render_template_string(GRID_HTML_CLASSIC)
+    return Response(GRID_HTML, mimetype="text/html")
 
 
 @app.route("/grid")
 def grid():
-    return jsonify(poller.get())
+    return jsonify({**poller.get(), "event": event.data})
+
+
+@app.route("/nav")
+def nav_state():
+    return jsonify(nav.get())
+
+
+# Stream Deck "Website" action (access in background) or the page's own keys:
+# /nav/next, /nav/prev, /nav/first, /nav/auto (toggle), /nav/auto_on, /nav/auto_off
+@app.route("/nav/<cmd>", methods=["GET", "POST"])
+def nav_cmd(cmd):
+    if cmd not in NAV_CMDS:
+        return jsonify({"ok": False, "error": "unknown command"}), 404
+    return jsonify({"ok": True, **nav.send(cmd)})
 
 
 # -----------------------------------------------------------------------------
@@ -634,12 +964,14 @@ def grid():
 if __name__ == "__main__":
     t = threading.Thread(target=poller.run, daemon=True)
     t.start()
+    threading.Thread(target=event.run, daemon=True).start()
 
     print("\n" + "=" * 60)
     print("  iRacing Qualifying Grid Display v2")
     print("  Open in browser:  http://localhost:5001")
     print("  (Runs in parallel to iracing_dashboard.py on port 5000)")
-    print("  Press H in the browser for Stream mode (transparent bg)")
+    print("  Pages: auto every ?secs=10 s, or Stream Deck /nav/next | prev | first | auto")
+    print("  Old design: http://localhost:5001/?style=classic")
     print("  Press Ctrl+C to stop")
     print("=" * 60 + "\n")
 

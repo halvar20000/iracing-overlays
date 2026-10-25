@@ -102,9 +102,10 @@ Dashboards. Nach „Szenen wählen“ steht dann „ready (gespeichert, kostenlo
   Dateigröße“); im erweiterten Modus einen eigenen Video-Encoder statt „Stream-Encoder
   verwenden“. Sonst bricht der Start mit diesem Hinweis ab — OBS würde das Spulen
   zwischen den Szenen mit aufnehmen.
-- **Startaufstellung**: die Grafik (Grid-Overlay 5001) zeigt beim Einblenden zuerst
-  10 s still die ersten Plätze, dann scrollt sie (`?hold=` = andere Sekundenzahl);
-  die Szene dauert 20 s.
+- **Startaufstellung**: die Grafik (Grid-Overlay 5001) beginnt beim Einblenden auf
+  Seite 1 (Plätze 1–8) und blättert nach 10 s weiter (`?secs=` = andere
+  Sekundenzahl); die Szene dauert 20 s. Wurde vorher per Stream Deck auf
+  „manuell“ geschaltet, bleibt sie auf Seite 1 (Taste „Grid Auto“ = wieder automatisch).
 - Das Replay darf in einer anderen Session stehen (z. B. Training): der Sprung ins
   Rennen dauert ~2–3 s, das Dashboard wartet ihn ab.
 - OBS darf beim Start nicht schon aufnehmen (sonst Abbruch mit Meldung).

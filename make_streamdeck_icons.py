@@ -217,6 +217,11 @@ DASH_ICONS = [
     ("show_stop",         "auto",   "stop",        "Moderation Stopp",  "show_stop"),
     # Frag Claude (race_qa.py): press = listen, press again = answer
     ("ask",               "auto",   "mic",         "Frag Claude",       "ask"),
+    # Startaufstellung (grid 5001): pages by hand, http://localhost:5001/nav/<cmd>
+    ("grid_next",         "quali",  "next",        "Grid weiter",       "5001/nav/next"),
+    ("grid_prev",         "quali",  "prev",        "Grid zurück",       "5001/nav/prev"),
+    ("grid_first",        "quali",  "grid",        "Grid Seite 1",      "5001/nav/first"),
+    ("grid_auto",         "quali",  "clock",       "Grid Auto",         "5001/nav/auto"),
     # PAGES, not /streamdeck commands: Website action without "background"
     ("ot_panel",          "tool",   "overtake",    "Überhol Fenster",   "/overtakes/panel"),
     ("cam_panel",         "tool",   "camera",      "Kamera Fenster",    "/cameras/panel"),
@@ -269,7 +274,7 @@ OFF_COLOR = "#949494"
 BG_ON = ("#262633", "#14141c")
 BG_OFF = ("#202020", "#111111")
 # dashboard commands that toggle something get an off picture too
-DASH_TOGGLES = {"auto_follow", "auto_replay", "auto_replay_ot", "hide_ui", "regie"}
+DASH_TOGGLES = {"auto_follow", "auto_replay", "auto_replay_ot", "hide_ui", "regie", "grid_auto"}
 
 
 def render_html(cat, glyph, label, off=False):
