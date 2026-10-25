@@ -68,6 +68,21 @@ with tempfile.TemporaryDirectory() as td:
     r2 = cr.CarRenderer(get=lambda u, timeout: next(flaky), root=root)
     check("C4 failure not cached (self-heals)", r2.render(DRV) is None and r2.render(DRV) == b"PNG")
 
+# ---- trim: transparent margin around the car is cut off ----------------------
+try:
+    import io
+    from PIL import Image
+    im = Image.new("RGBA", (400, 200), (0, 0, 0, 0))
+    im.paste((200, 0, 0, 255), (100, 80, 300, 140))
+    b = io.BytesIO(); im.save(b, "PNG")
+    out = Image.open(io.BytesIO(cr.trim(b.getvalue(), pad=4)))
+    check("R1 trim crops to the car + pad", out.size == (208, 68), str(out.size))
+    opaque = Image.new("RGB", (50, 20), (9, 9, 9)); b2 = io.BytesIO(); opaque.save(b2, "PNG")
+    check("R2 no alpha -> unchanged", cr.trim(b2.getvalue()) == b2.getvalue())
+    check("R3 not an image -> unchanged", cr.trim(b"CAR") == b"CAR")
+except ImportError:
+    print("[SKIP] trim checks (no Pillow)")
+
 # ---- grid server -----------------------------------------------------------
 import iracing_grid as g
 g.renderer = cr.CarRenderer(get=lambda u, timeout: Resp(body=b"CAR"))
@@ -81,6 +96,18 @@ check("G3 unknown car 404", c.get("/car/9.png").status_code == 404)
 check("G4 /brand bmw", c.get("/brand/bmw").status_code == 200)
 check("G5 /brand unknown 404", c.get("/brand/zzz").status_code == 404)
 check("G6 default page unchanged", b"/grid" in c.get("/").data)
+
+# ---- standings tower /cars (5005) -------------------------------------------
+import iracing_standings as st
+st.car_renderer = cr.CarRenderer(get=lambda u, timeout: Resp(body=b"CAR"))
+st.poller.raw = {3: DRV}
+sc = st.app.test_client()
+tp = sc.get("/cars").data
+check("S1 tower /cars page has the livery switch", b"SHOW_CARS" in tp and b"/car/" in tp)
+check("S2 /cars/nodelta served", sc.get("/cars/nodelta").status_code == 200)
+r5 = sc.get("/car/3.png")
+check("S3 tower /car render", r5.status_code == 200 and r5.data == b"CAR")
+check("S4 tower unknown car 404", sc.get("/car/7.png").status_code == 404)
 
 print()
 print("ALL PASS" if not failures else f"FAILURES: {failures}")

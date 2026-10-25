@@ -17,6 +17,8 @@ Loader-Datei verwenden).
 | Overlay | Port / Pfad | Loader-Datei | Größe (B × H) |
 |---|---|---|---|
 | Standings Tower | 5005 `/` | `standings.html` | ✓ 456 × 640 (22 Fahrer; +25 px je Fahrer). Große Felder: URL-Quelle `http://localhost:5005/?rows=25` = Top 24 + Auto der Kamera ≈ 456 × 720 |
+| Standings Tower mit Autos (Lackierung statt Markenlogo) | 5005 `/cars` | `standings_cars.html` | ≈ 498 × 640 (42 px breiter als der normale Tower; `?view=` Blickwinkel) |
+| Standings Tower mit Autos, ohne +/- | 5005 `/cars/nodelta` | `standings_cars_nodelta.html` | ≈ 498 × 640 |
 | Standings Tower ohne +/- | 5005 `/nodelta` | `standings_nodelta.html` | ≈ wie der normale Tower (456 breit; Zeitspalten breiter statt +/-). Mehrklassen: `?classrows=N` = Top N je Klasse |
 | Schnellste Runde (Banner) | 5005 `/fastest` | `fastest.html` | ✓ 620 × 60 |
 | Biggest Movers | 5005 `/movers` | `movers.html` | ✓ 536 × 145 |

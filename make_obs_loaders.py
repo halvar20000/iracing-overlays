@@ -32,6 +32,8 @@ OVERLAYS = [
     ("live",          "Live Indicator",   5004),
     ("standings",     "Standings",        5005),
     ("standings_nodelta", "Standings (no +/-)", 5005, "/nodelta"),
+    ("standings_cars", "Standings (Cars)", 5005, "/cars"),
+    ("standings_cars_nodelta", "Standings (Cars, no +/-)", 5005, "/cars/nodelta"),
     ("livery",        "Livery",           5006),
     ("trackmap",      "Track Map",        5007),
     ("flag",          "Flag",             5008),

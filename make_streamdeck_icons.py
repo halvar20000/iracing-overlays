@@ -139,6 +139,8 @@ G = {
 OVERLAY_ICONS = [
     ("standings",     "live",   "tower",     "Tower"),
     ("standings_nodelta", "live", "tower",   "Tower ohne +/-"),
+    ("standings_cars", "live",  "car",       "Tower Autos"),
+    ("standings_cars_nodelta", "live", "car", "Tower Autos ohne +/-"),
     ("fastest",       "live",   "stopwatch", "Schnellste Runde"),
     ("movers",        "live",   "updown",    "Movers"),
     ("gapbar",        "live",   "gapbar",    "Gap Bar"),

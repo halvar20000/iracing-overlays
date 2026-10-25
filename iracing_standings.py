@@ -29,6 +29,7 @@ from iracing_sdk_base import SDKPoller, GridBaseline, SESSION_STATE_RACING, setu
 setup_utf8_stdout()
 
 from car_brands import detect_brand, resolve_logo
+from car_render import CarRenderer
 from class_colors import class_colors
 from cls_proam import ProAmRoster
 from cls_pit_tires import PitTireFeed, join_with_field
@@ -210,9 +211,12 @@ class StandingsPoller(SDKPoller):
         self._fl_seq = 0
         self._fl_event: dict | None = None
 
+    raw = {}     # CarIdx -> DriverInfo dict, for the /car livery renders
+
     def _driver_map(self) -> dict:
         info = self.ir["DriverInfo"] or {}
         out = {}
+        raw = {}
         for d in info.get("Drivers", []) or []:
             cidx = d.get("CarIdx")
             if cidx is None:
@@ -221,6 +225,7 @@ class StandingsPoller(SDKPoller):
                 continue
             if d.get("IsSpectator") == 1:
                 continue
+            raw[cidx] = d
             car_path   = d.get("CarPath", "") or ""
             car_screen = d.get("CarScreenName", "") or ""
             brand = detect_brand(car_path, car_screen)
@@ -265,6 +270,7 @@ class StandingsPoller(SDKPoller):
         for m in out.values():
             m["class_color"] = ccol.get(m["class_id"]) or m["class_color"]
         _fill_class_labels(out)
+        self.raw = raw
         return out
 
     def _update_pit_tracking(self, ir):
@@ -893,6 +899,7 @@ def _no_cache(resp):
         resp.headers["Expires"] = "0"
     return resp
 poller = StandingsPoller()
+car_renderer = CarRenderer()
 proam = ProAmRoster()
 pit_tires = PitTireFeed()
 
@@ -1540,6 +1547,7 @@ TOWER_HTML = r"""<!DOCTYPE html>
     }
     body.debug-mode { background: #23262b; }
     .tower { width: 440px; }
+    .tower.cars { width: 482px; }   /* /cars: +42 px for the livery column */
 
     /* --- info bar ------------------------------------------------------ */
     .info {
@@ -1615,6 +1623,10 @@ TOWER_HTML = r"""<!DOCTYPE html>
             box-shadow: 0 0 0 1px rgba(0,0,0,0.35); }
     .brand { width: 20px; height: 18px; object-fit: contain; justify-self: center;
              filter: drop-shadow(0 0 1px rgba(0,0,0,0.8)); }
+    /* /cars (or ?cars=1): the car livery instead of the brand logo */
+    .carimg { width: 66px; height: 23px; object-fit: contain; justify-self: center; visibility: hidden;
+              filter: drop-shadow(0 1px 1px rgba(0,0,0,0.7)); }
+    .carimg.ok { visibility: visible; }
     .t { text-align: right; padding-right: 7px; white-space: nowrap; }
     .t.sb { color: var(--sb); }
     .t.pb { color: var(--pb); }
@@ -1708,8 +1720,16 @@ let SHOW_BRAND = true;
 let MULTI = false;   // multiclass: class-colour bar in front of the name (?classbar=0 hides)
 // Variant without the +/- (places gained / lost vs the grid) column:
 // /nodelta or ?delta=0 (Thomas 2026-10-23).
-const SHOW_DELTA = !(location.pathname.replace(/\/+$/, '') === '/nodelta' || qs.get('delta') === '0');
+const SHOW_DELTA = !(/\/nodelta\/?$/.test(location.pathname) || qs.get('delta') === '0');
 if (!SHOW_DELTA) document.body.classList.add('nodelta');
+// /cars (or ?cars=1): the car's livery (iRacing render, like 5001/cars) in
+// place of the brand logo — shown in one-make fields too, the liveries differ.
+const SHOW_CARS = /^\/cars(\/|$)/.test(location.pathname) || qs.get('cars') === '1';
+const CAR_VIEW = qs.get('view') || '';
+function carImg(r) {
+    return `<img class="carimg" src="/car/${r.car_idx}.png?n=${encodeURIComponent(r.car_number || '')}`
+         + `${CAR_VIEW ? '&view=' + encodeURIComponent(CAR_VIEW) : ''}" alt="" onload="this.classList.add('ok')">`;
+}
 function brandColumn(all) {
     const q = qs.get('brand');
     if (q === '1') return true;
@@ -1741,7 +1761,8 @@ function rowHtml(r, isRace) {
     else if (!r.in_world) tags += `<span class="tag out">${r.left ? 'LEFT' : 'OUT'}</span>`;
     const flag = TEAM_MODE ? ''
         : r.country ? `<img class="flag" src="/flag/${encodeURIComponent(r.country)}.svg" alt="">` : '<div></div>';
-    const brand = (SHOW_BRAND && r.brand && r.brand_logo) ? `<img class="brand" src="/brand/${encodeURIComponent(r.brand)}" alt="">` : '<div></div>';
+    const brand = SHOW_CARS ? carImg(r)
+        : (SHOW_BRAND && r.brand && r.brand_logo) ? `<img class="brand" src="/brand/${encodeURIComponent(r.brand)}" alt="">` : '<div></div>';
     const lastCls = r.last_is_pb ? 'pb' : '';
     const last = `<div class="t ${lastCls}">${fmtLap(r.last_lap)}</div>`;
     let cells;
@@ -1782,7 +1803,8 @@ function render(d) {
     const isRace = d.session_type === 'Race';
     let rows = d.standings || [];
     SHOW_BRAND = brandColumn(rows);       // whole field, before ?rows= trims it
-    el.style.setProperty('--bw', SHOW_BRAND ? '28px' : '0px');
+    el.classList.toggle('cars', SHOW_CARS);
+    el.style.setProperty('--bw', SHOW_CARS ? '70px' : SHOW_BRAND ? '28px' : '0px');
     // ?rows=N: top N positions only. The car on camera is kept visible — if it
     // is further back it takes the last slot (after a thin gap).
     const ROWS = parseInt(qs.get('rows') || '0', 10);
@@ -1842,6 +1864,8 @@ poll();
 """
 
 
+@app.route("/cars")
+@app.route("/cars/nodelta")
 @app.route("/nodelta")
 def index_nodelta():
     # same tower, the page drops the +/- column itself (reads the path)
@@ -2665,7 +2689,7 @@ def standings():
 # Bump on every change: http://localhost:5005/version shows which code the
 # running process actually loaded (the stream PC gets this folder through
 # Nextcloud, so a restart can still pick up the previous file).
-CODE_VERSION = "2026-10-25 class-colours"
+CODE_VERSION = "2026-10-25 tower-cars"
 
 
 @app.route("/version")
@@ -2689,6 +2713,24 @@ def flag(code: str):
 @app.route("/proam")
 def proam_status():
     return jsonify(proam.status())
+
+
+@app.route("/car/<int:cidx>.png")
+def car_image(cidx: int):
+    # livery render for the /cars tower (same source as the grid's 5001/cars)
+    d = poller.raw.get(cidx)
+    if not d:
+        return Response(status=404)
+    try:
+        view = int(request.args.get("view", 1))
+    except ValueError:
+        view = 1
+    data = car_renderer.render(d, team=bool(poller.get().get("team_event")), view=view)
+    if data is None:
+        return Response(status=404)     # not cached: self-heals once iRacing renders
+    resp = Response(data, mimetype="image/png")
+    resp.headers["Cache-Control"] = "max-age=300"
+    return resp
 
 
 @app.route("/brand/<slug>")

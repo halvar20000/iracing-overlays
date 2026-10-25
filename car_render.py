@@ -13,6 +13,7 @@ copies), plus the TEAM paint (car_team_<TeamID>.tga) for team events.
     r = CarRenderer()
     png = r.render(driver_info_dict, team=True, view=1)   # bytes or None
 """
+import io
 import os
 import threading
 from pathlib import Path
@@ -131,6 +132,27 @@ def fetch_render(params: dict, get=None):
     return None
 
 
+def trim(png: bytes, pad: int = 4) -> bytes:
+    """Crop the transparent margin around the car so a small slot (tower
+    row) shows the car, not empty canvas. No-op without Pillow, without an
+    alpha channel or on any error."""
+    try:
+        from PIL import Image
+        im = Image.open(io.BytesIO(png))
+        if im.mode not in ("RGBA", "LA") and "transparency" not in im.info:
+            return png
+        box = im.convert("RGBA").getchannel("A").point(lambda a: 255 if a > 12 else 0).getbbox()
+        if not box or box == (0, 0) + im.size:
+            return png
+        l, t, r, b = box
+        im = im.crop((max(0, l - pad), max(0, t - pad), min(im.width, r + pad), min(im.height, b + pad)))
+        out = io.BytesIO()
+        im.save(out, "PNG")
+        return out.getvalue()
+    except Exception:
+        return png
+
+
 class CarRenderer:
     """Bounded in-memory cache in front of fetch_render(). Failures are NOT
     cached, so a render server that comes up later self-heals."""
@@ -156,6 +178,7 @@ class CarRenderer:
         data = fetch_render(render_params(driver, paint_path, view, size), self._get)
         if data is None:
             return None
+        data = trim(data)
         with self._lock:
             self._cache[key] = data
             if len(self._cache) > CACHE_MAX:

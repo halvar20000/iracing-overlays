@@ -178,6 +178,21 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 25, 2026 (tower with car liveries `5005/cars`):** Thomas: the
+liveries of 5001/cars instead of the brand logos in the tower. `/cars` and
+`/cars/nodelta` (or `?cars=1`) = the same TOWER_HTML with a 70 px livery
+column in the brand slot (`SHOW_CARS`, img hidden until it loads; shown in
+one-make fields too — the liveries differ), tower 440 → 482 px wide
+(`.tower.cars`). Server: StandingsPoller keeps `raw` DriverInfo dicts,
+`/car/<idx>.png` via car_render.CarRenderer (team paint in team events,
+`?view=`). car_render.trim() now crops the transparent margin around the
+render (Pillow; no alpha / error = unchanged) so the car fills a 23 px row —
+the grid page gets it too. Loaders standings_cars(.html) /
+standings_cars_nodelta (59), icons "Tower Autos", OVERLAY_TABLE,
+OBS_OVERLAYS.md. CODE_VERSION "2026-10-25 tower-cars". test_car_render.py
+29/29 (+ trim, tower routes); rendered with a fake render server. NOT tried:
+the real render server (margin, angle). Restart 5001 + 5005.
+
 **October 25, 2026 (grid with car liveries `5001/cars`, DNLS look):**
 Thomas sent the DNLS Community Cup "STARTING GRID" graphic (car renders
 over skewed panels). NEW page GRID_CARS_HTML on the grid server (900 × 770,
