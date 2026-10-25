@@ -242,7 +242,7 @@ override). Team event → team name; multiclass → one page set per class in
 grid order, numbers = CLASS grid position, class colour on the tab
 (class_colors). Pages of ?per=8: AUTO every ?secs=10 s, or by hand —
 `PageNav` on the server, `/nav/next|prev|first|auto|auto_on|auto_off` (Stream
-Deck Website action in background; icons dashboard/grid_next/_prev/_first/
+Deck Website action in background; icons dashboard/page_next/_prev/_first/
 _auto (+ off)); next/prev/first switch to MANUAL (kept across page reloads)
 until auto; each open page polls /nav (300 ms) and applies each seq once
 (commands older than the page are ignored); keys → / ← / Home / A in the page

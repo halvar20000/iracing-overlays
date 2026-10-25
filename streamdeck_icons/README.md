@@ -124,14 +124,16 @@ URL wie unten. Das Dashboard (Port 5000) muss laufen.
 | `show_next.png` | `http://localhost:5000/streamdeck/show_next` — nächster Moderations-Abschnitt |
 | `show_stop.png` | `http://localhost:5000/streamdeck/show_stop` — Moderation abbrechen |
 | `ask.png` | `http://localhost:5000/streamdeck/ask` — Frag Claude: drücken = Frage stellen, nochmal drücken = Antwort (FRAG_CLAUDE.md) |
-| `grid_next.png` | `http://localhost:5001/nav/next` — Startaufstellung: nächste Seite (schaltet das automatische Blättern aus) |
-| `grid_prev.png` | `http://localhost:5001/nav/prev` — Startaufstellung: Seite zurück |
-| `grid_first.png` | `http://localhost:5001/nav/first` — Startaufstellung: Seite 1 |
-| `grid_auto.png` | `http://localhost:5001/nav/auto` — Startaufstellung: automatisch blättern an/aus (grau: `dashboard_off/grid_auto.png`) |
+| `page_next.png` | `http://localhost:5001/nav/next` — WCT-Seiten: nächste Seite (schaltet das automatische Blättern aus) |
+| `page_prev.png` | `http://localhost:5001/nav/prev` — WCT-Seiten: Seite zurück |
+| `page_first.png` | `http://localhost:5001/nav/first` — WCT-Seiten: Seite 1 |
+| `page_auto.png` | `http://localhost:5001/nav/auto` — WCT-Seiten: automatisch blättern an/aus (grau: `dashboard_off/page_auto.png`) |
 
-Die vier Grid-Tasten blättern **alle Seiten im WCT-Look** (Startaufstellung,
-Endergebnis `5002/wct`, letzte Runde `5010/lastrace/wct`, Teamwertung
-`5010/teams/wct`) — dafür muss das Grid-Overlay (5001) laufen.
+Diese vier Tasten blättern **alle Seiten im WCT-Look**: Startaufstellung
+(`grid.html`), Endergebnis (`results_wct.html`), letzte Runde
+(`lastrace_wct.html`) und Teamwertung (`teams_wct.html`). Die Befehle laufen
+über Port 5001 — das Grid-Overlay muss dafür im Launcher laufen, auch wenn
+gerade nur ein Ergebnis gezeigt wird.
 
 ## Seiten als Fenster öffnen (z. B. auf dem Hochkant-Monitor)
 
