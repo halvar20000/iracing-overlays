@@ -22,12 +22,14 @@ sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
 import iracing_dashboard as dash
 
 L, DT = 4000.0, 0.1
+CLASSES = [0, 0, 0, 0]          # CarClassID per car (multiclass checks)
 def base_fields(t, pcts, surfs, pits, flags):
     n=len(pcts)
     return {"SessionTime":t,"SessionNum":4,"SessionState":4,
             "WeekendInfo":{"TrackLength":"4.00 km"},
             "DriverInfo":{"Drivers":[{"CarIdx":i,"CarNumber":str(10+i),
-              "UserName":f"D{i}","CurDriverIncidentCount":-1} for i in range(n)]},
+              "UserName":f"D{i}","CurDriverIncidentCount":-1,
+              "CarClassID":CLASSES[i]} for i in range(n)]},
             "CarIdxTrackSurface":list(surfs),"CarIdxSessionFlags":list(flags),
             "CarIdxLapDistPct":[p%1.0 for p in pcts],
             "CarIdxClassPosition":list(range(1,n+1)),
@@ -95,6 +97,23 @@ def v5(t,i):
     return 45.0
 Sim(p,v5).run(16.0)
 check("O5 crawling car: no overtake", len(overtakes(p))==0, str(overtakes(p)))
+
+# O6: a faster CLASS passing a slower one -> traffic, no overtake
+CLASSES[:] = [2, 1, 1, 1]
+p=dash.TelemetryPoller(poll_hz=10)
+Sim(p,v1).run(16.0)
+check("O6 other class: no overtake", len(overtakes(p))==0, str(overtakes(p)))
+
+# O7: pass inside a class with another class ahead -> P1 IN CLASS (overall P2)
+CLASSES[:] = [2, 1, 1, 1]
+p=dash.TelemetryPoller(poll_hz=10)
+def v7(t,i):
+    if i==2 and t>=4.0: return 51.0
+    return 45.0
+Sim(p,v7,start=[2.60,2.502,2.500,2.10]).run(16.0)
+ot=overtakes(p)
+check("O7 class pass, class position", len(ot)==1 and ot[0][0]==2 and "for P1" in ot[0][1], str(ot))
+CLASSES[:] = [0, 0, 0, 0]
 
 print()
 print("ALL PASS" if not failures else f"FAILURES: {failures}")

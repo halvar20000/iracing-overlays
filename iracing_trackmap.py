@@ -36,6 +36,7 @@ from flask import Flask, jsonify, render_template_string, Response, abort, reque
 
 from iracing_sdk_base import SDKPoller, setup_utf8_stdout
 from cls_proam import ProAmRoster
+from class_colors import class_colors, text_on
 setup_utf8_stdout()
 
 
@@ -417,6 +418,13 @@ class TrackmapPoller(SDKPoller):
             d.get("UserID") for d in drivers
             if d.get("CarIsPaceCar") != 1 and d.get("IsSpectator") != 1)
 
+        # Multiclass (IEC, 2026-10-25): every dot in its CLASS colour — the
+        # same colours as the tower (class_colors). Pro/Am wins in a WCT
+        # field; single class keeps the old orange.
+        ccol = class_colors(drivers)
+        multiclass = len(ccol) > 1
+        legend: dict = {}       # colour -> class name, for the map's key
+
         cars = []
         for d in drivers:
             idx = d.get("CarIdx")
@@ -443,6 +451,12 @@ class TrackmapPoller(SDKPoller):
                 "cam":        (idx == cam_idx),
                 "proam":      proam.lookup(d.get("UserID")) if proam_on else None,
             })
+            col = ccol.get(int(d.get("CarClassID") or 0)) if multiclass else None
+            cars[-1]["color"] = col
+            cars[-1]["text"] = text_on(col) if col else None
+            if col:
+                legend.setdefault(col, (d.get("CarClassShortName") or "").strip()
+                                  or (d.get("CarScreenNameShort") or "").strip())
 
         return {
             "connected":      True,
@@ -454,6 +468,7 @@ class TrackmapPoller(SDKPoller):
             "view_w":         track["view_w"] if track else SVG_VIEW_W,
             "view_h":         track["view_h"] if track else SVG_VIEW_H,
             "cars":           cars,
+            "classes":        [{"color": c, "name": n} for c, n in legend.items()],
             "location":       _track_location(weekend, track_file),
         }
 
@@ -727,6 +742,11 @@ TRACKMAP_HTML = r"""
         aspect-ratio: 5 / 3;
     }
     .svg-host > svg { width: 100%; height: 100%; display: block; }
+    .legend { position: absolute; left: 6px; top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
+    .legend span { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px 3px 6px;
+        background: rgba(14,14,20,0.88); border-radius: 4px; color: #f2f2f4;
+        font: 800 15px 'Segoe UI', sans-serif; }
+    .legend i { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #1a1a24; }
 
     /* Car dots are drawn on top of the track SVG via a separate overlay SVG. */
     .cars-overlay {
@@ -751,6 +771,11 @@ TRACKMAP_HTML = r"""
     .car.am  { fill: #2ecc71; }
     .car.pro.pit, .car.am.pit { fill-opacity: 0.45; }
     .car.cam.pro, .car.cam.am { fill: #facc15; fill-opacity: 1; }
+    /* Multiclass: class colour from the server (inline fill). The camera car
+       KEEPS its class colour and gets a white ring + glow instead of yellow
+       (a yellow GT3 class would look like the camera car). */
+    .car.klass.pit { fill-opacity: 0.45; }
+    .car.klass.cam { stroke: #ffffff; stroke-width: 5; filter: drop-shadow(0 0 8px #ffffff); }
     .car-label {
         font-family: 'Segoe UI', sans-serif;
         font-size: 19px;
@@ -860,6 +885,7 @@ async function loadTrack(trackFile, viewW, viewH) {
             <svg class="cars-overlay" id="cars-overlay"
                  viewBox="0 0 ${viewW} ${viewH}"
                  preserveAspectRatio="xMidYMid meet"></svg>
+            <div class="legend" id="legend"></div>
         </div>`;
 
     try {
@@ -909,12 +935,23 @@ function renderCars(d) {
         const xy = pctToXY(c.pct);
         if (!xy) continue;
         const pa  = c.proam === 'PRO' ? ' pro' : c.proam === 'AM' ? ' am' : '';
-        const cls = 'car' + pa + (c.cam ? ' cam' : '') + (c.on_pit ? ' pit' : '');
+        const kc  = (!pa && c.color) ? c.color : '';
+        const cls = 'car' + pa + (kc ? ' klass' : '') + (c.cam ? ' cam' : '') + (c.on_pit ? ' pit' : '');
         const r   = c.cam ? 22 : 17;
-        parts.push(`<circle class="${cls}" cx="${xy[0].toFixed(1)}" cy="${xy[1].toFixed(1)}" r="${r}"></circle>`);
-        parts.push(`<text class="car-label" x="${xy[0].toFixed(1)}" y="${xy[1].toFixed(1)}">${esc(c.num)}</text>`);
+        const fill = kc ? ` style="fill:${esc(kc)}"` : '';
+        const tfill = kc && c.text ? ` style="fill:${esc(c.text)}"` : '';
+        parts.push(`<circle class="${cls}" cx="${xy[0].toFixed(1)}" cy="${xy[1].toFixed(1)}" r="${r}"${fill}></circle>`);
+        parts.push(`<text class="car-label" x="${xy[0].toFixed(1)}" y="${xy[1].toFixed(1)}"${tfill}>${esc(c.num)}</text>`);
     }
     overlay.innerHTML = parts.join('');
+    // multiclass key (?legend=0 hides it)
+    const lg = document.getElementById('legend');
+    if (lg) {
+        const cl = new URLSearchParams(location.search).get('legend') === '0' ? [] : (d.classes || []);
+        const h = cl.map(k => `<span><i style="background:${esc(k.color)}"></i>${esc(k.name || '')}</span>`).join('');
+        if (lg.dataset.h !== h) { lg.innerHTML = h; lg.dataset.h = h; }
+        lg.style.display = h ? '' : 'none';
+    }
 }
 
 async function poll() {

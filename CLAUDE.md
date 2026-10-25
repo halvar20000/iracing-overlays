@@ -177,6 +177,24 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 25, 2026 (IEC multiclass: class colours on tower + trackmap,
+overtakes only inside a class):** NEW `class_colors.py` — one colour per car
+class for both overlays: iRacing's CarClassColor, a class without one or
+with a colour already taken gets the next of PALETTE (no yellow = camera
+car, no PRO red / AM green); classes coloured in class-id order, pace car
+skipped. Tower (5005): `_driver_map` uses it for class_color; in a
+multiclass field a class-colour bar sits in the Pro/Am slot before the
+name (Pro/Am wins in WCT; `?classbar=0` hides). Trackmap (5007): car dots in
+the class colour (inline fill, number black / white by luminance), the
+camera car KEEPS its class colour with a white ring + glow; pit = 45 %;
+`/state` `classes` → key top-left (`?legend=0` hides). Single class keeps
+orange / yellow. Dashboard overtakes (5000, feeds /ticker + REGIE): rank is
+now the CLASS rank and a swap only counts between cars of the same class —
+a GTP lapping through GT3s was reported as an overtake, and "for P2" was
+the overall place. `_ot_classes()` (DriverInfo every 5 s, monotonic).
+test_overtakes +O6 / O7 (both fail on the old code). Tower + map rendered
+with a 3-class field. Restart 5000, 5005, 5007.
+
 **October 25, 2026 (tower for the first IEC TEAM race — class order,
 ?classrows=N):** checked before Thomas's first IEC team stream: team names
 (TeamRacing → team instead of driver, no flag column, since 2026-10-10) and

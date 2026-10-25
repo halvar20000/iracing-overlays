@@ -29,6 +29,7 @@ from iracing_sdk_base import SDKPoller, GridBaseline, SESSION_STATE_RACING, setu
 setup_utf8_stdout()
 
 from car_brands import detect_brand, resolve_logo
+from class_colors import class_colors
 from cls_proam import ProAmRoster
 from cls_pit_tires import PitTireFeed, join_with_field
 import country_flags
@@ -259,6 +260,10 @@ class StandingsPoller(SDKPoller):
                 "car_screen": car_screen,
                 "class_est":  _num(d.get("CarClassEstLapTime")),
             }
+        # one colour per class, the same as the trackmap's dots (class_colors)
+        ccol = class_colors(info.get("Drivers", []) or [])
+        for m in out.values():
+            m["class_color"] = ccol.get(m["class_id"]) or m["class_color"]
         _fill_class_labels(out)
         return out
 
@@ -1700,6 +1705,7 @@ let TEAM_MODE = false;
 // says nothing, so the column is dropped (Thomas 2026-10-23). ?brand=1 / 0
 // forces it on / off.
 let SHOW_BRAND = true;
+let MULTI = false;   // multiclass: class-colour bar in front of the name (?classbar=0 hides)
 // Variant without the +/- (places gained / lost vs the grid) column:
 // /nodelta or ?delta=0 (Thomas 2026-10-23).
 const SHOW_DELTA = !(location.pathname.replace(/\/+$/, '') === '/nodelta' || qs.get('delta') === '0');
@@ -1727,7 +1733,9 @@ function headRow(isRace) {
 function rowHtml(r, isRace) {
     const pos = r.class_position || r.position;
     const pa = r.proam === 'PRO' ? '<div class="pa pro"></div>'
-             : r.proam === 'AM'  ? '<div class="pa am"></div>' : '<div></div>';
+             : r.proam === 'AM'  ? '<div class="pa am"></div>'
+             : (MULTI && r.class_color) ? `<div class="pa" style="background:${esc(r.class_color)}"></div>`
+             : '<div></div>';
     let tags = '';
     if (r.on_pit) tags += '<span class="tag pit">PIT</span>';
     else if (!r.in_world) tags += `<span class="tag out">${r.left ? 'LEFT' : 'OUT'}</span>`;
@@ -1798,6 +1806,7 @@ function render(d) {
         rows = out;
     }
     const multi = new Set(rows.map(r => r.class_id)).size > 1;
+    MULTI = multi && qs.get('classbar') !== '0';
     let html = infoBar(d);
     let cur = null, open = false;
     for (const r of rows) {
@@ -2656,7 +2665,7 @@ def standings():
 # Bump on every change: http://localhost:5005/version shows which code the
 # running process actually loaded (the stream PC gets this folder through
 # Nextcloud, so a restart can still pick up the previous file).
-CODE_VERSION = "2026-10-25 class-order"
+CODE_VERSION = "2026-10-25 class-colours"
 
 
 @app.route("/version")

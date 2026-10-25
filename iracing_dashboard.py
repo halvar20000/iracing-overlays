@@ -408,6 +408,7 @@ class TelemetryPoller:
         # laps 1-2: overtakes go to the feed, but never to the /ticker
         self._ot_gate = StartLapGate(2.0)
         self._ot_early = False
+        self._ot_cls, self._ot_cls_t = {}, -1e9   # car_idx -> class id
         self._ot_pair_last = {}          # (x,y) -> last emit t_session
         self._ot_last_swap = {}          # frozenset({x,y}) -> last rank-swap t
         self._last_auto_replay_priority = 0
@@ -1065,9 +1066,17 @@ class TelemetryPoller:
             lap = laps_arr[idx] if idx < len(laps_arr) else 0
             prog[idx] = (lap or 0) + max(pct, 0.0)
         order = sorted(prog, key=lambda i: -prog[i])
-        rank = {idx: r + 1 for r, idx in enumerate(order)}
         if order:
             self._ot_early = self._ot_gate.early(prog[order[0]])
+        # Rank INSIDE the car's class (multiclass, e.g. IEC 2026-10-25): a
+        # GTP lapping through the GT3 field is traffic, not an overtake, and
+        # "for P3" means P3 in class. Single-class = the overall rank.
+        cls = self._ot_classes()
+        rank, _n = {}, {}
+        for idx in order:
+            c = cls.get(idx, 0)
+            _n[c] = _n.get(c, 0) + 1
+            rank[idx] = _n[c]
         if self._caution_phase() is not None:
             # full-course yellow: places change through the pits and the
             # pace-car queue, not by passing — no overtakes until the green
@@ -1082,7 +1091,7 @@ class TelemetryPoller:
             if px is None or rx >= px:
                 continue
             for y, ry in rank.items():
-                if y == x:
+                if y == x or cls.get(y, 0) != cls.get(x, 0):
                     continue
                 py = prev.get(y)
                 if py is None:
@@ -1122,6 +1131,19 @@ class TelemetryPoller:
                         and t_now - self._collapse_at.get(y, -1e9) > 10.0):
                     self._ot_pair_last[key] = t_now
                     self._emit_overtake(x, y, info["pos"], info["t0"])
+
+    def _ot_classes(self) -> dict:
+        """car_idx -> CarClassID, re-read from DriverInfo every 5 s."""
+        t_now = time.monotonic()
+        if t_now - self._ot_cls_t > 5.0 or not self._ot_cls:
+            out = {}
+            try:
+                for d in (self.ir["DriverInfo"] or {}).get("Drivers", []) or []:
+                    out[int(d.get("CarIdx"))] = int(d.get("CarClassID") or 0)
+            except Exception:
+                pass
+            self._ot_cls, self._ot_cls_t = out, t_now
+        return self._ot_cls
 
     def _emit_overtake(self, x_idx, y_idx, position, t_move):
         xi = self._driver_name(x_idx)
