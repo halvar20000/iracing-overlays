@@ -178,6 +178,27 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 25, 2026 (grid with car liveries `5001/cars`, DNLS look):**
+Thomas sent the DNLS Community Cup "STARTING GRID" graphic (car renders
+over skewed panels). NEW page GRID_CARS_HTML on the grid server (900 × 770,
+?zoom=): red title bar (league · LAUF n · track, from 5010 like the WCT grid)
++ "STARTING GRID" bar (class pill in multiclass, page range), 8 per page in
+two staggered columns: big position, car render, white brand chip
+(car_brands, `/brand/<slug>` now on 5001 too), team / driver name, number
+tag (accent pink; class colour in multiclass), LAP box = pole time, else
++gap to the class pole, NO TIME. Same paging as the WCT grid (`/nav`, keys,
+Stream Deck page keys, back to page 1 on show). `?view=` render angle
+(default 1 = side; the image's 3/4 view may be another number — try 0-3
+on the stream PC), `?head=` / `?accent=` hex colours, `?demo=1`. Cars from
+iRacing's local render server via NEW shared `car_render.py` (CarRenderer:
+params, %20, nested MX-5 carPath variants, TEAM paint car_team_<TeamID>.tga
+in team events, cache, failures not cached → `/car/<idx>.png` 404 and the
+image stays hidden). GridPoller keeps the raw DriverInfo dicts (`raw`) and
+a `brand` per row. Loader grid_cars.html (57), icon "Grid Autos",
+OVERLAY_TABLE, OBS_OVERLAYS.md. test_car_render.py 22/22; rendered against a
+fake render server (real route, 10 cars). NOT tried: the real render
+server's look (transparent background? angle?). Restart 5001.
+
 **October 25, 2026 (zoom-in videos for every upcoming WCT / PCCD 6th / IEC
 round):** rounds from CLS round-info → 16 new videos in zoom_videos/
 (gitignored, render on Unraid, copy to the stream PC by hand): Spa

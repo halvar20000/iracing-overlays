@@ -8,6 +8,9 @@ pages of 8 — automatic (?secs=10) or by hand: Stream Deck
 http://localhost:5001/nav/next | prev | first | auto, keys → ← Home A.
 Options: ?auto=0 ?per= ?zoom= ?title= ?round=LAUF ?race=RENNEN ?logo=<url>|0
 ?veil=0 ?debug=1 (H) ?demo=1. Old purple card: /?style=classic.
+/cars = the same grid with the car liveries (iRacing's local render server),
+brand logo, number, gap to pole (DNLS look; ?view= render angle, ?head= /
+?accent= hex colours, same paging).
 
 Requirements:  pip install pyirsdk flask
 Run:           python iracing_grid.py
@@ -15,8 +18,11 @@ Open:          http://localhost:5001
 """
 
 import threading
-from flask import Flask, Response, jsonify, render_template_string, request
+from flask import (Flask, Response, abort, jsonify, render_template_string,
+                   request, send_file)
 
+from car_brands import detect_brand, resolve_logo
+from car_render import CarRenderer
 from class_colors import class_colors
 from wct_board import EventInfo, PageNav
 
@@ -31,9 +37,12 @@ class GridPoller(SDKPoller):
     tag = "grid"
     poll_interval = 2.0
 
+    raw = {}     # CarIdx -> DriverInfo dict, for the /car livery renders
+
     def _driver_map(self) -> dict:
         info = self.ir["DriverInfo"] or {}
         out = {}
+        raw = {}
         ccol = class_colors(info.get("Drivers") or [])
         for d in info.get("Drivers", []) or []:
             cidx = d.get("CarIdx")
@@ -43,6 +52,7 @@ class GridPoller(SDKPoller):
                 continue
             if d.get("IsSpectator") == 1:
                 continue
+            raw[cidx] = d
             out[cidx] = {
                 "car_idx":    cidx,
                 "name":       d.get("UserName", "") or "",
@@ -55,7 +65,9 @@ class GridPoller(SDKPoller):
                 "class_name": d.get("CarClassShortName") or "",
                 "class_color": ccol.get(int(d.get("CarClassID") or 0), ""),
                 "is_spectator": bool(d.get("IsSpectator", 0)),
+                "brand":      detect_brand(d.get("CarPath"), d.get("CarScreenName")) or "",
             }
+        self.raw = raw
         return out
 
     def _find_qualifying_session(self, sessions: list) -> dict:
@@ -241,6 +253,7 @@ app = Flask(__name__)
 poller = GridPoller()
 event = EventInfo()
 nav = PageNav()
+renderer = CarRenderer()
 
 
 @app.after_request
@@ -884,12 +897,271 @@ pollNav(); setInterval(pollNav, 300);
 """
 
 
+GRID_CARS_HTML = r"""<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><title>Starting Grid Cars</title>
+<style>
+:root { --head: #d9302c; --accent: #e65fa0; --panel: rgba(38,38,42,.94); --bar: rgba(44,44,48,.94);
+        --box: rgba(28,28,32,.96); --chip: #f2f2f2; --text: #f4f4f6; --muted: #b8b8c2; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: rgba(0,0,0,0); overflow: hidden; }
+body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; color: var(--text); }
+body.debug { background: #3a4a3a; }
+.card { position: relative; width: 900px; height: 770px; padding: 14px 18px 0; transform-origin: 0 0; }
+.hbar { height: 52px; background: var(--head); clip-path: polygon(0 0, 100% 0, calc(100% - 22px) 100%, 0 100%);
+        display: flex; align-items: center; justify-content: center; padding: 0 40px;
+        font-size: 26px; font-weight: 900; font-style: italic; letter-spacing: .4px; text-transform: uppercase;
+        white-space: nowrap; overflow: hidden; }
+.sbar { margin-top: 6px; height: 42px; width: 86%; background: var(--bar);
+        clip-path: polygon(0 0, 100% 0, calc(100% - 18px) 100%, 0 100%);
+        display: flex; align-items: center; justify-content: center; gap: 14px;
+        font-size: 22px; font-weight: 900; font-style: italic; letter-spacing: .4px; }
+.sbar .cls { font-size: 14px; font-style: normal; font-weight: 800; padding: 3px 10px; border-radius: 3px;
+             background: rgba(255,255,255,.12); border-left: 5px solid transparent; }
+.sbar .rng { font-size: 13px; font-style: normal; font-weight: 700; color: var(--muted); }
+.grid { position: relative; height: 640px; margin-top: 12px; }
+.slot { position: absolute; width: 420px; height: 140px; }
+.slot.in { animation: slotIn .5s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes slotIn { from { opacity: 0; transform: translateX(-24px); } to { opacity: 1; transform: none; } }
+.slot .panel { position: absolute; left: 22px; top: 36px; width: 380px; height: 72px; background: var(--panel);
+               transform: skewX(-14deg); border-right: 4px solid var(--accent); border-bottom: 4px solid var(--accent); }
+.slot .pos { position: absolute; left: 0; top: 0; width: 62px; height: 56px; background: var(--box);
+             transform: skewX(-14deg); display: flex; align-items: center; justify-content: center; z-index: 2; }
+.slot .pos span { transform: skewX(14deg); font-size: 38px; font-weight: 900; font-style: italic; }
+.slot .carimg { position: absolute; right: 18px; top: -6px; height: 82px; max-width: 240px; object-fit: contain;
+                z-index: 3; filter: drop-shadow(0 6px 6px rgba(0,0,0,.55)); visibility: hidden; }
+.slot .carimg.ok { visibility: visible; }
+.slot .brand { position: absolute; left: 30px; top: 78px; width: 84px; height: 26px; background: var(--chip);
+               transform: skewX(-14deg); z-index: 2; display: flex; align-items: center; justify-content: center; }
+.slot .brand img { transform: skewX(14deg); max-height: 20px; max-width: 64px; }
+.slot .brand.none { background: rgba(255,255,255,.18); }
+.slot .name { position: absolute; left: 128px; right: 30px; top: 80px; height: 24px; z-index: 2;
+              font-size: 16px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.slot .num { position: absolute; left: 12px; top: 112px; width: 58px; height: 24px; background: var(--accent);
+             transform: skewX(-14deg); display: flex; align-items: center; justify-content: center; z-index: 2; }
+.slot .num span { transform: skewX(14deg); font-size: 15px; font-weight: 800; }
+.slot .lap { position: absolute; right: 26px; top: 112px; height: 24px; display: flex; z-index: 2;
+             transform: skewX(-14deg); }
+.slot .lap b { background: #8a8a92; color: #1b1b1f; font-size: 11px; font-weight: 800; padding: 0 9px;
+               display: flex; align-items: center; }
+.slot .lap i { background: var(--box); font-style: normal; font-size: 14px; font-weight: 700; min-width: 92px;
+               padding: 0 10px; display: flex; align-items: center; justify-content: flex-end;
+               font-variant-numeric: tabular-nums; }
+.slot .lap b span, .slot .lap i span { transform: skewX(14deg); }
+.slot .lap i.none span { font-size: 11px; letter-spacing: 1px; color: var(--muted); }
+.empty-msg { position: absolute; inset: 120px 60px auto; height: 80px; display: flex; align-items: center; justify-content: center;
+             font-size: 22px; font-weight: 700; color: #c8c8d0; background: rgba(36,36,42,.8); }
+.hint { position: absolute; right: 8px; bottom: 4px; font-size: 11px; color: #ffd166; display: none; }
+body.debug .hint { display: block; }
+</style></head>
+<body>
+<div class="card" id="card">
+  <div class="hbar" id="title">—</div>
+  <div class="sbar" id="sbar"><span>STARTING GRID</span></div>
+  <div class="grid" id="grid"></div>
+  <div class="hint" id="hint"></div>
+</div>
+<script>
+const QS = new URLSearchParams(location.search);
+const PER = Math.max(2, parseInt(QS.get("per") || "8", 10));
+const SECS = Math.max(2, parseFloat(QS.get("secs") || "10"));
+const AUTO_PARAM = QS.get("auto") !== "0";
+const ROUND_WORD = QS.get("round") || "LAUF";
+const RACE_WORD = QS.get("race") || "RENNEN";
+const VIEW = QS.get("view") || "";
+const DEMO = QS.get("demo") === "1";
+const hex = v => /^[0-9a-fA-F]{3,8}$/.test(v || "") ? "#" + v : "";
+if (hex(QS.get("head"))) document.documentElement.style.setProperty("--head", hex(QS.get("head")));
+if (hex(QS.get("accent"))) document.documentElement.style.setProperty("--accent", hex(QS.get("accent")));
+const card = document.getElementById("card");
+const zoom = parseFloat(QS.get("zoom") || "1");
+if (zoom && zoom !== 1) card.style.transform = "scale(" + zoom + ")";
+let debug = QS.get("debug") === "1";
+document.body.classList.toggle("debug", debug);
+
+let data = null, pages = [], classes = [], page = 0, sig = "", manual = !AUTO_PARAM, navSeq = null, timer = null;
+
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function fmtLap(sec) {
+  if (!sec || sec <= 0) return "";
+  const m = Math.floor(sec / 60), s = (sec - m * 60).toFixed(3).padStart(6, "0");
+  return m + ":" + s;
+}
+function fitTitle() {
+  const el = document.getElementById("title");
+  let fs = 26; el.style.fontSize = fs + "px";
+  while (el.scrollWidth > el.clientWidth && fs > 13) el.style.fontSize = (--fs) + "px";
+}
+function title(d) {
+  if (QS.get("title")) return QS.get("title");
+  const ev = d.event || {}, parts = [];
+  if (ev.league) parts.push(ev.league);
+  if (ev.round) parts.push(ROUND_WORD + " " + ev.round + (d.races > 1 && d.race_no > 1 ? " · " + RACE_WORD + " " + d.race_no : ""));
+  const trk = [d.track_short || d.track, d.track_config].filter(Boolean).join(" ");
+  if (trk) parts.push(trk);
+  return parts.join(" - ") || "STARTING GRID";
+}
+function buildPages(rows) {
+  const order = [], by = {};
+  rows.forEach(r => { const k = r.class_id || 0; if (!by[k]) { by[k] = []; order.push(k); } by[k].push(r); });
+  const out = [];
+  order.forEach(k => {
+    const list = by[k];
+    const pole = list.find(r => r.best_time > 0);
+    for (let i = 0; i < list.length; i += PER)
+      out.push({ cls: k, name: list[0].class_name || "GRID", color: list[0].class_color || "", pole: pole ? pole.best_time : 0,
+                 rows: list.slice(i, i + PER), from: i + 1, to: Math.min(i + PER, list.length), classStart: i });
+  });
+  classes = order;
+  return out;
+}
+function carSrc(r) {
+  if (DEMO) return "";
+  return "/car/" + r.car_idx + ".png?n=" + encodeURIComponent(r.car_number || "") + (VIEW ? "&view=" + encodeURIComponent(VIEW) : "");
+}
+function slotHtml(r, n, i, pg, multi) {
+  const x = i % 2 === 0 ? 0 : 450, y = Math.floor(i / 2) * 142 + (i % 2 ? 66 : 0);
+  const nm = data.team_event && r.team_name ? r.team_name : r.name;
+  let val, lbl = "LAP", none = false;
+  if (!(r.best_time > 0)) { val = "NO TIME"; none = true; }
+  else if (n === 1 || !pg.pole || r.best_time <= pg.pole) val = fmtLap(r.best_time);
+  else val = "+" + (r.best_time - pg.pole).toFixed(3);
+  const numStyle = multi && r.class_color ? ' style="background:' + r.class_color + '"' : '';
+  const brand = r.brand ? '<div class="brand"><img src="/brand/' + encodeURIComponent(r.brand) + '" alt="" onerror="this.parentNode.classList.add(\'none\');this.remove()"></div>'
+                        : '<div class="brand none"></div>';
+  const src = carSrc(r);
+  return '<div class="slot in" style="left:' + x + 'px;top:' + y + 'px;animation-delay:' + (i * 0.07).toFixed(2) + 's">' +
+    '<div class="panel"></div>' +
+    '<div class="pos"><span>' + n + '</span></div>' +
+    (src ? '<img class="carimg" src="' + src + '" alt="" onload="this.classList.add(\'ok\')">' : '') +
+    brand +
+    '<div class="name">' + esc(nm || "—") + '</div>' +
+    '<div class="num"' + numStyle + '><span>' + esc(r.car_number) + '</span></div>' +
+    '<div class="lap"><b><span>' + lbl + '</span></b><i' + (none ? ' class="none"' : '') + '><span>' + val + '</span></i></div>' +
+    '</div>';
+}
+function draw() {
+  const grid = document.getElementById("grid"), sbar = document.getElementById("sbar");
+  if (!pages.length) {
+    sbar.innerHTML = "<span>STARTING GRID</span>";
+    grid.innerHTML = '<div class="empty-msg">' + (data && data.connected ? "Noch kein Startgrid" : "Warte auf iRacing …") + '</div>';
+    return;
+  }
+  page = ((page % pages.length) + pages.length) % pages.length;
+  const pg = pages[page], multi = classes.length > 1;
+  const same = pages.filter(p => p.cls === pg.cls).length > 1;
+  sbar.innerHTML = "<span>STARTING GRID</span>" +
+    (multi ? '<span class="cls"' + (pg.color ? ' style="border-left-color:' + pg.color + '"' : '') + '>' + esc(pg.name) + '</span>' : '') +
+    (same ? '<span class="rng">' + pg.from + "–" + pg.to + '</span>' : '');
+  grid.innerHTML = pg.rows.map((r, i) => slotHtml(r, multi ? pg.classStart + i + 1 : (r.position || pg.classStart + i + 1), i, pg, multi)).join("");
+  document.getElementById("hint").textContent = (manual ? "MANUELL" : "AUTO " + SECS + " s") + " · Seite " + (page + 1) + "/" + pages.length;
+}
+function go(p) { page = p; draw(); schedule(); }
+function schedule() {
+  clearTimeout(timer);
+  if (!manual && pages.length > 1) timer = setTimeout(() => go(page + 1), SECS * 1000);
+}
+async function tick() {
+  try { data = await (await fetch("/grid", { cache: "no-store" })).json(); } catch (e) { return; }
+  document.getElementById("title").textContent = title(data);
+  fitTitle();
+  const rows = data.grid || [];
+  const s = (data.team_event ? "T" : "") + rows.map(r => [r.car_idx, r.position, (r.best_time || 0).toFixed(3), r.class_id, r.name, r.team_name, r.car_number, r.brand].join(":")).join("|");
+  if (s === sig) return;
+  const first = sig === "";
+  sig = s;
+  pages = buildPages(rows);
+  if (first) page = 0;
+  draw(); if (first) schedule();
+}
+async function pollNav() {
+  let st;
+  try { st = await (await fetch("/nav", { cache: "no-store" })).json(); } catch (e) { return; }
+  const wasManual = manual;
+  manual = !AUTO_PARAM || st.manual;
+  if (navSeq === null) { navSeq = st.seq; if (manual !== wasManual) schedule(); draw(); return; }
+  if (st.seq !== navSeq) {
+    navSeq = st.seq;
+    if (st.cmd === "next") return go(page + 1);
+    if (st.cmd === "prev") return go(page - 1);
+    if (st.cmd === "first") return go(0);
+  }
+  if (manual !== wasManual) { schedule(); draw(); }
+}
+function send(cmd) { fetch("/nav/" + cmd, { method: "POST" }).then(pollNav).catch(() => {}); }
+document.addEventListener("keydown", e => {
+  const k = e.key;
+  if (k === "h" || k === "H") { debug = !debug; document.body.classList.toggle("debug", debug); }
+  else if (k === "ArrowRight" || k === "PageDown" || k === " " || k === "n" || k === "N") send("next");
+  else if (k === "ArrowLeft" || k === "PageUp" || k === "p" || k === "P") send("prev");
+  else if (k === "Home" || k === "1") send("first");
+  else if (k === "a" || k === "A") send("auto");
+  else return;
+  e.preventDefault();
+});
+function restart() { if (pages.length) go(0); }
+window.addEventListener("obsSourceVisibleChanged", e => { if (!e.detail || e.detail.visible) restart(); });
+window.addEventListener("obsSourceActiveChanged", e => { if (!e.detail || e.detail.active) restart(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) restart(); });
+if (DEMO) {
+  window.fetch = (u => async (url, o) => {
+    if (String(url).startsWith("/grid")) {
+      const names = ["Maurice Becker","Yannick Wonnenberg","Mike Zocher","Dennis Richter","Marius Becker","Tim Freudling","Andre Brechmann","Andreas Bastian","Remo Cursio","Bastian Kübler"];
+      const nums = ["49","03","01","63","14","11","82","921","7","22"];
+      const brands = ["porsche","bmw","mercedes","ferrari","audi","mclaren","lamborghini","bmw","porsche","ford"];
+      return { json: async () => ({ connected: true, source: "qualifying", track_short: "Indianapolis", track_config: "Road Course",
+        races: 1, race_no: 1, team_event: false, event: { league: "CAS GT3 WCT", slug: "cas-gt3-wct", round: 5 },
+        grid: names.map((n, i) => ({ car_idx: i, position: i + 1, name: n, car_number: nums[i], brand: brands[i],
+          best_time: 82.563 + i * 0.27 + (i % 3) * 0.031, class_id: 1, class_name: "GT3", class_color: "", team_name: "" })) }) };
+    }
+    if (String(url).startsWith("/nav")) return { json: async () => ({ seq: 0, cmd: "", manual: false }) };
+    return u(url, o);
+  })(window.fetch);
+}
+tick(); setInterval(tick, 2000);
+pollNav(); setInterval(pollNav, 300);
+</script></body></html>
+"""
+
+
 @app.route("/")
 def index():
     # ?style=classic = the old purple card with auto-scroll
     if request.args.get("style") == "classic":
         return render_template_string(GRID_HTML_CLASSIC)
     return Response(GRID_HTML, mimetype="text/html")
+
+
+@app.route("/cars")
+def cars_page():
+    # starting grid with car liveries (iRacing render server), DNLS-style
+    return Response(GRID_CARS_HTML, mimetype="text/html")
+
+
+@app.route("/car/<int:cidx>.png")
+def car_image(cidx: int):
+    d = poller.raw.get(cidx)
+    if not d:
+        return Response(status=404)
+    try:
+        view = int(request.args.get("view", 1))
+    except ValueError:
+        view = 1
+    data = renderer.render(d, team=bool(poller.get().get("team_event")), view=view)
+    if data is None:
+        # 404, not cached: the <img> stays hidden and the render server
+        # coming up later self-heals on the next page draw
+        return Response(status=404)
+    resp = Response(data, mimetype="image/png")
+    resp.headers["Cache-Control"] = "max-age=300"
+    return resp
+
+
+@app.route("/brand/<slug>")
+def brand_logo(slug: str):
+    path = resolve_logo(slug)
+    if not path or not path.is_file():
+        abort(404)
+    return send_file(str(path), max_age=3600)
 
 
 @app.route("/grid")
@@ -931,6 +1203,7 @@ if __name__ == "__main__":
     print("  Open in browser:  http://localhost:5001")
     print("  (Runs in parallel to iracing_dashboard.py on port 5000)")
     print("  Pages: auto every ?secs=10 s, or Stream Deck /nav/next | prev | first | auto")
+    print("  With car liveries: http://localhost:5001/cars  (?view=0..3 render angle)")
     print("  Old design: http://localhost:5001/?style=classic")
     print("  Press Ctrl+C to stop")
     print("=" * 60 + "\n")

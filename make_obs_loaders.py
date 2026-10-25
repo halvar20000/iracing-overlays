@@ -26,6 +26,7 @@ OVERLAYS = [
     # (filename stem, friendly name, port)
     ("dashboard",     "Dashboard",        5000),
     ("grid",          "Grid",             5001),
+    ("grid_cars",     "Grid (Cars)",      5001, "/cars"),
     ("results",       "Results",          5002),
     ("results_lite",  "Results Lite",     5003),
     ("live",          "Live Indicator",   5004),
