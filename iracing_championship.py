@@ -46,6 +46,7 @@ from pathlib import Path
 from flask import Flask, Response, jsonify, render_template_string, request
 
 from iracing_sdk_base import SDKPoller, GridBaseline, SESSION_STATE_RACING, setup_utf8_stdout
+import wct_board
 setup_utf8_stdout()
 
 try:
@@ -2166,6 +2167,137 @@ async function loadPin() {
 load(); setInterval(load, 15000); setInterval(draw, 1000); setInterval(loadPin, 1000); loadPin();
 </script></body></html>
 """
+
+
+# -----------------------------------------------------------------------------
+# WCT-look pages (2026-10-25, wct_board): last CLS round's result and the team
+# championship, paged GESAMT / PRO / AM (or per class), same Stream Deck keys
+# as the grid (5001/nav/...).
+# -----------------------------------------------------------------------------
+def _lastrace_wct(info: dict) -> dict:
+    lr = info.get("lastRound") or {}
+    league = info.get("league") or {}
+    races = lr.get("races") or []
+    out = {"connected": True, "tab": "RESULTS", "slug": league.get("slug") or "",
+           "title": wct_board.event_title({"league": league.get("name")},
+                                          wct_board.title_track(lr.get("track"), lr.get("trackConfig")),
+                                          round_no=lr.get("number")),
+           "empty": "Noch keine abgeschlossene Runde", "sections": []}
+    combined = lr.get("combined") or []
+    proam = any(r.get("proAmClass") for race in races for r in race.get("results") or [])
+    comb_by = {(c.get("iracingMemberId") or c.get("name")): c for c in combined}
+    multi = len(races) > 1
+
+    def value(r, lead_laps=0):
+        if r.get("status") and r["status"] != "CLASSIFIED":
+            return r["status"]
+        lb = (r.get("lapsBehind") or 0) - lead_laps
+        if lb > 0:
+            return wct_board.laps_text(lb)
+        if r.get("gapMs"):
+            return wct_board.fmt_gap(r["gapMs"] / 1000)
+        return ""
+
+    for race in races:
+        n = race.get("raceNumber") or 1
+        res = sorted(race.get("results") or [], key=lambda r: r.get("position") or 999)
+        tag = f"RENNEN {n}" if multi else "ERGEBNIS"
+        best = min((r for r in res if r.get("bestLapMs")), key=lambda r: r["bestLapMs"], default=None)
+        rows = []
+        for r in res:
+            mark = ""
+            if proam and r.get("proAmClass") in ("PRO", "AM"):
+                mark = wct_board.PRO_COLOR if r["proAmClass"] == "PRO" else wct_board.AM_COLOR
+            rows.append({"pos": r.get("position") or "", "num": r.get("startNumber") or "", "name": r.get("name") or "",
+                         "sub": r.get("car") or "", "value": value(r), "mark": mark, "fl": bool(r.get("fastestLap")),
+                         # Pro/Am: the race points are OVERALL points, the class points are on the class pages
+                         "pts": None if proam else r.get("points")})
+        out["sections"].append({"label": tag, "rows": rows})
+        if not proam:
+            continue
+        for cls, col in (("PRO", wct_board.PRO_COLOR), ("AM", wct_board.AM_COLOR)):
+            grp = [r for r in res if r.get("proAmClass") == cls]
+            if not grp:
+                continue
+            lead_laps = grp[0].get("lapsBehind") or 0
+            cbest = min((r for r in grp if r.get("bestLapMs")), key=lambda r: r["bestLapMs"], default=None)
+            rows = []
+            for i, r in enumerate(grp, 1):
+                c = comb_by.get(r.get("iracingMemberId") or r.get("name")) or {}
+                cr = c.get(f"race{n}") or {}
+                rows.append({"pos": i, "num": r.get("startNumber") or "", "name": r.get("name") or "",
+                             "sub": r.get("car") or "", "value": value(r, lead_laps), "fl": r is cbest,
+                             "pts": cr.get("points")})
+            out["sections"].append({"label": f"{tag} {cls}" if multi else cls, "color": col, "rows": rows})
+
+    if multi and combined:                      # the round's total over both races
+        def crow(c, pos):
+            bits = [f"R{k} P{(c.get(f'race{k}') or {}).get('position')}" for k in (1, 2)
+                    if (c.get(f"race{k}") or {}).get("position")]
+            return {"pos": pos, "num": c.get("startNumber") or "", "name": c.get("name") or "",
+                    "sub": " · ".join(bits), "pts": c.get("total")}
+        if proam:
+            for cls, col in (("PRO", wct_board.PRO_COLOR), ("AM", wct_board.AM_COLOR)):
+                grp = [c for c in combined if c.get("proAmClass") == cls]
+                if grp:
+                    out["sections"].append({"label": f"WERTUNG {cls}", "color": col,
+                                            "rows": [crow(c, i) for i, c in enumerate(grp, 1)]})
+        else:
+            out["sections"].append({"label": "WERTUNG", "rows": [crow(c, c.get("position") or i)
+                                                                for i, c in enumerate(combined, 1)]})
+    return out
+
+
+def _teams_wct(st: dict) -> dict:
+    league = st.get("league") or {}
+    season = st.get("season") or {}
+    done = season.get("completedRounds")
+    out = {"connected": True, "tab": "TEAMS", "slug": league.get("slug") or "",
+           "title": " - ".join(x for x in ("TEAMWERTUNG", league.get("name") or "",
+                                           f"NACH LAUF {done}" if done else "") if x).upper(),
+           "empty": "Keine Teamwertung in dieser Liga", "sections": []}
+
+    def rows(teams):
+        return [{"pos": t.get("rank") or i, "num": "", "name": t.get("teamName") or "", "pts": t.get("points")}
+                for i, t in enumerate(teams or [], 1)]
+    classes = [g for g in (st.get("teamClasses") or []) if g.get("teams")]
+    if classes:
+        for g in classes:
+            out["sections"].append({"label": (g.get("carClassShortCode") or g.get("carClassName") or "").upper(),
+                                    "rows": rows(g["teams"])})
+    elif st.get("teams"):
+        out["sections"].append({"label": "TEAMS", "rows": rows(st["teams"])})
+    elif "teams" not in st:
+        out["empty"] = "CLS liefert noch keine Teamwertung"
+    return out
+
+
+@app.route("/lastrace/wct")
+def lastrace_wct_page():
+    return Response(wct_board.board_page("/lastrace/wct/data"), mimetype="text/html")
+
+
+@app.route("/lastrace/wct/data")
+def lastrace_wct_data():
+    d = api_roundinfo().get_json() or {}       # same data (league detect, replayed round) as /lastrace
+    if not d.get("info"):
+        return jsonify({"connected": True, "tab": "RESULTS", "title": "", "sections": [],
+                        "empty": d.get("error") or "Lade CLS-Daten …"})
+    return jsonify(_lastrace_wct(d["info"]))
+
+
+@app.route("/teams/wct")
+def teams_wct_page():
+    return Response(wct_board.board_page("/teams/wct/data"), mimetype="text/html")
+
+
+@app.route("/teams/wct/data")
+def teams_wct_data():
+    _apply_detected_league(poller.get())
+    st = fetcher.get().get("data") or {}
+    if not st:
+        return jsonify({"connected": True, "tab": "TEAMS", "title": "", "sections": [], "empty": "Lade CLS-Daten …"})
+    return jsonify(_teams_wct(st))
 
 
 @app.route("/lastrace")

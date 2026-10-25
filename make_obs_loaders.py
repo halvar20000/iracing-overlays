@@ -65,6 +65,10 @@ OVERLAYS = [
     ("table_am",      "Standings Before Round AM", 5010, "/table/am"),
     # ABSPANN: opaque full-page versions, shown over Gabi on the Moderator scene
     ("results_solid", "Results (Abspann, opaque)", 5002, "/solid"),
+    # WCT broadcast look (2026-10-25): paged, Stream Deck 5001/nav/...
+    ("results_wct",   "Results (WCT look)", 5002, "/wct"),
+    ("lastrace_wct",  "Last Round (WCT look)", 5010, "/lastrace/wct"),
+    ("teams_wct",     "Team Standings (WCT look)", 5010, "/teams/wct"),
     ("champ_solid",   "Championship (Abspann, opaque)", 5010, "/overlay/solid"),
     ("rsvp",          "RSVP Overview",    5010, "/rsvp"),
     ("stats",         "Season Statistics", 5010, "/stats"),

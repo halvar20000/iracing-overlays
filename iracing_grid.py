@@ -14,13 +14,11 @@ Run:           python iracing_grid.py
 Open:          http://localhost:5001
 """
 
-import json
 import threading
-import time
-import urllib.request
 from flask import Flask, Response, jsonify, render_template_string, request
 
 from class_colors import class_colors
+from wct_board import EventInfo, PageNav
 
 from iracing_sdk_base import SDKPoller, setup_utf8_stdout
 setup_utf8_stdout()
@@ -233,58 +231,7 @@ class GridPoller(SDKPoller):
 
 
 
-class EventInfo:
-    """League + round for the title ("LAUF 5 - CAS GT3 WCT - …") from the
-    championship server (5010 /api/roundinfo: it detects the league from the
-    grid and knows a replayed earlier round). 5010 not running = no title
-    parts, the track name alone."""
-    URL = "http://127.0.0.1:5010/api/roundinfo"
-
-    def __init__(self):
-        self.data = {}
-
-    def run(self):
-        while True:
-            try:
-                with urllib.request.urlopen(self.URL, timeout=8) as r:
-                    d = json.loads(r.read().decode("utf-8"))
-                info = (d.get("info") or {}) if d.get("ok") else {}
-                league = info.get("league") or {}
-                self.data = {"league": league.get("name") or "", "slug": league.get("slug") or "",
-                             "round": (info.get("nextRound") or {}).get("number")} if league else {}
-            except Exception:
-                self.data = {}
-            time.sleep(30)
-
-
-class PageNav:
-    """Page commands from a Stream Deck / keyboard: every command gets a new
-    seq; each open grid page applies it once. `manual` stops the automatic
-    page change (also after a page reload) until "auto" is sent."""
-
-    def __init__(self):
-        self._lock = threading.Lock()
-        self.state = {"seq": 0, "cmd": "", "manual": False}
-
-    def send(self, cmd):
-        with self._lock:
-            st = self.state
-            if cmd == "auto":                         # toggle
-                st["manual"] = not st["manual"]
-            elif cmd in ("auto_on", "auto_off"):
-                st["manual"] = cmd == "auto_off"
-            else:                                     # next / prev / first
-                st["manual"] = True
-            st["seq"] += 1
-            st["cmd"] = cmd
-            return dict(st)
-
-    def get(self):
-        with self._lock:
-            return dict(self.state)
-
-
-NAV_CMDS = ("next", "prev", "first", "auto", "auto_on", "auto_off")
+NAV_CMDS = PageNav.CMDS
 
 
 # -----------------------------------------------------------------------------
@@ -789,6 +736,11 @@ document.body.classList.toggle("debug", debug);
 
 let data = null, pages = [], page = 0, sig = "", manual = !AUTO_PARAM, navSeq = null, timer = null;
 
+function fitTitle() {           // long track names: shrink instead of cutting off
+  const el = document.getElementById("title");
+  let fs = 18; el.style.fontSize = fs + "px";
+  while (el.scrollWidth > el.clientWidth && fs > 11) el.style.fontSize = (--fs) + "px";
+}
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 function fmtLap(sec) {
   if (!sec || sec <= 0) return "";
@@ -862,6 +814,7 @@ async function tick() {
     data = await (await fetch("/grid", { cache: "no-store" })).json();
   } catch (e) { return; }
   document.getElementById("title").textContent = title(data);
+  fitTitle();
   const logo = document.getElementById("logo"), foot = document.getElementById("foot");
   const src = QS.get("logo") === "0" ? "" : (QS.get("logo") ||
       (data.event && data.event.slug ? "https://league.simracing-hub.com/logos/" + data.event.slug + ".webp" : ""));
@@ -944,9 +897,16 @@ def grid():
     return jsonify({**poller.get(), "event": event.data})
 
 
+# The page commands are shared by every WCT-look page (5002 /wct, 5010
+# /lastrace/wct, /teams/wct poll this server), hence CORS.
+def _cors(resp):
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    return resp
+
+
 @app.route("/nav")
 def nav_state():
-    return jsonify(nav.get())
+    return _cors(jsonify(nav.get()))
 
 
 # Stream Deck "Website" action (access in background) or the page's own keys:
@@ -954,8 +914,8 @@ def nav_state():
 @app.route("/nav/<cmd>", methods=["GET", "POST"])
 def nav_cmd(cmd):
     if cmd not in NAV_CMDS:
-        return jsonify({"ok": False, "error": "unknown command"}), 404
-    return jsonify({"ok": True, **nav.send(cmd)})
+        return _cors(jsonify({"ok": False, "error": "unknown command"})), 404
+    return _cors(jsonify({"ok": True, **nav.send(cmd)}))
 
 
 # -----------------------------------------------------------------------------

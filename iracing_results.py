@@ -26,8 +26,10 @@ Data source:
 import json
 import threading
 import urllib.request
-from flask import Flask, jsonify, render_template_string
+from flask import Flask, Response, jsonify, render_template_string
 
+import wct_board
+from class_colors import class_colors
 from cls_proam import ProAmRoster
 from iracing_sdk_base import SDKPoller, setup_utf8_stdout
 setup_utf8_stdout()
@@ -47,6 +49,7 @@ class ResultsPoller(SDKPoller):
     def _driver_map(self) -> dict:
         info = self.ir["DriverInfo"] or {}
         out = {}
+        ccol = class_colors(info.get("Drivers") or [])
         for d in info.get("Drivers", []) or []:
             cidx = d.get("CarIdx")
             if cidx is None:
@@ -64,6 +67,9 @@ class ResultsPoller(SDKPoller):
                 "license":    d.get("LicString", "") or "",
                 "team_name":  d.get("TeamName", "") or "",
                 "user_id":    d.get("UserID"),
+                "class_id":   int(d.get("CarClassID") or 0),
+                "class_name": d.get("CarClassShortName") or "",
+                "class_color": ccol.get(int(d.get("CarClassID") or 0), ""),
             }
         return out
 
@@ -100,6 +106,18 @@ class ResultsPoller(SDKPoller):
             if s.get("ResultsPositions"):
                 return s
         return None
+
+    @staticmethod
+    def _race_no(sessions: list, chosen) -> int:
+        """1 for the weekend's first race, 2 for the second … (0 = none)."""
+        if not chosen:
+            return 0
+        races = [s.get("SessionNum") for s in sessions
+                 if "race" in (s.get("SessionType") or "").lower()]
+        try:
+            return races.index(chosen.get("SessionNum")) + 1
+        except ValueError:
+            return 0
 
     def _session_is_finalized(self, session: dict) -> bool:
         """Check if iRacing has marked this session as ended."""
@@ -219,7 +237,10 @@ class ResultsPoller(SDKPoller):
             "source":       source,
             "session_name": (chosen or {}).get("SessionName", "Race") if chosen else None,
             "track":        weekend.get("TrackDisplayName", ""),
+            "track_short":  weekend.get("TrackDisplayShortName", "") or weekend.get("TrackDisplayName", ""),
             "track_config": weekend.get("TrackConfigName", ""),
+            "team_event":   str(weekend.get("TeamRacing", 0)) == "1",
+            "race_no":      self._race_no(sessions, chosen),
             "num_cars":     len(rows),
             "results":      rows,
         }
@@ -754,6 +775,89 @@ tick();
 """
 
 
+# -----------------------------------------------------------------------------
+# WCT-look final result (2026-10-25): /wct, pages via wct_board
+# -----------------------------------------------------------------------------
+event = wct_board.EventInfo()
+
+
+def _section_rows(rows: list, team_event: bool, relative: bool, mark_proam: bool) -> list:
+    """Board rows; relative = positions / gaps / fastest lap counted inside
+    this group (a class), same rule as /solid's classRows()."""
+    placed = [r for r in rows if r.get("position")]
+    lead = placed[0] if placed else None
+    best = min((r for r in rows if (r.get("fastest_lap") or 0) > 0),
+               key=lambda r: r["fastest_lap"], default=None)
+    out = []
+    for r in rows:
+        i = placed.index(r) if r in placed else -1
+        pos = (i + 1) if relative and i >= 0 else (r.get("position") or "")
+        lb = r.get("laps_behind") or 0
+        gap = r.get("time_gap")
+        if relative and lead is not None:
+            lb -= lead.get("laps_behind") or 0
+            # the overall winner's own gap reads 0 or None — both mean 0 here
+            lead_gap = lead.get("time_gap") if lead.get("time_gap") is not None else (0.0 if not lead.get("laps_behind") else None)
+            gap = (gap - lead_gap) if (gap is not None and lead_gap is not None) else None
+        if r.get("reason_id"):
+            value = "DNF" if "disq" not in (r.get("reason_out") or "").lower() else "DSQ"
+        elif r is lead:
+            value = f"{r.get('laps_complete') or 0} LAPS"
+        elif lb > 0:
+            value = wct_board.laps_text(lb)
+        else:
+            value = wct_board.fmt_gap(gap)
+        mark = ""
+        if mark_proam and r.get("proam") in ("PRO", "AM"):
+            mark = wct_board.PRO_COLOR if r["proam"] == "PRO" else wct_board.AM_COLOR
+        out.append({"pos": pos, "num": r.get("car_number") or "",
+                    "name": (r.get("team_name") if team_event and r.get("team_name") else r.get("name")) or "",
+                    "sub": r.get("car") or "", "value": value, "mark": mark, "fl": r is best})
+    return out
+
+
+def wct_data(snap: dict, ev: dict) -> dict:
+    rows = [r for r in (snap.get("results") or []) if r.get("position")] + \
+           [r for r in (snap.get("results") or []) if not r.get("position")]
+    team = bool(snap.get("team_event"))
+    extra = f" · RENNEN {snap['race_no']}" if (snap.get("race_no") or 0) > 1 else ""
+    track = wct_board.title_track(snap.get("track_short") or snap.get("track"), snap.get("track_config"))
+    out = {"connected": bool(snap.get("connected")), "tab": "RESULTS",
+           "title": wct_board.event_title(ev, track, extra=extra), "slug": (ev or {}).get("slug") or "",
+           "empty": "Noch kein Ergebnis", "sections": []}
+    if not rows:
+        return out
+    order = []
+    for r in rows:
+        if r.get("class_id", 0) not in order:
+            order.append(r.get("class_id", 0))
+    if len(order) > 1:                                  # multiclass: one table per class
+        for cid in order:
+            grp = [r for r in rows if r.get("class_id", 0) == cid]
+            out["sections"].append({"label": (grp[0].get("class_name") or "CLASS").upper(),
+                                    "color": grp[0].get("class_color") or "",
+                                    "rows": _section_rows(grp, team, True, False)})
+        return out
+    proam_on = bool(snap.get("proam_active"))
+    out["sections"].append({"label": "GESAMT", "rows": _section_rows(rows, team, False, proam_on)})
+    if proam_on:
+        for cls, col in (("PRO", wct_board.PRO_COLOR), ("AM", wct_board.AM_COLOR)):
+            grp = [r for r in rows if r.get("proam") == cls]
+            if grp:
+                out["sections"].append({"label": cls, "color": col, "rows": _section_rows(grp, team, True, False)})
+    return out
+
+
+@app.route("/wct")
+def wct_page():
+    return Response(wct_board.board_page("/wct/data"), mimetype="text/html")
+
+
+@app.route("/wct/data")
+def wct_page_data():
+    return jsonify(wct_data(poller.get(), event.data))
+
+
 @app.route("/")
 @app.route("/solid")
 def index():
@@ -785,12 +889,14 @@ def proam_status():
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
     proam.start()
+    threading.Thread(target=event.run, daemon=True).start()
     t = threading.Thread(target=poller.run, daemon=True)
     t.start()
 
     print("\n" + "=" * 60)
     print("  iRacing Final Race Results Display")
     print("  Open in browser:  http://localhost:5002")
+    print("  WCT look (pages GESAMT / PRO / AM): http://localhost:5002/wct")
     print("  (Runs in parallel to iracing_dashboard.py [5000] and")
     print("   iracing_grid.py [5001])")
     print("  Press H in the browser for Stream mode (transparent bg)")

@@ -178,6 +178,39 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 25, 2026 (WCT-look results: final result, last CLS round, team
+championship — `wct_board.py`):** same look as the new grid, from Thomas's
+WCT "RESULTS" graphic; Pro/Am and team standings asked for. NEW shared
+module `wct_board.py`: BOARD_HTML (paged list: tab + title + orange rule,
+section pills, rows pos · blue number box · name (+ PRO red / AM green /
+class bar, purple fastest-lap dot) · car · value · "n PKT", league logo from
+CLS, title auto-shrinks; ?per=10 ?secs=10 ?auto=0 ?section=PRO ?tab= ?title=
+?logo= ?veil=0 ?zoom= ?debug=1 / H ?demo=1), PageNav + EventInfo (moved out
+of the grid). ONE page-command source: grid 5001 /nav (now CORS open) —
+every WCT page polls it (?nav= overrides), so the four grid Stream Deck keys
+page whichever WCT page is on air; grid must run. Pages:
+  • 5002 `/wct` (+ /wct/data, `wct_data()`): GESAMT, then PRO / AM in Pro/Am
+    fields (class-relative positions, gaps, laps, fastest lap; the overall
+    winner's gap None = 0); multiclass = one section per class; team event =
+    team names; values "N LAPS" / +gap / "+1 LAP" / DNF / DSQ; title LAUF n
+    [· RENNEN 2] from 5010.
+  • 5010 `/lastrace/wct` (`_lastrace_wct`, data via api_roundinfo() so league
+    detect + replayed round apply): per race ERGEBNIS / RENNEN n (+ PRO / AM),
+    WERTUNG (round total, "R1 P3 · R2 P1") for two-race rounds. CLS has NO
+    gaps for imported rounds → points column; in Pro/Am the race `points`
+    are OVERALL, so the overall page shows none and PRO / AM show the CLASS
+    points from combined[].raceN.points (AM winner 35, not 19).
+  • 5010 `/teams/wct` (`_teams_wct`): CLS standings `teams` or, IEC,
+    `teamClasses` per class; "TEAMWERTUNG - <league> - NACH LAUF n".
+CLS league-manager v2.45.0 (DEPLOYED with Thomas's OK): /api/overlay/
+standings carries `teams` + `teamClasses` (null for leagues without teams
+and with ?beforeRound). Checked: WCT table = the public standings Team tab
+(Speed Monkeys II 225, REVORYX 223, …), IEC LMP2 / GT3 / PCUP groups.
+Loaders results_wct / lastrace_wct / teams_wct (56), icons, OVERLAY_TABLE.
+test_wct_board.py 36/36 (sections, class gaps / points, teams, nav, routes);
+pages rendered with live CLS data (WCT R5, PCCD R8, IEC teams) + a synthetic
+final result. Restart 5001, 5002, 5010.
+
 **October 25, 2026 (grid 5001 — WCT broadcast look, pages by Stream Deck):**
 Thomas sent the WCT "STARTING GRID" graphic (LAUF 5 - CAS GT3 WCT -
 INDIANAPOLIS RC) and wanted ours to look like it, paged by hand instead of

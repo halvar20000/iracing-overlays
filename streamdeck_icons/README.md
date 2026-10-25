@@ -129,6 +129,10 @@ URL wie unten. Das Dashboard (Port 5000) muss laufen.
 | `grid_first.png` | `http://localhost:5001/nav/first` — Startaufstellung: Seite 1 |
 | `grid_auto.png` | `http://localhost:5001/nav/auto` — Startaufstellung: automatisch blättern an/aus (grau: `dashboard_off/grid_auto.png`) |
 
+Die vier Grid-Tasten blättern **alle Seiten im WCT-Look** (Startaufstellung,
+Endergebnis `5002/wct`, letzte Runde `5010/lastrace/wct`, Teamwertung
+`5010/teams/wct`) — dafür muss das Grid-Overlay (5001) laufen.
+
 ## Seiten als Fenster öffnen (z. B. auf dem Hochkant-Monitor)
 
 Gleiche Aktion **System → Website**, aber **ohne** Haken bei „Im
