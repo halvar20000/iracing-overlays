@@ -178,6 +178,19 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 25, 2026 (normal tower, RACE: only pos · name · brand ·
+interval · pit):** Thomas: the normal tower (not /cars) shows in a race only
+position, driver name, brand logo, interval and a pit column — "L5" = last
+stop entered in lap 5 (StandingsPoller._last_pit_lap = CarIdxLap at pit
+entry), amber "PIT" while in the pit lane (replaces the name tag). No flag,
+last lap, +/- (`COMPACT`, body class `compact`; /nodelta is now the same in a
+race). Pro/Am / class bar before the name kept; one-make fields still hide
+the logo (?brand=1 forces). `?layout=full` = old columns; /cars unchanged;
+practice / quali unchanged. FIX on the way: pit stops were never reset per
+session (a practice stop would read "L3" in the race) — `_update_pit_tracking`
+clears on (SessionUniqueID, SessionNum) change. CODE_VERSION "2026-10-25
+tower-compact-race". Rendered with a fake 10-car field. Restart 5005.
+
 **October 25, 2026 (NO automatic paging / scrolling on any overlay):**
 Thomas: pages move only with the Stream Deck page keys (5001 /nav). Grid
 5001 (/, /cars, /row), wct_board pages (5002 /wct, 5010 /lastrace/wct,

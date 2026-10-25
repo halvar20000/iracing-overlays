@@ -276,6 +276,14 @@ class StandingsPoller(SDKPoller):
     def _update_pit_tracking(self, ir):
         """Detect OnPitRoad transitions and record last-pit lap + pit-lane time
         per driver. Called once per poll tick."""
+        # New session (quali -> race, or a new hosted race): forget the stops,
+        # or a practice stop would show as "L3" in the race's pit column.
+        key = (ir["SessionUniqueID"], ir["SessionNum"])
+        if key != getattr(self, "_pit_session", None):
+            self._pit_session = key
+            for d in (self._last_pit_lap, self._last_pit_time, self._pit_entry_lap,
+                      self._pit_entry_t, self._prev_on_pit):
+                d.clear()
         on_pit = ir["CarIdxOnPitRoad"] or []
         laps   = ir["CarIdxLap"] or []
         t_now  = ir["SessionTime"] or 0.0
@@ -1586,6 +1594,12 @@ TOWER_HTML = r"""<!DOCTYPE html>
     /* /nodelta (or ?delta=0): race view without the +/- column */
     .nodelta .race .grid { grid-template-columns: 28px 14px minmax(0, 1fr) 26px var(--bw, 28px) 82px 82px; }
     .nodelta .teams.race .grid { grid-template-columns: 28px 14px minmax(0, 1fr) var(--bw, 28px) 82px 82px; }
+    /* Race, normal tower (Thomas 2026-10-25): position · name · brand ·
+       interval · pit lap only (no flag, last lap, +/-). ?layout=full = old. */
+    .compact .race .grid, .compact .teams.race .grid {
+        grid-template-columns: 28px 14px minmax(0, 1fr) var(--bw, 28px) 86px 46px; }
+    .p { text-align: center; font-size: 14px; font-weight: 700; color: var(--muted); }
+    .p.now { color: #111; background: #b9852a; border-radius: 3px; margin: 0 5px; font-weight: 800; }
     .head {
         height: 24px; background: var(--head);
         font-size: 14px; font-weight: 500; color: var(--text);
@@ -1725,6 +1739,11 @@ if (!SHOW_DELTA) document.body.classList.add('nodelta');
 // /cars (or ?cars=1): the car's livery (iRacing render, like 5001/cars) in
 // place of the brand logo — shown in one-make fields too, the liveries differ.
 const SHOW_CARS = /^\/cars(\/|$)/.test(location.pathname) || qs.get('cars') === '1';
+// Normal tower in a race: only position, name, brand, interval and the pit
+// column ("L5" = last stop in lap 5, "PIT" while in the pit lane). The livery
+// tower (/cars) and ?layout=full keep every column.
+const COMPACT = !SHOW_CARS && qs.get('layout') !== 'full';
+if (COMPACT) document.body.classList.add('compact');
 const CAR_VIEW = qs.get('view') || '';
 function carImg(r) {
     return `<img class="carimg" src="/car/${r.car_idx}.png?n=${encodeURIComponent(r.car_number || '')}`
@@ -1742,8 +1761,10 @@ function label(r) {
 
 function headRow(isRace) {
     return `<div class="grid head">
-        <div></div><div></div><div class="c-name">${TEAM_MODE ? 'team' : 'driver name'}</div>${TEAM_MODE ? '' : '<div></div>'}<div></div>
-        ${isRace
+        <div></div><div></div><div class="c-name">${TEAM_MODE ? 'team' : 'driver name'}</div>${(TEAM_MODE || (isRace && COMPACT)) ? '' : '<div></div>'}<div></div>
+        ${isRace && COMPACT
+            ? '<div class="r">interval</div><div class="r" style="text-align:center;padding:0">pit</div>'
+            : isRace
             ? '<div class="r">interval</div><div class="r">last</div>'
               + (SHOW_DELTA ? '<div class="r" style="text-align:center;padding:0">+/-</div>' : '')
             : '<div class="r">fastest</div><div class="r">last</div>'}
@@ -1757,9 +1778,9 @@ function rowHtml(r, isRace) {
              : (MULTI && r.class_color) ? `<div class="pa" style="background:${esc(r.class_color)}"></div>`
              : '<div></div>';
     let tags = '';
-    if (r.on_pit) tags += '<span class="tag pit">PIT</span>';
+    if (r.on_pit && !(isRace && COMPACT)) tags += '<span class="tag pit">PIT</span>';
     else if (!r.in_world) tags += `<span class="tag out">${r.left ? 'LEFT' : 'OUT'}</span>`;
-    const flag = TEAM_MODE ? ''
+    const flag = (TEAM_MODE || (isRace && COMPACT)) ? ''
         : r.country ? `<img class="flag" src="/flag/${encodeURIComponent(r.country)}.svg" alt="">` : '<div></div>';
     const brand = SHOW_CARS ? carImg(r)
         : (SHOW_BRAND && r.brand && r.brand_logo) ? `<img class="brand" src="/brand/${encodeURIComponent(r.brand)}" alt="">` : '<div></div>';
@@ -1779,7 +1800,11 @@ function rowHtml(r, isRace) {
             : pd > 0 ? `<div class="d up">▲${pd}</div>`
             : pd < 0 ? `<div class="d down">▼${-pd}</div>`
             : '<div class="d same">=</div>';
-        cells = `<div class="t ${ivCls}">${iv}</div>${last}${SHOW_DELTA ? dHtml : ''}`;
+        if (COMPACT) {
+            const pit = r.on_pit ? '<div class="p now">PIT</div>'
+                : r.last_pit_lap != null ? `<div class="p">L${r.last_pit_lap}</div>` : '<div class="p"></div>';
+            cells = `<div class="t ${ivCls}">${iv}</div>${pit}`;
+        } else cells = `<div class="t ${ivCls}">${iv}</div>${last}${SHOW_DELTA ? dHtml : ''}`;
     } else {
         const best = r.best_lap > 0
             ? `<div class="t best ${r.session_best ? 'sb' : ''}">${fmtLap(r.best_lap)}</div>`
@@ -2689,7 +2714,7 @@ def standings():
 # Bump on every change: http://localhost:5005/version shows which code the
 # running process actually loaded (the stream PC gets this folder through
 # Nextcloud, so a restart can still pick up the previous file).
-CODE_VERSION = "2026-10-25 tower-cars"
+CODE_VERSION = "2026-10-25 tower-compact-race"
 
 
 @app.route("/version")
