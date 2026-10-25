@@ -20,6 +20,9 @@ FONT_B = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
 Z0, Z1 = 3.0, 15.7
+# the end zoom shrinks for a big circuit so the whole lap stays in the
+# picture (Le Mans 13.6 km); a Hungaroring-size track keeps Z1
+FIT_W, FIT_H = 0.72, 0.60
 T_HOLD0, T_ZOOM, T_DRAW, T_HOLD1 = 1.0, 15.0, 2.0, 3.0
 ORANGE = (255, 140, 30)
 
@@ -114,6 +117,9 @@ def main():
     slat, slon = tlat - math.copysign(9.583, tlat), tlon - 14.249
     if pts[0] != pts[-1]:
         pts = pts + [pts[0]]
+    xs, ys = zip(*(merc(la, lo, 0) for la, lo in pts))
+    z1 = min(Z1, math.log2(min(FIT_W * W / (max(xs) - min(xs)), FIT_H * H / (max(ys) - min(ys)))))
+    print(f"end zoom {z1:.2f}")
 
     f_title = ImageFont.truetype(FONT_B, 64)
     f_sub = ImageFont.truetype(FONT, 34)
@@ -134,7 +140,7 @@ def main():
     for i in range(n):
         t = i / FPS
         u = ease((t - T_HOLD0) / T_ZOOM)
-        z = Z0 + (Z1 - Z0) * u
+        z = Z0 + (z1 - Z0) * u
         # the target slides to the centre during the first ~60 % of the zoom
         m = 1 - ease(u / 0.6)
         px, py = merc(tlat, tlon, z)

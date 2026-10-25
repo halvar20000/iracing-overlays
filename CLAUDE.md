@@ -178,6 +178,22 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 25, 2026 (zoom-in videos for every upcoming WCT / PCCD 6th / IEC
+round):** rounds from CLS round-info → 16 new videos in zoom_videos/
+(gitignored, render on Unraid, copy to the stream PC by hand): Spa
+(spa_2024_grandprix), Fuji GP, Misano GP, Sebring Intl, Le Mans, Road
+Atlanta, Red Bull Ring (spielberg_gp), Sachsenring, Brands Hatch GP,
+Barcelona GP, Montreal, Hockenheim GP, Laguna Seca, Nürburgring GP, Summit
+Point, Daytona road (+ cota_gp, thebend_gt, hungaroring from before).
+make_track_zoom.py: end zoom now fits the lap into 72 % × 60 % of the frame
+(capped at the old 15.7 — Hungaroring / COTA / The Bend unchanged; Le Mans
+13.6, Spa 14.9). NEW tracks/summit_point.json + daytona_road.json from OSM
+(Overpass from Unraid needs a User-Agent, else 406; busy = 502 → backoff;
+NEVER put personal data in the UA — once sent the user's email, don't).
+Daytona = the loop of oneway raceway ways whose length matches 3.56 mi
+(DFS over the way graph, NASCAR chicane / pits excluded). Every final frame
+checked against the satellite image. WCT R12 "SPECIAL EVENT" has no track.
+
 **October 25, 2026 (WCT-look results: final result, last CLS round, team
 championship — `wct_board.py`):** same look as the new grid, from Thomas's
 WCT "RESULTS" graphic; Pro/Am and team standings asked for. NEW shared

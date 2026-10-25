@@ -83,3 +83,14 @@ Druids → Warwick Bridge → Lodge → Deer Leap. 2681 m vs 2656-2670 m
 official. Start/finish point and pit lane reused from
 oulton_international.json (same pit straight). Filename confirmed by an
 iRacing race log (TrackName "oulton fosters").
+
+summit_point.json (2026-10-25) — OpenStreetMap way 572443699 "Summit Point
+Circuit" (© OpenStreetMap contributors, ODbL), closed oneway loop, 3222 m vs
+3219 m official; pit lane way 572443703. Slug NOT confirmed against an
+iRacing log (built for the zoom video of PCCD round 1).
+daytona_road.json (2026-10-25) — Daytona Road Course (sports car layout with
+the Le Mans "bus stop" chicane, International + West Horseshoe, Dogleg)
+stitched from 12 OSM raceway ways (© OpenStreetMap contributors, ODbL):
+352070316, 352696267, 352104911, 352104914, 1315971773, 352070313, 352104912,
+352070310, 352070308, 352067004, 352070311, 198466856 — 5768 m vs 5729 m
+official; the 2021 NASCAR chicane and pit lanes left out. Slug NOT confirmed.
