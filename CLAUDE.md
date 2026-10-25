@@ -186,7 +186,8 @@ over skewed panels). NEW page GRID_CARS_HTML on the grid server (900 × 770,
 two staggered columns: big position, car render, white brand chip
 (car_brands, `/brand/<slug>` now on 5001 too), team / driver name, number
 tag (accent pink; class colour in multiclass), LAP box = pole time, else
-+gap to the class pole, NO TIME. Same paging as the WCT grid (`/nav`, keys,
++gap to the class pole, NO TIME. League logo from CLS bottom left under the left
+column (?logo=<url>|0, added after Thomas missed it). Same paging as the WCT grid (`/nav`, keys,
 Stream Deck page keys, back to page 1 on show). `?view=` render angle
 (default 1 = side; the image's 3/4 view may be another number — try 0-3
 on the stream PC), `?head=` / `?accent=` hex colours, `?demo=1`. Cars from

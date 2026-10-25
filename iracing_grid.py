@@ -10,7 +10,7 @@ Options: ?auto=0 ?per= ?zoom= ?title= ?round=LAUF ?race=RENNEN ?logo=<url>|0
 ?veil=0 ?debug=1 (H) ?demo=1. Old purple card: /?style=classic.
 /cars = the same grid with the car liveries (iRacing's local render server),
 brand logo, number, gap to pole (DNLS look; ?view= render angle, ?head= /
-?accent= hex colours, same paging).
+?accent= hex colours, ?logo=<url>|0 league logo, same paging).
 
 Requirements:  pip install pyirsdk flask
 Run:           python iracing_grid.py
@@ -950,6 +950,9 @@ body.debug { background: #3a4a3a; }
 .slot .lap i.none span { font-size: 11px; letter-spacing: 1px; color: var(--muted); }
 .empty-msg { position: absolute; inset: 120px 60px auto; height: 80px; display: flex; align-items: center; justify-content: center;
              font-size: 22px; font-weight: 700; color: #c8c8d0; background: rgba(36,36,42,.8); }
+.lg { position: absolute; left: 34px; top: 700px; width: 390px; height: 62px; display: flex; align-items: center;
+      justify-content: center; background: rgba(30,30,34,.85); transform: skewX(-14deg); visibility: hidden; }
+.lg img { transform: skewX(14deg); max-height: 50px; max-width: 330px; }
 .hint { position: absolute; right: 8px; bottom: 4px; font-size: 11px; color: #ffd166; display: none; }
 body.debug .hint { display: block; }
 </style></head>
@@ -958,6 +961,7 @@ body.debug .hint { display: block; }
   <div class="hbar" id="title">—</div>
   <div class="sbar" id="sbar"><span>STARTING GRID</span></div>
   <div class="grid" id="grid"></div>
+  <div class="lg" id="foot"><img id="logo" alt=""></div>
   <div class="hint" id="hint"></div>
 </div>
 <script>
@@ -1064,6 +1068,16 @@ async function tick() {
   try { data = await (await fetch("/grid", { cache: "no-store" })).json(); } catch (e) { return; }
   document.getElementById("title").textContent = title(data);
   fitTitle();
+  // league logo from CLS (bottom left, under the left column); ?logo=<url>|0
+  const logo = document.getElementById("logo"), foot = document.getElementById("foot");
+  const lsrc = QS.get("logo") === "0" ? "" : (QS.get("logo") ||
+      (data.event && data.event.slug ? "https://league.simracing-hub.com/logos/" + data.event.slug + ".webp" : ""));
+  if (!lsrc) foot.style.visibility = "hidden";
+  else if (logo.dataset.src !== lsrc) {
+    logo.dataset.src = lsrc; foot.style.visibility = "hidden";
+    logo.onload = () => foot.style.visibility = "visible"; logo.onerror = () => foot.style.visibility = "hidden";
+    logo.src = lsrc;
+  }
   const rows = data.grid || [];
   const s = (data.team_event ? "T" : "") + rows.map(r => [r.car_idx, r.position, (r.best_time || 0).toFixed(3), r.class_id, r.name, r.team_name, r.car_number, r.brand].join(":")).join("|");
   if (s === sig) return;
