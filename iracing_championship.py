@@ -47,6 +47,7 @@ from flask import Flask, Response, jsonify, render_template_string, request
 
 from iracing_sdk_base import SDKPoller, GridBaseline, SESSION_STATE_RACING, setup_utf8_stdout
 import wct_board
+import class_colors
 setup_utf8_stdout()
 
 try:
@@ -2203,7 +2204,52 @@ setInterval(pollNav, 300); pollNav();
 # championship, paged GESAMT / PRO / AM (or per class), same Stream Deck keys
 # as the grid (5001/nav/...).
 # -----------------------------------------------------------------------------
-def _lastrace_wct(info: dict) -> dict:
+def _class_of(st: dict, races: list):
+    """CLS round results carry no car class: take it from the driver's
+    standings row (carClassName), else from the class most drivers of the
+    same car are in. None = single-class league."""
+    by_id = {str(r.get("iracingMemberId")): r.get("carClassName")
+             for r in (st or {}).get("standings") or [] if r.get("carClassName")}
+    if len(set(by_id.values())) < 2:
+        return None
+    votes: dict = {}
+    for race in races:
+        for r in race.get("results") or []:
+            c = by_id.get(str(r.get("iracingMemberId")))
+            if c:
+                votes.setdefault(r.get("car"), {}).setdefault(c, 0)
+                votes[r.get("car")][c] += 1
+    car_cls = {car: max(v, key=v.get) for car, v in votes.items()}
+    return lambda r: by_id.get(str(r.get("iracingMemberId"))) or car_cls.get(r.get("car")) or "?"
+
+
+def _merge_teams(res: list) -> list:
+    """Team races: CLS lists every DRIVER, team mates share the position
+    (their own teamName can even differ). One row per position: the driver
+    who did the most laps carries the name, laps and status; the best lap is
+    the team's best."""
+    by_pos: dict = {}
+    for r in res:
+        by_pos.setdefault(r.get("position") or 999, []).append(r)
+    out = []
+    for pos in sorted(by_pos):
+        grp = by_pos[pos]
+        main = dict(max(grp, key=lambda r: r.get("laps") or 0))
+        main["laps"] = sum(r.get("laps") or 0 for r in grp)     # each driver's stint
+        if any((r.get("status") or "CLASSIFIED") == "CLASSIFIED" for r in grp):
+            main["status"] = "CLASSIFIED"
+        laps = [r["bestLapMs"] for r in grp if r.get("bestLapMs")]
+        main["bestLapMs"] = min(laps) if laps else None
+        main["fastestLap"] = any(r.get("fastestLap") for r in grp)
+        main["drivers"] = [r.get("name") or "" for r in sorted(grp, key=lambda r: -(r.get("laps") or 0))]
+        out.append(main)
+    top = max((r.get("laps") or 0 for r in out), default=0)
+    for r in out:
+        r["lapsBehind"] = top - (r.get("laps") or 0)
+    return out
+
+
+def _lastrace_wct(info: dict, st: dict = None) -> dict:
     lr = info.get("lastRound") or {}
     league = info.get("league") or {}
     races = lr.get("races") or []
@@ -2226,6 +2272,12 @@ def _lastrace_wct(info: dict) -> dict:
         if r.get("gapMs"):
             return wct_board.fmt_gap(r["gapMs"] / 1000)
         return ""
+
+    class_of = _class_of(st, races)
+    team = any(len({r.get("position") for r in race.get("results") or []}) < len(race.get("results") or [])
+               for race in races)
+    if class_of or team:                         # IEC: per class, one row per team
+        return _lastrace_classes(out, races, class_of, team, multi)
 
     for race in races:
         n = race.get("raceNumber") or 1
@@ -2277,6 +2329,95 @@ def _lastrace_wct(info: dict) -> dict:
     return out
 
 
+def _lastrace_classes(out: dict, races: list, class_of, team: bool, multi: bool) -> dict:
+    """Multiclass and / or team rounds (IEC): one page set per class, class
+    positions and laps behind the class winner. Team races show the team
+    name and NO points — CLS gives points per driver by HIS distance, so a
+    team's row would read 0 (the team table has the real ones)."""
+    def value(r, lead_laps, first):
+        if r.get("status") and r["status"] != "CLASSIFIED":
+            return r["status"]
+        lb = (r.get("lapsBehind") or 0) - lead_laps
+        if lb > 0:
+            return wct_board.laps_text(lb)
+        if r.get("gapMs") and not first:
+            return wct_board.fmt_gap(r["gapMs"] / 1000)
+        return f"{r['laps']} LAPS" if first and r.get("laps") else ""
+    for race in races:
+        n = race.get("raceNumber") or 1
+        res = sorted(race.get("results") or [], key=lambda r: r.get("position") or 999)
+        if team:
+            res = _merge_teams(res)
+        groups: dict = {}
+        for r in res:
+            groups.setdefault(class_of(r) if class_of else "", []).append(r)
+        def speed(k):                            # fastest class first
+            laps = [r["bestLapMs"] for r in groups[k] if r.get("bestLapMs")]
+            return min(laps) if laps else 10 ** 9
+        for ci, k in enumerate(sorted(groups, key=speed)):
+            grp = groups[k]
+            done = [r for r in grp if (r.get("status") or "CLASSIFIED") == "CLASSIFIED"]
+            lead_laps = (done[0] if done else grp[0]).get("lapsBehind") or 0
+            best = min((r for r in grp if r.get("bestLapMs")), key=lambda r: r["bestLapMs"], default=None)
+            rows = []
+            for i, r in enumerate(grp, 1):
+                rows.append({"pos": i, "num": r.get("startNumber") or "",
+                             "name": (r.get("teamName") if team and r.get("teamName") else r.get("name")) or "",
+                             "sub": r.get("car") or "", "value": value(r, lead_laps, i == 1), "fl": r is best,
+                             "pts": None if team else r.get("points")})
+            label = (k or "ERGEBNIS").upper()
+            if multi:
+                label = f"RENNEN {n} {label}" if k else f"RENNEN {n}"
+            sec = {"label": label, "rows": rows}
+            if k:
+                sec["color"] = class_colors.PALETTE[ci % len(class_colors.PALETTE)]
+            out["sections"].append(sec)
+    return out
+
+
+def _table_wct(st: dict) -> dict:
+    """Driver championship in the board look: PRO / AM in Pro/Am seasons,
+    one table per car class in multiclass leagues (IEC), else one table.
+    Positions inside the class, CLS order (tie-breaks) kept; `points` IS the
+    class total in Pro/Am seasons (same as /table)."""
+    league = st.get("league") or {}
+    season = st.get("season") or {}
+    done = season.get("completedRounds")
+    out = {"connected": True, "tab": "STANDINGS", "slug": league.get("slug") or "",
+           "title": " - ".join(x for x in ("MEISTERSCHAFT", league.get("name") or "",
+                                           f"NACH LAUF {done}" if done else "") if x).upper(),
+           "empty": "Noch keine Meisterschaftspunkte", "sections": []}
+    rows = sorted([r for r in st.get("standings") or [] if not r.get("excludedAt")],
+                  key=lambda r: r.get("rank") or 999)
+
+    def board(grp, mark=""):
+        lead = grp[0].get("points") or 0 if grp else 0
+        return [{"pos": i, "num": r.get("startNumber") or "", "name": r.get("name") or "",
+                 "sub": r.get("teamName") or "", "mark": mark,
+                 "value": "" if i == 1 else f"-{lead - (r.get('points') or 0)}",
+                 "pts": r.get("points") or 0} for i, r in enumerate(grp, 1)]
+    if season.get("proAmEnabled") and any(r.get("proAmClass") for r in rows):
+        for cls, col in (("PRO", wct_board.PRO_COLOR), ("AM", wct_board.AM_COLOR)):
+            grp = sorted([r for r in rows if r.get("proAmClass") == cls],
+                         key=lambda r: (-(r.get("points") or 0), r.get("rank") or 999))
+            if grp:
+                out["sections"].append({"label": cls, "color": col, "rows": board(grp)})
+        return out
+    classes = []
+    for r in rows:
+        if r.get("carClassName") and r["carClassName"] not in classes:
+            classes.append(r["carClassName"])        # best-ranked class first
+    if len(classes) > 1:
+        for ci, c in enumerate(classes):
+            grp = [r for r in rows if r.get("carClassName") == c]
+            out["sections"].append({"label": c.upper(), "color": class_colors.PALETTE[ci % len(class_colors.PALETTE)],
+                                    "rows": board(grp)})
+        return out
+    if rows:
+        out["sections"].append({"label": "FAHRER", "rows": board(rows)})
+    return out
+
+
 def _teams_wct(st: dict) -> dict:
     league = st.get("league") or {}
     season = st.get("season") or {}
@@ -2312,7 +2453,21 @@ def lastrace_wct_data():
     if not d.get("info"):
         return jsonify({"connected": True, "tab": "RESULTS", "title": "", "sections": [],
                         "empty": d.get("error") or "Lade CLS-Daten …"})
-    return jsonify(_lastrace_wct(d["info"]))
+    return jsonify(_lastrace_wct(d["info"], fetcher.get().get("data") or {}))
+
+
+@app.route("/table/wct")
+def table_wct_page():
+    return Response(wct_board.board_page("/table/wct/data"), mimetype="text/html")
+
+
+@app.route("/table/wct/data")
+def table_wct_data():
+    _apply_detected_league(poller.get())
+    st = fetcher.get().get("data") or {}
+    if not st:
+        return jsonify({"connected": True, "tab": "STANDINGS", "title": "", "sections": [], "empty": "Lade CLS-Daten …"})
+    return jsonify(_table_wct(st))
 
 
 @app.route("/teams/wct")

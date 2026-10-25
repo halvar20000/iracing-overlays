@@ -118,6 +118,45 @@ check("W3 5010 /lastrace/wct page", b"/lastrace/wct/data" in cc.get("/lastrace/w
 check("W4 5010 /teams/wct page", b"/teams/wct/data" in cc.get("/teams/wct").data)
 check("W5 /lastrace/pro still works", cc.get("/lastrace/pro").status_code == 200)
 
+# ---- IEC: per class, one row per team (CLS lists drivers, no class) ----------
+def res(pos, name, team, car, laps, mid, status="CLASSIFIED", best=90000, pts=10):
+    return {"position": pos, "name": name, "teamName": team, "car": car, "laps": laps, "lapsBehind": 0,
+            "iracingMemberId": mid, "status": status, "bestLapMs": best, "points": pts, "startNumber": str(pos)}
+iec = {"league": {"name": "CAS IEC", "slug": "cas-iec"},
+       "lastRound": {"number": 2, "track": "Fuji", "races": [{"raceNumber": 1, "results": [
+           res(1, "A1", "LMP Team", "Dallara P217", 100, "1", best=80000),
+           res(2, "B1", "Team B", "Dallara P217", 60, "2", best=81000), res(2, "B2", "Team B x", "Dallara P217", 39, "3"),
+           res(3, "G1", "GT Team", "BMW M4 GT3", 95, "4", best=90000),
+           res(4, "G2", "GT Two", "BMW M4 GT3", 50, "5", best=89000), res(4, "G3", "GT Two", "BMW M4 GT3", 44, "99"),
+           res(5, "G4", "GT Out", "Ferrari 296 GT3", 10, "6", status="DSQ")]}]}}
+iec_st = {"standings": [{"iracingMemberId": m, "carClassName": c} for m, c in
+                        (("1", "LMP2"), ("2", "LMP2"), ("3", "LMP2"), ("4", "GT3"), ("5", "GT3"), ("6", "GT3"))]}
+d = ch._lastrace_wct(iec, iec_st)
+labels = [s["label"] for s in d["sections"]]
+check("I1 one page set per class, fastest first", labels == ["LMP2", "GT3"], str(labels))
+lmp, gt = d["sections"][0]["rows"], d["sections"][1]["rows"]
+check("I2 team mates merged, team name shown", [r["name"] for r in lmp] == ["LMP Team", "Team B"], str(lmp))
+check("I3 team laps = sum of stints", lmp[1]["value"] == "+1 LAP" and lmp[0]["value"] == "100 LAPS", str(lmp))
+check("I4 class positions + unlisted driver's class from the car", [r["pos"] for r in gt] == [1, 2, 3] and gt[1]["name"] == "GT Two", str(gt))
+check("I5 no points in a team race, DSQ shown, class FL", all(r["pts"] is None for r in gt) and gt[2]["value"] == "DSQ" and gt[1]["fl"], str(gt))
+
+# ---- driver championship /table/wct -------------------------------------------
+def srow(rank, name, pts, **kw):
+    return dict({"rank": rank, "name": name, "points": pts, "teamName": "T", "startNumber": str(rank)}, **kw)
+d = ch._table_wct({"league": {"name": "CAS PCC"}, "season": {"completedRounds": 8},
+                   "standings": [srow(1, "Remo", 484), srow(2, "Maurice", 435), srow(3, "X", 0, excludedAt="x")]})
+check("C1 one table, gap to the leader", d["title"] == "MEISTERSCHAFT - CAS PCC - NACH LAUF 8" and
+      [(r["pos"], r["value"], r["pts"]) for r in d["sections"][0]["rows"]] == [(1, "", 484), (2, "-49", 435)], str(d))
+d = ch._table_wct({"league": {}, "season": {"proAmEnabled": True}, "standings": [
+    srow(1, "P", 90, proAmClass="PRO"), srow(2, "A", 182, proAmClass="AM"), srow(3, "A2", 100, proAmClass="AM")]})
+check("C2 Pro/Am: PRO then AM, class positions", [(s["label"], [r["pos"] for r in s["rows"]]) for s in d["sections"]]
+      == [("PRO", [1]), ("AM", [1, 2])], str(d))
+d = ch._table_wct({"league": {}, "season": {}, "standings": [
+    srow(1, "L", 203, carClassName="LMP2"), srow(5, "G", 124, carClassName="GT3"), srow(2, "L2", 191, carClassName="LMP2")]})
+check("C3 multiclass: one table per class", [(s["label"], [r["name"] for r in s["rows"]]) for s in d["sections"]]
+      == [("LMP2", ["L", "L2"]), ("GT3", ["G"])], str(d))
+check("C4 /table/wct page (not the /table/<cls> route)", b"/table/wct/data" in cc.get("/table/wct").data)
+
 print()
 print("ALL PASS" if not failures else f"FAILURES: {failures}")
 sys.exit(1 if failures else 0)

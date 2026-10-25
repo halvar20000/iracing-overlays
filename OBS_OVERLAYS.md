@@ -89,7 +89,8 @@ Quelle: `?auto=1` (+ `?secs=`), `?cycle=20` (lastrace / table) oder
 | Rennergebnis (Lite) | 5003 | `results_lite.html` | ≈ 780 × 900 |
 | Rennergebnis, deckend (Abspann) | 5002 `/solid` | `results_solid.html` | ✓ 1920 × 1080 |
 | Endergebnis im WCT-Look (GESAMT / PRO / AM bzw. je Klasse, Seiten zu 10) | 5002 `/wct` | `results_wct.html` | 900 × 620 |
-| Letzte Runde (CLS) im WCT-Look (Rennen, PRO / AM mit Klassenpunkten, Wertung) | 5010 `/lastrace/wct` | `lastrace_wct.html` | 900 × 620 |
+| Letzte Runde (CLS) im WCT-Look (Rennen, PRO / AM mit Klassenpunkten, Wertung; IEC je Klasse mit Teamnamen) | 5010 `/lastrace/wct` | `lastrace_wct.html` | 900 × 620 |
+| Fahrer-Meisterschaft (CLS) im WCT-Look (PRO / AM, IEC je Klasse, sonst eine Tabelle) | 5010 `/table/wct` | `table_wct.html` | 900 × 620 |
 | Team-Meisterschaft (CLS) im WCT-Look (IEC: je Klasse) | 5010 `/teams/wct` | `teams_wct.html` | 900 × 620 |
 | Meisterschaft, deckend (Abspann) | 5010 `/overlay/solid` | `champ_solid.html` | ✓ 1920 × 1080 (`?zoom=`) |
 | Highlight-Video Titelkarte (nur während der Aufnahme, HIGHLIGHTS.md) | 5000 `/highlights/card` | `highlight_card.html` | ≈ 1100 × 110 (`?zoom=`) |

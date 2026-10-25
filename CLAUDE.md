@@ -178,6 +178,25 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 25, 2026 (board look for PCCD + IEC too; driver championship
+`5010/table/wct`):** Thomas: the new tables for Porsche Cup and IEC too, not
+only WCT. The board pages were already league-neutral (5010 follows the
+detected / configured league), but: (1) NEW `/table/wct` (`_table_wct`) =
+the DRIVER championship: PRO / AM in Pro/Am seasons, one table per
+carClassName in multiclass (IEC), else one "FAHRER" table; class positions,
+"-N" behind the class leader, sub = team, excluded drivers dropped. (2)
+`/lastrace/wct` in IEC showed one mixed driver list — CLS round results have
+NO class and list every DRIVER (team mates share the position, their
+teamName can even differ). `_class_of()` joins the standings' carClassName
+(car → majority class for drivers not in the standings), `_lastrace_classes()`
+= one section per class (fastest best lap first, class_colors.PALETTE),
+`_merge_teams()` = one row per position, laps = SUM of the stints (each
+driver's lapsBehind is his own), team name shown, NO points (CLS gives points
+per driver by his own distance — teams would read 0; the team table has
+them). Icons renamed "… neu" (files unchanged), loader table_wct.html,
+OBS_OVERLAYS. test_wct_board +9; rendered with live CLS (IEC R2 Fuji, PCCD
+5th). Restart 5010.
+
 **October 25, 2026 (normal tower, RACE: only pos · name · brand ·
 interval · pit):** Thomas: the normal tower (not /cars) shows in a race only
 position, driver name, brand logo, interval and a pit column — "L5" = last
