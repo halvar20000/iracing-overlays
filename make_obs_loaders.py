@@ -27,6 +27,7 @@ OVERLAYS = [
     ("dashboard",     "Dashboard",        5000),
     ("grid",          "Grid",             5001),
     ("grid_cars",     "Grid (Cars)",      5001, "/cars"),
+    ("grid_row",      "Grid (Row)",       5001, "/row"),
     ("results",       "Results",          5002),
     ("results_lite",  "Results Lite",     5003),
     ("live",          "Live Indicator",   5004),

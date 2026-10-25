@@ -96,6 +96,9 @@ check("G3 unknown car 404", c.get("/car/9.png").status_code == 404)
 check("G4 /brand bmw", c.get("/brand/bmw").status_code == 200)
 check("G5 /brand unknown 404", c.get("/brand/zzz").status_code == 404)
 check("G6 default page unchanged", b"/grid" in c.get("/").data)
+rp = c.get("/row").data
+check("G7 /row page: one grid row, livery + nav", b"STARTREIHE" in rp and b"/car/" in rp and b"/nav" in rp)
+check("G8 /row/views angle finder", b"view=" in c.get("/row/views").data)
 
 # ---- standings tower /cars (5005) -------------------------------------------
 import iracing_standings as st

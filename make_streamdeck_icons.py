@@ -176,6 +176,7 @@ OVERLAY_ICONS = [
     ("delta_own",     "quali",  "delta_own", "Delta eigene"),
     ("grid",          "quali",  "grid",      "Start Grid"),
     ("grid_cars",     "quali",  "car",       "Grid Autos"),
+    ("grid_row",      "quali",  "car",       "Grid Reihe"),
     ("sectors",       "quali",  "sectors",   "Beste Sektoren"),
     ("lastrace",      "pre",    "podium",    "Letzte Runde"),
     ("table",         "pre",    "table",     "Tabelle"),

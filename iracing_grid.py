@@ -11,6 +11,9 @@ Options: ?auto=0 ?per= ?zoom= ?title= ?round=LAUF ?race=RENNEN ?logo=<url>|0
 /cars = the same grid with the car liveries (iRacing's local render server),
 brand logo, number, gap to pole (DNLS look; ?view= render angle, ?head= /
 ?accent= hex colours, ?logo=<url>|0 league logo, same paging).
+/row = ONE grid row (two cars) on asphalt with painted grid boxes; next =
+the next row (by hand; ?auto=1 + ?secs=8 cycles). ?view= / ?rot=-90 for a
+top-down render; /row/views shows one car in every render angle.
 
 Requirements:  pip install pyirsdk flask
 Run:           python iracing_grid.py
@@ -1137,6 +1140,271 @@ pollNav(); setInterval(pollNav, 300);
 """
 
 
+GRID_ROW_HTML = r"""<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><title>Grid Row</title>
+<style>
+:root { --accent: #e65fa0; --head: #d9302c; --text: #f4f4f6; --muted: #b8b8c2; --box: rgba(24,24,28,.96); }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: rgba(0,0,0,0); overflow: hidden; }
+body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; color: var(--text); }
+body.debug { background: #3a4a3a; }
+.card { position: relative; width: 1000px; height: 680px; transform-origin: 0 0; overflow: hidden; border-radius: 6px;
+        background:
+          repeating-linear-gradient(90deg, rgba(255,255,255,.025) 0 2px, transparent 2px 9px),
+          repeating-linear-gradient(90deg, rgba(0,0,0,.18) 0 1px, transparent 1px 23px),
+          linear-gradient(180deg, #34343a, #2a2a2f 60%, #26262b); }
+/* kerbs left / right */
+.kerb { position: absolute; top: 0; bottom: 0; width: 26px;
+        background: repeating-linear-gradient(180deg, #c8202a 0 34px, #e8e8ea 34px 68px); }
+.kerb.l { left: 0; } .kerb.r { right: 0; }
+.head { position: absolute; left: 26px; right: 26px; top: 0; height: 44px; background: var(--head);
+        display: flex; align-items: center; justify-content: center; font-size: 21px; font-weight: 900;
+        font-style: italic; text-transform: uppercase; letter-spacing: .4px; white-space: nowrap; overflow: hidden; padding: 0 20px; }
+.check { position: absolute; left: 26px; right: 26px; top: 56px; height: 36px;
+         background: conic-gradient(#f2f2f2 25%, #1c1c1f 0 50%, #f2f2f2 0 75%, #1c1c1f 0) 0 0 / 36px 36px; opacity: .9; }
+.line { position: absolute; left: 26px; right: 26px; top: 96px; height: 10px; background: #d8b21c; opacity: .9; }
+.rowtag { position: absolute; left: 50%; top: 118px; transform: translateX(-50%); background: rgba(16,16,20,.85);
+          padding: 4px 16px; border-radius: 3px; font-size: 16px; font-weight: 900; font-style: italic; letter-spacing: 1px;
+          white-space: nowrap; }
+.rowtag .cls { font-style: normal; font-size: 13px; margin-left: 10px; padding: 1px 8px; border-radius: 3px;
+               background: rgba(255,255,255,.14); border-left: 5px solid transparent; }
+.slot { position: absolute; width: 400px; height: 470px; }
+.slot.in { animation: drop .6s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes drop { from { opacity: 0; transform: translateY(40px); } to { opacity: 1; transform: none; } }
+.slot.s0 { left: 66px; top: 150px; }
+.slot.s1 { left: 534px; top: 205px; }
+/* white grid-box marks: front bar + side ticks, like a painted grid slot */
+.mark { position: absolute; left: 30px; right: 30px; top: 20px; height: 330px; border-top: 5px solid #e6e6e6;
+        opacity: .85; }
+.mark::before, .mark::after { content: ""; position: absolute; top: -5px; width: 5px; height: 46px; background: #e6e6e6; }
+.mark::before { left: 0; } .mark::after { right: 0; }
+.carbox { position: absolute; left: 0; right: 0; top: 30px; height: 330px; display: flex; align-items: center; justify-content: center; }
+.carbox img { visibility: hidden; filter: drop-shadow(0 10px 12px rgba(0,0,0,.6)); }
+.carbox img.ok { visibility: visible; }
+.carbox.side img { max-width: 380px; max-height: 200px; }
+.carbox.top img { width: 320px; height: 190px; object-fit: contain; transform: rotate(var(--rot)); }
+.carbox .ph { width: 150px; height: 300px; border-radius: 40px 40px 26px 26px; background: rgba(255,255,255,.06);
+              border: 2px dashed rgba(255,255,255,.18); }
+.plate { position: absolute; left: 0; right: 0; top: 368px; height: 92px; display: flex; }
+.plate .pos { width: 78px; background: var(--box); display: flex; align-items: center; justify-content: center;
+              font-size: 46px; font-weight: 900; font-style: italic; }
+.plate .info { flex: 1; min-width: 0; background: rgba(40,40,46,.95); border-bottom: 4px solid var(--accent);
+               padding: 8px 14px; display: flex; flex-direction: column; justify-content: center; gap: 6px; }
+.plate .nm { font-size: 24px; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.plate .sub { display: flex; align-items: center; gap: 10px; font-size: 15px; color: var(--muted); white-space: nowrap; }
+.plate .num { background: var(--accent); color: #fff; font-weight: 800; padding: 1px 9px; border-radius: 3px; }
+.plate .brand { height: 22px; background: #f2f2f2; border-radius: 3px; padding: 2px 6px; display: flex; align-items: center; }
+.plate .brand img { max-height: 18px; max-width: 54px; }
+.plate .tm { margin-left: auto; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.plate .tm.none { font-size: 12px; letter-spacing: 1px; color: var(--muted); }
+.msg { position: absolute; left: 140px; right: 140px; top: 300px; height: 80px; display: flex; align-items: center;
+       justify-content: center; background: rgba(20,20,24,.85); font-size: 22px; font-weight: 700; color: #c8c8d0; }
+.lg { position: absolute; left: 66px; bottom: 10px; height: 52px; display: flex; align-items: center; visibility: hidden;
+      background: rgba(20,20,24,.75); padding: 6px 14px; border-radius: 4px; }
+.lg img { max-height: 40px; max-width: 260px; }
+.hint { position: absolute; right: 36px; bottom: 6px; font-size: 11px; color: #ffd166; display: none; }
+body.debug .hint { display: block; }
+</style></head>
+<body>
+<div class="card" id="card">
+  <div class="kerb l"></div><div class="kerb r"></div>
+  <div class="check"></div><div class="line"></div>
+  <div class="head" id="title">—</div>
+  <div class="rowtag" id="rowtag">STARTREIHE 1</div>
+  <div id="slots"></div>
+  <div class="lg" id="foot"><img id="logo" alt=""></div>
+  <div class="hint" id="hint"></div>
+</div>
+<script>
+const QS = new URLSearchParams(location.search);
+const SECS = Math.max(2, parseFloat(QS.get("secs") || "8"));
+const AUTO_PARAM = QS.get("auto") === "1";          // one row at a time: by hand unless ?auto=1
+const ROUND_WORD = QS.get("round") || "LAUF";
+const RACE_WORD = QS.get("race") || "RENNEN";
+const ROW_WORD = QS.get("row") || "STARTREIHE";
+const VIEW = QS.get("view") || "";
+const ROT = QS.get("rot");                          // e.g. -90: a render seen from above, nose up
+const DEMO = QS.get("demo") === "1";
+const hex = v => /^[0-9a-fA-F]{3,8}$/.test(v || "") ? "#" + v : "";
+if (hex(QS.get("head"))) document.documentElement.style.setProperty("--head", hex(QS.get("head")));
+if (hex(QS.get("accent"))) document.documentElement.style.setProperty("--accent", hex(QS.get("accent")));
+if (ROT !== null) document.documentElement.style.setProperty("--rot", (parseFloat(ROT) || 0) + "deg");
+const card = document.getElementById("card");
+const zoom = parseFloat(QS.get("zoom") || "1");
+if (zoom && zoom !== 1) card.style.transform = "scale(" + zoom + ")";
+let debug = QS.get("debug") === "1";
+document.body.classList.toggle("debug", debug);
+
+let data = null, pages = [], page = 0, sig = "", manual = !AUTO_PARAM, navSeq = null, timer = null, multi = false;
+
+function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function fmtLap(sec) {
+  if (!sec || sec <= 0) return "";
+  const m = Math.floor(sec / 60), s = (sec - m * 60).toFixed(3).padStart(6, "0");
+  return m + ":" + s;
+}
+function title(d) {
+  if (QS.get("title")) return QS.get("title");
+  const ev = d.event || {}, parts = [];
+  if (ev.league) parts.push(ev.league);
+  if (ev.round) parts.push(ROUND_WORD + " " + ev.round + (d.races > 1 && d.race_no > 1 ? " · " + RACE_WORD + " " + d.race_no : ""));
+  const trk = [d.track_short || d.track, d.track_config].filter(Boolean).join(" ");
+  if (trk) parts.push(trk);
+  return parts.join(" - ") || "STARTING GRID";
+}
+// one page = one grid row (two cars), in grid order; multiclass: rows per class
+function buildPages(rows) {
+  const order = [], by = {};
+  rows.forEach(r => { const k = r.class_id || 0; if (!by[k]) { by[k] = []; order.push(k); } by[k].push(r); });
+  multi = order.length > 1;
+  const out = [];
+  order.forEach(k => {
+    const list = by[k], pole = list.find(r => r.best_time > 0);
+    for (let i = 0; i < list.length; i += 2)
+      out.push({ rows: list.slice(i, i + 2), row: i / 2 + 1, start: i, cls: list[0].class_name || "", color: list[0].class_color || "",
+                 pole: pole ? pole.best_time : 0 });
+  });
+  return out;
+}
+function carSrc(r) {
+  return DEMO ? "" : "/car/" + r.car_idx + ".png?n=" + encodeURIComponent(r.car_number || "") + (VIEW ? "&view=" + encodeURIComponent(VIEW) : "");
+}
+function slotHtml(r, i, pg) {
+  const n = pg.start + i + 1;
+  const nm = data.team_event && r.team_name ? r.team_name : r.name;
+  let tm, none = false;
+  if (!(r.best_time > 0)) { tm = "NO TIME"; none = true; }
+  else if (n === 1 || !pg.pole || r.best_time <= pg.pole) tm = fmtLap(r.best_time);
+  else tm = "+" + (r.best_time - pg.pole).toFixed(3);
+  const src = carSrc(r);
+  const car = src ? '<img src="' + src + '" alt="" onload="this.classList.add(\'ok\')">' : '<div class="ph"></div>';
+  const brand = r.brand ? '<span class="brand"><img src="/brand/' + encodeURIComponent(r.brand) + '" alt="" onerror="this.parentNode.remove()"></span>' : '';
+  const numStyle = multi && r.class_color ? ' style="background:' + r.class_color + '"' : '';
+  return '<div class="slot s' + i + ' in" style="animation-delay:' + (i * 0.18) + 's">' +
+    '<div class="mark"></div>' +
+    '<div class="carbox ' + (ROT !== null ? 'top' : 'side') + '">' + car + '</div>' +
+    '<div class="plate"><div class="pos">' + n + '</div><div class="info">' +
+      '<div class="nm">' + esc(nm || "—") + '</div>' +
+      '<div class="sub"><span class="num"' + numStyle + '>#' + esc(r.car_number) + '</span>' + brand +
+      (data.team_event && r.team_name && r.name ? '<span>' + esc(r.name) + '</span>' : '') +
+      '<span class="tm' + (none ? ' none' : '') + '">' + tm + '</span></div>' +
+    '</div></div></div>';
+}
+function draw() {
+  const slots = document.getElementById("slots"), tag = document.getElementById("rowtag");
+  if (!pages.length) {
+    tag.textContent = ROW_WORD;
+    slots.innerHTML = '<div class="msg">' + (data && data.connected ? "Noch kein Startgrid" : "Warte auf iRacing …") + '</div>';
+    return;
+  }
+  page = ((page % pages.length) + pages.length) % pages.length;
+  const pg = pages[page];
+  tag.innerHTML = esc(ROW_WORD + " " + pg.row) +
+    (multi && pg.cls ? '<span class="cls"' + (pg.color ? ' style="border-left-color:' + pg.color + '"' : '') + '>' + esc(pg.cls) + '</span>' : '');
+  slots.innerHTML = pg.rows.map((r, i) => slotHtml(r, i, pg)).join("");
+  document.getElementById("hint").textContent = (manual ? "MANUELL" : "AUTO " + SECS + " s") + " · Reihe " + (page + 1) + "/" + pages.length;
+}
+function go(p) { page = p; draw(); schedule(); }
+function schedule() {
+  clearTimeout(timer);
+  if (!manual && pages.length > 1) timer = setTimeout(() => go(page + 1), SECS * 1000);
+}
+async function tick() {
+  try { data = await (await fetch("/grid", { cache: "no-store" })).json(); } catch (e) { return; }
+  const t = document.getElementById("title");
+  t.textContent = title(data);
+  let fs = 21; t.style.fontSize = fs + "px";
+  while (t.scrollWidth > t.clientWidth && fs > 12) t.style.fontSize = (--fs) + "px";
+  const logo = document.getElementById("logo"), foot = document.getElementById("foot");
+  const lsrc = QS.get("logo") === "0" ? "" : (QS.get("logo") ||
+      (data.event && data.event.slug ? "https://league.simracing-hub.com/logos/" + data.event.slug + ".webp" : ""));
+  if (!lsrc) foot.style.visibility = "hidden";
+  else if (logo.dataset.src !== lsrc) {
+    logo.dataset.src = lsrc; foot.style.visibility = "hidden";
+    logo.onload = () => foot.style.visibility = "visible"; logo.onerror = () => foot.style.visibility = "hidden";
+    logo.src = lsrc;
+  }
+  const rows = data.grid || [];
+  const s = (data.team_event ? "T" : "") + rows.map(r => [r.car_idx, r.position, (r.best_time || 0).toFixed(3), r.class_id, r.name, r.team_name, r.car_number, r.brand].join(":")).join("|");
+  if (s === sig) return;
+  const first = sig === "";
+  sig = s;
+  pages = buildPages(rows);
+  if (first) page = 0;
+  draw(); if (first) schedule();
+}
+async function pollNav() {
+  let st;
+  try { st = await (await fetch("/nav", { cache: "no-store" })).json(); } catch (e) { return; }
+  const wasManual = manual;
+  manual = !AUTO_PARAM || st.manual;
+  if (navSeq === null) { navSeq = st.seq; if (manual !== wasManual) schedule(); draw(); return; }
+  if (st.seq !== navSeq) {
+    navSeq = st.seq;
+    if (st.cmd === "next") return go(page + 1);
+    if (st.cmd === "prev") return go(page - 1);
+    if (st.cmd === "first") return go(0);
+  }
+  if (manual !== wasManual) { schedule(); draw(); }
+}
+function send(cmd) { fetch("/nav/" + cmd, { method: "POST" }).then(pollNav).catch(() => {}); }
+document.addEventListener("keydown", e => {
+  const k = e.key;
+  if (k === "h" || k === "H") { debug = !debug; document.body.classList.toggle("debug", debug); }
+  else if (k === "ArrowRight" || k === "PageDown" || k === " " || k === "n" || k === "N") send("next");
+  else if (k === "ArrowLeft" || k === "PageUp" || k === "p" || k === "P") send("prev");
+  else if (k === "Home" || k === "1") send("first");
+  else if (k === "a" || k === "A") send("auto");
+  else return;
+  e.preventDefault();
+});
+function restart() { if (pages.length) go(0); }
+window.addEventListener("obsSourceVisibleChanged", e => { if (!e.detail || e.detail.visible) restart(); });
+window.addEventListener("obsSourceActiveChanged", e => { if (!e.detail || e.detail.active) restart(); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden) restart(); });
+if (DEMO) {
+  window.fetch = (u => async (url, o) => {
+    if (String(url).startsWith("/grid")) {
+      const names = ["Maurice Becker","Yannick Wonnenberg","Mike Zocher","Dennis Richter","Marius Becker","Tim Freudling"];
+      const nums = ["49","03","01","63","14","11"], brands = ["porsche","bmw","mercedes","ferrari","audi","mclaren"];
+      return { json: async () => ({ connected: true, track_short: "Indianapolis", track_config: "Road Course", races: 1, race_no: 1,
+        team_event: false, event: { league: "CAS GT3 WCT", slug: "cas-gt3-wct", round: 5 },
+        grid: names.map((n, i) => ({ car_idx: i, position: i + 1, name: n, car_number: nums[i], brand: brands[i],
+          best_time: 82.563 + i * 0.27, class_id: 1, class_name: "GT3", class_color: "", team_name: "" })) }) };
+    }
+    if (String(url).startsWith("/nav")) return { json: async () => ({ seq: 0, cmd: "", manual: true }) };
+    return u(url, o);
+  })(window.fetch);
+}
+tick(); setInterval(tick, 2000);
+pollNav(); setInterval(pollNav, 300);
+</script></body></html>
+"""
+
+# /row/views: one car rendered in every view number of iRacing's render
+# server, to find the top-down angle on the stream PC (render server only
+# runs with the sim).
+GRID_ROW_VIEWS_HTML = r"""<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><title>Render Views</title>
+<style>body{background:#222;color:#eee;font-family:Segoe UI,Arial,sans-serif;margin:16px}
+.w{display:flex;flex-wrap:wrap;gap:12px}.v{background:#333;padding:8px;border-radius:4px;width:300px}
+.v img{width:284px;height:180px;object-fit:contain;background:#444}</style></head><body>
+<h2>iRacing Render: Blickwinkel</h2>
+<p>Welche Nummer zeigt das Auto von oben? Dann in OBS: <code>http://localhost:5001/row?view=NUMMER&amp;rot=-90</code>
+(rot = Drehung, so dass die Nase nach oben zeigt: -90, 90 oder 180).</p>
+<div class="w" id="w"></div>
+<script>
+fetch("/grid").then(r => r.json()).then(d => {
+  const r = (d.grid || [])[0];
+  const w = document.getElementById("w");
+  if (!r) { w.textContent = "Kein Auto im Grid (iRacing läuft?)"; return; }
+  for (let v = 0; v <= 9; v++)
+    w.insertAdjacentHTML("beforeend", '<div class="v"><b>view=' + v + '</b><br><img src="/car/' + r.car_idx + '.png?view=' + v + '" alt="—"></div>');
+});
+</script></body></html>
+"""
+
+
 @app.route("/")
 def index():
     # ?style=classic = the old purple card with auto-scroll
@@ -1149,6 +1417,17 @@ def index():
 def cars_page():
     # starting grid with car liveries (iRacing render server), DNLS-style
     return Response(GRID_CARS_HTML, mimetype="text/html")
+
+
+@app.route("/row")
+def row_page():
+    # one grid row (two cars) at a time, seen like a painted grid; next = next row
+    return Response(GRID_ROW_HTML, mimetype="text/html")
+
+
+@app.route("/row/views")
+def row_views():
+    return Response(GRID_ROW_VIEWS_HTML, mimetype="text/html")
 
 
 @app.route("/car/<int:cidx>.png")
@@ -1218,6 +1497,7 @@ if __name__ == "__main__":
     print("  (Runs in parallel to iracing_dashboard.py on port 5000)")
     print("  Pages: auto every ?secs=10 s, or Stream Deck /nav/next | prev | first | auto")
     print("  With car liveries: http://localhost:5001/cars  (?view=0..3 render angle)")
+    print("  One grid row at a time: http://localhost:5001/row  (angles: /row/views)")
     print("  Old design: http://localhost:5001/?style=classic")
     print("  Press Ctrl+C to stop")
     print("=" * 60 + "\n")

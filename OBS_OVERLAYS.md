@@ -59,6 +59,7 @@ Loader-Datei verwenden).
 | Quali-Delta (zur eigenen Bestzeit) | 5014 `/own` | `delta_own.html` | ≈ 480 × 160 |
 | Startaufstellung | 5001 | `grid.html` | 900 × 620 (`?zoom=` skaliert; Seiten per Stream Deck `5001/nav/next`) |
 | Startaufstellung mit Autos | 5001/cars | `grid_cars.html` | 900 × 770 (Lackierungen aus iRacing; `?view=` Blickwinkel, `?head=` / `?accent=` Farben; gleiche Seiten-Tasten) |
+| Startaufstellung, eine Reihe | 5001/row | `grid_row.html` | 1000 × 680 (zwei Autos = eine Startreihe auf Asphalt mit Startboxen; Weiter-Taste = nächste Reihe, `?auto=1` + `?secs=` blättert selbst; `?view=` / `?rot=-90` für eine Ansicht von oben, Blickwinkel testen auf `5001/row/views`) |
 | Beste Sektoren + theoretische Bestzeit | 5014 `/sectors` | `sectors.html` | ✓ 456 × 280 (3 Sektoren; +40 px je weiterem Sektor) |
 
 ## Vor dem Rennen / Moderatoren-Bildschirm (Daten aus CLS, deckende Panels)

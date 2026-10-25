@@ -178,6 +178,20 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 25, 2026 (grid ONE ROW at a time, 5001 `/row`):** from an F1 TV
+top-down grid picture: two cars = one grid row on asphalt (kerbs, chequered
+line, painted grid boxes, pole left + higher), plate below each car (position,
+name / team, number, brand chip, pole time or +gap / NO TIME), "STARTREIHE n"
+(+ class pill in multiclass, rows per class), league logo under the pole
+slot; title like /cars. 1000 × 680. BY HAND by default — the shared /nav
+next / prev / first (Stream Deck "Seite" keys, → ← Home in the page); ?auto=1
+?secs=8 cycles. Liveries from the shared /car route (CarRenderer). iRacing's
+render server is only known to give the SIDE view (view 1); no top view is
+documented → ?view=N ?rot=-90 rotate a render, and `/row/views` shows one car
+in view 0..9 to find a top view ON THE STREAM PC (not checked). Loader
+grid_row.html (60), icon "Grid Reihe", OBS_OVERLAYS row. test_car_render G7/G8
+(31 PASS). Rendered with the fake render server. Restart 5001.
+
 **October 25, 2026 (tower with car liveries `5005/cars`):** Thomas: the
 liveries of 5001/cars instead of the brand logos in the tower. `/cars` and
 `/cars/nodelta` (or `?cars=1`) = the same TOWER_HTML with a 70 px livery
