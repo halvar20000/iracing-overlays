@@ -17,6 +17,7 @@ Loader-Datei verwenden).
 | Overlay | Port / Pfad | Loader-Datei | Größe (B × H) |
 |---|---|---|---|
 | Standings Tower | 5005 `/` | `standings.html` | ✓ 456 × 640 (22 Fahrer; +25 px je Fahrer). Große Felder: URL-Quelle `http://localhost:5005/?rows=25` = Top 24 + Auto der Kamera ≈ 456 × 720 |
+| Standings Tower ohne +/- | 5005 `/nodelta` | `standings_nodelta.html` | ≈ wie der normale Tower (456 breit; Zeitspalten breiter statt +/-). Mehrklassen: `?classrows=N` = Top N je Klasse |
 | Schnellste Runde (Banner) | 5005 `/fastest` | `fastest.html` | ✓ 620 × 60 |
 | Biggest Movers | 5005 `/movers` | `movers.html` | ✓ 536 × 145 |
 | Abstandsbalken (Gap Bar) | 5005 `/gapbar` | `gapbar.html` | ✓ frei wählbar × 135 (füllt die Breite) |
@@ -29,6 +30,7 @@ Loader-Datei verwenden).
 | Driver Card ohne iRating / Safety Rating | 5017 `/simple` | `driver_simple.html` | ✓ 800 × 130 |
 | Livery (Auto der Kamera) | 5006 | `livery.html` | ≈ 800 × 350 |
 | Track Map | 5007 | `trackmap.html` | ≈ 1000 × 600 (skaliert mit) |
+| Race Control (Gelbphase, Strafen-Flaggen, iRaceControl-Meldungen) | 5019 | `rc_banner.html` | ≈ 950 × 120 (siehe RACE_CONTROL.md) |
 | Flaggen (weiß / karierte) | 5008 | `flag.html` | ≈ 280 × 200 |
 | Neuer Führender (Banner) | 5018 | `leader.html` | ≈ 760 × 220 |
 | Catch-Up Battle | 5015 | `catch.html` | ≈ 1100 × 150 |
