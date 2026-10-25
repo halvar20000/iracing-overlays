@@ -19,6 +19,7 @@ import threading
 from flask import Flask, jsonify, render_template_string
 
 from iracing_sdk_base import SDKPoller, setup_utf8_stdout
+from page_keys import KEY_SCROLL_JS
 setup_utf8_stdout()
 
 
@@ -340,7 +341,8 @@ function renderResults(rows) {
     requestAnimationFrame(updateAutoScroll);
 }
 
-function updateAutoScroll() {
+function oldAutoScroll() {        // ?autoscroll=1 only (page_keys.py)
+
     const viewport = document.getElementById("scroll-viewport");
     const inner    = document.getElementById("scroll-inner");
     if (!viewport || !inner) return;
@@ -359,6 +361,7 @@ function updateAutoScroll() {
     inner.style.setProperty("--scroll-duration", duration.toFixed(1) + "s");
     inner.classList.add("autoscroll");
 }
+/*__KEY_SCROLL__*/
 window.addEventListener("resize", () => setTimeout(updateAutoScroll, 100));
 
 async function tick() {
@@ -400,6 +403,7 @@ tick();
 </body>
 </html>
 """
+LITE_HTML = LITE_HTML.replace("/*__KEY_SCROLL__*/", KEY_SCROLL_JS)
 
 
 @app.route("/")

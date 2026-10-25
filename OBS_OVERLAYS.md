@@ -12,6 +12,12 @@ Loader-Datei verwenden).
 
 ✓ = gemessen · ≈ = aus dem Layout geschätzt
 
+**Blättern / Scrollen (seit 25.10.2026): nur noch per Stream-Deck-Seitentasten**
+(`5001/nav/next|prev|first`, siehe `streamdeck_icons/README.md`) — kein
+Overlay wechselt die Seite oder scrollt mehr von selbst. Der alte Timer pro
+Quelle: `?auto=1` (+ `?secs=`), `?cycle=20` (lastrace / table) oder
+`?autoscroll=1` (results, results_lite, klassisches Grid).
+
 ## Rennen live
 
 | Overlay | Port / Pfad | Loader-Datei | Größe (B × H) |
@@ -59,7 +65,7 @@ Loader-Datei verwenden).
 | Quali-Delta (zur eigenen Bestzeit) | 5014 `/own` | `delta_own.html` | ≈ 480 × 160 |
 | Startaufstellung | 5001 | `grid.html` | 900 × 620 (`?zoom=` skaliert; Seiten per Stream Deck `5001/nav/next`) |
 | Startaufstellung mit Autos | 5001/cars | `grid_cars.html` | 900 × 770 (Lackierungen aus iRacing; `?view=` Blickwinkel, `?head=` / `?accent=` Farben; gleiche Seiten-Tasten) |
-| Startaufstellung, eine Reihe | 5001/row | `grid_row.html` | 1000 × 680 (zwei Autos = eine Startreihe auf Asphalt mit Startboxen; Weiter-Taste = nächste Reihe, `?auto=1` + `?secs=` blättert selbst; echte Lackierung von der Seite) |
+| Startaufstellung, eine Reihe | 5001/row | `grid_row.html` | 1000 × 680 (zwei Autos = eine Startreihe auf Asphalt mit Startboxen; Weiter-Taste = nächste Reihe; echte Lackierung von der Seite) |
 | Startaufstellung, eine Reihe von oben | 5001/row/top | `grid_row_top.html` | 1000 × 680 (wie oben, Autos von oben GEZEICHNET in den Hauptfarben der Lackierung — iRacing rendert nur die Seitenansicht) |
 | Beste Sektoren + theoretische Bestzeit | 5014 `/sectors` | `sectors.html` | ✓ 456 × 280 (3 Sektoren; +40 px je weiterem Sektor) |
 

@@ -1796,11 +1796,12 @@ PRERACE_HTML = r"""<!DOCTYPE html>
 <style>
     /* Pre-race pages from CLS (2026-10-08) — one page, four views by path:
          /lastrace  results of the last completed round (?race=1|2, else
-                    both races alternate every ?cycle=15 s), ?top=N;
-                    Pro/Am seasons: each view PRO then AM, 20 s each,
+                    race 1 → race 2 → combined BY THE PAGE KEYS — 5001
+                    /nav, no timer since 2026-10-25; ?cycle=N = timer), ?top=N;
+                    Pro/Am seasons: each view PRO then AM (same keys),
                     ?class=pro|am|all as on /table
          /table     championship standings BEFORE the round, ?top=N;
-                    Pro/Am seasons: PRO then AM, ?cycle=20 s each,
+                    Pro/Am seasons: PRO then AM by the page keys,
                     ?class=pro|am pins one, ?class=all = mixed list
          /rsvp      RSVP count for the next round (numbers only); WCT GT3:
                     no answer = racing (opt-out), ?optout=1|0 overrides
@@ -1903,10 +1904,13 @@ const classP = () => CLASS_Q || PIN || '';
 const raceP = () => RACE_Q || (PIN ? 'auto' : '');
 const OPTOUT_P = qs.get('optout') || '';                 // /rsvp: '1' | '0' | '' (by league)
 const OPTOUT_LEAGUES = ['cas-gt3-wct'];                  // only declines count — no answer = racing
-// seconds per view: /lastrace races 15 s, Pro/Am pages (/table, /lastrace in
-// a Pro/Am season) 20 s per class
+// Views (race 1 / race 2 / combined, PRO / AM) change ONLY by the Stream
+// Deck page keys (grid server 5001 /nav, 2026-10-25 — no automatic paging);
+// ?cycle=N brings back the timer (N s per view) for one source.
 const CYCLE_Q = parseFloat(qs.get('cycle') || '0');
-const cycleSec = proAm => CYCLE_Q || (proAm || MODE === 'table' ? 20 : 15);
+const cycleSec = proAm => CYCLE_Q;
+const NAV = (qs.get('nav') || 'http://' + (location.hostname || 'localhost') + ':5001').replace(/\/$/, '');
+const wrap = (i, n) => ((i % n) + n) % n;
 
 function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function abbrev(full) { const p = String(full || '').trim().split(/\s+/); return p.length < 2 ? (full || '') : `${p[0][0]}. ${p.slice(1).join(' ')}`; }
@@ -1953,8 +1957,9 @@ function renderLastRace(d) {
     else if (raceP()) base = [base.find(v => v.race && String(v.race.raceNumber) === raceP()) || base[0]];
     const views = base.flatMap(v => classes.map(cls => ({ ...v, cls,
         label: cls ? (base.length > 1 ? `${v.label} · ${cls}` : cls) : v.label })));
-    if (Date.now() - lastSwitch > cycleSec(proAm) * 1000) { raceIdx = (raceIdx + 1) % views.length; lastSwitch = Date.now(); }
-    const view = views[raceIdx % views.length];
+    if (CYCLE_Q > 0 && Date.now() - lastSwitch > cycleSec(proAm) * 1000) { raceIdx = (raceIdx + 1) % views.length; lastSwitch = Date.now(); }
+    raceIdx = wrap(raceIdx, views.length);
+    const view = views[raceIdx];
     const tabs = views.length > 1 ? `<div class="tabs">${views.map(v => `<span class="${v === view ? 'on' : ''}">${v.label}</span>`).join('')}</div>` : '';
     const title = `LAST ROUND${view.cls ? ' · ' + view.cls : ''}`;
     if (view.kind === 'combined') return renderCombined(lr, tabs, view.cls, title);
@@ -2087,8 +2092,9 @@ function renderTable(d) {
         let cls;
         if (classP() === 'pro' || classP() === 'am') cls = classes.find(c => c === classP().toUpperCase()) || classes[0];
         else {
-            if (Date.now() - lastSwitch > cycleSec(true) * 1000) { raceIdx = (raceIdx + 1) % classes.length; lastSwitch = Date.now(); }
-            cls = classes[raceIdx % classes.length];
+            if (CYCLE_Q > 0 && Date.now() - lastSwitch > cycleSec(true) * 1000) { raceIdx = (raceIdx + 1) % classes.length; lastSwitch = Date.now(); }
+            raceIdx = wrap(raceIdx, classes.length);
+            cls = classes[raceIdx];
         }
         list = st.standings.filter(x => x.proAmClass === cls).map((x, i) => ({ ...x, rank: i + 1 }));
         label = ' · ' + cls;
@@ -2164,7 +2170,30 @@ async function loadPin() {
     try { p = (await (await fetch('/api/prerace_pin', { cache: 'no-store' })).json()).cls || null; } catch (e) { return; }
     if (p !== PIN) { PIN = p; restartCycle(); }
 }
+// page keys: next / prev / first from the grid server (applied once each)
+let navSeq = null;
+async function pollNav() {
+    if (MODE !== 'lastrace' && MODE !== 'table') return;
+    let st;
+    try { st = await (await fetch(NAV + '/nav', { cache: 'no-store' })).json(); } catch (e) { return; }
+    if (navSeq === null) { navSeq = st.seq; return; }
+    if (st.seq === navSeq) return;
+    navSeq = st.seq;
+    if (st.cmd === 'next') raceIdx += 1;
+    else if (st.cmd === 'prev') raceIdx -= 1;
+    else if (st.cmd === 'first') raceIdx = 0;
+    else return;
+    lastSwitch = Date.now(); draw();
+}
+document.addEventListener('keydown', e => {
+    const cmd = { ArrowRight: 'next', ArrowDown: 'next', PageDown: 'next', ArrowLeft: 'prev',
+                  ArrowUp: 'prev', PageUp: 'prev', Home: 'first' }[e.key];
+    if (!cmd) return;
+    fetch(NAV + '/nav/' + cmd, { method: 'POST' }).then(pollNav).catch(() => {});
+    e.preventDefault();
+});
 load(); setInterval(load, 15000); setInterval(draw, 1000); setInterval(loadPin, 1000); loadPin();
+setInterval(pollNav, 300); pollNav();
 </script></body></html>
 """
 

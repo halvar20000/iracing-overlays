@@ -32,6 +32,7 @@ import wct_board
 from class_colors import class_colors
 from cls_proam import ProAmRoster
 from iracing_sdk_base import SDKPoller, setup_utf8_stdout
+from page_keys import KEY_SCROLL_JS
 setup_utf8_stdout()
 
 # The AI moderation pins the class it is talking about on the championship
@@ -689,7 +690,8 @@ function renderResults(rows) {
 
 // Auto-scroll controller: animates the inner block up/down when content
 // overflows the viewport.  Speed scales with how much overflow there is.
-function updateAutoScroll() {
+function oldAutoScroll() {        // ?autoscroll=1 only (page_keys.py)
+
     const viewport = document.getElementById("scroll-viewport");
     const inner    = document.getElementById("scroll-inner");
     if (!viewport || !inner) return;
@@ -709,6 +711,7 @@ function updateAutoScroll() {
     inner.classList.add("autoscroll");
 }
 
+/*__KEY_SCROLL__*/
 window.addEventListener("resize", () => setTimeout(updateAutoScroll, 100));
 
 async function tick() {
@@ -773,6 +776,7 @@ tick();
 </body>
 </html>
 """
+RESULTS_HTML = RESULTS_HTML.replace("/*__KEY_SCROLL__*/", KEY_SCROLL_JS)
 
 
 # -----------------------------------------------------------------------------

@@ -17,6 +17,8 @@ import time
 from pathlib import Path
 
 import highlight_runner as R
+NAVS = []
+R.page_nav = lambda cmd: NAVS.append(cmd)   # no real grid server in the tests
 from fake_obs import FakeObs
 from obs_ws import ObsClient
 
@@ -197,6 +199,7 @@ check("grid: one recording, no pause between grid and start", rc == ["StartRecor
 check("grid: one seek only (start plays on from the grid)", [c for c in rp.calls if c[0] == "seek"]
       == [("seek", 3, 244.0)], rp.calls)
 check("grid: source hidden again", not fake.scenes["iRacing"]["Startaufstellung"])
+check("grid: page 1 at the start, page 2 halfway (no grid timer any more)", NAVS[:2] == ["first", "next"], NAVS)
 vis = [d["sceneItemEnabled"] for rt, d in fake.calls if rt == "SetSceneItemEnabled"
        and d["sceneItemId"] == fake.ids[("iRacing", "Startaufstellung")]]
 check("grid: hidden at run start, shown, hidden", vis == [False, True, False], vis)

@@ -178,6 +178,24 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 25, 2026 (NO automatic paging / scrolling on any overlay):**
+Thomas: pages move only with the Stream Deck page keys (5001 /nav). Grid
+5001 (/, /cars, /row), wct_board pages (5002 /wct, 5010 /lastrace/wct,
+/teams/wct): AUTO_PARAM = `?auto=1` opt-in (was default on). 5010 /lastrace
+(RACE 1 → 2 → COMBINED) and /table (PRO → AM): no timer unless `?cycle=N`;
+they now poll /nav (`pollNav`, next / prev / first, keys too). Results 5002,
+results lite 5003, classic grid: NEW `page_keys.py` KEY_SCROLL_JS (injected
+via `/*__KEY_SCROLL__*/`): next = one screen down (wraps to the top), prev =
+up, first = top; old scroller kept as oldAutoScroll() for `?autoscroll=1`.
+Highlight reel: the grid scene sends `first` at the start and `next` halfway
+(`page_nav`, GRID_NAV) since the grid no longer turns itself. Side effect:
+the AI moderation's unpinned /lastrace stays on race 1 unless a key is
+pressed (the Pro/Am pin still selects the class). Event queues (ticker, RC
+banner, fastest lap) unchanged. page_auto key only matters with ?auto=1.
+Page JS node-checked; test_highlight_runner 116, test_car_render,
+test_wct_board, test_championship_rounds pass. Restart 5000, 5001, 5002,
+5003, 5010.
+
 **October 25, 2026 (grid ONE ROW at a time, 5001 `/row` + `/row/top`):** from an F1 TV
 top-down grid picture: two cars = one grid row on asphalt (kerbs, chequered
 line, painted grid boxes, pole left + higher), plate below each car (position,

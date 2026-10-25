@@ -124,16 +124,22 @@ URL wie unten. Das Dashboard (Port 5000) muss laufen.
 | `show_next.png` | `http://localhost:5000/streamdeck/show_next` — nächster Moderations-Abschnitt |
 | `show_stop.png` | `http://localhost:5000/streamdeck/show_stop` — Moderation abbrechen |
 | `ask.png` | `http://localhost:5000/streamdeck/ask` — Frag Claude: drücken = Frage stellen, nochmal drücken = Antwort (FRAG_CLAUDE.md) |
-| `page_next.png` | `http://localhost:5001/nav/next` — WCT-Seiten: nächste Seite (schaltet das automatische Blättern aus) |
-| `page_prev.png` | `http://localhost:5001/nav/prev` — WCT-Seiten: Seite zurück |
-| `page_first.png` | `http://localhost:5001/nav/first` — WCT-Seiten: Seite 1 |
-| `page_auto.png` | `http://localhost:5001/nav/auto` — WCT-Seiten: automatisch blättern an/aus (grau: `dashboard_off/page_auto.png`) |
+| `page_next.png` | `http://localhost:5001/nav/next` — alle Seiten: nächste Seite / weiter scrollen |
+| `page_prev.png` | `http://localhost:5001/nav/prev` — alle Seiten: Seite zurück |
+| `page_first.png` | `http://localhost:5001/nav/first` — alle Seiten: Seite 1 / nach oben |
+| `page_auto.png` | `http://localhost:5001/nav/auto` — automatisch blättern an/aus — wirkt nur noch auf Quellen mit `?auto=1` (grau: `dashboard_off/page_auto.png`) |
 
-Diese vier Tasten blättern **alle Seiten im WCT-Look**: Startaufstellung
-(`grid.html`), Endergebnis (`results_wct.html`), letzte Runde
-(`lastrace_wct.html`) und Teamwertung (`teams_wct.html`). Die Befehle laufen
-über Port 5001 — das Grid-Overlay muss dafür im Launcher laufen, auch wenn
-gerade nur ein Ergebnis gezeigt wird.
+Seit 25.10.2026 blättert und scrollt **kein Overlay mehr von selbst** — nur
+diese Tasten bewegen die Seiten: Startaufstellung (`grid.html`, `grid_cars`,
+`grid_row`, klassisch), Endergebnis (`results_wct.html`), letzte Runde
+(`lastrace_wct.html`, `lastrace.html`: Rennen 1 → 2 → Gesamt), Tabelle
+(`table.html`: PRO → AM), Teamwertung (`teams_wct.html`) und die langen Listen
+`results.html` / `results_lite.html` (Weiter = eine Bildschirmhöhe nach unten,
+am Ende zurück nach oben). Die Befehle laufen über Port 5001 — das
+Grid-Overlay muss dafür im Launcher laufen, auch wenn gerade nur ein Ergebnis
+gezeigt wird. Wer den alten Timer für eine Quelle zurück will: URL-Quelle mit
+`?auto=1` (WCT-Seiten / Grid, Dauer `?secs=`), `?cycle=20` (lastrace / table)
+oder `?autoscroll=1` (results, results_lite, klassisches Grid).
 
 ## Seiten als Fenster öffnen (z. B. auf dem Hochkant-Monitor)
 

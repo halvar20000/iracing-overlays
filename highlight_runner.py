@@ -60,6 +60,14 @@ import time
 
 from race_director import NEVER_CAMS
 
+GRID_NAV = "http://127.0.0.1:5001/nav/"
+
+
+def page_nav(cmd):
+    """Page command to the grid server (same as the Stream Deck page keys)."""
+    import urllib.request
+    urllib.request.urlopen(urllib.request.Request(GRID_NAV + cmd, method="POST"), timeout=2).read()
+
 DEFAULTS = {
     "scenes": {"race": "iRacing", "moderator": "Moderator", "black": "Highlight Schwarz"},
     "sources": {"avatar_talk": "Gabi", "avatar_idle": "Gabi Ruhe", "grid": "Startaufstellung",
@@ -122,9 +130,12 @@ def default_texts(info: dict) -> dict:
 
 class HighlightRunner:
     def __init__(self, replay, obs=None, speaker=None, avatar=None, cfg: dict | None = None,
-                 clock=time.time, sleep=time.sleep, pin=None):
+                 clock=time.time, sleep=time.sleep, pin=None, nav=None):
         self.replay, self.obs, self.speaker, self.avatar = replay, obs, speaker, avatar
         self.pin = pin                 # pin(cls or None): Pro/Am class of the 5002 / 5010 pages
+        # nav(cmd): page command to the grid server (the grid has no timer
+        # any more since 2026-10-25 — the reel turns its page itself)
+        self.nav = nav if nav is not None else page_nav
         self.cfg = {**DEFAULTS, **(cfg or {})}
         self.cfg["scenes"] = {**DEFAULTS["scenes"], **((cfg or {}).get("scenes") or {})}
         self.cfg["sources"] = {**DEFAULTS["sources"], **((cfg or {}).get("sources") or {})}
@@ -591,6 +602,12 @@ class HighlightRunner:
         return bool(a and b and a.get("session_num") == b.get("session_num")
                     and 0 <= float(b["t_start"]) - float(a["t_end"]) <= 1.0)
 
+    def _nav(self, cmd):
+        try:
+            self.nav(cmd)
+        except Exception as e:
+            self._note(f"Seitenwechsel {cmd}: {e}")
+
     def _overlay(self, sc, on: bool):
         """The scene's own OBS source (grid scene: the starting grid)."""
         key = sc.get("overlay")
@@ -628,6 +645,8 @@ class HighlightRunner:
         if self._stop.is_set():
             sc["state"] = "abgebrochen"
             return
+        if sc.get("overlay"):
+            self._nav("first")                       # grid graphic from page 1
         self._overlay(sc, True)
         self._rec_on(rec)
         self._show("race", wait=False)                   # fade in from black (or the cut)
@@ -665,6 +684,10 @@ class HighlightRunner:
         sc = self.scenes[self.current] if 0 <= self.current < len(self.scenes) else None
         recording = self.state == "running" and sc is not None and sc.get("state") == "läuft"
         cam_at, k = start, 0
+        # grid scene: page 2 of the grid graphic halfway through
+        page_at = None
+        if recording and sc.get("overlay"):
+            page_at = (float(sc["t_start"]) + float(sc["t_end"])) / 2
         while not self._stop.is_set():
             try:
                 self.replay.hold()
@@ -674,6 +697,9 @@ class HighlightRunner:
             now = self.clock()
             if t is not None and t >= target:
                 return True
+            if page_at is not None and t is not None and t >= page_at:
+                self._nav("next")
+                page_at = None
             if t is not None and (last_t is None or abs(t - last_t) > 0.01):
                 last_t, last_move = t, now
             elif now - last_move > float(self.cfg["stall_s"]):

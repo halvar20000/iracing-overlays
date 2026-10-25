@@ -178,7 +178,7 @@ const DATA_URL = "__DATA_URL__";
 const QS = new URLSearchParams(location.search);
 const PER = Math.max(3, parseInt(QS.get("per") || "10", 10));
 const SECS = Math.max(2, parseFloat(QS.get("secs") || "10"));
-const AUTO_PARAM = QS.get("auto") !== "0";
+const AUTO_PARAM = QS.get("auto") === "1";          // pages turn only by the Stream Deck keys / arrows; ?auto=1 = old timer
 // page commands come from the grid server (Stream Deck keys 5001/nav/...)
 const NAV = (QS.get("nav") || "http://" + (location.hostname || "localhost") + ":5001").replace(/\/$/, "");
 const card = document.getElementById("card");

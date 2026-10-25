@@ -26,6 +26,7 @@ from flask import (Flask, Response, abort, jsonify, render_template_string,
 
 from car_brands import detect_brand, resolve_logo
 from car_render import CarRenderer, livery_colors
+from page_keys import KEY_SCROLL_JS
 from class_colors import class_colors
 from wct_board import EventInfo, PageNav
 
@@ -567,7 +568,7 @@ const QS = new URLSearchParams(location.search);
 const HOLD_S = Math.max(0, parseFloat(QS.get("hold") || "10"));   // first places stand still this long
 const HOLD_BOTTOM_S = 4;
 let scrollAnim = null;
-function updateAutoScroll() {
+function oldAutoScroll() {        // ?autoscroll=1 only (page_keys.py)
     const viewport = document.getElementById("scroll-viewport");
     const inner    = document.getElementById("scroll-inner");
     if (!viewport || !inner) return;
@@ -597,9 +598,11 @@ function updateAutoScroll() {
 }
 // Back to the top (first places, then the hold) every time the source is shown
 function restartScroll() {
+    if (!KS_AUTO) return;                        // page keys: page_keys.py goes to the top itself
     if (scrollAnim) { scrollAnim.currentTime = 0; scrollAnim.play(); }
     else updateAutoScroll();
 }
+/*__KEY_SCROLL__*/
 window.addEventListener("obsSourceVisibleChanged", e => { if (!e.detail || e.detail.visible) restartScroll(); });
 window.addEventListener("obsSourceActiveChanged", e => { if (!e.detail || e.detail.active) restartScroll(); });
 document.addEventListener("visibilitychange", () => { if (!document.hidden) restartScroll(); });
@@ -662,6 +665,7 @@ tick();
 </body>
 </html>
 """
+GRID_HTML_CLASSIC = GRID_HTML_CLASSIC.replace("/*__KEY_SCROLL__*/", KEY_SCROLL_JS)
 
 
 # Starting grid in the broadcast look of the WCT graphics (2026-10-25,
@@ -669,8 +673,9 @@ tick();
 # STARTING GRID tab + title bar, orange rule, class tab + page boxes on the
 # left, two staggered columns of 4 (pos box + name over an orange line, car
 # number + quali time), league logo at the bottom. Pages of ?per=8 instead
-# of the old scroll: automatic every ?secs=10 s, or by hand via the Stream
-# Deck (/nav/next | prev | first | auto) or the keys → ← Home A.
+# of the old scroll, turned BY HAND only (2026-10-25, Thomas: no automatic
+# paging anywhere): Stream Deck /nav/next | prev | first or the keys → ← Home;
+# ?auto=1 brings back the timer (every ?secs=10 s) for one source.
 GRID_HTML = r"""<!DOCTYPE html>
 <html lang="de"><head><meta charset="UTF-8"><title>Starting Grid</title>
 <style>
@@ -740,7 +745,7 @@ body.debug .hint { display: block; }
 const QS = new URLSearchParams(location.search);
 const PER = Math.max(2, parseInt(QS.get("per") || "8", 10));
 const SECS = Math.max(2, parseFloat(QS.get("secs") || "10"));
-const AUTO_PARAM = QS.get("auto") !== "0";
+const AUTO_PARAM = QS.get("auto") === "1";          // pages turn only by the Stream Deck keys / arrows; ?auto=1 = old timer
 const ROUND_WORD = QS.get("round") || "LAUF";
 const RACE_WORD = QS.get("race") || "RENNEN";
 const card = document.getElementById("card");
@@ -971,7 +976,7 @@ body.debug .hint { display: block; }
 const QS = new URLSearchParams(location.search);
 const PER = Math.max(2, parseInt(QS.get("per") || "8", 10));
 const SECS = Math.max(2, parseFloat(QS.get("secs") || "10"));
-const AUTO_PARAM = QS.get("auto") !== "0";
+const AUTO_PARAM = QS.get("auto") === "1";          // pages turn only by the Stream Deck keys / arrows; ?auto=1 = old timer
 const ROUND_WORD = QS.get("round") || "LAUF";
 const RACE_WORD = QS.get("race") || "RENNEN";
 const VIEW = QS.get("view") || "";
@@ -1218,7 +1223,7 @@ body.debug .hint { display: block; }
 <script>
 const QS = new URLSearchParams(location.search);
 const SECS = Math.max(2, parseFloat(QS.get("secs") || "8"));
-const AUTO_PARAM = QS.get("auto") === "1";          // one row at a time: by hand unless ?auto=1
+const AUTO_PARAM = QS.get("auto") === "1";          // pages turn only by the Stream Deck keys / arrows; ?auto=1 = old timer
 const ROUND_WORD = QS.get("round") || "LAUF";
 const RACE_WORD = QS.get("race") || "RENNEN";
 const ROW_WORD = QS.get("row") || "STARTREIHE";
