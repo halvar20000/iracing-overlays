@@ -112,6 +112,29 @@ def _weather(ir) -> dict:
 # keep the single LAP TIME column.
 
 
+def _num(v) -> float:
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _class_order(drivers: dict) -> dict:
+    """class_id -> rank, FASTEST class first (multiclass, e.g. IEC: GTP above
+    LMP2 above GT3). iRacing's CarClassID says nothing about speed, and the
+    tower used to list the classes by it. Ranked by CarClassEstLapTime
+    (values < 20 s are junk — see the REGIE notes); a class without one goes
+    after the timed ones, in class-id order."""
+    est: dict = {}
+    for d in drivers.values():
+        cid, e = d.get("class_id", 0), d.get("class_est") or 0.0
+        est.setdefault(cid, 0.0)
+        if e >= 20 and (not est[cid] or e < est[cid]):
+            est[cid] = e
+    keys = sorted(est, key=lambda c: (0 if est[c] else 1, est[c], c))
+    return {c: i for i, c in enumerate(keys)}
+
+
 def _fill_class_labels(drivers: dict) -> None:
     """Give every class a readable label when iRacing sends none.
 
@@ -234,6 +257,7 @@ class StandingsPoller(SDKPoller):
                 # country as the fallback (see country_flags.py).
                 "flair":      (d.get("FlairName") or "").strip(),
                 "car_screen": car_screen,
+                "class_est":  _num(d.get("CarClassEstLapTime")),
             }
         _fill_class_labels(out)
         return out
@@ -758,6 +782,9 @@ class StandingsPoller(SDKPoller):
             memory = (self._quali_memory_for(ir)
                       if session_type == "Qualifying" and not behind else None)
             rows = self._build_timed_standings(drivers, ir, None if behind else sess, memory)
+        # classes fastest first (stable sort keeps the order inside a class)
+        rank = _class_order(drivers)
+        rows.sort(key=lambda r: rank.get(r.get("class_id", 0), 999))
 
         # WCT GT3 Pro/Am bar (red PRO / green AM in front of the name).
         # Only switched on when the field is a WCT field — see cls_proam.py.
@@ -1757,6 +1784,19 @@ function render(d) {
         if (f && !top.includes(f)) { top[ROWS - 1] = { ...f, _gapBefore: true }; }
         rows = top;
     }
+    // ?classrows=N: top N of EACH class (multiclass, e.g. IEC) — ?rows= would
+    // cut the slower classes off. The camera car stays in its class block.
+    const CROWS = parseInt(qs.get('classrows') || '0', 10);
+    if (CROWS > 0) {
+        const out = [], seen = new Map();
+        for (const r of rows) {
+            const n = (seen.get(r.class_id) || 0) + 1;
+            seen.set(r.class_id, n);
+            if (n <= CROWS) out.push(r);
+            else if (r.focus) out.push({ ...r, _gapBefore: true });
+        }
+        rows = out;
+    }
     const multi = new Set(rows.map(r => r.class_id)).size > 1;
     let html = infoBar(d);
     let cur = null, open = false;
@@ -2616,7 +2656,7 @@ def standings():
 # Bump on every change: http://localhost:5005/version shows which code the
 # running process actually loaded (the stream PC gets this folder through
 # Nextcloud, so a restart can still pick up the previous file).
-CODE_VERSION = "2026-10-23 nodelta"
+CODE_VERSION = "2026-10-25 class-order"
 
 
 @app.route("/version")

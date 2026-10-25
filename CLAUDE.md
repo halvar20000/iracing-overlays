@@ -177,6 +177,19 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 25, 2026 (tower for the first IEC TEAM race — class order,
+?classrows=N):** checked before Thomas's first IEC team stream: team names
+(TeamRacing → team instead of driver, no flag column, since 2026-10-10) and
+the class blocks (tab + colour per class) were already there; the driver
+card shows the team under the driver name. Two gaps fixed: (1) classes were
+listed in CarClassID order (says nothing about speed) → `_class_order()`
+ranks them by CarClassEstLapTime, FASTEST first (< 20 s ignored, no estimate
+= after, id order), stable re-sort after the standings are built (race and
+timed). (2) `?rows=N` cut the slower classes off in a multiclass field → NEW
+`?classrows=N` = top N per class, the camera car is added to its block after
+a gap. CODE_VERSION "2026-10-25 class-order". Rendered a 3-class team field.
+Restart 5005.
+
 **October 23, 2026 (tower variant without +/-):** `5005/nodelta` (or any
 tower URL with `?delta=0`) = the tower without the +/- (places gained / lost
 vs the grid) column — the race grid gets 82 px time columns instead. Loader
