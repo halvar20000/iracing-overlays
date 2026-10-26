@@ -14,6 +14,8 @@ The engine never talks to a data source directly - it just processes frames.
 
 from __future__ import annotations
 
+import json
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Optional
@@ -90,6 +92,10 @@ class RaceEvent:
     resolution: Optional[str] = None
     noted: bool = False
     investigating: bool = False
+    session_num: int = 0
+    source: str = ""            # incidents: 'points' | 'detected'
+    kind: str = ""              # incidents: spin / contact / stopped / incident
+    other_car_idx: int = -1
 
     def to_dict(self) -> dict:
         return {
@@ -100,11 +106,29 @@ class RaceEvent:
             "inc_points": self.inc_points, "is_incident": self.is_incident,
             "resolved": self.resolved, "resolution": self.resolution,
             "noted": self.noted, "investigating": self.investigating,
+            "session_num": self.session_num, "source": self.source,
+            "kind": self.kind, "other_car_idx": self.other_car_idx,
         }
 
+    @classmethod
+    def from_dict(cls, d: dict) -> "RaceEvent":
+        names = cls.__dataclass_fields__.keys()
+        return cls(**{k: v for k, v in d.items() if k in names})
 
-# How much of the log to keep in memory / send to clients.
-_MAX_EVENTS = 600
+
+# Official points this soon after a detection of the same car belong to it.
+MATCH_POINTS_S = 20.0
+# Fields of a Car that survive a restart (autosave).
+_SAVED_CAR_FIELDS = ("number", "driver", "team", "incident_points",
+                     "unresolved", "niw_count", "pit_stops", "laps_led",
+                     "time_penalty", "dsq", "notes")
+
+
+# How much of the log to keep in memory / send to clients.  Incidents and
+# penalties are never dropped (a 2.5 h endurance race has hundreds of pit and
+# off-track lines; the stewards' work must not scroll out of memory).
+_MAX_EVENTS = 5000
+_KEEP_ALWAYS = ("incident", "penalty")
 
 
 class RaceState:
@@ -137,6 +161,10 @@ class RaceState:
         self.connected = False
         self._leader_idx: Optional[int] = None
         self._prev_flags: list[str] = []
+        self.session_num = 0
+        self.session_key = ""
+        self.in_replay = False
+        self.official_points = False     # official counts arrive live
 
     # -- logging ------------------------------------------------------------
 
@@ -149,11 +177,19 @@ class RaceState:
             car_idx=car.car_idx if car else -1,
             car_number=car.number if car else "",
             inc_points=inc_points, is_incident=is_incident,
+            session_num=self.session_num,
         )
         self._next_event_id += 1
         self.events.append(ev)
         if len(self.events) > _MAX_EVENTS:
-            self.events = self.events[-_MAX_EVENTS:]
+            extra = len(self.events) - _MAX_EVENTS
+            kept = []
+            for e in self.events:
+                if extra > 0 and e.category not in _KEEP_ALWAYS:
+                    extra -= 1
+                    continue
+                kept.append(e)
+            self.events = kept
         self.event_revision += 1
         return ev
 
@@ -169,13 +205,19 @@ class RaceState:
         self.session_length_km = s.track_length_km
         self.session_type = s.session_type
         self.session_state = s.session_state
-        self.session_time = s.session_time
+        if not s.in_replay:            # the clocks stay on the live race
+            self.session_time = s.session_time
         self.session_time_remain = s.session_time_remain
         self.session_laps_total = s.session_laps_total
         self.session_laps_remain = s.session_laps_remain
         self.flags = s.flags
         self.start_lights = s.start_lights
         self.sim_date = s.sim_date
+        self.session_num = s.session_num
+        self.session_key = s.session_key
+        if s.in_replay != self.in_replay:
+            self.in_replay = s.in_replay
+            self.event_revision += 1
         self.weather = {
             "air_temp": s.weather.air_temp, "track_temp": s.weather.track_temp,
             "humidity": s.weather.humidity, "wind_ms": s.weather.wind_ms,
@@ -204,25 +246,80 @@ class RaceState:
                     self._log(LOG_FLAG, f"{f.upper()} flag", lap=self._leader_lap())
             self._prev_flags = list(s.flags)
 
+        # While the sim plays a replay, the car data shows the PAST: nothing
+        # of it may go into the log (pit stops, off-tracks again, a leader
+        # change ...).  The timing table keeps the last live picture.
+        if s.in_replay:
+            self._ingest_incidents(frame)
+            return
+
         # Per-car updates.
         for cf in frame.cars:
             self._update_car(cf)
 
-        # Explicit incident events from the source (simulator emits these).
+        self._ingest_incidents(frame)
+
+        # Laps-led accounting.
+        self._update_laps_led(frame.cars)
+
+    def _ingest_incidents(self, frame: Frame) -> None:
+        """Detections (no points) and points (simulator / official)."""
+        if frame.incident_totals is not None:
+            for idx, total in frame.incident_totals.items():
+                car = self.cars.get(idx)
+                if car is not None:
+                    car.incident_points = total
         for inc in frame.incidents:
             car = self.cars.get(inc.car_idx)
             if car is None:
                 continue
-            car.incident_points += inc.points
-            car.unresolved += 1
+            if inc.source == "detected":
+                other = self.cars.get(inc.other_car_idx) \
+                    if inc.other_car_idx is not None else None
+                label = {"spin": "Spin", "contact": "Contact",
+                         "stopped": "Stopped on track"}.get(inc.kind,
+                                                            inc.kind.title())
+                if other is not None:
+                    label += f" with #{other.number}"
+                ev = self._log(LOG_INCIDENT, f"{label} (detected)", car=car,
+                               lap=inc.lap, is_incident=True)
+                ev.source, ev.kind = "detected", inc.kind
+                ev.other_car_idx = inc.other_car_idx \
+                    if inc.other_car_idx is not None else -1
+                car.unresolved += 1
+                continue
+            if frame.incident_totals is None:      # simulator: points summed
+                car.incident_points += inc.points
+            else:
+                self.official_points = True
+            total = f" (total {inc.total}x)" if inc.total is not None else ""
+            # The points of a spin / contact we detected a moment ago: put
+            # them on that line instead of opening a second incident.
+            ev = self._recent_detection(car.car_idx)
+            if ev is not None:
+                ev.inc_points = inc.points
+                ev.text = ev.text.replace(" (detected)", "") + \
+                    f" - {inc.points}x{total}"
+                ev.source = "points"
+                self.event_revision += 1
+                continue
             label = inc.kind.replace("-", " ").title()
-            self._log(LOG_INCIDENT,
-                      f"{label} - {inc.points}x",
-                      car=car, lap=inc.lap, inc_points=inc.points,
-                      is_incident=True)
+            ev = self._log(LOG_INCIDENT, f"{label} - {inc.points}x{total}",
+                           car=car, lap=car.lap if self.in_replay else inc.lap,
+                           inc_points=inc.points,
+                           is_incident=True)
+            ev.source, ev.kind = "points", inc.kind
+            car.unresolved += 1
 
-        # Laps-led accounting.
-        self._update_laps_led(frame.cars)
+    def _recent_detection(self, car_idx: int) -> Optional[RaceEvent]:
+        for ev in reversed(self.events):
+            if self.session_time - ev.sim_time > MATCH_POINTS_S:
+                break
+            if (ev.car_idx == car_idx and ev.is_incident
+                    and ev.source == "detected"
+                    and ev.session_num == self.session_num):
+                return ev
+        return None
 
     def _update_car(self, cf: CarFrame) -> None:
         car = self.cars.get(cf.car_idx)
@@ -470,17 +567,56 @@ class RaceState:
                 "flags": self.flags, "start_lights": self.start_lights,
                 "sim_date": self.sim_date,
                 "car_count": len(cars),
+                "in_replay": self.in_replay,
+                "official_points": self.official_points,
             },
             "weather": self.weather,
             "cars": car_list,
         }
 
-    def events_payload(self, limit: int = 250) -> dict:
+    def events_payload(self, limit: int = 400) -> dict:
+        """Every incident / penalty plus the newest ``limit`` other lines."""
+        others = [e for e in self.events if e.category not in _KEEP_ALWAYS]
+        cut = others[-limit:][0].id if len(others) > limit else 0
+        evs = [e for e in self.events
+               if e.category in _KEEP_ALWAYS or e.id >= cut]
         return {
             "revision": self.event_revision,
             "total": len(self.events),
-            "events": [e.to_dict() for e in self.events[-limit:]],
+            "in_replay": self.in_replay,
+            "official_points": self.official_points,
+            "events": [e.to_dict() for e in evs],
         }
+
+    # -- autosave / recovery -------------------------------------------------
+
+    def to_saved(self) -> dict:
+        return {
+            "v": 1, "saved_at": time.time(),
+            "session_key": self.session_key, "track": self.session_track,
+            "next_event_id": self._next_event_id,
+            "official_points": self.official_points,
+            "events": [e.to_dict() for e in self.events],
+            "cars": {str(i): {k: getattr(c, k) for k in _SAVED_CAR_FIELDS}
+                     for i, c in self.cars.items()},
+        }
+
+    def load_saved(self, data: dict) -> int:
+        """Restore a saved race (log, decisions, per-car totals).  Returns
+        the number of log lines restored."""
+        self.events = [RaceEvent.from_dict(d) for d in data.get("events", [])]
+        self._next_event_id = max(
+            [int(data.get("next_event_id", 1))] + [e.id + 1 for e in self.events])
+        self.official_points = bool(data.get("official_points"))
+        for key, saved in (data.get("cars") or {}).items():
+            idx = int(key)
+            car = self.cars.get(idx) or Car(car_idx=idx)
+            for k in _SAVED_CAR_FIELDS:
+                if k in saved:
+                    setattr(car, k, saved[k])
+            self.cars[idx] = car
+        self.event_revision += 1
+        return len(self.events)
 
     def track_payload(self) -> dict:
         return {
@@ -489,3 +625,13 @@ class RaceState:
             "pit": self.pit_path,
             "length_km": self.session_length_km,
         }
+
+
+def save_json(path: str, data: dict) -> None:
+    """Write via a temp file + rename: a crash mid-write never leaves half a
+    file behind (that IS the case this save exists for)."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    os.replace(tmp, path)

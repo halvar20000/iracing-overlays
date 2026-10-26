@@ -10,28 +10,33 @@ What this source reads reliably from the SDK
   pit-road state, track surface, gaps and intervals.
 * Session: type, state, time/laps remaining, flags, weather.
 
-Known SDK limitation (see ROADMAP)
-----------------------------------
-iRacing's SDK does **not** expose a per-car incident count for cars other than
-your own.  So this source does not invent incident *points*; instead the
-race-state engine logs off-track excursions from the track-surface data, and
-the steward assigns points / penalties manually.  Behavioural incident
-detection is a roadmap item.
+Incidents (backend/incidents.py)
+--------------------------------
+* official points per car from ``ResultsPositions[].Incidents`` - live only
+  when this PC is an ADMIN of the session (a spectator gets them at the
+  finish), read every ``INC_POLL_S``;
+* spins / contacts / stopped cars detected from car motion, always.
+
+Replays: while iRacing shows a replay (``IsReplayPlaying`` and behind the
+live tip) the frame is flagged ``in_replay`` - the engine logs nothing from
+it.  ``replay_event`` jumps the sim's replay to an incident.
 """
 
 from __future__ import annotations
 
 import contextlib
 import io
+import threading
 import time
 from typing import Optional
 
 from backend.models import (
     CarFrame, Frame, SessionFrame, Weather,
     SURFACE_ON_TRACK, SURFACE_OFF_TRACK, SURFACE_IN_PIT_STALL,
-    SURFACE_APPROACHING_PITS, SURFACE_NOT_IN_WORLD,
+    SURFACE_APPROACHING_PITS, SURFACE_NOT_IN_WORLD, IncidentEvent,
 )
 from backend.sources.base import DataSource
+from backend.incidents import BehaviourDetector, OfficialIncidents
 from backend.tracks import load_track
 from backend.car_brands import detect_brand
 
@@ -63,6 +68,32 @@ _FLAG_BITS = [
 ]
 
 
+INC_POLL_S = 2.0          # ResultsPositions = a full session-info parse
+REPLAY_PREROLL_S = 8.0    # replay starts this long before the incident
+REPLAY_BEHIND_FRAMES = 60  # > 1 s behind the live tip = watching a replay
+
+
+def replay_target(t_event: float, preroll: float) -> int:
+    """Replay seek target in ms (never before the session start)."""
+    return int(max(0.0, t_event - preroll) * 1000)
+
+
+def pick_cam_group(groups: list[dict], current: int) -> int:
+    """Keep the operator's camera group, never Scenic (falls back to TV1,
+    then the first other group)."""
+    by_num = {int(g.get("GroupNum", -1)): str(g.get("GroupName", ""))
+              for g in groups}
+    if current in by_num and "scenic" not in by_num[current].lower():
+        return current
+    for num, name in by_num.items():
+        if name.replace(" ", "").lower() == "tv1":
+            return num
+    for num, name in by_num.items():
+        if "scenic" not in name.lower():
+            return num
+    return current
+
+
 class IRacingSource(DataSource):
     """Reads live data from a running copy of iRacing."""
 
@@ -78,6 +109,12 @@ class IRacingSource(DataSource):
         self._speed_ms: dict[int, float] = {}
         self._prev_pct: dict[int, float] = {}
         self._command_log: list[str] = []
+        self.detector = BehaviourDetector()
+        self.official = OfficialIncidents()
+        self._inc_next = 0.0
+        self._totals: Optional[dict[int, int]] = None
+        self._session_num = 0
+        self._replay_busy = False
 
     # -- DataSource interface ----------------------------------------------
 
@@ -126,7 +163,7 @@ class IRacingSource(DataSource):
     # -- polling ------------------------------------------------------------
 
     def poll(self) -> Optional[Frame]:
-        if not _HAVE_IRSDK or self._ir is None:
+        if self._ir is None:
             return None
         # Reconnect transparently if iRacing was restarted.
         if not self._ir.is_connected:
@@ -187,6 +224,11 @@ class IRacingSource(DataSource):
         sessions = session_info.get("Sessions", []) or []
         cur_session = sessions[cur_num] if cur_num < len(sessions) else {}
         session_type = str(cur_session.get("SessionType", "RACE")).upper()
+        self._session_num = cur_num
+        session_key = "%s-%s" % (weekend.get("SessionID", 0) or 0,
+                                 weekend.get("SubSessionID", 0) or 0)
+        in_replay = bool(self._g("IsReplayPlaying", False)) and \
+            int(self._g("ReplayFrameNumEnd", 0) or 0) > REPLAY_BEHIND_FRAMES
 
         # Telemetry arrays (indexed by CarIdx).
         pct = self._g("CarIdxLapDistPct", []) or []
@@ -316,13 +358,57 @@ class IRacingSource(DataSource):
             flags=active_flags, start_lights=start_lights,
             weather=self._read_weather(),
             sim_date=str(weekend.get("WeekendOptions", {}).get("Date", "")),
+            session_num=cur_num, session_key=session_key, in_replay=in_replay,
         )
 
+        incidents = self._read_incidents(cur_num, cur_session, cars,
+                                         session.session_time, state_id,
+                                         track_len_km, in_replay)
         return Frame(
-            session=session, cars=cars, incidents=[],
+            session=session, cars=cars, incidents=incidents,
+            incident_totals=self._totals,
             track_path=self._track_path, pit_path=self._pit_path,
             source_name=self.name, connected=True,
         )
+
+    def _read_incidents(self, session_num: int, cur_session: dict,
+                        cars: list[CarFrame], t: float, state_id: int,
+                        track_km: float, in_replay: bool) -> list[IncidentEvent]:
+        out: list[IncidentEvent] = []
+        laps = {c.car_idx: c.lap for c in cars}
+        # official points (throttled: every read parses the session YAML)
+        now = time.monotonic()
+        if now >= self._inc_next:
+            self._inc_next = now + INC_POLL_S
+            totals: dict[int, int] = {}
+            for r in cur_session.get("ResultsPositions") or []:
+                try:
+                    totals[int(r["CarIdx"])] = int(r.get("Incidents", 0) or 0)
+                except (KeyError, TypeError, ValueError):
+                    continue
+            for idx, delta, total in self.official.update(session_num, totals):
+                out.append(IncidentEvent(car_idx=idx, points=delta,
+                                         kind="incident", lap=laps.get(idx, 0),
+                                         source="points", total=total))
+            # cars without a result row yet keep their last known total
+            self._totals = dict(self.official.totals)
+        # behaviour - never from replay footage
+        if not in_replay:
+            surf = self._g("CarIdxTrackSurface", []) or []
+            pct = self._g("CarIdxLapDistPct", []) or []
+            rows = []
+            for c in cars:
+                i = c.car_idx
+                rows.append((i, float(pct[i]) if i < len(pct) else -1.0,
+                             int(surf[i]) if i < len(surf) else -1,
+                             c.on_pit_road))
+            for d in self.detector.update(t, session_num, state_id == 4, rows,
+                                          track_km * 1000.0):
+                out.append(IncidentEvent(car_idx=d.car_idx, points=0,
+                                         kind=d.kind, lap=laps.get(d.car_idx, 0),
+                                         other_car_idx=d.other_car_idx,
+                                         source="detected", text=d.text))
+        return out
 
     def _read_weather(self) -> Weather:
         return Weather(
@@ -350,7 +436,7 @@ class IRacingSource(DataSource):
         close), so for those this returns the iRacing chat command text the
         steward should issue.  Automating chat delivery is a roadmap item.
         """
-        if not _HAVE_IRSDK or self._ir is None or not self._ir.is_connected:
+        if self._ir is None or not self._ir.is_connected:
             return "iRacing not connected"
         cmd = command.lower()
         try:
@@ -361,6 +447,8 @@ class IRacingSource(DataSource):
                 self._ir.replay_search(irsdk.ReplaySearchMode.to_end)
                 self._ir.replay_set_play_speed(1)
                 return "Replay set to live"
+            if cmd == "replay_event":
+                return self._start_replay(params)
         except Exception as exc:                  # pragma: no cover
             return f"command failed: {exc}"
 
@@ -378,6 +466,66 @@ class IRacingSource(DataSource):
             return (f"SDK cannot send admin commands directly. "
                     f"iRacing chat command: {chat}")
         return f"command '{command}' acknowledged (logged only)"
+
+    def _start_replay(self, params: dict) -> str:
+        if self._replay_busy:
+            return "a replay jump is already running"
+        try:
+            session_num = int(params.get("session_num", self._session_num))
+            t_event = float(params["sim_time"])
+        except (KeyError, TypeError, ValueError):
+            return "replay: no time for this incident"
+        number = str(params.get("number", "") or "")
+        preroll = float(params.get("preroll", REPLAY_PREROLL_S) or REPLAY_PREROLL_S)
+        self._replay_busy = True
+        threading.Thread(target=self._replay_worker,
+                         args=(session_num, t_event, number, preroll),
+                         daemon=True).start()
+        return (f"replay of #{number or '?'} from "
+                f"{max(0.0, t_event - preroll):.0f}s")
+
+    def _replay_worker(self, session_num: int, t_event: float, number: str,
+                       preroll: float) -> None:
+        """Seek -> WAIT until iRacing is there -> camera -> play 1x.
+
+        A jump into another session takes iRacing ~2.5 s; switching the camera
+        and pressing play before it landed left the replay stuck (found with
+        the highlight runner, 2026-10-21).  One retry, then give up."""
+        ir = self._ir
+        target_ms = replay_target(t_event, preroll)
+        try:
+            landed = False
+            for _attempt in range(2):
+                ir.replay_search_session_time(session_num, target_ms)
+                t_end = time.monotonic() + 6.0
+                while time.monotonic() < t_end:
+                    time.sleep(0.2)
+                    try:
+                        if (int(ir["SessionNum"]) == session_num and
+                                abs(float(ir["SessionTime"]) * 1000 - target_ms)
+                                < 3000):
+                            landed = True
+                            break
+                    except Exception:
+                        pass
+                if landed:
+                    break
+            if not landed:
+                self._command_log.append(
+                    "Replay jump did not land (is the replay recorded "
+                    "that far back?)")
+                return
+            if number:
+                groups = (self._g("CameraInfo", {}) or {}).get("Groups", []) or []
+                group = pick_cam_group(groups,
+                                       int(self._g("CamGroupNumber", 0) or 0))
+                ir.cam_switch_num(number, group, 0)
+                time.sleep(0.3)
+            ir.replay_set_play_speed(1, False)
+        except Exception as exc:                  # pragma: no cover
+            self._command_log.append(f"Replay failed: {exc}")
+        finally:
+            self._replay_busy = False
 
     def drain_command_log(self) -> list[str]:
         out = self._command_log[:]

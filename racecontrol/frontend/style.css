@@ -217,12 +217,12 @@ main {
 
 .sel-actions { display: grid; grid-template-columns: repeat(3, 1fr);
   gap: 6px; margin: 12px 0; }
-.sel-actions button, .ia-grid button, .command-grid .cmd {
+.sel-actions button, .ia-grid button, .ia-replay button, .command-grid .cmd {
   background: var(--panel-2); border: 1px solid var(--border-2);
   color: var(--text); padding: 8px 4px; border-radius: 4px;
   font-size: 11px; font-weight: 600; transition: .12s;
 }
-.sel-actions button:hover, .ia-grid button:hover, .cmd:hover {
+.sel-actions button:hover, .ia-grid button:hover, .ia-replay button:hover, .cmd:hover {
   background: var(--head); border-color: var(--orange); }
 .danger { color: var(--red) !important; border-color: #4a1e22 !important; }
 .danger:hover { background: #2e0d10 !important; }
@@ -385,3 +385,19 @@ td.dsq { color: var(--red) !important; text-decoration: line-through; }
 @media (max-width: 1400px) {
   main { grid-template-columns: 320px 1fr 380px; }
 }
+
+/* ---- replay / incident sources (step 1) ---- */
+.replay-banner { background: #2a1236; color: #e6b3ff; border: 1px solid #b06ae0;
+  border-radius: 6px; padding: 6px 12px; font-weight: 800; font-size: 12px;
+  cursor: pointer; letter-spacing: .04em; }
+.replay-banner b { color: #fff; }
+.replay-banner.hidden { display: none; }
+.ia-replay { display: flex; gap: 6px; margin: 6px 0; }
+.ia-replay button { flex: 1; }
+.log-badge.det { background: #23262f; color: #9aa3b5; }
+.log-badge.pts { background: #3a1517; color: #ff8a8a; }
+.save-link { margin-left: auto; font-size: 11px; color: var(--blue);
+  text-decoration: none; border: 1px solid #1e2a4a; border-radius: 4px;
+  padding: 1px 8px; }
+.metric.inc.spectator span::after { content: "*"; color: var(--yellow); }
+.ia-replay button:disabled { opacity: .35; cursor: not-allowed; }

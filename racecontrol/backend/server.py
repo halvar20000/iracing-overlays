@@ -16,16 +16,18 @@ import argparse
 import asyncio
 import contextlib
 import json
+import re
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from backend import APP_NAME, __version__
-from backend.race_state import RaceState
+from backend.race_state import RaceState, save_json
 from backend.sources.base import DataSource
 from backend.sources.simulator import SimulatorSource
 from backend.sources.iracing_source import IRacingSource
@@ -34,6 +36,14 @@ from backend.sources.replay_source import ReplaySource
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 SNAPSHOT_HZ = 11            # how often the dashboard is refreshed
 RECHECK_IRACING_EVERY = 5.0  # seconds between iRacing detection attempts
+# Autosave: the race log, every steward decision and the incident baseline
+# go to data/<SessionID-SubSessionID>.json, so a crash or restart of this PC
+# mid-race picks the race up again (IEC Sebring 2026: the race-control PC
+# crashed and every count came back doubled).
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+AUTOSAVE_S = 10.0           # save at most this often when something changed
+AUTOSAVE_MAX_AGE_S = 12 * 3600
+LOCAL_MAX_AGE_S = 3 * 3600  # offline / test sessions (id 0-0): same track only
 
 
 class Engine:
@@ -52,6 +62,9 @@ class Engine:
         self._last_event_rev = -1
         self._last_track_rev = -1
         self._last_iracing_check = 0.0
+        self._restored_key: Optional[str] = None
+        self._saved_rev = -1
+        self._saved_at = 0.0
 
     # -- source management --------------------------------------------------
 
@@ -92,6 +105,7 @@ class Engine:
                 self.source.disconnect()
             self.source = ir
             self.state = RaceState()           # fresh state for the real race
+            self._restored_key = None
             self.state.note_system("Switched to live iRacing data")
 
     # -- the race loop ------------------------------------------------------
@@ -107,11 +121,73 @@ class Engine:
             frame = None
         if frame is not None:
             self.state.ingest(frame)
+            self._maybe_restore()
+            self._maybe_autosave()
         # Surface any messages the source generated (auto cautions, etc.).
         drain = getattr(self.source, "drain_command_log", None)
         if callable(drain):
             for line in drain():
                 self.state.note_system(line, category="flag")
+
+    # -- autosave -----------------------------------------------------------
+
+    def save_path(self) -> Optional[Path]:
+        key = self.state.session_key
+        if not key or self.source.name != "iracing":
+            return None
+        if key == "0-0":
+            slug = re.sub(r"[^a-z0-9]+", "_", self.state.session_track.lower())
+            key = f"local_{slug.strip('_')}"
+        return DATA_DIR / f"{re.sub(r'[^A-Za-z0-9_-]', '_', key)}.json"
+
+    def _maybe_restore(self) -> None:
+        key = self.state.session_key
+        if not key or key == self._restored_key or self.source.name != "iracing":
+            return
+        self._restored_key = key
+        path = self.save_path()
+        if path is None or not path.is_file():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(f"[autosave] {path.name} unreadable: {exc}", file=sys.stderr)
+            return
+        age = time.time() - float(data.get("saved_at", 0))
+        limit = LOCAL_MAX_AGE_S if key == "0-0" else AUTOSAVE_MAX_AGE_S
+        if age > limit or (key == "0-0" and
+                           data.get("track") != self.state.session_track):
+            return
+        n = self.state.load_saved(data)
+        off = data.get("official") or {}
+        official = getattr(self.source, "official", None)
+        if official is not None and off.get("session") is not None:
+            official.seed(int(off["session"]), off.get("totals") or {})
+        self.state.note_system(
+            f"Restored the race from the autosave ({n} log lines, "
+            f"saved {age / 60:.0f} min ago)")
+        print(f"[autosave] restored {n} lines from {path.name}")
+        self._saved_rev = self.state.event_revision
+
+    def _maybe_autosave(self, force: bool = False) -> None:
+        path = self.save_path()
+        if path is None:
+            return
+        now = time.monotonic()
+        if not force and (self.state.event_revision == self._saved_rev
+                          or now - self._saved_at < AUTOSAVE_S):
+            return
+        data = self.state.to_saved()
+        official = getattr(self.source, "official", None)
+        if official is not None:
+            data["official"] = {"session": official.session,
+                                "totals": official.totals}
+        try:
+            save_json(str(path), data)
+            self._saved_rev = self.state.event_revision
+            self._saved_at = now
+        except Exception as exc:
+            print(f"[autosave] failed: {exc}", file=sys.stderr)
 
     # -- client messaging ---------------------------------------------------
 
@@ -145,6 +221,18 @@ class Engine:
             result = st.resolve_incident(
                 int(msg.get("id", -1)), str(msg.get("resolution", "")),
                 str(msg.get("message", "")), float(msg.get("seconds", 0.0)))
+            return {"type": "ack", "text": result}
+
+        if action == "replay":
+            ev = next((e for e in st.events
+                       if e.id == int(msg.get("id", -1))), None)
+            if ev is None:
+                return {"type": "ack", "text": "event not found"}
+            car = st.cars.get(ev.car_idx)
+            result = self.source.send_command(
+                "replay_event", session_num=ev.session_num,
+                sim_time=ev.sim_time, number=car.number if car else "",
+                preroll=float(msg.get("preroll", 8) or 8))
             return {"type": "ack", "text": result}
 
         if action == "car":
@@ -204,6 +292,7 @@ async def lifespan(_app: FastAPI):
     """Start the background race loop for the lifetime of the server."""
     task = asyncio.create_task(_race_loop())
     yield
+    engine._maybe_autosave(force=True)
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task
@@ -220,6 +309,17 @@ async def status() -> JSONResponse:
         "connected": engine.state.connected,
         "clients": len(engine.clients),
     })
+
+
+@app.get("/api/save")
+async def download_save() -> Response:
+    """The whole race (log + decisions) as JSON - for the stewards' files."""
+    data = engine.state.to_saved()
+    name = (engine.save_path() or Path("icascontrol_race.json")).name
+    return Response(json.dumps(data, ensure_ascii=False, indent=1),
+                    media_type="application/json",
+                    headers={"Content-Disposition":
+                             f'attachment; filename="{name}"'})
 
 
 @app.websocket("/ws")

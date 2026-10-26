@@ -68,3 +68,6 @@ avatar/out/
 /drone/out/
 /drone_videos/
 /track_zoom/
+
+# iCASControl autosaves (race log + steward decisions per hosted session)
+racecontrol/data/

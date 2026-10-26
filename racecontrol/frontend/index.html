@@ -24,7 +24,7 @@
       <div class="metric"><label>Session</label><span id="session-time">--:--:--</span></div>
       <div class="metric"><label>Remaining</label><span id="time-remain">--:--:--</span></div>
       <div class="metric"><label>Leader Lap</label><span id="leader-lap">0</span></div>
-      <div class="metric inc"><label>Total Inc</label><span id="total-inc">0</span></div>
+      <div class="metric inc" id="total-inc-box"><label>Total Inc</label><span id="total-inc">0</span></div>
       <div class="metric"><label>Cars</label><span id="car-count">0</span></div>
     </div>
 
@@ -34,6 +34,9 @@
     </div>
 
     <div class="flagbox" id="flagbox"><span>NO FLAG</span></div>
+    <button class="replay-banner hidden" id="replay-banner"
+            title="iRacing shows a replay - nothing is logged from it. Click to go back live.">
+      REPLAY &middot; log paused &middot; <b>LIVE</b></button>
 
     <div class="conn">
       <button id="run-toggle" class="run-toggle run" title="RUN / STOP the controller">RUN</button>
@@ -156,6 +159,7 @@
       <div class="panel log-panel">
         <div class="panel-head">
           Race Log <span class="log-count" id="log-count">0</span>
+          <a class="save-link" href="/api/save" title="Download the race log + decisions (also autosaved)">Save</a>
         </div>
         <div class="log-filters" id="log-filters"></div>
         <div class="log-list" id="log-list"></div>
@@ -186,6 +190,11 @@
 
         <div class="incident-actions" id="incident-actions">
           <div class="ia-head" id="ia-head">No incident selected</div>
+          <div class="ia-replay">
+            <button id="ia-replay" disabled title="Replay from 8 s before (double-click a log line does the same)">&#9654; Replay</button>
+            <button id="ia-replay-long" disabled title="Replay from 20 s before">&#9654; -20s</button>
+            <button id="ia-live" title="Back to the live race">LIVE</button>
+          </div>
           <div class="ia-grid">
             <button data-res="NOTED">Noted</button>
             <button data-res="UNDER INVESTIGATION">Investigate</button>

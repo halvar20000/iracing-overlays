@@ -107,6 +107,12 @@ class IncidentEvent:
     kind: str = "incident"         # 'off-track', 'contact', 'spin', 'incident'
     lap: int = 0
     other_car_idx: Optional[int] = None
+    # 'points' = iRacing's own incident points (simulator, or the official
+    # per-car count in iRacing mode); 'detected' = inferred from car motion,
+    # no points (backend/incidents.py).
+    source: str = "points"
+    total: Optional[int] = None    # official running total after this one
+    text: str = ""                 # detector's description
 
 
 @dataclass
@@ -136,6 +142,9 @@ class SessionFrame:
     start_lights: str = "off"          # off / ready / set / go
     weather: Weather = field(default_factory=Weather)
     sim_date: str = ""                 # display date the race started on
+    session_num: int = 0               # iRacing SessionNum (replay seeks need it)
+    session_key: str = ""              # hosted session id (autosave file name)
+    in_replay: bool = False            # the sim shows a replay, not live
 
 
 @dataclass
@@ -144,6 +153,9 @@ class Frame:
     session: SessionFrame = field(default_factory=SessionFrame)
     cars: list[CarFrame] = field(default_factory=list)
     incidents: list[IncidentEvent] = field(default_factory=list)
+    # Official incident total per car_idx for the current session, when the
+    # source has them (iRacing).  Overrides the summed points.
+    incident_totals: Optional[dict[int, int]] = None
     track_path: Optional[list[list[float]]] = None  # normalised closed loop
     pit_path: Optional[list[list[float]]] = None     # normalised pit lane
     source_name: str = "unknown"

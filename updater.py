@@ -65,7 +65,7 @@ PROTECTED = {
     "show_script.json",
     "rc_config.json",
 }
-PROTECTED_DIRS = ("logs/", ".git/")
+PROTECTED_DIRS = ("logs/", ".git/", "racecontrol/data/")
 
 HERE = Path(__file__).resolve().parent
 

@@ -100,6 +100,34 @@ close the pit lane, wave lapped cars, post red/green flags. The **selected car**
 panel (bottom left) shows that car's detail and per-car actions (0x, notify,
 wave-around, end-of-line, DSQ).
 
+## Incidents, replays and the autosave (October 2026)
+
+**Incidents in iRacing mode come from two places:**
+
+* *Official points* - iRacing's own 1x / 2x / 4x per car. iRacing sends the
+  other drivers' points **live only to an admin of the session**; a spectator
+  gets them at the finish (seen in every race log we have). So run
+  iCASControl on a PC whose iRacing account is admin of the session. Until
+  points arrive, the "Total Inc" box shows a yellow `*`.
+* *Detected* - spins, contacts (two cars collapsing together, or one alongside)
+  and cars stopped on track, from car motion (the dashboard's tested method).
+  They appear as `Spin (detected)` / `Contact with #14 (detected)` with a DET
+  badge. When official points for that car arrive within 20 s they are put on
+  the same line (`Contact with #14 - 4x (total 8x)`), otherwise points get a
+  line of their own.
+
+**Replay:** click any log line, then **Replay** (from 8 s before) or **-20s**;
+double-clicking a line does the same. iRacing jumps there, puts the camera on
+that car (your camera group, never Scenic) and plays at 1x. **LIVE** (or the
+violet REPLAY bar at the top) goes back. While iRacing shows a replay nothing
+is logged from it - the clocks and the timing table stay on the live race.
+
+**Autosave:** the log, every decision, notes and the incident baseline are
+saved every 10 s to `data/<SessionID-SubSessionID>.json`. Restart the app (or
+the PC) during the race and it carries on where it was; points scored while it
+was down are logged as one line each, never doubled. **Save** (race log
+header) downloads the same file.
+
 ## What works today vs. what is honest to flag
 
 Live timing, the real track map, the incident/event log, gaps and intervals,
@@ -112,9 +140,8 @@ circuit map are read straight from the SDK and should be accurate. Two things
 are deliberately honest limitations of this version, both explained in the
 roadmap:
 
-* iRacing's SDK does not expose a per-car incident *count* for other cars, so
-  in iRacing mode the log records off-track excursions and the steward assigns
-  points/penalties manually. Behavioural incident detection is planned.
+* Official incident points arrive live only for a session admin (see above);
+  the detection works for everybody.
 * iRacing's SDK has no broadcast message for admin actions (full-course yellow,
   black flags, pit open/close). For those, the app shows the iRacing chat
   command to use; automating delivery is planned.

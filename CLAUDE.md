@@ -178,6 +178,39 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 26, 2026 (iCASControl = our iRaceControl clone, `racecontrol/`
+8080 — STEP 1 of 3: live incidents, replay per line, autosave):** Thomas:
+finishing our own clone would be simpler than the SignalR bridge. It was
+untouched since the June merge (v0.1: UI, timing, map, decision buttons,
+nothing reaching iRacing, NO incidents in iRacing mode, no save). FINDING:
+ResultsPositions[].Incidents is NOT live for a spectator — every race log
+(Algarve, Zolder, VIR, Oulton) has all counts 0 until the finish, then the
+whole tally in one tick; live points need the controller PC to be session
+ADMIN (as iRaceControl). So: NEW `racecontrol/backend/incidents.py` —
+`OfficialIncidents` (deltas; attach = silent baseline, a session seen
+starting begins at 0, seed() from the autosave) + `BehaviourDetector` (the
+dashboard's speed collapse: spin / contact with the other car / stopped on
+track, pit + not-racing excluded, blink = 90 s ignored, time jump resets).
+IRacingSource reads them (ResultsPositions every 2 s), flags `in_replay`
+(IsReplayPlaying + ReplayFrameNumEnd > 60) → RaceState logs NOTHING from
+replay frames and keeps the live clock; official points within 20 s of a
+detection of the same car go ON that line (MATCH_POINTS_S). Replay:
+WS action `replay` {id, preroll} → `replay_event` (thread: seek, wait until
+SessionNum/SessionTime landed ±3 s, 6 s, one retry; camera = current group,
+Scenic → TV1; play 1x); UI ▶ Replay / -20s / LIVE, dblclick a line, violet
+REPLAY bar. Autosave every 10 s to racecontrol/data/<SessionID-SubSessionID>
+.json (gitignored + updater PROTECTED_DIRS; id 0-0 = local_<track>, 3 h,
+same track) incl. the official baseline → restart mid-race restores log +
+decisions and logs points scored while down once. /api/save downloads it.
+Log keeps incidents / penalties forever (5000 lines, payload = all of them +
+newest 400 others). FIXED on the way: the save helper briefly swallowed
+track_payload (dashboard WS closed at once) — caught by rendering. "Total
+Inc" shows `*` while no official points came. test: `cd racecontrol &&
+python test_incidents.py` 53/53 (fake IR, FastAPI stubbed); dashboard run
+for real on the Algarve log in Chromium. NOT tried: real iRacing (admin
+points, detection, replay jump). Step 2 = chat commands into iRacing,
+step 3 = decisions to the RC banner / tower + Auto Steward.
+
 **October 26, 2026 (RC banner: iRaceControl's ATVO link is SignalR 2):**
 Thomas installed iRaceControl on his PC and pointed ATVO at the stream PC.
 5019's /rc/state showed what arrives: `GET /signalr/signalr/negotiate?

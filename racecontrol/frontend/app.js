@@ -15,6 +15,7 @@ const State = {
   events: [],
   selectedCar: null,        // car_idx
   selectedEvent: null,      // event id (an incident)
+  replayEvent: null,        // any clicked log line - the Replay buttons use it
   filters: new Set(['incident', 'offtrack', 'pit', 'flag',
                      'penalty', 'message', 'info']),
   showTeam: false,
@@ -144,6 +145,17 @@ function renderHeader(s) {
   $('#leader-lap').textContent = ss.laps_total > 0
     ? `${ss.leader_lap}/${ss.laps_total}` : ss.leader_lap;
   $('#total-inc').textContent = ss.total_incidents;
+  // iRacing sends other drivers' incident points live only to a session
+  // ADMIN; a spectator gets them at the finish.
+  const spectator = s.source === 'iracing' && !ss.official_points;
+  const incBox = $('#total-inc-box');
+  incBox.classList.toggle('spectator', spectator);
+  incBox.title = spectator
+    ? 'No live incident points from iRacing yet - they come live only when '
+      + 'this PC is ADMIN of the session. Spins / contacts are detected from '
+      + 'car motion meanwhile.'
+    : '';
+  $('#replay-banner').classList.toggle('hidden', !ss.in_replay);
   $('#car-count').textContent = ss.car_count;
   $('#session-type').textContent = ss.type;
   $('#session-state').textContent = ss.state;
@@ -296,13 +308,18 @@ function renderFilters() {
 }
 
 function logRowHtml(e, compact) {
-  const sel = e.id === State.selectedEvent ? ' selected' : '';
+  const sel = (e.id === State.selectedEvent || e.id === State.replayEvent)
+    ? ' selected' : '';
   const resolved = e.resolved ? ' resolved' : '';
   let badge = '';
-  if (e.resolved) badge = `<span class="log-badge done">${
+  if (e.is_incident && e.source === 'detected' && !e.resolved)
+    badge += '<span class="log-badge det" title="Detected from car motion - no iRacing points (yet)">DET</span>';
+  if (e.is_incident && e.inc_points > 0)
+    badge += `<span class="log-badge pts">${e.inc_points}x</span>`;
+  if (e.resolved) badge += `<span class="log-badge done">${
     esc(e.resolution || 'DONE')}</span>`;
-  else if (e.investigating) badge = '<span class="log-badge inv">INV</span>';
-  else if (e.noted) badge = '<span class="log-badge noted">NOTED</span>';
+  else if (e.investigating) badge += '<span class="log-badge inv">INV</span>';
+  else if (e.noted) badge += '<span class="log-badge noted">NOTED</span>';
   const num = e.car_number ? `#${e.car_number} ` : '';
   return `<div class="log-row ${e.category}${sel}${resolved}"
        data-event="${e.id}" data-car="${e.car_idx}">
@@ -332,6 +349,7 @@ function selectCar(idx) {
 
 function selectEvent(id) {
   const ev = State.events.find((e) => e.id === id);
+  State.replayEvent = ev ? id : null;
   if (ev && ev.is_incident && !ev.resolved) {
     State.selectedEvent = (State.selectedEvent === id) ? null : id;
   } else {
@@ -342,8 +360,16 @@ function selectEvent(id) {
   renderCarLog();
 }
 
+function replay(id, preroll) {
+  if (id === null || id === undefined) { toast('Click a log line first'); return; }
+  send({ action: 'replay', id, preroll });
+}
+
 function updateIncidentActions() {
   const head = $('#ia-head');
+  const canReplay = State.events.some((e) => e.id === State.replayEvent);
+  $('#ia-replay').disabled = !canReplay;
+  $('#ia-replay-long').disabled = !canReplay;
   const ev = State.events.find((e) => e.id === State.selectedEvent);
   const buttons = $$('#incident-actions .ia-grid button');
   if (!ev) {
@@ -431,6 +457,15 @@ function wire() {
     if (car >= 0) { State.selectedCar = car; if (State.snapshot) render(); }
     selectEvent(parseInt(row.dataset.event, 10));
   });
+  $('#log-list').addEventListener('dblclick', (e) => {
+    const row = e.target.closest('.log-row');
+    if (row) replay(parseInt(row.dataset.event, 10), 8);
+  });
+  $('#ia-replay').addEventListener('click', () => replay(State.replayEvent, 8));
+  $('#ia-replay-long').addEventListener('click', () => replay(State.replayEvent, 20));
+  const goLive = () => send({ action: 'command', command: 'replay_live' });
+  $('#ia-live').addEventListener('click', goLive);
+  $('#replay-banner').addEventListener('click', goLive);
   $('#car-log').addEventListener('click', (e) => {
     const row = e.target.closest('.log-row');
     if (row) selectEvent(parseInt(row.dataset.event, 10));

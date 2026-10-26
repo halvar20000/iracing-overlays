@@ -15,6 +15,12 @@ Thomas's companion overlay project.
 
 ## Phase 1 — make iRacing mode fully trustworthy
 
+**Done (October 2026, step 1 of 3):** live incidents (official points when
+admin + spin / contact / stopped detection), replay of any log line, replay
+footage never logged, autosave + recovery. Next: step 2 = admin chat commands
+(penalties, flags, RC messages into iRacing); step 3 = push decisions to the
+stream (RC banner 5019, tower) and the Auto Steward.
+
 These items turn iRacing mode from "accurate timing" into a tool you can steward
 a real CAS Community race with.
 
