@@ -137,7 +137,7 @@ check("N16 send without a form content type", r.get("R") and r["I"] == "0", str(
 r = recv.handle_send("x", json.dumps({"H": "RaceControlHub", "M": "GetAllIncidents", "A": [], "I": "1"}))
 check("N17 GetAllIncidents -> empty list, not null (null crashed iRaceControl)", r.get("R") == [] and "R" in r, str(r))
 # ---- the real iRaceControl format (2026-10-26, hosted session) -------------
-f5 = rc.Feed(); r5 = rc.AtvoReceiver(f5, 0, log_dir=tmp)
+f5 = rc.Feed(); r5 = rc.AtvoReceiver(f5, 0, log_dir=tmp); r5.gather_s = 0
 r5.car_lookup = lambda e: {"num": "12", "label": "Proton"} if e == "12" else None
 def sm(typ, head, text, entry=""):
     return json.dumps({"H": "RaceControlHub", "M": "SendMessage", "I": "5", "A": [{"EntryId": entry, "IdType": 0,
@@ -152,6 +152,23 @@ r5.handle_send("x", sm(3, "PENALTY", "Drive Through - avoidable contact", entry=
 r5.handle_send("x", sm(2, "WARNING", "Track limits T4"))
 ks = [(x["kind"], (x["car"] or {}).get("num")) for x in f5.list()[1:]]
 check("N20 penalty with car (EntryId), warning", ks == [("penalty", "12"), ("warning", None)], str(ks))
+# all six targets, gathered (the real test: penalty arrived first as WARNING)
+f6 = rc.Feed(); r6 = rc.AtvoReceiver(f6, 0, log_dir=tmp)
+r6.car_lookup = lambda e: {"num": e, "label": "Nim Cross"} if e in ("07", "14") else None
+for typ, head in [(2, "WARNING"), (1, "RACE CONTROL"), (3, "PENALTY"), (4, "RACE CONTROL"), (5, "RACE CONTROL"), (6, "RACE CONTROL")]:
+    r6.handle_send("x", sm(typ, head, "DRIVE TROUGH PENALTY FOR #07 (CRO) - bla"))
+for typ, head in [(1, "RACE CONTROL"), (2, "WARNING"), (3, "PENALTY")]:
+    r6.handle_send("x", sm(typ, head, "Safety car in this lap"))
+time.sleep(0.8)
+got = [(x["kind"], x["headline"], (x["car"] or {}).get("num")) for x in f6.list()]
+check("N22 routed to every target: kind from the text, car from '#07'",
+      got == [("penalty", "PENALTY", "07"), ("message", "RACE CONTROL", None)], str(got))
+r6.handle_send("x", sm(3, "PENALTY", "#14 (KAE) HAVE BEEN DISQUALIFIED: Track Limits")); time.sleep(0.7)
+f6.add("iracing", "dq", "DISQUALIFIED", "", {"num": "14", "label": "Dave Kaemmer"})
+f6.add("iracing", "penalty", "BLACK FLAG · PENALTY", "", {"num": "33", "label": "Other"})
+got = [x["headline"] for x in f6.list()[2:]]
+check("N23 iRacing flag for a car iRaceControl just named is not shown twice",
+      got == ["PENALTY", "BLACK FLAG · PENALTY"], str(got))
 check("N21 parse_span", rc.parse_span("00:01:05") == 65 and rc.parse_span("00:00:00") is None and rc.parse_span("x") is None)
 recv.stop()
 

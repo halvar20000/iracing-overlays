@@ -222,6 +222,16 @@ Banner hides the headline "RACE CONTROL" (the tag says it), warning tag
 white, investigation blue. NOT seen yet: the ATVO Incidents calls
 (investigation / decision / served) — they may expect results like
 GetAllIncidents did; watch the panel's raw list. test_rc_banner N18-N21.
+PENALTY TEST (same day): EntryId is "" even for car penalties; texts like
+"DRIVE TROUGH PENALTY FOR #07 (CRO) - …", "#14 (KAE) HAVE BEEN DISQUALIFIED:
+Track Limits". Still routed to all six targets, so the copy that arrived
+first decided the colour (the drive-through showed as WARNING). Now copies
+are GATHERED ATVO_GATHER_S 0.5 s → one banner; several Types → kind from the
+text (TEXT_KINDS: penalty / warning / investigation, header of that target);
+car = EntryId or the first "#NN" in the text (CAR_IN_TEXT → find_car). And
+iRacing's own black flag / DQ for a car iRaceControl named in the last
+STEWARD_COVERS_S 20 s is skipped (Feed._steward_said) — it came 1 s later
+as a second banner. N22-N23.
 Restart 5019.
 
 **October 25, 2026 (board look for PCCD + IEC too; driver championship

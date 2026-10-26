@@ -83,6 +83,7 @@ PACE_FLAGS = [
     (P_FREE_PASS, "pace", "FREE PASS"),
 ]
 CAR_REPEAT_S = 30.0       # same flag for the same car: once per 30 s
+STEWARD_COVERS_S = 20.0   # iRaceControl message about a car hides iRacing's flag for it
 
 
 def load_config() -> dict:
@@ -105,8 +106,11 @@ class Feed:
         self._id = 0
 
     def add(self, source: str, kind: str, headline: str, text: str = "",
-            car: dict | None = None, secs: float | None = None) -> dict:
+            car: dict | None = None, secs: float | None = None) -> dict | None:
         with self._lock:
+            if source == "iracing" and car and self._steward_said(car.get("num")):
+                print(f"[rc] iracing: {headline} #{car.get('num')} skipped (iRaceControl message)")
+                return None
             self._id += 1
             m = {"id": self._id, "t": time.time(), "source": source,
                  "kind": kind, "headline": headline, "text": text, "car": car,
@@ -115,6 +119,17 @@ class Feed:
         print(f"[rc] {source}: {headline} {text} "
               f"{('#' + car['num'] + ' ' + car['label']) if car else ''}".rstrip())
         return m
+
+    def _steward_said(self, num) -> bool:
+        """iRaceControl announced something about car #num in the last
+        STEWARD_COVERS_S — its text says more than iRacing's black flag."""
+        now = time.time()
+        for m in reversed(self._msgs):
+            if now - m["t"] > STEWARD_COVERS_S:
+                break
+            if m["source"] == "atvo" and m.get("car") and m["car"].get("num") == num:
+                return True
+        return False
 
     def list(self) -> list:
         with self._lock:
@@ -363,6 +378,24 @@ def hub_text(method: str, args):
 ATVO_TYPES = {1: "message", 2: "warning", 3: "penalty", 4: "investigation",
               5: "nfa", 6: "clear"}
 ATVO_DUP_S = 3.0          # same text again within 3 s = one message routed to several targets
+ATVO_GATHER_S = 0.5       # copies of one message arrive within ms — wait this long for them
+# iRaceControl sends EntryId "" even for car penalties; the number is in the
+# text: "DRIVE THROUGH PENALTY FOR #07 (CRO) - …", "#14 (KAE) HAVE BEEN DISQUALIFIED"
+CAR_IN_TEXT = re.compile(r"#\s?(\d{1,3})\b")
+TEXT_KINDS = [   # (kind, words) — only used when Type cannot tell (several targets)
+    ("penalty", ("PENALTY", "DISQUALIF", "BLACK FLAG", "STOP & GO", "STOP AND GO",
+                 "STOP/GO", "DRIVE THROUGH", "DRIVE TROUGH", "DRIVE-THROUGH")),
+    ("warning", ("WARNING", "WARNED")),
+    ("investigation", ("INVESTIGAT", "UNDER REVIEW", "NOTED")),
+]
+
+
+def text_kind(text: str) -> str:
+    t = text.upper()
+    for kind, words in TEXT_KINDS:
+        if any(w in t for w in words):
+            return kind
+    return "message"
 
 
 def parse_span(v) -> float | None:
@@ -403,6 +436,8 @@ class AtvoReceiver:
         self._closed: set = set()        # aborted tokens (end SSE / polls)
         self.car_lookup = None           # EntryId -> car dict (set by the app)
         self._recent: dict = {}          # (text, entry) -> time, for ATVO_DUP_S
+        self._pending: dict = {}         # (text, entry) -> copies being gathered
+        self.gather_s = ATVO_GATHER_S
         self.app = self._make_app()
 
     def start(self):
@@ -496,31 +531,63 @@ class AtvoReceiver:
         return {}
 
     def _send_message(self, m: dict) -> bool:
+        """Copies of one message (routed to several ATVO targets in CACS) come
+        within milliseconds: gather them ATVO_GATHER_S, then show ONE banner."""
         head = str(m.get("Header") or "").strip()
         text = str(m.get("Text") or "").strip()
         if not readable(text or head):
             return False
         entry = str(m.get("EntryId") or "").strip()
-        now = time.time()
         key = (text.lower(), entry)
-        with self._lock:
-            self._recent = {k: t for k, t in self._recent.items() if now - t < ATVO_DUP_S}
-            if key in self._recent:
-                return False
-            self._recent[key] = now
         try:
             typ = int(m.get("Type") or 0)
         except (TypeError, ValueError):
             typ = 0
-        kind = ATVO_TYPES.get(typ) or hub_kind("", head)
-        car = None
-        if entry and self.car_lookup:
-            try:
-                car = self.car_lookup(entry)
-            except Exception:
-                car = None
-        self.feed.add("atvo", kind, head, text or head, car, parse_span(m.get("DisplayTime")))
+        now = time.time()
+        with self._lock:
+            self._recent = {k: t for k, t in self._recent.items() if now - t < ATVO_DUP_S}
+            p = self._pending.get(key)
+            if p is not None:
+                p["types"].setdefault(typ, head)
+                return False
+            if key in self._recent:
+                return False
+            self._recent[key] = now
+            self._pending[key] = {"types": {typ: head}, "text": text, "entry": entry,
+                                  "secs": parse_span(m.get("DisplayTime"))}
+        if self.gather_s > 0:
+            t = threading.Timer(self.gather_s, self._flush, args=(key,))
+            t.daemon = True
+            t.start()
+        else:
+            self._flush(key)
         return True
+
+    def _flush(self, key):
+        with self._lock:
+            p = self._pending.pop(key, None)
+        if not p:
+            return
+        types, text = p["types"], p["text"]
+        if len(types) == 1:
+            typ, head = next(iter(types.items()))
+            kind = ATVO_TYPES.get(typ) or hub_kind("", head) or text_kind(text)
+        else:                       # routed to several targets: Type says nothing
+            kind = text_kind(text)
+            want = {"penalty": 3, "warning": 2, "investigation": 4}.get(kind, 1)
+            head = types.get(want) or types.get(1) or next(iter(types.values()))
+        car = None
+        if self.car_lookup:
+            for e in [p["entry"]] + CAR_IN_TEXT.findall(text)[:1]:
+                if not e:
+                    continue
+                try:
+                    car = self.car_lookup(e)
+                except Exception:
+                    car = None
+                if car:
+                    break
+        self.feed.add("atvo", kind, head, text or head, car, p["secs"])
 
     # ---- HTTP ------------------------------------------------------------
     def _make_app(self):
