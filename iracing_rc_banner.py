@@ -143,8 +143,13 @@ class FlagWatcher:
     """Edge detector. The first tick of a session only records the state
     (flags already flying when the overlay starts are not news)."""
 
-    def __init__(self, feed: Feed):
+    def __init__(self, feed: Feed, warnings: bool = False):
+        # warnings: iRacing's furled black flag (cutting / track limits
+        # warning, no reason given) — off by default since 2026-10-26: AI cars
+        # got four in three minutes, a full field would flood the stream.
+        # rc_config.json "iracing_warnings": true brings them back.
         self.feed = feed
+        self.warnings = warnings
         self.reset()
 
     def reset(self):
@@ -195,6 +200,8 @@ class FlagWatcher:
             rise_p = pf & ~self._prev_pace.get(i, pf)
             self._prev_car[i], self._prev_pace[i] = cf, pf
             for bit, kind, head in CAR_FLAGS:
+                if bit == F_FURLED and not self.warnings:
+                    continue
                 if rise_c & bit:
                     self._car_msg(i, car, kind, head, now)
                     if bit in (F_DQ, F_BLACK):
@@ -690,9 +697,9 @@ class AtvoReceiver:
 class RcPoller(SDKPoller):
     tag = "rcmsg"
 
-    def __init__(self, feed: Feed):
+    def __init__(self, feed: Feed, warnings: bool = False):
         super().__init__(poll_interval=0.25)
-        self.flags = FlagWatcher(feed)
+        self.flags = FlagWatcher(feed, warnings)
         self._key = None
         self._race_cache: dict = {}
         self._cars: dict = {}
@@ -774,7 +781,7 @@ feed = Feed()
 _cfg = load_config()
 atvo = AtvoReceiver(feed, int(_cfg.get("atvo_port") or 5020),
                      password=str(_cfg.get("atvo_password") or ""))
-poller = RcPoller(feed)
+poller = RcPoller(feed, bool(_cfg.get("iracing_warnings", False)))
 atvo.car_lookup = poller.find_car
 
 

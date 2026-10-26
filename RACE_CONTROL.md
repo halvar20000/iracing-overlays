@@ -61,6 +61,14 @@ Windows-Firewall auf dem Stream-PC: beim ersten Start fragt Windows –
 
 `rc_config.json` neben den Skripten (danach Overlay 5019 neu starten):
 `{"atvo_port": 5020, "atvo_password": "einWort"}`
+iRacings eigene Verwarnung (gefaltete schwarze Flagge, ohne Grund) wird
+nicht gezeigt; `"iracing_warnings": true` blendet sie wieder ein.
+
+Bewährte Routing-Tabelle (CACS, je Art höchstens EIN ATVO-Ziel):
+RACE_CONTROL_MESSAGE / SEQUENCER_MESSAGE → ATVO_INFO · NOTED / INVESTIGATING
+→ ATVO_INVESTIGATION · RACE_INCIDENT → ATVO_NO_FURTHER_ACTION ·
+CLEAR_PENALTIES → ATVO_CLEAR_PENALTY · TIME_PENALTY / DRIVE_THROUGH / STOP_GO
+/ DSQ → ATVO_PENALTY · alles andere (v. a. PRIVATE) kein ATVO-Ziel.
 
 ## Erster Test (GT3 WCT, Dienstag)
 

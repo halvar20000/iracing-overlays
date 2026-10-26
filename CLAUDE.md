@@ -232,6 +232,13 @@ car = EntryId or the first "#NN" in the text (CAR_IN_TEXT → find_car). And
 iRacing's own black flag / DQ for a car iRaceControl named in the last
 STEWARD_COVERS_S 20 s is skipped (Feed._steward_said) — it came 1 s later
 as a second banner. N22-N23.
+Thomas's CACS routing then set to one ATVO target per type (RC message /
+sequencer → INFO, noted / investigating → INVESTIGATION, race incident →
+NFA, clear penalties → CLEAR, time / DT / SG / DSQ → PENALTY, the rest none —
+FCY / green / red / EOL / wave around / black flag come from iRacing).
+iRacing's furled black flag (WARNING, no reason) now OFF by default (AI cars:
+4 in 3 min would flood a full race); rc_config "iracing_warnings": true
+brings it back. F13-F14.
 Restart 5019.
 
 **October 25, 2026 (board look for PCCD + IEC too; driver championship

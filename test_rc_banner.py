@@ -52,6 +52,15 @@ w3.tick(True, False, rc.F_ONE_TO_GREEN, [0, 0], [0, 0], CARS, 0)
 w3.tick(True, True, rc.F_GREEN, [0, 0], [0, 0], CARS, 1)
 check("F12 race start (pace lap one-to-green): no caution lines", heads(f3) == [], str(heads(f3)))
 
+f7 = rc.Feed(); w7 = rc.FlagWatcher(f7)
+w7.tick(True, True, rc.F_GREEN, [0, 0], [0, 0], CARS, 0)
+w7.tick(True, True, rc.F_GREEN, [rc.F_FURLED, rc.F_BLACK], [0, 0], CARS, 1)
+check("F13 iRacing warnings off by default, black flag still shown", heads(f7) == ["BLACK FLAG · PENALTY"], str(heads(f7)))
+f8 = rc.Feed(); w8 = rc.FlagWatcher(f8, warnings=True)
+w8.tick(True, True, rc.F_GREEN, [0, 0], [0, 0], CARS, 0)
+w8.tick(True, True, rc.F_GREEN, [rc.F_FURLED, 0], [0, 0], CARS, 1)
+check("F14 iracing_warnings on: shown", heads(f8) == ["WARNING"], str(heads(f8)))
+
 # ---- text extraction --------------------------------------------------------
 cases = [
     (b'{"type":"RaceControl","headline":"RACE CONTROL","message":"Car #12 under investigation"}',
