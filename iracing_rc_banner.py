@@ -45,6 +45,7 @@ import re
 import socket
 import threading
 import time
+import urllib.parse
 import uuid
 from collections import deque
 
@@ -313,6 +314,19 @@ def _strings(x, out):
     return out
 
 
+# Hub methods iRaceControl calls that want a RESULT (the .NET client awaits
+# Invoke<T>): GetVersion is its first call after connecting (2026-10-26).
+HUB_RESULTS = {"getversion": "1.0.0"}
+
+
+def form_data(body: str) -> str:
+    """The `data` field of a SignalR POST body (form-encoded), else the body."""
+    if body.startswith("data="):
+        return urllib.parse.unquote_plus(body[5:].split("&", 1)[0])
+    q = urllib.parse.parse_qs(body)
+    return q["data"][0] if q.get("data") else body
+
+
 def hub_text(method: str, args):
     """(headline, text) from one hub invocation, or None."""
     for a in args if isinstance(args, list) else [args]:
@@ -423,7 +437,10 @@ class AtvoReceiver:
             self._raw(addr, f"hub {msg.get('H', '')}.{method}",
                       json.dumps(args, ensure_ascii=False),
                       (r[0] + " | " + r[1]) if r and r[0] else (r[1] if r else None), shown)
-            return {"I": str(msg.get("I", "0"))}
+            out = {"I": str(msg.get("I", "0"))}
+            if method.lower() in HUB_RESULTS:
+                out["R"] = HUB_RESULTS[method.lower()]
+            return out
         r = extract_text(data.encode("utf-8"))      # plain PersistentConnection
         shown = bool(r and readable(r[1] or r[0]))
         if shown:
@@ -447,9 +464,10 @@ class AtvoReceiver:
             addr = f"{request.remote_addr}:{request.environ.get('REMOTE_PORT', '')}"
             q = request.args
             body = request.get_data(as_text=True) if request.method == "POST" else ""
+            data = form_data(body)
             me._log(addr, "http", method=request.method, path="/" + path,
                     query=request.query_string.decode("latin-1"), body=body[:4000],
-                    data=(request.form.get("data") or "")[:4000] if body else "",
+                    data=data[:4000],
                     ua=request.headers.get("User-Agent", ""))
             action = path.rstrip("/").rsplit("/", 1)[-1].lower()
             if action not in SR_ACTIONS:
@@ -497,7 +515,7 @@ class AtvoReceiver:
                 me._raw(addr, "abort", "client disconnected")
                 return _json({})
             # send
-            return _json(me.handle_send(addr, request.form.get("data", body)))
+            return _json(me.handle_send(addr, data))
         return sr
 
     def _sse(self, token, init=True):

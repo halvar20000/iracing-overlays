@@ -124,6 +124,16 @@ lines = [json.loads(l) for l in open(os.path.join(tmp, logf[0]), encoding="utf-8
 check("N12 capture log has every request incl. the hub body",
       any("Drive Through" in l.get("data", "") for l in lines) and any(l.get("path", "").endswith("negotiate") for l in lines), f"{len(lines)} lines")
 check("N13 hub_text plain string", rc.hub_text("Say", ["Pit lane closed"]) == ("", "Pit lane closed"))
+# what the stream PC really got from iRaceControl (lower-case %7b, no form parse)
+raw_body = "data=%7b%22I%22%3a%220%22%2c%22H%22%3a%22RaceControlHub%22%2c%22M%22%3a%22GetVersion%22%2c%22A%22%3a%5b%5d%7d"
+check("N14 form_data decodes the real body", json.loads(rc.form_data(raw_body))["M"] == "GetVersion")
+n = len(f4.list())
+r = recv.handle_send("x", rc.form_data(raw_body))
+check("N15 GetVersion answered with a result, nothing on air", r.get("R") and r["I"] == "0" and len(f4.list()) == n, str(r))
+body = "data=" + urllib.parse.quote(json.dumps({"H": "RaceControlHub", "M": "GetVersion", "A": [], "I": 0}))
+r = json.loads(urllib.request.urlopen(urllib.request.Request(f"{BASE}/send?transport=serverSentEvents{tok}&password=geheim",
+        data=body.encode(), headers={"Content-Type": "text/plain"}), timeout=5).read())
+check("N16 send without a form content type", r.get("R") and r["I"] == "0", str(r))
 recv.stop()
 
 # ---- Flask -----------------------------------------------------------------

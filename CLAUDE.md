@@ -199,6 +199,11 @@ address: NOT overlay.smarthomeworld68.fr — that is a Cloudflare tunnel
 and then a password. test_rc_banner.py N1-N13 (real HTTP: SSE + longPolling
 + password + hub calls). NOT tried against the real .NET client yet
 (installing dotnet was blocked) — Thomas's iRaceControl after the update.
+FIRST REAL CONNECT (same day): SSE connect worked; its first hub call is
+`RaceControlHub.GetVersion` (no args, awaits a result) → HUB_RESULTS
+answers "R": "1.0.0" (guess — watch whether iRaceControl accepts it). The
+POST body did NOT land in request.form on the stream PC (URL-encoded line
+went on the feed) → `form_data()` decodes the raw body itself.
 Restart 5019.
 
 **October 25, 2026 (board look for PCCD + IEC too; driver championship
