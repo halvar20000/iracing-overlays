@@ -178,6 +178,29 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 26, 2026 (RC banner: iRaceControl's ATVO link is SignalR 2):**
+Thomas installed iRaceControl on his PC and pointed ATVO at the stream PC.
+5019's /rc/state showed what arrives: `GET /signalr/signalr/negotiate?
+clientProtocol=2.1&connectionData=[{"Name":"RaceControlHub"}]&password=`,
+User-Agent SignalR.Client.NetStandard 2.4.3 — ASP.NET SignalR 2, not a raw
+TCP stream. The raw receiver never answered (no connection) and put the HTTP
+header lines ON AIR as banners. `AtvoReceiver` is now a minimal SignalR 2
+server (its own Flask app on 5020, werkzeug make_server): negotiate
+(ProtocolVersion 2.1, TryWebSockets false), connect/reconnect via
+serverSentEvents ("data: initialized" + {"S":1}, keep-alive 10 s) or
+longPolling, start, send (form `data` = {"H","M","A","I"} → {"I"}), poll,
+ping, abort. Hub method names / args UNKNOWN: `hub_text()` reads JSON
+objects (_from_json) or strings (an all-caps first string = headline),
+`hub_kind()` penalty / warning from method or headline; every request incl.
+decoded `data` → logs/atvo_capture_<date>.log; panel lists `hub H.M` + args.
+NEW rc_config.json `atvo_password` (checked on every request, 403). Public
+address: NOT overlay.smarthomeworld68.fr — that is a Cloudflare tunnel
+(HTTP only); needs the public IP / a DNS-only name + router forward 5020,
+and then a password. test_rc_banner.py N1-N13 (real HTTP: SSE + longPolling
++ password + hub calls). NOT tried against the real .NET client yet
+(installing dotnet was blocked) — Thomas's iRaceControl after the update.
+Restart 5019.
+
 **October 25, 2026 (board look for PCCD + IEC too; driver championship
 `5010/table/wct`):** Thomas: the new tables for Porsche Cup and IEC too, not
 only WCT. The board pages were already league-neutral (5010 follows the

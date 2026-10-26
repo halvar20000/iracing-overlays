@@ -72,33 +72,58 @@ for i, (raw, want) in enumerate(cases, 1):
 check("T7 binary garbage -> nothing readable", not rc.readable((rc.extract_text(b"\x01\x02\x03\xff\xfe") or ("", "", ""))[1]))
 check("T8 password-like token not shown", not rc.readable("x1"))
 
-# ---- real TCP --------------------------------------------------------------
+# ---- SignalR 2 server (iRaceControl's ATVO link), real HTTP ----------------
+import urllib.request, urllib.parse, urllib.error
 tmp = tempfile.mkdtemp()
 s0 = socket.socket(); s0.bind(("127.0.0.1", 0)); port = s0.getsockname()[1]; s0.close()
-f4 = rc.Feed(); recv = rc.AtvoReceiver(f4, port, log_dir=tmp); recv.start()
+f4 = rc.Feed(); recv = rc.AtvoReceiver(f4, port, log_dir=tmp, password="geheim"); recv.start()
 for _ in range(50):
     if recv.listening: break
     time.sleep(0.05)
 check("N1 listening", recv.listening, recv.error)
-c = socket.create_connection(("127.0.0.1", port))
-c.sendall(b'{"message":"Incident T1 #12 / #44 noted"}\n')
-c.sendall(b'Pit lane clo')                     # split across packets,
-time.sleep(0.1); c.sendall(b'sed\x00')        # NUL-terminated
-c.sendall(b'no delimiter at all')             # flushed after a pause
-time.sleep(1.0)
-c.sendall("Blaue Flagge für #9\n".encode("utf-16-le"))   # .NET style
-time.sleep(0.8)
+BASE = f"http://127.0.0.1:{port}/signalr/signalr"
+CD = urllib.parse.quote('[{"Name":"RaceControlHub"}]')
+def get(action, extra="", pw="geheim"):
+    return urllib.request.urlopen(f"{BASE}/{action}?clientProtocol=2.1&connectionData={CD}&password={pw}{extra}", timeout=5)
+try:
+    get("negotiate", pw="falsch"); code = 200
+except urllib.error.HTTPError as e:
+    code = e.code
+check("N2 wrong password refused", code == 403, str(code))
+neg = json.loads(get("negotiate").read())
+check("N3 negotiate", neg["ProtocolVersion"] == "2.1" and neg["TryWebSockets"] is False
+      and neg["Url"] == "/signalr/signalr" and neg["ConnectionToken"], str(neg))
+tok = "&connectionToken=" + urllib.parse.quote(neg["ConnectionToken"])
+sse = get("connect", "&transport=serverSentEvents" + tok)
+first = [sse.readline().decode().strip() for _ in range(4)]
+check("N4 SSE: initialized + init message (S=1)",
+      first[0] == "data: initialized" and '"S":1' in first[2], str(first))
+check("N5 start", json.loads(get("start", "&transport=serverSentEvents" + tok).read()) == {"Response": "started"})
+def send(obj):
+    body = urllib.parse.urlencode({"data": json.dumps(obj)}).encode()
+    return json.loads(urllib.request.urlopen(urllib.request.Request(
+        f"{BASE}/send?transport=serverSentEvents{tok}&password=geheim", data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded"}), timeout=5).read())
+r = send({"H": "racecontrolhub", "M": "SendMessage", "A": ["PENALTY", "#12 Drive Through - causing a collision", 10], "I": 3})
+check("N6 hub call answered", r == {"I": "3"}, str(r))
+r = send({"H": "racecontrolhub", "M": "Incident", "A": [{"Headline": "RACE CONTROL", "Message": "T1 #12 / #44 under investigation"}], "I": 4})
+ms = f4.list()
+check("N7 messages on the feed", [(m["kind"], m["headline"], m["text"]) for m in ms] ==
+      [("penalty", "PENALTY", "#12 Drive Through - causing a collision"),
+       ("message", "RACE CONTROL", "T1 #12 / #44 under investigation")], str(ms))
 st = recv.status()
-check("N2 client seen", len(st["clients"]) == 1, str(st["clients"]))
-c.close(); time.sleep(0.6)
-texts = [m["text"] for m in f4.list()]
-check("N3 messages in order", texts == ["Incident T1 #12 / #44 noted", "Pit lane closed", "no delimiter at all", "Blaue Flagge für #9"], str(texts))
+check("N8 client listed", len(st["clients"]) == 1 and st["clients"][0]["transport"] == "serverSentEvents", str(st["clients"]))
+check("N9 HTTP lines NOT on air (only the two hub texts)", len(f4.list()) == 2)
+neg2 = json.loads(get("negotiate").read())
+lp = json.loads(get("connect", "&transport=longPolling&connectionToken=" + neg2["ConnectionToken"]).read())
+check("N10 longPolling connect", lp.get("S") == 1, str(lp))
+urllib.request.urlopen(urllib.request.Request(f"{BASE}/abort?transport=serverSentEvents{tok}&password=geheim", data=b""), timeout=5)
+check("N11 abort ends the client", all(c["transport"] != "serverSentEvents" for c in recv.status()["clients"]))
 logf = [x for x in os.listdir(tmp) if x.startswith("atvo_capture_")]
 lines = [json.loads(l) for l in open(os.path.join(tmp, logf[0]), encoding="utf-8")] if logf else []
-check("N4 capture log: connect, data, disconnect",
-      lines and lines[0]["event"] == "connect" and lines[-1]["event"] == "disconnect"
-      and any(l["event"] == "data" and "Incident" in l["text"] for l in lines), f"{len(lines)} lines")
-check("N5 raw kept for the panel", len(recv.status()["raw"]) == 4)
+check("N12 capture log has every request incl. the hub body",
+      any("Drive Through" in l.get("data", "") for l in lines) and any(l.get("path", "").endswith("negotiate") for l in lines), f"{len(lines)} lines")
+check("N13 hub_text plain string", rc.hub_text("Say", ["Pit lane closed"]) == ("", "Pit lane closed"))
 recv.stop()
 
 # ---- Flask -----------------------------------------------------------------

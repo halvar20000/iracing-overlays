@@ -10,8 +10,10 @@ Violettes **RACE CONTROL**-Banner im F1-Stil für OBS. Zwei Quellen:
    iRacing verrät **nicht**, welche Strafe eine Black Flag ist, und den Chat
    gibt das SDK nicht heraus.
 2. **iRaceControl** – die Texte der Stewards. iRaceControl kann seine
-   Meldungen an einen „ATVO Race Control Server“ schicken (TCP). Dieses
-   Overlay spielt diesen Server.
+   Meldungen an einen „ATVO Race Control Server“ schicken. Dieses Overlay
+   spielt diesen Server. Technisch ist das **SignalR** (ein Web-Protokoll
+   von Microsoft, Hub „RaceControlHub“) – am 26.10. beim ersten Verbinden
+   gesehen.
 
 ## OBS
 
@@ -27,31 +29,42 @@ Meldung einzublenden (auch ohne iRaceControl nutzbar).
 
 ## iRaceControl einrichten (beim Stewart)
 
-1. In iRaceControl: **Settings › CACS** → ATVO-Integration einschalten.
-2. Server-Adresse = IP des Stream-PCs, Port **5020**, Passwort leer.
-   - Stewart im selben Netz: die LAN-IP des Stream-PCs (z. B. 192.168.86.138).
-   - Stewart woanders (Internet): die **öffentliche IP** des Anschlusses und
-     im Router eine Portweiterleitung TCP 5020 → Stream-PC.
-3. Unter CACS die Meldungsarten auf die ATVO-Ziele routen (Race Control
-   Messages, Strafen). Überschriften / Dauer dort sind egal.
-4. Windows-Firewall auf dem Stream-PC: beim ersten Start fragt Windows –
-   **Zugriff zulassen** (privat + ggf. öffentlich), sonst kommt nichts an.
+Im iRaceControl-Einstellungsfenster, Bereich **ATVO SETTINGS**:
 
-Anderer Port: `rc_config.json` neben den Skripten:
-`{"atvo_port": 5020}` (danach Overlay neu starten).
+| Feld | Wert |
+|---|---|
+| ATVO Enabled | an |
+| Server address | Adresse des Stream-PCs (siehe unten) |
+| Server Port | **5020** |
+| Server password | das Passwort aus `rc_config.json` (`atvo_password`), sonst leer |
+| Headlines / Sec | egal, so lassen |
+| ATVO Incidents | an = auch Incidents schicken |
+
+Adresse:
+- Stewart im selben Netz: die LAN-IP des Stream-PCs (192.168.86.138).
+- Stewart woanders (Internet): die **öffentliche IP** des Anschlusses (oder
+  ein DNS-Name, der direkt darauf zeigt – **nicht** über den Cloudflare-
+  Tunnel / orange Wolke, der leitet nur Webseiten über 443 weiter) und im
+  Router eine Portweiterleitung TCP 5020 → 192.168.86.138:5020.
+  Dann unbedingt ein **Passwort** setzen: sonst kann jeder, der den Port
+  findet, Texte auf den Stream schicken.
+
+Windows-Firewall auf dem Stream-PC: beim ersten Start fragt Windows –
+**Zugriff zulassen**, sonst kommt nichts an.
+
+`rc_config.json` neben den Skripten (danach Overlay 5019 neu starten):
+`{"atvo_port": 5020, "atvo_password": "einWort"}`
 
 ## Erster Test (GT3 WCT, Dienstag)
 
-Das Datenformat von iRaceControl → ATVO ist nirgends beschrieben. Alles,
-was ankommt, wird roh mitgeschrieben in `logs/atvo_capture_<Datum>.log`.
+Welche Hub-Methoden iRaceControl aufruft (Namen, Argumente), ist nirgends
+beschrieben. Jede Anfrage wird mitgeschrieben in
+`logs/atvo_capture_<Datum>.log`; der Text wird aus den Argumenten gelesen.
 
-1. Overlay starten, `/panel` öffnen: „bereit auf TCP-Port 5020“.
+1. Overlay starten, `/panel` öffnen: „bereit auf Port 5020“.
 2. Stewart verbindet iRaceControl → im Panel „verbunden: …“.
 3. Stewart schickt eine Testmeldung, eine Strafe, ein FCY.
 4. Im Panel unter „ATVO Rohdaten“ prüfen, was gelesen wurde.
 5. Die Datei `logs/atvo_capture_<Datum>.log` an Claude geben – damit wird
    die Anzeige an das echte Format angepasst.
 
-Falls iRaceControl „nicht verbunden“ meldet, obwohl das Panel eine
-Verbindung zeigt: dann erwartet iRaceControl eine Antwort vom Server – auch
-das steht in der Capture-Datei und lässt sich nachbauen.

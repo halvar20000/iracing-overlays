@@ -16,14 +16,15 @@ An F1-style violet RACE CONTROL banner for OBS, fed from two sources:
 
 2. iRaceControl (iracecontrol.com) via its ATVO integration: iRaceControl
    sends race control messages, incidents under review and penalties to an
-   "ATVO Race Control Server" over TCP. This overlay IS such a server
-   (default TCP port 5020, rc_config.json "atvo_port"): in iRaceControl
-   Settings > CACS enter this PC's address + the port, switch ATVO on and
-   route the message types to ATVO. The wire format is not documented, so
-   (2026-10-25, built before the first test) EVERYTHING that arrives is
-   written raw to logs/atvo_capture_<date>.log, and the text is pulled out
-   tolerantly (JSON, XML, text lines, printable strings in binary data).
-   Check /panel during the first test — it shows the raw bytes too.
+   "ATVO Race Control Server". This overlay IS such a server (default port
+   5020, rc_config.json "atvo_port"; optional "atvo_password" = the
+   password entered in iRaceControl, empty = any). In iRaceControl's
+   settings: ATVO Enabled, server address = this PC, port 5020.
+   The link turned out to be ASP.NET SignalR 2 (hub "RaceControlHub", seen
+   2026-10-26) — AtvoReceiver is a minimal SignalR server. The hub method
+   names are not documented, so every request is written to
+   logs/atvo_capture_<date>.log and the text is pulled out of the hub
+   arguments tolerantly. Check /panel during the first test.
 
 Pages:
     /          the banner (OBS browser source, transparent; ?secs= ?zoom=
@@ -44,6 +45,7 @@ import re
 import socket
 import threading
 import time
+import uuid
 from collections import deque
 
 from flask import Flask, jsonify, request
@@ -282,30 +284,98 @@ def readable(text: str) -> bool:
     return len(text) >= 3 and sum(c.isalpha() for c in text) >= 3
 
 
-class AtvoReceiver:
-    """TCP server that accepts iRaceControl's ATVO connection. Logs every
-    byte, splits on newline / NUL (or a 0.4 s pause), extracts text."""
+# iRaceControl's "ATVO" link is ASP.NET SignalR 2.x (seen 2026-10-26 on the
+# stream PC: GET /signalr/signalr/negotiate?clientProtocol=2.1&connectionData=
+# [{"Name":"RaceControlHub"}]&password=, User-Agent SignalR.Client.NetStandard
+# 2.4.3). So the receiver is a minimal SignalR 2 SERVER: negotiate, connect
+# (serverSentEvents or longPolling — no websockets offered), start, send,
+# poll, ping, reconnect, abort. Hub calls arrive by POST /send as
+# data={"H": hub, "M": method, "A": [args], "I": id}; the method names and
+# args are not documented, so every request goes raw into the capture log and
+# the text is pulled out of the args tolerantly.
+SR_PROTOCOL = "2.1"
+SR_KEEPALIVE_S = 10.0       # SSE keep-alive (client times out after 20 s)
+SR_POLL_S = 20.0            # longPolling: hold a poll this long
+SR_ACTIONS = ("negotiate", "connect", "reconnect", "start", "send",
+              "poll", "ping", "abort")
 
-    def __init__(self, feed: Feed, port: int, log_dir: str = LOG_DIR):
+
+def _strings(x, out):
+    if isinstance(x, str):
+        if x.strip():
+            out.append(x.strip())
+    elif isinstance(x, list):
+        for v in x:
+            _strings(v, out)
+    elif isinstance(x, dict):
+        for v in x.values():
+            _strings(v, out)
+    return out
+
+
+def hub_text(method: str, args):
+    """(headline, text) from one hub invocation, or None."""
+    for a in args if isinstance(args, list) else [args]:
+        if isinstance(a, (dict, list)):
+            r = _from_json(a)
+            if r and (r[1] or r[0]):
+                return (r[0].strip(), r[1].strip())
+    ss = [s for s in _strings(args, []) if readable(s)]
+    if not ss:
+        return None
+    if len(ss) >= 2 and len(ss[0]) <= 40 and ss[0].upper() == ss[0]:
+        return (ss[0], " · ".join(ss[1:]))     # ("PENALTY", "#12 drive through")
+    return ("", " · ".join(ss))
+
+
+def hub_kind(method: str, head: str) -> str:
+    s = f"{method} {head}".lower()
+    for k in ("penalty", "warning"):
+        if k in s:
+            return k
+    return "message"
+
+
+class AtvoReceiver:
+    """Minimal ASP.NET SignalR 2 server for iRaceControl's ATVO link."""
+
+    def __init__(self, feed: Feed, port: int, log_dir: str = LOG_DIR,
+                 password: str = ""):
         self.feed, self.port, self.log_dir = feed, port, log_dir
+        self.password = password or ""
         self.listening = False
         self.error = ""
-        self.clients: dict = {}          # addr -> {"since", "bytes"}
-        self.raw = deque(maxlen=40)      # recent chunks for /panel
+        self.clients: dict = {}          # token -> {"addr", "since", "seen", "bytes", "transport"}
+        self.raw = deque(maxlen=40)      # recent requests for /panel
         self._lock = threading.Lock()
-        self._sock = None
+        self._server = None
+        self._closed: set = set()        # aborted tokens (end SSE / polls)
+        self.app = self._make_app()
 
     def start(self):
         threading.Thread(target=self._serve, daemon=True).start()
 
     def stop(self):
         try:
-            if self._sock:
-                self._sock.close()
-        except OSError:
+            if self._server:
+                self._server.shutdown()
+        except Exception:
             pass
 
-    def _log(self, addr, what: str, data: bytes = b""):
+    def _serve(self):
+        from werkzeug.serving import make_server
+        try:
+            self._server = make_server("0.0.0.0", self.port, self.app, threaded=True)
+        except (OSError, SystemExit) as e:
+            self.error = f"cannot listen on TCP {self.port}: {e}"
+            print(f"[rc] {self.error}")
+            return
+        self.listening = True
+        print(f"[rc] ATVO (SignalR) receiver listening on TCP {self.port}")
+        self._server.serve_forever()
+
+    # ---- capture ---------------------------------------------------------
+    def _log(self, addr: str, what: str, **kw):
         try:
             os.makedirs(self.log_dir, exist_ok=True)
             day = datetime.date.today().isoformat()
@@ -313,93 +383,145 @@ class AtvoReceiver:
                       encoding="utf-8") as f:
                 f.write(json.dumps({
                     "t": datetime.datetime.now().isoformat(timespec="milliseconds"),
-                    "from": f"{addr[0]}:{addr[1]}", "event": what,
-                    "len": len(data), "hex": data.hex(),
-                    "text": data.decode("utf-8", "replace")}, ensure_ascii=False) + "\n")
+                    "from": addr, "event": what, **kw}, ensure_ascii=False) + "\n")
         except OSError as e:
             print(f"[rc] capture log failed: {e}")
 
-    def _serve(self):
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            s.bind(("0.0.0.0", self.port))
-            s.listen(5)
-            self._sock = s
-            self.listening = True
-            print(f"[rc] ATVO receiver listening on TCP {self.port}")
-        except OSError as e:
-            self.error = f"cannot listen on TCP {self.port}: {e}"
-            print(f"[rc] {self.error}")
-            return
-        while True:
-            try:
-                conn, addr = s.accept()
-            except OSError:
-                return
-            threading.Thread(target=self._client, args=(conn, addr), daemon=True).start()
-
-    def _client(self, conn, addr):
-        key = f"{addr[0]}:{addr[1]}"
+    def _raw(self, addr, how, text, parsed=None, shown=False):
+        b = text.encode("utf-8", "replace")
         with self._lock:
-            self.clients[key] = {"since": time.time(), "bytes": 0}
-        self._log(addr, "connect")
-        print(f"[rc] ATVO client connected: {key}")
-        conn.settimeout(0.4)
-        buf = b""
-        try:
-            while True:
-                try:
-                    data = conn.recv(65536)
-                except socket.timeout:
-                    if buf:                 # no delimiter, but it went quiet
-                        self._chunk(addr, buf)
-                        buf = b""
-                    continue
-                if not data:
-                    break
-                with self._lock:
-                    self.clients[key]["bytes"] += len(data)
-                self._log(addr, "data", data)
-                buf += data
-                if _looks_utf16(buf):       # split on a UTF-16 newline only
-                    parts = buf.split(b"\n\x00")
-                else:
-                    parts = re.split(rb"[\n\x00]", buf)
-                buf = parts.pop()
-                for p in parts:
-                    self._chunk(addr, p)
-        except OSError:
-            pass
-        finally:
-            if buf:
-                self._chunk(addr, buf)
-            conn.close()
-            with self._lock:
-                self.clients.pop(key, None)
-            self._log(addr, "disconnect")
-            print(f"[rc] ATVO client gone: {key}")
+            self.raw.append({"t": time.time(), "from": addr, "len": len(b),
+                             "hex": b[:200].hex(), "text": text[:600],
+                             "parsed": parsed, "how": how, "shown": shown})
 
-    def _chunk(self, addr, chunk: bytes):
-        if not chunk.strip(b"\x00\r\n\t "):
+    def _touch(self, token, addr, transport=None, nbytes=0):
+        if not token:
             return
-        r = extract_text(chunk)
-        entry = {"t": time.time(), "from": addr[0], "len": len(chunk),
-                 "hex": chunk[:400].hex(), "text": chunk[:400].decode("utf-8", "replace"),
-                 "parsed": None, "how": None, "shown": False}
-        if r:
-            head, text, how = r
-            entry["parsed"], entry["how"] = (head + " | " + text if head else text), how
-            if readable(text or head):
-                self.feed.add("atvo", "message", head or "", text or head)
-                entry["shown"] = True
         with self._lock:
-            self.raw.append(entry)
+            c = self.clients.setdefault(token, {"addr": addr, "since": time.time(),
+                                                "bytes": 0, "transport": ""})
+            c["seen"] = time.time()
+            c["addr"] = addr
+            c["bytes"] += nbytes
+            if transport:
+                c["transport"] = transport
+
+    # ---- hub calls -------------------------------------------------------
+    def handle_send(self, addr: str, data: str):
+        try:
+            msg = json.loads(data)
+        except ValueError:
+            msg = None
+        if isinstance(msg, dict) and "M" in msg:
+            method, args = str(msg.get("M") or ""), msg.get("A") or []
+            r = hub_text(method, args)
+            shown = False
+            if r:
+                head, text = r
+                self.feed.add("atvo", hub_kind(method, head), head, text or head)
+                shown = True
+            self._raw(addr, f"hub {msg.get('H', '')}.{method}",
+                      json.dumps(args, ensure_ascii=False),
+                      (r[0] + " | " + r[1]) if r and r[0] else (r[1] if r else None), shown)
+            return {"I": str(msg.get("I", "0"))}
+        r = extract_text(data.encode("utf-8"))      # plain PersistentConnection
+        shown = bool(r and readable(r[1] or r[0]))
+        if shown:
+            self.feed.add("atvo", "message", r[0], r[1] or r[0])
+        self._raw(addr, "send", data, (r[1] if r else None), shown)
+        return {}
+
+    # ---- HTTP ------------------------------------------------------------
+    def _make_app(self):
+        from flask import Flask as _F, Response
+        sr = _F("atvo_signalr")
+        me = self
+
+        def _json(obj, code=200):
+            return Response(json.dumps(obj), status=code, mimetype="application/json",
+                            headers={"Cache-Control": "no-cache"})
+
+        @sr.route("/", defaults={"path": ""}, methods=["GET", "POST"])
+        @sr.route("/<path:path>", methods=["GET", "POST"])
+        def any_path(path):
+            addr = f"{request.remote_addr}:{request.environ.get('REMOTE_PORT', '')}"
+            q = request.args
+            body = request.get_data(as_text=True) if request.method == "POST" else ""
+            me._log(addr, "http", method=request.method, path="/" + path,
+                    query=request.query_string.decode("latin-1"), body=body[:4000],
+                    data=(request.form.get("data") or "")[:4000] if body else "",
+                    ua=request.headers.get("User-Agent", ""))
+            action = path.rstrip("/").rsplit("/", 1)[-1].lower()
+            if action not in SR_ACTIONS:
+                me._raw(addr, "http ?", f"{request.method} /{path}")
+                return _json({"error": "not a SignalR request"}, 404)
+            if me.password and q.get("password", "") != me.password:
+                me._raw(addr, "refused", f"{action}: wrong password")
+                return _json({"error": "wrong password"}, 403)
+            token = q.get("connectionToken", "")
+            transport = q.get("transport", "")
+            if action == "negotiate":
+                cid = uuid.uuid4().hex
+                base = "/" + path.rstrip("/").rsplit("/", 1)[0]
+                me._raw(addr, "negotiate", f"connectionData={q.get('connectionData', '')}")
+                return _json({"Url": base, "ConnectionToken": cid, "ConnectionId": cid,
+                              "KeepAliveTimeout": 20.0, "DisconnectTimeout": 30.0,
+                              "ConnectionTimeout": 110.0, "TryWebSockets": False,
+                              "ProtocolVersion": SR_PROTOCOL,
+                              "TransportConnectTimeout": 5.0, "LongPollDelay": 0.0})
+            me._touch(token, addr, transport, len(body))
+            if action in ("connect", "reconnect"):
+                me._raw(addr, action, f"transport={transport}")
+                with me._lock:
+                    me._closed.discard(token)
+                if transport == "serverSentEvents":
+                    return Response(me._sse(token, init=(action == "connect")),
+                                    mimetype="text/event-stream",
+                                    headers={"Cache-Control": "no-cache"})
+                if action == "connect":          # longPolling: init at once
+                    return _json({"C": "s-0,0", "S": 1, "M": []})
+                return _json({"C": "s-0,0", "M": []})
+            if action == "start":
+                return _json({"Response": "started"})
+            if action == "ping":
+                return _json({"Response": "pong"})
+            if action == "poll":
+                end = time.time() + SR_POLL_S
+                while time.time() < end and token not in me._closed:
+                    time.sleep(0.5)
+                return _json({"C": "s-0,0", "M": []})
+            if action == "abort":
+                with me._lock:
+                    me._closed.add(token)
+                    me.clients.pop(token, None)
+                me._raw(addr, "abort", "client disconnected")
+                return _json({})
+            # send
+            return _json(me.handle_send(addr, request.form.get("data", body)))
+        return sr
+
+    def _sse(self, token, init=True):
+        yield "data: initialized\n\n"
+        if init:
+            yield 'data: {"C":"d-0,0","S":1,"M":[]}\n\n'
+        last = time.time()
+        while token not in self._closed:
+            time.sleep(0.5)
+            if time.time() - last >= SR_KEEPALIVE_S:
+                last = time.time()
+                self._touch(token, self.clients.get(token, {}).get("addr", ""))
+                yield "data: {}\n\n"
 
     def status(self) -> dict:
+        now = time.time()
         with self._lock:
+            for k in [k for k, c in self.clients.items() if now - c.get("seen", 0) > 60]:
+                self.clients.pop(k, None)
             return {"port": self.port, "listening": self.listening, "error": self.error,
-                    "clients": [{"addr": k, **v} for k, v in self.clients.items()],
+                    "password": bool(self.password),
+                    "clients": [{"addr": c["addr"], "bytes": c["bytes"],
+                                 "transport": c.get("transport", ""), "since": c["since"]}
+                                for c in self.clients.values()],
                     "raw": list(self.raw)[::-1]}
 
 
@@ -477,7 +599,8 @@ class RcPoller(SDKPoller):
 app = Flask(__name__)
 feed = Feed()
 _cfg = load_config()
-atvo = AtvoReceiver(feed, int(_cfg.get("atvo_port") or 5020))
+atvo = AtvoReceiver(feed, int(_cfg.get("atvo_port") or 5020),
+                     password=str(_cfg.get("atvo_password") or ""))
 poller = RcPoller(feed)
 
 
@@ -625,9 +748,9 @@ async function poll() {
     const d = await (await fetch('/rc/state?raw=1', {cache: 'no-store'})).json();
     const a = d.atvo;
     document.getElementById('atvo').innerHTML =
-      `<b>ATVO-Empfänger (iRaceControl):</b> ${a.listening ? `<span class="ok">bereit auf TCP-Port ${a.port}</span>` : `<span class="bad">${esc(a.error || 'nicht aktiv')}</span>`}<br>`
-      + (a.clients.length ? a.clients.map(c => `<span class="ok">verbunden: ${esc(c.addr)}</span> · ${c.bytes} Bytes`).join('<br>')
-                          : '<span class="muted">keine Verbindung — in iRaceControl unter Settings › CACS diese PC-Adresse + Port eintragen und ATVO einschalten</span>')
+      `<b>ATVO-Empfänger (iRaceControl, SignalR):</b> ${a.listening ? `<span class="ok">bereit auf Port ${a.port}${a.password ? ' · mit Passwort' : ' · ohne Passwort'}</span>` : `<span class="bad">${esc(a.error || 'nicht aktiv')}</span>`}<br>`
+      + (a.clients.length ? a.clients.map(c => `<span class="ok">verbunden: ${esc(c.addr)}</span> · ${esc(c.transport)} · ${c.bytes} Bytes`).join('<br>')
+                          : '<span class="muted">keine Verbindung — in iRaceControl bei ATVO diese PC-Adresse + Port eintragen und ATVO einschalten</span>')
       + `<br><span class="muted">iRacing: ${d.iracing.connected ? 'verbunden' : 'nicht verbunden'}${d.iracing.is_race ? ' · Rennen' : ''}</span>`;
     document.getElementById('msgs').innerHTML = '<tr><th>Zeit</th><th>Quelle</th><th>Meldung</th></tr>' +
       (d.messages || []).slice().reverse().map(m => `<tr><td>${tm(m.t)}</td><td>${esc(m.source)}</td><td><b>${esc(m.headline)}</b> ${esc(m.text)}${m.car ? ` · #${esc(m.car.num)} ${esc(m.car.label)}` : ''}</td></tr>`).join('');
@@ -664,7 +787,7 @@ if __name__ == "__main__":
     print(f"  Banner (OBS):   http://localhost:{PORT}")
     print(f"  Operator panel: http://localhost:{PORT}/panel")
     print(f"  Preview:        http://localhost:{PORT}/?demo=1")
-    print(f"  iRaceControl -> ATVO server: this PC, TCP port {atvo.port}")
+    print(f"  iRaceControl -> ATVO server: this PC, port {atvo.port} (SignalR)")
     print("  Raw capture:    logs/atvo_capture_<date>.log")
     print("=" * 60 + "\n")
     try:
