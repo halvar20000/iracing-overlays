@@ -134,6 +134,8 @@ body = "data=" + urllib.parse.quote(json.dumps({"H": "RaceControlHub", "M": "Get
 r = json.loads(urllib.request.urlopen(urllib.request.Request(f"{BASE}/send?transport=serverSentEvents{tok}&password=geheim",
         data=body.encode(), headers={"Content-Type": "text/plain"}), timeout=5).read())
 check("N16 send without a form content type", r.get("R") and r["I"] == "0", str(r))
+r = recv.handle_send("x", json.dumps({"H": "RaceControlHub", "M": "GetAllIncidents", "A": [], "I": "1"}))
+check("N17 GetAllIncidents -> empty list, not null (null crashed iRaceControl)", r.get("R") == [] and "R" in r, str(r))
 recv.stop()
 
 # ---- Flask -----------------------------------------------------------------

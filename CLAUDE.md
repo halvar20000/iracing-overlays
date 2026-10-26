@@ -204,6 +204,9 @@ FIRST REAL CONNECT (same day): SSE connect worked; its first hub call is
 answers "R": "1.0.0" (guess — watch whether iRaceControl accepts it). The
 POST body did NOT land in request.form on the stream PC (URL-encoded line
 went on the feed) → `form_data()` decodes the raw body itself.
+THEN iRaceControl CRASHED on connect: its second call is
+`GetAllIncidents` (no args) and our null result killed it → `hub_result()`:
+every GetAll… / Get…s call returns [] (never null).
 Restart 5019.
 
 **October 25, 2026 (board look for PCCD + IEC too; driver championship

@@ -315,8 +315,20 @@ def _strings(x, out):
 
 
 # Hub methods iRaceControl calls that want a RESULT (the .NET client awaits
-# Invoke<T>): GetVersion is its first call after connecting (2026-10-26).
+# Invoke<T>): GetVersion, then GetAllIncidents right after connecting
+# (2026-10-26). A null result for GetAllIncidents CRASHED iRaceControl — so
+# every "GetAll…" call gets an empty list, never null.
 HUB_RESULTS = {"getversion": "1.0.0"}
+
+
+def hub_result(method: str):
+    """(True, result) for a hub method that must return something."""
+    m = method.lower()
+    if m in HUB_RESULTS:
+        return True, HUB_RESULTS[m]
+    if m.startswith("getall") or (m.startswith("get") and m.endswith("s")):
+        return True, []
+    return False, None
 
 
 def form_data(body: str) -> str:
@@ -438,8 +450,9 @@ class AtvoReceiver:
                       json.dumps(args, ensure_ascii=False),
                       (r[0] + " | " + r[1]) if r and r[0] else (r[1] if r else None), shown)
             out = {"I": str(msg.get("I", "0"))}
-            if method.lower() in HUB_RESULTS:
-                out["R"] = HUB_RESULTS[method.lower()]
+            has, res = hub_result(method)
+            if has:
+                out["R"] = res
             return out
         r = extract_text(data.encode("utf-8"))      # plain PersistentConnection
         shown = bool(r and readable(r[1] or r[0]))
