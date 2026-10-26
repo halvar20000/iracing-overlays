@@ -136,6 +136,23 @@ r = json.loads(urllib.request.urlopen(urllib.request.Request(f"{BASE}/send?trans
 check("N16 send without a form content type", r.get("R") and r["I"] == "0", str(r))
 r = recv.handle_send("x", json.dumps({"H": "RaceControlHub", "M": "GetAllIncidents", "A": [], "I": "1"}))
 check("N17 GetAllIncidents -> empty list, not null (null crashed iRaceControl)", r.get("R") == [] and "R" in r, str(r))
+# ---- the real iRaceControl format (2026-10-26, hosted session) -------------
+f5 = rc.Feed(); r5 = rc.AtvoReceiver(f5, 0, log_dir=tmp)
+r5.car_lookup = lambda e: {"num": "12", "label": "Proton"} if e == "12" else None
+def sm(typ, head, text, entry=""):
+    return json.dumps({"H": "RaceControlHub", "M": "SendMessage", "I": "5", "A": [{"EntryId": entry, "IdType": 0,
+        "SessionName": None, "Type": typ, "Header": head, "Text": text, "DisplayTime": "00:00:10", "Source": "iRaceControl"}]})
+for typ, head in [(1, "RACE CONTROL"), (2, "WARNING"), (3, "PENALTY"), (4, "RACE CONTROL"), (5, "RACE CONTROL"), (6, "RACE CONTROL")]:
+    r = r5.handle_send("x", sm(typ, head, "PACE CAR DEPLOYED BY RACE CONTROL"))
+check("N18 one message routed to all 6 targets = shown once", len(f5.list()) == 1 and r == {"I": "5"}, str(f5.list()))
+m = f5.list()[0]
+check("N19 type / headline / text / DisplayTime", (m["kind"], m["headline"], m["text"], m["secs"]) ==
+      ("message", "RACE CONTROL", "PACE CAR DEPLOYED BY RACE CONTROL", 10.0), str(m))
+r5.handle_send("x", sm(3, "PENALTY", "Drive Through - avoidable contact", entry="12"))
+r5.handle_send("x", sm(2, "WARNING", "Track limits T4"))
+ks = [(x["kind"], (x["car"] or {}).get("num")) for x in f5.list()[1:]]
+check("N20 penalty with car (EntryId), warning", ks == [("penalty", "12"), ("warning", None)], str(ks))
+check("N21 parse_span", rc.parse_span("00:01:05") == 65 and rc.parse_span("00:00:00") is None and rc.parse_span("x") is None)
 recv.stop()
 
 # ---- Flask -----------------------------------------------------------------

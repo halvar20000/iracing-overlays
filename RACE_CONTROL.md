@@ -40,6 +40,13 @@ Im iRaceControl-Einstellungsfenster, Bereich **ATVO SETTINGS**:
 | Headlines / Sec | egal, so lassen |
 | ATVO Incidents | an = auch Incidents schicken |
 
+**Wichtig – Routing:** iRaceControl schickt eine Meldung nur an ATVO, wenn
+sie in **Settings › CACS** in der **Routing-Tabelle** einem ATVO-Ziel
+zugeordnet ist (Standard: nur iRacing-Chat). Jede Meldungsart **einem**
+ATVO-Ziel zuordnen (Info → INFO, Strafen → PENALTY, Verwarnungen → WARNING …).
+Dieselbe Meldung an mehrere Ziele kommt mehrfach an (wir zeigen sie nur
+einmal). Verbunden = Statusleiste „ATVO: <Adresse:Port> CONNECTED“.
+
 Adresse:
 - Stewart im selben Netz: die LAN-IP des Stream-PCs (192.168.86.138).
 - Stewart woanders (Internet): die **öffentliche IP** des Anschlusses (oder

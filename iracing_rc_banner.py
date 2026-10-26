@@ -105,11 +105,12 @@ class Feed:
         self._id = 0
 
     def add(self, source: str, kind: str, headline: str, text: str = "",
-            car: dict | None = None) -> dict:
+            car: dict | None = None, secs: float | None = None) -> dict:
         with self._lock:
             self._id += 1
             m = {"id": self._id, "t": time.time(), "source": source,
-                 "kind": kind, "headline": headline, "text": text, "car": car}
+                 "kind": kind, "headline": headline, "text": text, "car": car,
+                 "secs": secs}
             self._msgs.append(m)
         print(f"[rc] {source}: {headline} {text} "
               f"{('#' + car['num'] + ' ' + car['label']) if car else ''}".rstrip())
@@ -193,7 +194,7 @@ class FlagWatcher:
         if now - self._last_car.get(key, -1e9) < CAR_REPEAT_S:
             return
         self._last_car[key] = now
-        self.feed.add("iracing", kind, head, "", dict(car))
+        self.feed.add("iracing", kind, head, "", {k: v for k, v in car.items() if k != "uid"})
 
 
 # =============================================================================
@@ -354,6 +355,30 @@ def hub_text(method: str, args):
     return ("", " · ".join(ss))
 
 
+# RaceControlHub.SendMessage({EntryId, IdType, SessionName, Type, Header,
+# Text, DisplayTime "00:00:10", Source "iRaceControl"}) — seen 2026-10-26.
+# Type = the ATVO target chosen in iRaceControl's CACS routing, in the order
+# of its settings window: INFO, WARNING, PENALTY, INVESTIGATION, NO FURTHER
+# ACTION, CLEAR PENALTY.
+ATVO_TYPES = {1: "message", 2: "warning", 3: "penalty", 4: "investigation",
+              5: "nfa", 6: "clear"}
+ATVO_DUP_S = 3.0          # same text again within 3 s = one message routed to several targets
+
+
+def parse_span(v) -> float | None:
+    """'00:00:10' / '00:00:07.5' / 10 -> seconds."""
+    if isinstance(v, (int, float)):
+        return float(v) if v > 0 else None
+    try:
+        parts = [float(x) for x in str(v).split(":")]
+    except ValueError:
+        return None
+    secs = 0.0
+    for x in parts:
+        secs = secs * 60 + x
+    return secs if secs > 0 else None
+
+
 def hub_kind(method: str, head: str) -> str:
     s = f"{method} {head}".lower()
     for k in ("penalty", "warning"):
@@ -376,6 +401,8 @@ class AtvoReceiver:
         self._lock = threading.Lock()
         self._server = None
         self._closed: set = set()        # aborted tokens (end SSE / polls)
+        self.car_lookup = None           # EntryId -> car dict (set by the app)
+        self._recent: dict = {}          # (text, entry) -> time, for ATVO_DUP_S
         self.app = self._make_app()
 
     def start(self):
@@ -440,6 +467,13 @@ class AtvoReceiver:
             msg = None
         if isinstance(msg, dict) and "M" in msg:
             method, args = str(msg.get("M") or ""), msg.get("A") or []
+            m0 = args[0] if isinstance(args, list) and args and isinstance(args[0], dict) else None
+            if method.lower() == "sendmessage" and m0 is not None and ("Text" in m0 or "Header" in m0):
+                shown = self._send_message(m0)
+                self._raw(addr, f"hub {msg.get('H', '')}.{method}",
+                          json.dumps(args, ensure_ascii=False),
+                          f"{m0.get('Header') or ''} | {m0.get('Text') or ''}", shown)
+                return {"I": str(msg.get("I", "0"))}
             r = hub_text(method, args)
             shown = False
             if r:
@@ -460,6 +494,33 @@ class AtvoReceiver:
             self.feed.add("atvo", "message", r[0], r[1] or r[0])
         self._raw(addr, "send", data, (r[1] if r else None), shown)
         return {}
+
+    def _send_message(self, m: dict) -> bool:
+        head = str(m.get("Header") or "").strip()
+        text = str(m.get("Text") or "").strip()
+        if not readable(text or head):
+            return False
+        entry = str(m.get("EntryId") or "").strip()
+        now = time.time()
+        key = (text.lower(), entry)
+        with self._lock:
+            self._recent = {k: t for k, t in self._recent.items() if now - t < ATVO_DUP_S}
+            if key in self._recent:
+                return False
+            self._recent[key] = now
+        try:
+            typ = int(m.get("Type") or 0)
+        except (TypeError, ValueError):
+            typ = 0
+        kind = ATVO_TYPES.get(typ) or hub_kind("", head)
+        car = None
+        if entry and self.car_lookup:
+            try:
+                car = self.car_lookup(entry)
+            except Exception:
+                car = None
+        self.feed.add("atvo", kind, head, text or head, car, parse_span(m.get("DisplayTime")))
+        return True
 
     # ---- HTTP ------------------------------------------------------------
     def _make_app(self):
@@ -590,12 +651,26 @@ class RcPoller(SDKPoller):
             tname = (d.get("TeamName") or "").strip()
             col = cols.get(int(d.get("CarClassID") or 0)) if multi else None
             out[i] = {"num": str(d.get("CarNumber") or "").strip('"'),
+                      "uid": str(d.get("UserID") or ""),
                       "label": tname if team and tname else name,
                       "driver": name if team and tname and tname != name else "",
                       "class": (d.get("CarClassShortName") or "").strip() if multi else "",
                       "color": col, "text": text_on(col) if col else None}
         self._cars, self._cars_t = out, now
         return out
+
+    def find_car(self, entry: str) -> dict | None:
+        """iRaceControl's EntryId -> car (by car number, user id or car idx;
+        which one it sends is not documented)."""
+        e = str(entry).strip().lstrip("#")
+        cars = dict(self._cars)
+        for key in ("num", "uid"):
+            for c in cars.values():
+                if c.get(key) and c[key] == e:
+                    return {k: v for k, v in c.items() if k != "uid"}
+        if e.isdigit() and int(e) in cars:
+            return {k: v for k, v in cars[int(e)].items() if k != "uid"}
+        return None
 
     def _is_race(self, ir, key, num) -> bool:
         if key not in self._race_cache:
@@ -633,6 +708,7 @@ _cfg = load_config()
 atvo = AtvoReceiver(feed, int(_cfg.get("atvo_port") or 5020),
                      password=str(_cfg.get("atvo_password") or ""))
 poller = RcPoller(feed)
+atvo.car_lookup = poller.find_car
 
 
 @app.after_request
@@ -684,6 +760,8 @@ BANNER_HTML = r"""<!DOCTYPE html>
   .rc.green .tag { background: #1fbf4f; } .rc.red .tag { background: #e3242b; }
   .rc.penalty .tag, .rc.dq .tag { background: #111; border-right: 4px solid #fff; }
   .rc.repair .tag { background: #ff7a00; }
+  .rc.warning .tag { background: #fff; color: #111; }
+  .rc.investigation .tag { background: #2f6bf7; }
   .body { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 10px 18px; min-width: 0; }
   .head { font-size: 26px; font-weight: 900; letter-spacing: .5px; }
   .text { font-size: 22px; font-weight: 600; color: #e6e2f5; margin-top: 2px; }
@@ -711,7 +789,8 @@ function show(m) {
   busy = true;
   const rc = document.getElementById('rc');
   rc.className = 'rc ' + (m.kind || '');
-  document.getElementById('head').textContent = m.headline || '';
+  // the tag already says RACE CONTROL (iRaceControl's default INFO headline)
+  document.getElementById('head').textContent = /^race\s*control$/i.test(m.headline || '') ? '' : (m.headline || '');
   document.getElementById('text').textContent = m.text || '';
   const c = m.car;
   document.getElementById('car').innerHTML = c ? `<span class="num"${c.color ? ` style="background:${esc(c.color)};color:${esc(c.text)}"` : ''}>#${esc(c.num)}</span>`
@@ -719,7 +798,7 @@ function show(m) {
       + (c.class ? `<span class="cls" style="background:${esc(c.color)};color:${esc(c.text)}">${esc(c.class)}</span>` : '') : '';
   requestAnimationFrame(() => rc.classList.add('show'));
   const words = ((m.headline || '') + ' ' + (m.text || '')).split(/\s+/).length;
-  const secs = Math.max(SECS, Math.min(20, words * 0.45));
+  const secs = Math.max(m.secs || SECS, Math.min(20, words * 0.45));
   setTimeout(() => { rc.classList.remove('show'); setTimeout(() => { busy = false; next(); }, 450); }, secs * 1000);
 }
 function next() { if (!busy && queue.length) show(queue.shift()); }

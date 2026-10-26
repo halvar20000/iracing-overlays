@@ -207,6 +207,21 @@ went on the feed) → `form_data()` decodes the raw body itself.
 THEN iRaceControl CRASHED on connect: its second call is
 `GetAllIncidents` (no args) and our null result killed it → `hub_result()`:
 every GetAll… / Get…s call returns [] (never null).
+WORKING (same day, Thomas's hosted AI session): nothing came until the
+messages were ROUTED to the ATVO targets in iRaceControl's Settings › CACS
+routing table (default = iRacing chat only). Real format:
+`RaceControlHub.SendMessage({EntryId, IdType, SessionName, Type, Header,
+Text, DisplayTime "00:00:10", Source "iRaceControl"})`, Type 1-6 = INFO,
+WARNING, PENALTY, INVESTIGATION, NO FURTHER ACTION, CLEAR PENALTY (ATVO_TYPES
+→ kinds message / warning / penalty / investigation / nfa / clear). One
+message routed to all six targets arrived 6× → same text + entry within
+ATVO_DUP_S 3 s shown once. DisplayTime → feed `secs` (banner duration).
+EntryId → car via RcPoller.find_car (car number, UserID or CarIdx — which
+one iRaceControl sends is NOT known yet, EntryId was empty in the test).
+Banner hides the headline "RACE CONTROL" (the tag says it), warning tag
+white, investigation blue. NOT seen yet: the ATVO Incidents calls
+(investigation / decision / served) — they may expect results like
+GetAllIncidents did; watch the panel's raw list. test_rc_banner N18-N21.
 Restart 5019.
 
 **October 25, 2026 (board look for PCCD + IEC too; driver championship
