@@ -188,6 +188,9 @@ a Follower that gets its own id back = "refused" ("that link leads back to
 THIS iCAS"). A steward must follow from HIS OWN PC (or just open the link
 in a browser). test_incidents 251/251; real run: self-follow via the LAN IP
 refused, chat works again.
+CONFIRMED by Thomas (same day): from a second device over the tunnel link
+it works ("habe ich so gemacht und es funktioniert") - first real use of
+the multi-steward login / tunnel.
 
 **October 27, 2026 (iCASControl 0.1.12 — sequencer):** Thomas's
 iRaceControl SEQUENCER screenshot (QUALIFY: MSGT 00:00:01 "Start Qualifying
