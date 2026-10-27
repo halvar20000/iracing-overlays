@@ -75,6 +75,7 @@ OVERLAYS = [
     ("lastrace_wct",  "Last Round (WCT look)", 5010, "/lastrace/wct"),
     ("table_wct",     "Championship (WCT look)", 5010, "/table/wct"),
     ("teams_wct",     "Team Standings (WCT look)", 5010, "/teams/wct"),
+    ("live_wct",      "Championship LIVE / provisional (WCT look)", 5010, "/live/wct"),
     ("champ_solid",   "Championship (Abspann, opaque)", 5010, "/overlay/solid"),
     ("rsvp",          "RSVP Overview",    5010, "/rsvp"),
     ("stats",         "Season Statistics", 5010, "/stats"),

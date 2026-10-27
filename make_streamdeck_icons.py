@@ -195,6 +195,7 @@ OVERLAY_ICONS = [
     ("lastrace_wct",  "pre",    "podium",    "Letzte Runde neu"),
     ("table_wct",     "pre",    "trophy",    "Tabelle neu"),
     ("teams_wct",     "pre",    "trophy",    "Teamwertung"),
+    ("live_wct",      "live",   "trophy",    "Tabelle live"),
     ("champ_solid",   "post",   "trophy",    "Meisterschaft Abspann"),
     ("highlight_card", "post",  "film",      "Highlight Titel"),
     ("ask_status",    "live",   "mic",       "Frag Claude Status"),

@@ -92,6 +92,7 @@ Quelle: `?auto=1` (+ `?secs=`), `?cycle=20` (lastrace / table) oder
 | Letzte Runde (CLS) im WCT-Look (Rennen, PRO / AM mit Klassenpunkten, Wertung; IEC je Klasse mit Teamnamen) | 5010 `/lastrace/wct` | `lastrace_wct.html` | 900 × 620 |
 | Fahrer-Meisterschaft (CLS) im WCT-Look (PRO / AM, IEC je Klasse, sonst eine Tabelle) | 5010 `/table/wct` | `table_wct.html` | 900 × 620 |
 | Team-Meisterschaft (CLS) im WCT-Look (IEC: je Klasse) | 5010 `/teams/wct` | `teams_wct.html` | 900 × 620 |
+| Fahrer-Meisterschaft LIVE / provisorisch im WCT-Look (CLS + Rennen jetzt, PRO / AM, ▲▼ in der Klasse, +Punkte der Runde) | 5010 `/live/wct` | `live_wct.html` | 900 × 620 |
 | Meisterschaft, deckend (Abspann) | 5010 `/overlay/solid` | `champ_solid.html` | ✓ 1920 × 1080 (`?zoom=`) |
 | Highlight-Video Titelkarte (nur während der Aufnahme, HIGHLIGHTS.md) | 5000 `/highlights/card` | `highlight_card.html` | ≈ 1100 × 110 (`?zoom=`) |
 

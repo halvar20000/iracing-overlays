@@ -2418,6 +2418,66 @@ def _table_wct(st: dict) -> dict:
     return out
 
 
+def _live_wct(ps: dict) -> dict:
+    """PROVISIONAL driver championship in the board look (2026-10-27,
+    Thomas): the live projection of /overlay (CLS points + earlier races of
+    the round + the race now) split into PRO / AM in Pro/Am seasons (class
+    points), one table per class in multiclass leagues, else one table.
+    pos = projected class position, value = places won / lost in the class
+    + points scored this round, pts = projected total."""
+    league = ps.get("league") or {}
+    season = ps.get("season") or {}
+    done = season.get("completedRounds") or 0
+    rows = [c for c in ps.get("champ_rows") or []]
+    racing = bool(ps.get("live_race") or ps.get("race_finished") or ps.get("earlier_races"))
+    title = ["MEISTERSCHAFT " + ("PROVISORISCH" if racing else "LIVE"),
+             league.get("name") or "",
+             (f"LAUF {done + 1}" if racing else (f"NACH LAUF {done}" if done else ""))]
+    out = {"connected": True, "tab": "LIVE" if racing else "STANDINGS",
+           "slug": league.get("slug") or "",
+           "title": " - ".join(x for x in title if x).upper(),
+           "empty": ps.get("error") or "Noch keine Meisterschaftspunkte", "sections": []}
+
+    def board(grp, mark=""):
+        before = {id(c): i for i, c in enumerate(
+            sorted(grp, key=lambda c: (-(c.get("pre_points") or 0), c.get("rank") or 999)), 1)}
+        now = sorted(grp, key=lambda c: (-(c.get("proj_points") or 0), c.get("rank") or 999))
+        lines = []
+        for i, c in enumerate(now, 1):
+            moved = before[id(c)] - i
+            gain = (c.get("proj_points") or 0) - (c.get("pre_points") or 0)
+            val = []
+            if moved:
+                val.append(("▲" if moved > 0 else "▼") + str(abs(moved)))
+            if gain:
+                val.append(f"+{gain}")
+            lines.append({"pos": i, "num": c.get("start_number") or "",
+                          "name": c.get("name") or "", "sub": c.get("team_name") or "",
+                          "mark": mark, "value": "  ".join(val),
+                          "pts": c.get("proj_points") or 0})
+        return lines
+
+    if season.get("proAmEnabled") and any(c.get("pro_am") for c in rows):
+        for cls, col in (("PRO", wct_board.PRO_COLOR), ("AM", wct_board.AM_COLOR)):
+            grp = [c for c in rows if c.get("pro_am") == cls]
+            if grp:
+                out["sections"].append({"label": cls, "color": col, "rows": board(grp)})
+        return out
+    classes = []
+    for c in sorted(rows, key=lambda c: c.get("rank") or 999):
+        if c.get("car_class_name") and c["car_class_name"] not in classes:
+            classes.append(c["car_class_name"])
+    if len(classes) > 1:
+        for ci, k in enumerate(classes):
+            out["sections"].append({"label": k.upper(),
+                                    "color": class_colors.PALETTE[ci % len(class_colors.PALETTE)],
+                                    "rows": board([c for c in rows if c.get("car_class_name") == k])})
+        return out
+    if rows:
+        out["sections"].append({"label": "FAHRER", "rows": board(rows)})
+    return out
+
+
 def _teams_wct(st: dict) -> dict:
     league = st.get("league") or {}
     season = st.get("season") or {}
@@ -2468,6 +2528,20 @@ def table_wct_data():
     if not st:
         return jsonify({"connected": True, "tab": "STANDINGS", "title": "", "sections": [], "empty": "Lade CLS-Daten …"})
     return jsonify(_table_wct(st))
+
+
+@app.route("/live/wct")
+def live_wct_page():
+    return Response(wct_board.board_page("/live/wct/data"), mimetype="text/html")
+
+
+@app.route("/live/wct/data")
+def live_wct_data():
+    ps = _state()
+    if not ps.get("ok"):
+        return jsonify({"connected": True, "tab": "LIVE", "title": "", "sections": [],
+                        "empty": ps.get("error") or "Lade CLS-Daten …"})
+    return jsonify(_live_wct(ps))
 
 
 @app.route("/teams/wct")

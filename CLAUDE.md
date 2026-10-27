@@ -178,6 +178,21 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 27, 2026 (5010 `/live/wct` — PROVISIONAL championship in the
+board look, PRO / AM):** Thomas wanted the live projection (old /overlay view
+B) in the new design. `_live_wct(_state())` = board data from
+build_projection's champ_rows: Pro/Am seasons → PRO / AM sections (proj_points
+= class total + class race points), multiclass → per class, else FAHRER;
+pos = projected class position (proj_points desc, CLS rank tiebreak), value =
+"▲2 +25" (places won / lost INSIDE the class vs pre_points order + points of
+this round incl. earlier races of the round), pts = projected total. Title
+"MEISTERSCHAFT PROVISORISCH - <league> - LAUF n+1" + tab LIVE while a race /
+finished race / earlier race of the round counts, else "LIVE … NACH LAUF n".
+Loader live_wct.html (63), icon "Tabelle live" (rendered with chromium
+--headless=new; the script's old --headless hung here), OVERLAY_TABLE,
+OBS_OVERLAYS. Checked with the live WCT CLS table + a faked race (last AM
+wins his class: +40, rises). Restart 5010.
+
 **October 27, 2026 (WCT: BLACK bar for a driver not rated PRO / AM yet):**
 Thomas: tonight a driver races in WCT who CLS has not classified. NEW
 `cls_proam.ProAmRoster.lookup_field(user_id, active)` = "PRO" / "AM", in a WCT
