@@ -277,6 +277,8 @@ nothing but local yellow / blue / per-car bits are set. iRacing keeps green
 logs "ONE TO GREEN - restart next lap" and "GREEN flag - caution over" when
 the caution bits go off. Snapshot `flags_raw` (flag box tooltip shows the hex)
 for the next report. test_incidents 175/175.
+CONFIRMED by Thomas in iRacing (same day): the caution end is detected
+("Caution Ende --> funktioniert").
 
 **October 27, 2026 (iCASControl 0.1.7 — caution length):** Thomas: how long
 does the pace car stay out? iRacing decides itself; `!pacelaps N|+n|-n` (admin,
