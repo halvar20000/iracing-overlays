@@ -320,6 +320,8 @@ f2 = src._read_frame(0.1)
 pts = [i for i in f2.incidents if i.source == "points"]
 check("rise -> points event", len(pts) == 1 and pts[0].car_idx == 1
       and pts[0].points == 4 and pts[0].total == 4, f2.incidents)
+check("sector status reported", src.sector_status.get("on") is True
+      and src.sector_status.get("sectors") == 3, src.sector_status)
 dbg = src.inc_debug
 check("debug: raw rows as iRacing sent them",
       dbg["result_rows"] == 2 and dbg["cars_with_points"] == 2
@@ -454,7 +456,7 @@ class _App:
 
 _stub("fastapi", FastAPI=_App, WebSocket=object, WebSocketDisconnect=Exception)
 _stub("fastapi.responses", JSONResponse=dict, Response=dict)
-_stub("fastapi.staticfiles", StaticFiles=lambda **k: None)
+_stub("fastapi.staticfiles", StaticFiles=type("StaticFiles", (), {"__init__": lambda self, **k: None}))
 argv = sys.argv
 sys.argv = ["x", "--sim"]
 from backend import server  # noqa: E402

@@ -48,8 +48,11 @@ if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
 try:
     from field_sectors import FieldSectors
-except Exception:                       # racecontrol copied on its own
+    _SECTOR_IMPORT_ERROR = ""
+except Exception as _e:                 # racecontrol copied on its own
     FieldSectors = None
+    _SECTOR_IMPORT_ERROR = f"field_sectors not importable: {_e}"
+    print(f"[iracing] sector times OFF - {_SECTOR_IMPORT_ERROR}")
 from backend.car_brands import detect_brand
 
 try:                                  # pyirsdk is Windows-only in practice
@@ -161,6 +164,8 @@ class IRacingSource(DataSource):
         self._replay_busy = False
         self.sectors = FieldSectors() if FieldSectors else None
         self.inc_debug: dict = {}
+        self.sector_status = ({"on": True} if FieldSectors else
+                              {"on": False, "error": _SECTOR_IMPORT_ERROR})
         self._sector_key = None
 
     # -- DataSource interface ----------------------------------------------
@@ -465,6 +470,9 @@ class IRacingSource(DataSource):
         if not in_replay:
             fs.update(t, list(pcts), list(surfaces), list(on_pits))
         n = fs.n
+        self.sector_status = {"on": True, "sectors": n,
+                              "from_iracing": bool(bounds),
+                              "cars_timed": len(fs.car_best)}
         for c in cars:
             row = fs.car_last.get(c.car_idx) or [None] * n
             mine = fs.car_best.get(c.car_idx) or [None] * n

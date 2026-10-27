@@ -206,6 +206,12 @@ the stream PC's iRacing account is not session admin. NEW
 `GET /api/incidents/debug` (8080) = raw rows exactly as iRacing sent them
 (number, driver, incidents, laps), whose car this PC is, SessionInfoUpdate,
 the baseline. test 65/65.
+Sector columns did not show on the stream PC at first (fine after a
+reload): StaticFiles sent no Cache-Control, the browser kept the old app.js →
+`_NoCacheStatic` (no-store on every dashboard file); /api/status shows
+`sector_timing` (on, sector count, from SplitTimeInfo or not, import error).
+Version 0.1.1. Thomas confirmed: not admin on the stream PC = no live points.
+test 66/66.
 
 **October 26, 2026 (iCASControl = our iRaceControl clone, `racecontrol/`
 8080 — STEP 1 of 3: live incidents, replay per line, autosave):** Thomas:

@@ -308,6 +308,7 @@ async def status() -> JSONResponse:
         "source": engine.source.name, "running": engine.running,
         "connected": engine.state.connected,
         "clients": len(engine.clients),
+        "sector_timing": getattr(engine.source, "sector_status", None),
     })
 
 
@@ -393,8 +394,18 @@ async def _race_loop() -> None:
 
 
 # Static front-end - mounted last so /ws and /api take precedence.
+class _NoCacheStatic(StaticFiles):
+    """The dashboard files are always fetched fresh - after an update the
+    browser kept the old app.js (no sector columns, 2026-10-27)."""
+
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return resp
+
+
 if FRONTEND_DIR.is_dir():
-    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True),
+    app.mount("/", _NoCacheStatic(directory=str(FRONTEND_DIR), html=True),
               name="frontend")
 
 
