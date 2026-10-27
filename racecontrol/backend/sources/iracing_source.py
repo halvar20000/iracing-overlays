@@ -741,7 +741,14 @@ class IRacingSource(DataSource):
         if self._ir is None or not self._ir.is_connected:
             return "iRacing not connected"
         if verify:
-            self._chat_verify[text] = verify
+            # the state BEFORE the command: only a change counts as done
+            # (2026-10-27: #11's EOL bit was already set, iRacing answered
+            # "Can't set EOL when not under caution" and we said confirmed)
+            try:
+                before = self._chat_effect(verify[0], verify[1])
+            except Exception:
+                before = None
+            self._chat_verify[text] = (verify[0], verify[1], before)
         self._chat.send(text, method, char_delay_ms)
         return f"to iRacing: {text}"
 
@@ -751,8 +758,16 @@ class IRacingSource(DataSource):
             self._note(f"NOT sent to iRacing: {text} - {info}")
             return
         if verify:
-            self._chat_checks.append({"text": text, "kind": verify[0],
-                                      "car": verify[1],
+            kind, car, before = verify
+            if kind in ("eol", "waveby") and not self._chat_effect("yellow", -1):
+                self._note(f"Sent to iRacing: {text} - iRacing only accepts "
+                           f"this under a caution (none is out)")
+                return
+            if before:
+                self._note(f"Sent to iRacing: {text} - cannot confirm, the "
+                           f"car already showed that state before")
+                return
+            self._chat_checks.append({"text": text, "kind": kind, "car": car,
                                       "until": time.monotonic() + CHAT_VERIFY_S})
         else:
             self._note(f"Sent to iRacing chat: {text}")

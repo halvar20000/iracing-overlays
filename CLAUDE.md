@@ -217,6 +217,13 @@ messages; sim / replay = "Would send …" in the log. Header switch iRACING CHAT
 confirm() for yellow / pit close / clear all / DT / S&G. NEEDS the admin PC:
 the stream PC's account is not admin. test 91/91 (fake keys, fake IR flags,
 engine routing). NOT tried on Windows / in iRacing at all.
+FIRST REAL TEST (same day, Thomas's own hosted session, admin): method
+"post" works — messages and commands land in the iRacing chat. `!eol #11`
+with no caution out: iRacing answered "Can't set EOL when not under caution",
+but we logged "iRacing confirmed" — #11's EOL pace bit was ALREADY set. Now
+send_chat records the state BEFORE the command and only an off → on change
+confirms; already set = "cannot confirm"; EOL / wave-by without a caution =
+"iRacing only accepts this under a caution". test 103/103.
 
 **October 27, 2026 (iCASControl first real run — Thomas's Spa AI practice
 screenshot):** detection works live (spins, "Contact with #28", pit lane).

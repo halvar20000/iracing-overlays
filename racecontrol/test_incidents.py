@@ -625,11 +625,38 @@ chat_ir["CarIdxSessionFlags"] = [0, irs.FLAG_BLACK]
 csrc._check_chat()
 check("black flag bit set -> 'iRacing confirmed'",
       csrc.drain_command_log() == ["iRacing confirmed: !black #11 D"])
+def wait_log():
+    for _ in range(50):
+        if csrc._command_log or csrc._chat_checks:
+            return
+        _t.sleep(0.1)
+# 2026-10-27 hosted session: EOL with no caution out - iRacing said "Can't set
+# EOL when not under caution", the car's EOL bit was already set, we said
+# "confirmed"
+chat_ir["SessionFlags"] = 0
+chat_ir["CarIdxPaceFlags"] = [0, irs.PACE_EOL]
 csrc.send_chat("!eol #11", "post", 0, ("eol", 1))
-for _ in range(50):
-    if csrc._chat_checks:
-        break
-    _t.sleep(0.1)
+wait_log()
+log = csrc.drain_command_log()
+check("EOL with no caution out -> no 'confirmed', says caution needed",
+      len(log) == 1 and "only accepts this under a caution" in log[0]
+      and not csrc._chat_checks, log)
+chat_ir["SessionFlags"] = 0x4000
+csrc.send_chat("!eol #11", "post", 0, ("eol", 1))
+wait_log()
+log = csrc.drain_command_log()
+check("bit already set before the command -> 'cannot confirm', not confirmed",
+      len(log) == 1 and "cannot confirm" in log[0] and not csrc._chat_checks, log)
+chat_ir["CarIdxPaceFlags"] = [0, 0]
+csrc.send_chat("!eol #11", "post", 0, ("eol", 1))
+wait_log()
+chat_ir["CarIdxPaceFlags"] = [0, irs.PACE_EOL]
+csrc._check_chat()
+check("under caution, bit goes off -> on -> confirmed",
+      csrc.drain_command_log() == ["iRacing confirmed: !eol #11"])
+chat_ir["CarIdxPaceFlags"] = [0, 0]
+csrc.send_chat("!eol #11", "post", 0, ("eol", 1))
+wait_log()
 csrc._chat_checks[0]["until"] = 0
 csrc._check_chat()
 log = csrc.drain_command_log()
