@@ -181,6 +181,15 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 27, 2026 (/lastrace/wct showed "?" instead of AM):** CLS WCT
+standings carry a CAR class on 2 of 38 registrations (Maurice Becker "Pro",
+Alexander Thieme "Am" — admin data, tell Thomas), so `_class_of` saw two
+classes and took the IEC multiclass path: sections "?" (everyone without a
+class) and "PRO". Now Pro/Am rounds never split by car class, and
+`_class_of` needs a class on at least half of the standings rows. Checked
+with live CLS: WCT before R4 → ERGEBNIS / PRO / AM (class points 35), IEC R2
+→ LMP2 / GT3 / PORSCHE CUP. Restart 5010.
+
 **October 27, 2026 (OVERLAYS.html — one page with every overlay):** Thomas:
 "ich suche und suche immer wieder". make_streamdeck_icons.write_overview()
 (called by write_table) generates OVERLAYS.html: cards per Stream Deck

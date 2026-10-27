@@ -2208,9 +2208,15 @@ def _class_of(st: dict, races: list):
     """CLS round results carry no car class: take it from the driver's
     standings row (carClassName), else from the class most drivers of the
     same car are in. None = single-class league."""
+    rows = (st or {}).get("standings") or []
     by_id = {str(r.get("iracingMemberId")): r.get("carClassName")
-             for r in (st or {}).get("standings") or [] if r.get("carClassName")}
+             for r in rows if r.get("carClassName")}
     if len(set(by_id.values())) < 2:
+        return None
+    # a stray class on a few registrations is not a multiclass league
+    # (2026-10-27: WCT had "Pro" / "Am" as CAR class on 2 of 38 drivers ->
+    # /lastrace/wct split into "?" and "PRO")
+    if len(by_id) < 0.5 * len(rows):
         return None
     votes: dict = {}
     for race in races:
@@ -2273,7 +2279,8 @@ def _lastrace_wct(info: dict, st: dict = None) -> dict:
             return wct_board.fmt_gap(r["gapMs"] / 1000)
         return ""
 
-    class_of = _class_of(st, races)
+    # Pro/Am rounds are split by PRO / AM, never by car class
+    class_of = None if proam else _class_of(st, races)
     team = any(len({r.get("position") for r in race.get("results") or []}) < len(race.get("results") or [])
                for race in races)
     if class_of or team:                         # IEC: per class, one row per team
