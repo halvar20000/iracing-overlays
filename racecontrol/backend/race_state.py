@@ -102,6 +102,9 @@ class RaceEvent:
     source: str = ""            # incidents: 'points' | 'detected'
     kind: str = ""              # incidents: spin / contact / stopped / incident
     other_car_idx: int = -1
+    by: str = ""                # steward whose action wrote this line
+    decided_by: str = ""        # steward who made the decision
+    claimed_by: str = ""        # steward looking at this incident right now
 
     def to_dict(self) -> dict:
         return {
@@ -114,6 +117,8 @@ class RaceEvent:
             "noted": self.noted, "investigating": self.investigating,
             "session_num": self.session_num, "source": self.source,
             "kind": self.kind, "other_car_idx": self.other_car_idx,
+            "by": self.by, "decided_by": self.decided_by,
+            "claimed_by": self.claimed_by,
         }
 
     @classmethod
@@ -122,6 +127,9 @@ class RaceEvent:
         return cls(**{k: v for k, v in d.items() if k in names})
 
 
+# Steward chat: lines kept (also in the autosave) and max length of one.
+STEWARD_CHAT_KEEP = 300
+STEWARD_CHAT_LEN = 400
 # Official points this soon after a detection of the same car belong to it.
 MATCH_POINTS_S = 20.0
 # Fields of a Car that survive a restart (autosave).
@@ -156,6 +164,7 @@ class RaceState:
         self.session_laps_total = 0
         self.session_laps_remain = 0
         self.flags: list[str] = []
+        self.flags_raw = 0
         self.start_lights = "off"
         self.sim_date = ""
         self.weather: dict = {}
@@ -173,6 +182,9 @@ class RaceState:
         self.official_points = False     # official counts arrive live
         self.steward_rules: dict = dict(steward.DEFAULT_CONFIG)
         self.frame_cars: set[int] = set()   # the cars of the last live frame
+        self.actor = ""         # steward whose message is being handled
+        self.steward_chat: list[dict] = []
+        self.chat_revision = 0
 
     # -- logging ------------------------------------------------------------
 
@@ -185,7 +197,7 @@ class RaceState:
             car_idx=car.car_idx if car else -1,
             car_number=car.number if car else "",
             inc_points=inc_points, is_incident=is_incident,
-            session_num=self.session_num,
+            session_num=self.session_num, by=self.actor,
         )
         self._next_event_id += 1
         self.events.append(ev)
@@ -219,6 +231,7 @@ class RaceState:
         self.session_laps_total = s.session_laps_total
         self.session_laps_remain = s.session_laps_remain
         self.flags = s.flags
+        self.flags_raw = getattr(s, "flags_raw", 0)
         self.start_lights = s.start_lights
         self.sim_date = s.sim_date
         self.session_num = s.session_num
@@ -248,10 +261,22 @@ class RaceState:
         # Flag changes.
         if frame.cars and s.flags != self._prev_flags:
             added = [f for f in s.flags if f not in self._prev_flags]
+            was_caution = any(f in ("caution", "one_to_green")
+                              for f in self._prev_flags)
+            is_caution = any(f in ("caution", "one_to_green") for f in s.flags)
             for f in added:
-                if f in ("green", "yellow", "caution", "checkered",
-                         "red", "white"):
+                if f == "one_to_green":
+                    self._log(LOG_FLAG, "ONE TO GREEN - restart next lap",
+                              lap=self._leader_lap())
+                elif f in ("green", "caution", "checkered", "red", "white"):
+                    if f == "green" and was_caution:
+                        continue          # logged below
                     self._log(LOG_FLAG, f"{f.upper()} flag", lap=self._leader_lap())
+            if was_caution and not is_caution:
+                # iRacing keeps the green bit set through a caution, so the
+                # restart is the caution bits going OFF, not "green" coming on
+                self._log(LOG_FLAG, "GREEN flag - caution over",
+                          lap=self._leader_lap())
             self._prev_flags = list(s.flags)
 
         # While the sim plays a replay, the car data shows the PAST: nothing
@@ -466,6 +491,7 @@ class RaceState:
             return "incident already resolved"
         car = self.cars.get(ev.car_idx)
         ev.resolution = resolution
+        ev.decided_by = self.actor
 
         if resolution == RESOLUTION_NOTED:
             ev.noted = True
@@ -555,6 +581,37 @@ class RaceState:
                   lap=self._leader_lap())
         return f"message sent {who}"
 
+    def claim(self, event_id: int, on: bool) -> str:
+        """A steward takes an incident ("I look at it") or lets it go."""
+        ev = next((e for e in self.events if e.id == event_id), None)
+        if ev is None or not ev.is_incident:
+            return "incident not found"
+        who = self.actor or "Steward"
+        if on:
+            if ev.claimed_by and ev.claimed_by != who:
+                return f"{ev.claimed_by} is already looking at it"
+            ev.claimed_by = who
+        elif ev.claimed_by in ("", who):
+            ev.claimed_by = ""
+        else:
+            return f"{ev.claimed_by} is looking at it"
+        self.event_revision += 1
+        return (f"{who} looks at incident #{ev.car_number}" if on
+                else "incident released")
+
+    def chat(self, text: str) -> Optional[dict]:
+        """One line in the stewards' own chat (never reaches iRacing)."""
+        text = str(text or "").strip()[:STEWARD_CHAT_LEN]
+        if not text:
+            return None
+        line = {"id": (self.steward_chat[-1]["id"] + 1) if self.steward_chat
+                else 1, "t": time.time(), "name": self.actor or "Steward",
+                "text": text}
+        self.steward_chat.append(line)
+        del self.steward_chat[:-STEWARD_CHAT_KEEP]
+        self.chat_revision += 1
+        return line
+
     def note_system(self, text: str, category: str = LOG_INFO) -> None:
         """Log a system / command-result line."""
         self._log(category, text, lap=self._leader_lap())
@@ -624,7 +681,8 @@ class RaceState:
                 "laps_remain": self.session_laps_remain,
                 "leader_lap": self._leader_lap(),
                 "total_incidents": self.total_incidents(),
-                "flags": self.flags, "start_lights": self.start_lights,
+                "flags": self.flags, "flags_raw": self.flags_raw,
+                "start_lights": self.start_lights,
                 "sim_date": self.sim_date,
                 "car_count": len(cars),
                 "in_replay": self.in_replay,
@@ -657,6 +715,7 @@ class RaceState:
             "next_event_id": self._next_event_id,
             "official_points": self.official_points,
             "events": [e.to_dict() for e in self.events],
+            "steward_chat": self.steward_chat,
             "cars": {str(i): {k: getattr(c, k) for k in _SAVED_CAR_FIELDS}
                      for i, c in self.cars.items()},
         }
@@ -668,6 +727,10 @@ class RaceState:
         self._next_event_id = max(
             [int(data.get("next_event_id", 1))] + [e.id + 1 for e in self.events])
         self.official_points = bool(data.get("official_points"))
+        self.steward_chat = list(data.get("steward_chat") or [])[-STEWARD_CHAT_KEEP:]
+        self.chat_revision += 1
+        for e in self.events:
+            e.claimed_by = ""            # nobody is looking after a restart
         for key, saved in (data.get("cars") or {}).items():
             idx = int(key)
             car = self.cars.get(idx) or Car(car_idx=idx)

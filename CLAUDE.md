@@ -178,6 +178,19 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 27, 2026 (iCASControl 0.1.8 — stayed on CAUTION after the
+restart):** Thomas: the race was green again, iCAS still said caution. The
+source mapped SessionFlags yellow 0x08 and yellow waving 0x100 to "yellow",
+and steward `_caution_out` counted "yellow" as a caution — those are LOCAL
+yellows (waved at a corner) and can stay on after the restart. Now ONLY
+0x4000 / 0x8000 (+ one-to-green 0x200 while racing) are the caution;
+0x08 / 0x100 = "local_yellow" (flag box: "GREEN · local yellow"); green when
+nothing but local yellow / blue / per-car bits are set. iRacing keeps green
+0x04 on through a caution, so the log never got a GREEN line: RaceState now
+logs "ONE TO GREEN - restart next lap" and "GREEN flag - caution over" when
+the caution bits go off. Snapshot `flags_raw` (flag box tooltip shows the hex)
+for the next report. test_incidents 175/175.
+
 **October 27, 2026 (iCASControl 0.1.7 — caution length):** Thomas: how long
 does the pace car stay out? iRacing decides itself; `!pacelaps N|+n|-n` (admin,
 under a caution) sets it. Race-control panel: row "Caution laps" (number +

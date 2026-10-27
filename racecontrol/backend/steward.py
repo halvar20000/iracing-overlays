@@ -126,7 +126,9 @@ def _is_quali(state) -> bool:
 
 
 def _caution_out(state) -> bool:
-    return any(f in ("caution", "yellow") for f in (state.flags or []))
+    """Full course caution (incl. its one-to-green lap).  A LOCAL yellow is
+    not one - counting it kept iCAS on caution after the restart."""
+    return any(f in ("caution", "one_to_green") for f in (state.flags or []))
 
 
 def _racing_car(car) -> bool:

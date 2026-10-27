@@ -74,15 +74,22 @@ _SESSION_STATE_MAP = {
     0: "INVALID", 1: "GET IN CAR", 2: "WARMUP", 3: "PARADE LAPS",
     4: "RACING", 5: "CHECKERED", 6: "COOLDOWN",
 }
-# SessionFlags bitfield -> our flag vocabulary.
+# SessionFlags bitfield -> our flag vocabulary.  ONLY 0x4000 / 0x8000 are the
+# full course caution.  yellow 0x08 / yellow waving 0x100 are LOCAL yellows
+# (the waved flag at a corner) - counted as "yellow" they kept iCAS on
+# caution after the restart (2026-10-27): "local_yellow", never a caution.
 _FLAG_BITS = [
     (0x00000001, "checkered"), (0x00000002, "white"), (0x00000004, "green"),
-    (0x00000008, "yellow"), (0x00000010, "red"), (0x00000020, "blue"),
+    (0x00000008, "local_yellow"), (0x00000010, "red"), (0x00000020, "blue"),
     (0x00000040, "debris"), (0x00000080, "crossed"),
-    (0x00000100, "yellow"), (0x00004000, "caution"),
-    (0x00008000, "caution"), (0x00010000, "black"),
-    (0x00020000, "disqualify"), (0x00080000, "furled"),
+    (0x00000100, "local_yellow"), (0x00000200, "one_to_green"),
+    (0x00004000, "caution"), (0x00008000, "caution"),
+    (0x00010000, "black"), (0x00020000, "disqualify"),
+    (0x00080000, "furled"),
 ]
+# What is not a flag of its own: with only these the race is green.
+_NOT_A_FLAG = {"local_yellow", "blue", "crossed", "debris", "black",
+               "disqualify", "furled"}
 
 
 CHAT_VERIFY_S = 6.0
@@ -462,8 +469,11 @@ class IRacingSource(DataSource):
         for bit, label in _FLAG_BITS:
             if flags_val & bit and label not in active_flags:
                 active_flags.append(label)
-        if not active_flags:
-            active_flags = ["green"]
+        if "one_to_green" in active_flags and "caution" not in active_flags \
+                and state_id != 4:
+            active_flags.remove("one_to_green")   # pace lap before the start
+        if not [f for f in active_flags if f not in _NOT_A_FLAG]:
+            active_flags.insert(0, "green")
 
         start_lights = "off"
         if flags_val & 0x10000000:        # startReady
@@ -486,6 +496,7 @@ class IRacingSource(DataSource):
             if str(cur_session.get("SessionLaps", "")).isdigit() else 0,
             session_laps_remain=int(self._g("SessionLapsRemain", 0) or 0),
             flags=active_flags, start_lights=start_lights,
+            flags_raw=flags_val,
             weather=self._read_weather(),
             sim_date=str(weekend.get("WeekendOptions", {}).get("Date", "")),
             session_num=cur_num, session_key=session_key, in_replay=in_replay,

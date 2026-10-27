@@ -171,13 +171,21 @@ function renderHeader(s) {
 
   // flag box - show the most significant active flag
   const flags = ss.flags || [];
-  const order = ['red', 'checkered', 'white', 'caution', 'yellow', 'green'];
+  // (local_yellow = a waved yellow at a corner, NOT a full course caution)
+  const order = ['red', 'checkered', 'white', 'caution', 'one_to_green',
+    'yellow', 'green', 'local_yellow'];
   let shown = order.find((f) => flags.includes(f)) || 'none';
   const fb = $('#flagbox');
-  fb.className = 'flagbox ' + (shown === 'caution' ? 'yellow' : shown);
+  fb.className = 'flagbox ' + (['caution', 'one_to_green', 'local_yellow'].includes(shown)
+    ? 'yellow' : shown);
   const label = { red: 'RED FLAG', checkered: 'CHECKERED', white: 'WHITE',
-    caution: 'CAUTION', yellow: 'YELLOW', green: 'GREEN', none: 'NO FLAG' };
-  fb.innerHTML = `<span>${label[shown]}</span>`;
+    caution: 'CAUTION', one_to_green: 'ONE TO GREEN', yellow: 'YELLOW',
+    green: 'GREEN', local_yellow: 'LOCAL YELLOW', none: 'NO FLAG' };
+  const local = shown === 'green' && flags.includes('local_yellow')
+    ? '<small> · local yellow</small>' : '';
+  fb.innerHTML = `<span>${label[shown]}${local}</span>`;
+  fb.title = 'iRacing SessionFlags 0x' + ((ss.flags_raw || 0) >>> 0).toString(16)
+    + ' = ' + (flags.join(', ') || '-');
 
   // source badge
   const srcBadge = $('#source-badge');

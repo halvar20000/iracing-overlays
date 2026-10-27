@@ -344,6 +344,39 @@ check("debug: raw rows as iRacing sent them",
 src._ir = fake_ir(53, {0: 3, 1: 4}, replay=True)
 check("in_replay flagged", src._read_frame(0.1).session.in_replay)
 
+# 2026-10-27: iCAS stayed on CAUTION after the restart - local yellow bits
+# (0x08 / 0x100) counted as a caution; iRacing keeps green 0x04 on throughout
+from backend.race_state import RaceState as _RS
+from backend import steward as _stw
+def flagframe(t, bits, state=4):
+    ir = fake_ir(t, {0: 3, 1: 4})
+    ir["SessionFlags"], ir["SessionState"] = bits, state
+    src._ir = ir
+    return src._read_frame(0.1)
+fs = _RS()
+seq = [(60, 0x0004), (61, 0x0004 | 0x8000), (70, 0x0004 | 0x4000 | 0x0008),
+       (120, 0x0004 | 0x4000 | 0x0200), (150, 0x0004 | 0x0100 | 0x0008)]
+got = []
+for t, bits in seq:
+    fr = flagframe(t, bits)
+    fs.ingest(fr)
+    got.append((list(fr.session.flags), _stw._caution_out(fs)))
+check("caution bits -> caution", got[1][1] and got[2][1] and "caution" in got[1][0], got)
+check("one to green lap still a caution", got[3][1] and "one_to_green" in got[3][0], got)
+check("restart: green + local yellow bits left -> NO caution, flags green",
+      not got[4][1] and got[4][0][0] == "green" and "local_yellow" in got[4][0], got)
+flog = [e.text for e in fs.events if e.category == "flag"] \
+    if fs.events and hasattr(fs.events[0], "category") else \
+    [e.text for e in fs.events]
+check("log: CAUTION, ONE TO GREEN, GREEN - caution over",
+      any("CAUTION" in x for x in flog) and any("ONE TO GREEN" in x for x in flog)
+      and any("caution over" in x for x in flog), flog)
+check("raw bits kept", fs.flags_raw == (0x0004 | 0x0100 | 0x0008))
+check("only local yellow, no caution ever -> green",
+      flagframe(200, 0x0008).session.flags[0] == "green")
+check("one-to-green bit on the pace lap (parade) = not a caution",
+      "one_to_green" not in flagframe(5, 0x0200, state=3).session.flags)
+
 ir = fake_ir(53, {})
 src._ir = ir
 msg = src.send_command("replay_event", session_num=0, sim_time=120.0,
@@ -489,7 +522,7 @@ class _App:
 
     def _deco(self, *a, **k):
         return lambda f: f
-    get = websocket = post = _deco
+    get = websocket = post = middleware = _deco
 
     def mount(self, *a, **k):
         pass

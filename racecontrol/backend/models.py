@@ -145,6 +145,7 @@ class SessionFrame:
     session_laps_remain: int = 0
     flags: list[str] = field(default_factory=list)
     start_lights: str = "off"          # off / ready / set / go
+    flags_raw: int = 0                 # iRacing SessionFlags as sent (debug)
     weather: Weather = field(default_factory=Weather)
     sim_date: str = ""                 # display date the race started on
     session_num: int = 0               # iRacing SessionNum (replay seeks need it)
