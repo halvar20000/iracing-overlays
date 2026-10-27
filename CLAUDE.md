@@ -225,6 +225,13 @@ localStorage), default CAR = main livery colour from CarDesignStr
 ahead, blue a lap+ behind, white same lap; laps = white / blue 1 / purple 2+;
 license = LicColor. Our dots were all white = AI session class colour. Rings
 (leader gold, selected red, off-track yellow) unchanged. test 71/71; rendered.
+Selecting a driver needed several clicks / often failed: the timing table
+is rebuilt with innerHTML ~11x a second, so press and release land on
+different row elements and the browser never fires `click` (same for the
+race log on every new line). Rows now act on `pointerdown`; double press
+(camera on the car / replay of a log line) via `isDoublePress()` 400 ms.
+CDP test with real mouse press + release 150 ms apart while the simulator
+streams: old code 0 of 12 selected, new 12 of 12.
 
 **October 26, 2026 (iCASControl = our iRaceControl clone, `racecontrol/`
 8080 — STEP 1 of 3: live incidents, replay per line, autosave):** Thomas:

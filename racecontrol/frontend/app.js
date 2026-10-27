@@ -370,6 +370,16 @@ function renderLog() {
 }
 
 // ---- selection ------------------------------------------------------------
+// Second press on the same row within 400 ms = double click.
+const lastPress = { where: '', key: null, t: 0 };
+function isDoublePress(where, key) {
+  const now = performance.now();
+  const dbl = lastPress.where === where && lastPress.key === key
+    && now - lastPress.t < 400;
+  lastPress.where = where; lastPress.key = key; lastPress.t = dbl ? 0 : now;
+  return dbl;
+}
+
 function selectCar(idx) {
   State.selectedCar = (State.selectedCar === idx) ? null : idx;
   if (State.snapshot) render();
@@ -428,18 +438,25 @@ function wire() {
     send({ action: 'set_running', running: State.running });
   });
 
-  // timing rows
-  $('#timing-body').addEventListener('click', (e) => {
-    const tr = e.target.closest('tr');
-    if (tr) selectCar(parseInt(tr.dataset.idx, 10));
-  });
-  $('#timing-body').addEventListener('dblclick', (e) => {
+  // timing rows - on PRESS, not click: the table is rebuilt ~11x a second,
+  // and a click whose press and release land on different (rebuilt) rows
+  // never fires (2026-10-27: "need several clicks, often nothing").  The
+  // double press is detected here for the same reason.
+  $('#timing-body').addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
     const tr = e.target.closest('tr');
     if (!tr) return;
     const idx = parseInt(tr.dataset.idx, 10);
-    const car = State.snapshot?.cars.find((c) => c.car_idx === idx);
-    if (car) send({ action: 'command', command: 'cam_car',
-      params: { number: car.number } });
+    if (isDoublePress('timing', idx)) {
+      State.selectedCar = idx;
+      if (State.snapshot) render();
+      renderCarLog(); renderLog();
+      const car = State.snapshot?.cars.find((c) => c.car_idx === idx);
+      if (car) send({ action: 'command', command: 'cam_car',
+        params: { number: car.number } });
+      return;
+    }
+    selectCar(idx);
   });
 
   // timing toggles
@@ -479,24 +496,24 @@ function wire() {
     renderLog();
   });
 
-  // log rows
-  $('#log-list').addEventListener('click', (e) => {
+  // log rows (rebuilt on every new line - same press handling)
+  $('#log-list').addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
     const row = e.target.closest('.log-row');
     if (!row) return;
+    const id = parseInt(row.dataset.event, 10);
     const car = parseInt(row.dataset.car, 10);
     if (car >= 0) { State.selectedCar = car; if (State.snapshot) render(); }
-    selectEvent(parseInt(row.dataset.event, 10));
-  });
-  $('#log-list').addEventListener('dblclick', (e) => {
-    const row = e.target.closest('.log-row');
-    if (row) replay(parseInt(row.dataset.event, 10), 8);
+    selectEvent(id);
+    if (isDoublePress('log', id)) replay(id, 8);
   });
   $('#ia-replay').addEventListener('click', () => replay(State.replayEvent, 8));
   $('#ia-replay-long').addEventListener('click', () => replay(State.replayEvent, 20));
   const goLive = () => send({ action: 'command', command: 'replay_live' });
   $('#ia-live').addEventListener('click', goLive);
   $('#replay-banner').addEventListener('click', goLive);
-  $('#car-log').addEventListener('click', (e) => {
+  $('#car-log').addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
     const row = e.target.closest('.log-row');
     if (row) selectEvent(parseInt(row.dataset.event, 10));
   });
