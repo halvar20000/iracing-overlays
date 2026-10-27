@@ -28,7 +28,7 @@ def base_fields(t, pcts, surfs, pits, flags):
     return {"SessionTime":t,"SessionNum":4,"SessionState":4,
             "WeekendInfo":{"TrackLength":"4.00 km"},
             "DriverInfo":{"Drivers":[{"CarIdx":i,"CarNumber":str(10+i),
-              "UserName":f"D{i}","CurDriverIncidentCount":-1,
+              "UserName":f"D{i}","UserID":100+i,"CurDriverIncidentCount":-1,
               "CarClassID":CLASSES[i]} for i in range(n)]},
             "CarIdxTrackSurface":list(surfs),"CarIdxSessionFlags":list(flags),
             "CarIdxLapDistPct":[p%1.0 for p in pcts],
@@ -114,6 +114,26 @@ Sim(p,v7,start=[2.60,2.502,2.500,2.10]).run(16.0)
 ot=overtakes(p)
 check("O7 class pass, class position", len(ot)==1 and ot[0][0]==2 and "for P1" in ot[0][1], str(ot))
 CLASSES[:] = [0, 0, 0, 0]
+
+# O8 / O9: GT3 WCT - only PRO passing PRO and AM passing AM count
+class FakeRoster:
+    def __init__(self, cls): self.cls = cls
+    def active_for(self, ids): return True
+    def lookup_field(self, uid, active): return self.cls.get(uid, "UNRATED")
+    def lookup(self, uid): return self.cls.get(uid)
+p=dash.TelemetryPoller(poll_hz=10)
+p.proam = FakeRoster({100: "AM", 101: "PRO", 102: "PRO", 103: "AM"})
+Sim(p,v1).run(16.0)                   # PRO #11 passes AM #10
+check("O8 PRO passing an AM: no overtake", len(overtakes(p))==0, str(overtakes(p)))
+p=dash.TelemetryPoller(poll_hz=10)
+p.proam = FakeRoster({100: "PRO", 101: "AM", 102: "AM", 103: "PRO"})
+def v9(t,i):
+    if i==2 and t>=4.0: return 51.0
+    return 45.0
+Sim(p,v9,start=[2.60,2.502,2.500,2.10]).run(16.0)   # AM #12 passes AM #11
+ot=overtakes(p)
+check("O9 AM passing AM, place inside AM", len(ot)==1 and ot[0][0]==2 and "for P1" in ot[0][1]
+      and p._overtakes[0]["proam"] == "AM", str(ot))
 
 print()
 print("ALL PASS" if not failures else f"FAILURES: {failures}")

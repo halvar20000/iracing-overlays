@@ -181,6 +181,14 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 27, 2026 (overtake ticker: only PRO > PRO and AM > AM in GT3 WCT):**
+dashboard `_ot_classes()` groups by (CarClassID, PRO / AM / UNRATED) when
+cls_proam says the field is WCT (poller.proam.lookup_field), so a PRO passing
+an AM is not an overtake and "for P3" = P3 inside PRO / AM; record carries
+`proam`, ticker shows "P3 AM". Lapping was never counted (rank by lap + pct).
+Affects the dashboard feed / REGIE overtakes too. test_overtakes O8 / O9.
+Restart 5000.
+
 **October 27, 2026 (tower: slim race layout + brand logos):** Thomas's WCT
 screenshot: no logo for the Corvette (brand "chevrolet" had no file), McLaren /
 Aston Martin read as thin dark lines (wide wordmarks at 20 px). NEW

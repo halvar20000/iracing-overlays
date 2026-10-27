@@ -408,7 +408,8 @@ class TelemetryPoller:
         # laps 1-2: overtakes go to the feed, but never to the /ticker
         self._ot_gate = StartLapGate(2.0)
         self._ot_early = False
-        self._ot_cls, self._ot_cls_t = {}, -1e9   # car_idx -> class id
+        self._ot_cls, self._ot_cls_t = {}, -1e9   # car_idx -> (class id, PRO / AM / "")
+        self._ot_pa = {}                          # car_idx -> "PRO" / "AM" / None
         self._ot_pair_last = {}          # (x,y) -> last emit t_session
         self._ot_last_swap = {}          # frozenset({x,y}) -> last rank-swap t
         self._last_auto_replay_priority = 0
@@ -1133,16 +1134,28 @@ class TelemetryPoller:
                     self._emit_overtake(x, y, info["pos"], info["t0"])
 
     def _ot_classes(self) -> dict:
-        """car_idx -> CarClassID, re-read from DriverInfo every 5 s."""
+        """car_idx -> the group overtakes are counted in, re-read from
+        DriverInfo every 5 s: the CarClassID, and in a GT3 WCT field
+        (cls_proam) also PRO / AM - Thomas 2026-10-27: only PRO passing PRO
+        and AM passing AM count (rank = place inside PRO / AM); a driver
+        without a rating (UNRATED) is a group of his own."""
         t_now = time.monotonic()
         if t_now - self._ot_cls_t > 5.0 or not self._ot_cls:
-            out = {}
+            out, pa = {}, {}
             try:
-                for d in (self.ir["DriverInfo"] or {}).get("Drivers", []) or []:
-                    out[int(d.get("CarIdx"))] = int(d.get("CarClassID") or 0)
+                drivers = (self.ir["DriverInfo"] or {}).get("Drivers", []) or []
+                try:
+                    wct = self.proam.active_for(d.get("UserID") for d in drivers)
+                except Exception:
+                    wct = False
+                for d in drivers:
+                    idx = int(d.get("CarIdx"))
+                    c = self.proam.lookup_field(d.get("UserID"), True) if wct else None
+                    pa[idx] = c if c in ("PRO", "AM") else None
+                    out[idx] = (int(d.get("CarClassID") or 0), c or "")
             except Exception:
                 pass
-            self._ot_cls, self._ot_cls_t = out, t_now
+            self._ot_cls, self._ot_pa, self._ot_cls_t = out, pa, t_now
         return self._ot_cls
 
     def _emit_overtake(self, x_idx, y_idx, position, t_move):
@@ -1163,6 +1176,7 @@ class TelemetryPoller:
             "type": "overtake",
             "details": f"passed #{yi['car_number']} {yi['name']} for P{position}",
             "position": position,
+            "proam": self._ot_pa.get(x_idx),        # place is inside PRO / AM
             # structured copy of the passed car, for the /ticker overlay
             "passed_idx": y_idx,
             "passed_name": yi["name"],
@@ -4820,7 +4834,7 @@ function show(o) {
         `<span class="num">#${esc(o.car_number)}</span><span class="nm">${esc(abbrev(o.name))}</span>
          <span class="vs">passes</span>
          ${o.passed_number ? `<span class="num">#${esc(o.passed_number)}</span>` : ''}<span class="nm">${esc(abbrev(o.passed_name || ''))}</span>`;
-    document.getElementById('p').textContent = o.position ? `P${o.position}` : '';
+    document.getElementById('p').textContent = o.position ? `P${o.position}` + (o.proam ? ' ' + o.proam : '') : '';
     t.classList.remove('show'); void t.offsetWidth; t.classList.add('show');
     setTimeout(() => { t.classList.remove('show'); setTimeout(next, 450); }, SECS * 1000);
 }
