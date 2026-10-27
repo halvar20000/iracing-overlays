@@ -169,6 +169,10 @@ main {
 .map-panel { flex: 0 0 auto; }
 .map-wrap { position: relative; aspect-ratio: 1 / 0.82; background: #0c0c12; }
 #trackmap { width: 100%; height: 100%; display: block; }
+.map-panel .panel-head { white-space: nowrap; gap: 8px; }
+.map-color { margin-left: auto; max-width: 112px; background: var(--head); color: var(--dim);
+  border: 1px solid var(--border); border-radius: 3px; font-size: 9.5px;
+  padding: 1px 3px; text-transform: none; letter-spacing: 0; }
 .map-legend { font-size: 9px; color: var(--mut); letter-spacing: .5px;
   display: flex; align-items: center; gap: 9px; font-weight: 600; }
 .map-legend .dot { width: 9px; height: 9px; border-radius: 50%;

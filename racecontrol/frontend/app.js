@@ -545,6 +545,18 @@ function wire() {
              command: cmd, message, seconds });
     }));
 
+  // map dot colours (kept per browser)
+  const mapColor = $('#map-color');
+  let savedMode = 'car';
+  try { savedMode = localStorage.getItem('icas.mapColor') || 'car'; } catch (e) {}
+  mapColor.value = savedMode;
+  map.setColorMode(mapColor.value);
+  mapColor.addEventListener('change', () => {
+    map.setColorMode(mapColor.value);
+    try { localStorage.setItem('icas.mapColor', mapColor.value); } catch (e) {}
+    render();
+  });
+
   // RC message
   const sendMsg = () => {
     const input = $('#rc-input');

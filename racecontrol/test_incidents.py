@@ -361,6 +361,12 @@ labels2 = irs.class_labels([
         ["Ferrari 296 GT3", "Chevrolet Corvette Z06 GT3.R", "BMW M4 GT3 EVO"])])
 check("'GT3.R' still shares GT3 (Spa race showed 'Class 0')",
       set(labels2.values()) == {"GT3"}, labels2)
+check("livery colour from CarDesignStr",
+      irs.design_color("22,ff0000,000000,ffffff") == "#ff0000"
+      and irs.design_color("") == "" and irs.design_color("1,zz") == "")
+check("licence colour int / hex string",
+      irs._hex_color(0x0153db) == "#0153db" and irs._hex_color("0x00c702") == "#00c702"
+      and irs._hex_color(None) == "")
 rir = fake_ir(70, {})
 rir["CarIdxLastLapTime"] = [144.95, 145.31]
 rir["CarIdxBestLapTime"] = [-1, -1]

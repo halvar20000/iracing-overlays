@@ -218,6 +218,13 @@ best) → the source keeps the fastest LAST lap per car and session
 (`_best_seen`, not from replay frames) and uses it when iRacing's best is
 empty or slower. Class read "Class 0": the GT3 field had no common word
 because of "GT3.R" → names split on punctuation. test 69/69.
+Track map dot colours like iRaceControl (manual 3.1.3: Car / Class /
+License / Relative / Laps behind leader): selector in the map header (kept in
+localStorage), default CAR = main livery colour from CarDesignStr
+(`design_color`); relative = vs the selected car (else leader): red a lap+
+ahead, blue a lap+ behind, white same lap; laps = white / blue 1 / purple 2+;
+license = LicColor. Our dots were all white = AI session class colour. Rings
+(leader gold, selected red, off-track yellow) unchanged. test 71/71; rendered.
 
 **October 26, 2026 (iCASControl = our iRaceControl clone, `racecontrol/`
 8080 — STEP 1 of 3: live incidents, replay per line, autosave):** Thomas:

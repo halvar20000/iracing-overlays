@@ -77,6 +77,8 @@ class CarFrame:
     class_short: str = ""
     car_brand: str = ""            # manufacturer slug, e.g. 'porsche'
     car_model: str = ""            # CarScreenName, e.g. 'Ferrari 296 GT3'
+    car_color: str = ""            # main livery colour (CarDesignStr), '#rrggbb'
+    lic_color: str = ""            # licence colour (LicColor), '#rrggbb'
     position: int = 0
     class_position: int = 0
     lap: int = 0

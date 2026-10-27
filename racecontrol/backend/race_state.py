@@ -43,6 +43,8 @@ class Car:
     class_short: str = ""
     car_brand: str = ""
     car_model: str = ""
+    car_color: str = ""
+    lic_color: str = ""
 
     position: int = 0
     class_position: int = 0
@@ -339,6 +341,8 @@ class RaceState:
         car.class_short = cf.class_short or cf.car_class
         car.car_brand = cf.car_brand
         car.car_model = cf.car_model
+        car.car_color = cf.car_color
+        car.lic_color = cf.lic_color
         car.position = cf.position
         car.class_position = cf.class_position
         car.lap = cf.lap
@@ -540,6 +544,7 @@ class RaceState:
                 "car_class": c.car_class, "class_color": c.class_color,
                 "class_short": c.class_short,
                 "brand": c.car_brand, "car_model": c.car_model,
+                "car_color": c.car_color, "lic_color": c.lic_color,
                 "brand_logo": logo_url(c.car_brand),
                 "position": c.position, "class_position": c.class_position,
                 "lap": c.lap, "laps_completed": c.laps_completed,

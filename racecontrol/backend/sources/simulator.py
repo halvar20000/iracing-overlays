@@ -92,6 +92,12 @@ def _make_pit_path(track: list[list[float]]) -> list[list[float]]:
     return pit
 
 
+# livery main colours for the simulated field (map colour mode "Car")
+_LIVERIES = ("#d7263d", "#1b998b", "#f46036", "#2e86ab", "#f5f5f5",
+             "#ffd23f", "#3a3a3a", "#8e44ad", "#00a6ed", "#7fb800",
+             "#ff7f11", "#0b3c5d")
+
+
 class _SimCar:
     """Mutable state for one simulated car. ``dist`` is the master clock:
     laps completed == int(dist), lap-distance % == dist % 1.0."""
@@ -445,6 +451,8 @@ class SimulatorSource(DataSource):
                 class_color=c.class_color, class_short=c.car_class,
                 car_brand=c.brand,
                 car_model=c.brand.replace("-", " ").title(),
+                car_color=_LIVERIES[c.idx % len(_LIVERIES)],
+                lic_color=("#0153db", "#00c702", "#fc8a27")[c.idx % 3],
                 position=pos,
                 class_position=class_counts[c.class_id],
                 lap=c.lap_number, laps_completed=c.laps_completed,

@@ -73,9 +73,36 @@ class TrackMap {
 
   setSelected(idx) { this.selectedIdx = idx; }
 
+  /* Dot fill like iRaceControl's map options:
+     car      = main livery colour (CarDesignStr)
+     class    = class colour
+     relative = vs the selected car (else the leader): red = a lap or more
+                ahead of it, blue = a lap or more behind, white = same lap
+     laps     = laps behind the leader: white lead lap, blue 1, purple 2+
+     license  = licence colour */
+  setColorMode(mode) { this.colorMode = mode; }
+
+  _dotColor(c, refDist) {
+    const mode = this.colorMode || 'car';
+    if (mode === 'class') return c.class_color || '#888';
+    if (mode === 'license') return c.lic_color || '#888';
+    if (mode === 'laps') {
+      return !c.laps_down ? '#f2f2f2' : c.laps_down === 1 ? '#2e86de' : '#9b59b6';
+    }
+    if (mode === 'relative') {
+      if (refDist === null) return '#f2f2f2';
+      const d = (c.laps_completed + c.lap_dist_pct) - refDist;
+      return d >= 0.5 ? '#e63946' : d <= -0.5 ? '#2e86de' : '#f2f2f2';
+    }
+    return c.car_color || c.class_color || '#888';
+  }
+
   /* Receive a fresh snapshot of cars. */
   update(cars) {
     const seen = new Set();
+    const ref = cars.find((c) => c.car_idx === this.selectedIdx)
+      || cars.find((c) => c.position === 1);
+    const refDist = ref ? ref.laps_completed + ref.lap_dist_pct : null;
     for (const c of cars) {
       seen.add(c.car_idx);
       let s = this.cars[c.car_idx];
@@ -85,7 +112,7 @@ class TrackMap {
       }
       s.target = c.lap_dist_pct;
       s.number = c.number;
-      s.color = c.class_color || '#888';
+      s.color = this._dotColor(c, refDist);
       s.position = c.position;
       s.off = c.off_track;
       s.pit = c.on_pit_road;

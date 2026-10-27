@@ -110,6 +110,28 @@ def pick_cam_group(groups: list[dict], current: int) -> int:
     return current
 
 
+def _hex_color(v) -> str:
+    """iRacing colour (int 0xRRGGBB or '0xrrggbb' string) -> '#rrggbb'."""
+    if v is None or v == "":
+        return ""
+    try:
+        n = int(v, 16) if isinstance(v, str) else int(v)
+    except (TypeError, ValueError):
+        return ""
+    return "#%06x" % (n & 0xFFFFFF)
+
+
+def design_color(design) -> str:
+    """Main livery colour from CarDesignStr 'pattern,col1,col2,col3[,...]'."""
+    parts = str(design or "").split(",")
+    if len(parts) < 2:
+        return ""
+    c = parts[1].strip().lstrip("#")
+    if len(c) != 6 or any(ch not in "0123456789abcdefABCDEF" for ch in c):
+        return ""
+    return "#" + c.lower()
+
+
 def class_labels(drivers: list) -> dict[int, str]:
     """CarIdx -> class label.  Hosted / AI sessions often send NO
     CarClassShortName (YAML null - str() made it "None"): then a class with
@@ -401,6 +423,8 @@ class IRacingSource(DataSource):
                 class_short=labels.get(idx, ""),
                 car_brand=detect_brand(d.get("CarPath"), d.get("CarScreenName")),
                 car_model=str(d.get("CarScreenName") or ""),
+                car_color=design_color(d.get("CarDesignStr")),
+                lic_color=_hex_color(d.get("LicColor")),
                 position=(int(at(positions, idx, r + 1)) or (r + 1))
                 if is_race else r + 1,
                 class_position=int(at(class_pos, idx, 0)),
