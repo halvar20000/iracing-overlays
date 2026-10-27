@@ -41,8 +41,7 @@ aktualisiert und im selben Launcher gestartet.
   - die offiziellen Incident-Punkte (1x / 2x / 4x) aller Fahrer **live** sehen willst
     (als Zuschauer schickt iRacing sie erst am Rennende),
   - Strafen und Befehle in den iRacing-Chat schicken willst.
-
-  Deshalb läuft der **Haupt-iCAS** auf dem Rechner des Admins, nicht unbedingt auf
+- Deshalb läuft der **Haupt-iCAS** auf dem Rechner des Admins, nicht unbedingt auf
   dem Stream-PC.
 - In iRacing unter **Optionen → Grafik** die Einstellung **Max Cars auf 63** stellen,
   damit iRacing Daten für das ganze Feld liefert.
