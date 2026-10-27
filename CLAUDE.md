@@ -192,6 +192,23 @@ second line `/all #N Driver: DRIVE THROUGH - reason` (REASON_LINE, also for
 resolve). test_incidents.py 100/100; menu checked in Chromium (opens on the
 right car 8/8, preset → car action sent + logged). NOT tried in iRacing.
 
+**October 27, 2026 (STEP 3b — open penalties on the tower):** 5019 keeps
+them: `PenaltyBoard` (Feed.board; every feed message with a car is applied
+AFTER the _steward_said skip): `penalty_of(kind, headline + text)` → dsq / dt
+("DRIVE T(H)ROUGH") / sg (+ secs) / time ("10 SECOND TIME PENALTY", "+5s";
+they ADD UP) / black (iRacing's generic flag, only if no steward DT/SG is open)
+/ pen / clear / warn (counted) / inv (until nfa / warning / penalty / clear,
+max INVESTIGATION_MAX_S 600) / nfa. Served = FlagWatcher sees F_BLACK go OFF
+(not with DQ) → oldest DT/SG removed. Session change (RcPoller key) resets.
+`GET /rc/penalties` (CORS *). Tower 5005: `RcPenalties` thread polls
+127.0.0.1:5019 every 2 s only while /standings was asked in the last 30 s
+(5019 off = {}), /standings carries `penalties` (?pen=0 leaves them out), JS
+`penTags()` after the name: DT / SG white-outlined black, +10s light, DSQ
+red, INV blue; ?warn=1 adds W<n>. CODE_VERSION "2026-10-27 tower-penalties".
+test_rc_banner P1-P11 (66 total), NEW test_tower_penalties.py T1-T6 (real
+HTTP 5019 → RcPenalties → /standings); tower rendered with fake field.
+Other standings tests pass. NOT tried live. Restart 5019 + 5005.
+
 **October 27, 2026 (iCASControl STEP 3a — decisions onto the stream banner
 5019; Thomas: step 2 all tested, "then start step 3"):** NEW
 `racecontrol/backend/stream.py` (BannerOut: urllib POST in a thread,

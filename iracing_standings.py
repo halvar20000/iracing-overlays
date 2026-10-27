@@ -22,7 +22,9 @@ Runs in parallel with the other iracing_*.py scripts. It connects to
 iRacing independently.
 """
 
+import json
 import threading
+import time
 from flask import Flask, Response, jsonify, render_template_string, request, send_file, abort
 
 from iracing_sdk_base import SDKPoller, GridBaseline, SESSION_STATE_RACING, setup_utf8_stdout
@@ -906,7 +908,48 @@ def _no_cache(resp):
         resp.headers["Pragma"] = "no-cache"
         resp.headers["Expires"] = "0"
     return resp
+class RcPenalties:
+    """Open steward penalties per car number from the Race Control overlay
+    (iracing_rc_banner.py, 5019 /rc/penalties: iCASControl, iRaceControl
+    and iRacing's black flags). Polled only while the tower asks; 5019 off
+    = no tags, nothing else changes."""
+
+    URL = "http://127.0.0.1:5019/rc/penalties"
+    EVERY_S, IDLE_S = 2.0, 30.0
+
+    def __init__(self, url: str = URL):
+        self.url = url
+        self._data: dict = {}
+        self._asked = 0.0
+        self._lock = threading.Lock()
+
+    def get(self) -> dict:
+        self._asked = time.monotonic()
+        with self._lock:
+            return self._data
+
+    def poll_once(self) -> None:
+        import urllib.request
+        try:
+            with urllib.request.urlopen(self.url, timeout=1.5) as r:
+                data = json.loads(r.read().decode("utf-8")).get("penalties") or {}
+        except Exception:
+            data = {}
+        with self._lock:
+            self._data = data
+
+    def run(self) -> None:
+        while True:
+            if time.monotonic() - self._asked < self.IDLE_S:
+                self.poll_once()
+            time.sleep(self.EVERY_S)
+
+    def start(self) -> None:
+        threading.Thread(target=self.run, daemon=True).start()
+
+
 poller = StandingsPoller()
+rc_penalties = RcPenalties()
 car_renderer = CarRenderer()
 proam = ProAmRoster()
 pit_tires = PitTireFeed()
@@ -1633,6 +1676,11 @@ TOWER_HTML = r"""<!DOCTYPE html>
     }
     .tag.pit { background: #b9852a; color: #111; }
     .tag.out { background: rgba(255,255,255,0.14); color: var(--muted); }
+    .tag.pen { background: #0b0b0e; color: #fff; box-shadow: inset 0 0 0 1px #fff; }
+    .tag.pen.time { background: #e8e8ec; color: #111; box-shadow: none; }
+    .tag.pen.dsq { background: #c62828; box-shadow: none; }
+    .tag.pen.inv { background: #2f6fd6; box-shadow: none; }
+    .tag.pen.warn { background: #fff; color: #111; box-shadow: none; }
     .flag { width: 19px; height: 13px; object-fit: cover; justify-self: center;
             box-shadow: 0 0 0 1px rgba(0,0,0,0.35); }
     .brand { width: 20px; height: 18px; object-fit: contain; justify-self: center;
@@ -1749,6 +1797,18 @@ function carImg(r) {
     return `<img class="carimg" src="/car/${r.car_idx}.png?n=${encodeURIComponent(r.car_number || '')}`
          + `${CAR_VIEW ? '&view=' + encodeURIComponent(CAR_VIEW) : ''}" alt="" onload="this.classList.add('ok')">`;
 }
+// Steward penalties (Race Control overlay 5019): DT / SG / +5s / DSQ / INV
+// after the name. ?pen=0 hides them, ?warn=1 also shows warnings (W2).
+const SHOW_PEN = qs.get('pen') !== '0', SHOW_WARN = qs.get('warn') === '1';
+let PENALTIES = {};
+function penTags(r) {
+    if (!SHOW_PEN) return '';
+    const p = PENALTIES[String(r.car_number || '').replace(/^#/, '')];
+    if (!p) return '';
+    let h = (p.tags || []).map(t => `<span class="tag pen ${esc(t.type)}">${esc(t.label)}</span>`).join('');
+    if (SHOW_WARN && p.warnings) h += `<span class="tag pen warn">W${p.warnings}</span>`;
+    return h;
+}
 function brandColumn(all) {
     const q = qs.get('brand');
     if (q === '1') return true;
@@ -1780,6 +1840,7 @@ function rowHtml(r, isRace) {
     let tags = '';
     if (r.on_pit && !(isRace && COMPACT)) tags += '<span class="tag pit">PIT</span>';
     else if (!r.in_world) tags += `<span class="tag out">${r.left ? 'LEFT' : 'OUT'}</span>`;
+    tags += penTags(r);
     const flag = (TEAM_MODE || (isRace && COMPACT)) ? ''
         : r.country ? `<img class="flag" src="/flag/${encodeURIComponent(r.country)}.svg" alt="">` : '<div></div>';
     const brand = SHOW_CARS ? carImg(r)
@@ -1820,6 +1881,7 @@ function rowHtml(r, isRace) {
 
 function render(d) {
     TEAM_MODE = !!(d && d.team_event) && qs.get('names') !== 'driver';
+    PENALTIES = (d && d.penalties) || {};
     const el = document.getElementById('tower');
     if (!d || !d.connected) {
         el.innerHTML = '<div class="msg">Waiting for iRacing…</div>';
@@ -2708,13 +2770,16 @@ def youtube_config():
 
 @app.route("/standings")
 def standings():
-    return jsonify(poller.get())
+    snap = dict(poller.get())
+    if request.args.get("pen") != "0":
+        snap["penalties"] = rc_penalties.get()
+    return jsonify(snap)
 
 
 # Bump on every change: http://localhost:5005/version shows which code the
 # running process actually loaded (the stream PC gets this folder through
 # Nextcloud, so a restart can still pick up the previous file).
-CODE_VERSION = "2026-10-25 tower-compact-race"
+CODE_VERSION = "2026-10-27 tower-penalties"
 
 
 @app.route("/version")
@@ -2773,6 +2838,7 @@ def brand_logo(slug: str):
 def main():
     proam.start()
     pit_tires.start()
+    rc_penalties.start()
     t = threading.Thread(target=poller.run, daemon=True)
     t.start()
     try:

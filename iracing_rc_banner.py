@@ -99,6 +99,121 @@ def load_config() -> dict:
 
 
 # =============================================================================
+# Open penalties per car (for the tower, 5005 polls /rc/penalties)
+# =============================================================================
+PEN_TIME = re.compile(r"(\d+)\s*(?:S\b|SEC|SECOND)")
+INVESTIGATION_MAX_S = 600.0
+
+
+def penalty_of(kind: str, text: str):
+    """(type, seconds) a banner message puts on a car, or None.
+    type: dsq / dt / sg / time / black / pen / clear / warn / inv / nfa."""
+    t = " ".join(str(text or "").upper().split())
+    if kind == "clear" or "PENALTY CLEARED" in t or "CLEAR PENALT" in t:
+        return ("clear", 0)
+    if kind == "dq" or "DISQUALIF" in t:
+        return ("dsq", 0)
+    if kind == "investigation":
+        return ("inv", 0)
+    if kind == "nfa":
+        return ("nfa", 0)
+    if kind == "warning":
+        return ("warn", 0)
+    if kind != "penalty":
+        return None
+    if re.search(r"DRIVE[ -]?T(H)?ROUGH", t):
+        return ("dt", 0)
+    if re.search(r"STOP\s*(AND|&|/|-)?\s*GO", t):
+        m = PEN_TIME.search(t)
+        return ("sg", int(m.group(1)) if m else 0)
+    if "TIME PENALTY" in t or "SECOND PENALTY" in t:
+        m = PEN_TIME.search(t)
+        return ("time", int(m.group(1)) if m else 0)
+    if "BLACK FLAG" in t:
+        return ("black", 0)
+    return ("pen", 0)
+
+
+class PenaltyBoard:
+    """Open penalties per car number. Drive-through / stop-and-go / iRacing
+    black flag stay until served (iRacing's black flag goes off) or cleared;
+    time penalties add up; a DSQ stays for the session."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.reset()
+
+    def reset(self):
+        with self._lock:
+            self._cars: dict = {}
+
+    def _car(self, num):
+        return self._cars.setdefault(num, {"open": [], "time": 0, "dsq": False,
+                                           "warnings": 0, "inv": None})
+
+    def apply(self, num: str, kind: str, text: str, now: float | None = None):
+        num = str(num or "").strip().lstrip("#")
+        pen = penalty_of(kind, text) if num else None
+        if not pen:
+            return
+        typ, secs = pen
+        now = time.time() if now is None else now
+        with self._lock:
+            c = self._car(num)
+            if typ == "clear":
+                c.update(open=[], time=0, dsq=False, inv=None)
+            elif typ == "dsq":
+                c.update(dsq=True, open=[], inv=None)
+            elif typ == "inv":
+                c["inv"] = now
+            elif typ == "nfa":
+                c["inv"] = None
+            elif typ == "warn":
+                c["warnings"] += 1
+                c["inv"] = None
+            elif typ == "time":
+                c["time"] += secs
+                c["inv"] = None
+            elif typ == "black":
+                if not c["open"]:           # the steward's own DT / S&G covers it
+                    c["open"].append({"type": "black", "secs": 0})
+            else:
+                c["open"] = [o for o in c["open"] if o["type"] != "black"]
+                c["open"].append({"type": typ, "secs": secs})
+                c["inv"] = None
+
+    def served(self, num: str):
+        """iRacing's black flag went off: the oldest DT / S&G was served."""
+        with self._lock:
+            c = self._cars.get(str(num))
+            if c and c["open"]:
+                c["open"].pop(0)
+
+    def get(self, now: float | None = None) -> dict:
+        now = time.time() if now is None else now
+        out = {}
+        with self._lock:
+            for num, c in self._cars.items():
+                tags = []
+                if c["dsq"]:
+                    tags.append({"type": "dsq", "label": "DSQ"})
+                else:
+                    for o in c["open"]:
+                        lab = {"dt": "DT", "black": "PEN", "pen": "PEN"}.get(o["type"])
+                        if o["type"] == "sg":
+                            lab = f"SG {o['secs']}s" if o["secs"] else "SG"
+                        tags.append({"type": o["type"], "label": lab})
+                    if c["time"]:
+                        tags.append({"type": "time", "label": f"+{c['time']}s"})
+                    if c["inv"] is not None and now - c["inv"] < INVESTIGATION_MAX_S:
+                        tags.append({"type": "inv", "label": "INV"})
+                if tags or c["warnings"]:
+                    out[num] = {"tags": tags, "warnings": c["warnings"],
+                                "time": c["time"], "dsq": c["dsq"]}
+        return out
+
+
+# =============================================================================
 # Message feed (shared by both sources)
 # =============================================================================
 class Feed:
@@ -106,6 +221,7 @@ class Feed:
         self._lock = threading.Lock()
         self._msgs = deque(maxlen=maxlen)
         self._id = 0
+        self.board = PenaltyBoard()
 
     def add(self, source: str, kind: str, headline: str, text: str = "",
             car: dict | None = None, secs: float | None = None) -> dict | None:
@@ -118,6 +234,8 @@ class Feed:
                  "kind": kind, "headline": headline, "text": text, "car": car,
                  "secs": secs}
             self._msgs.append(m)
+        if car and car.get("num"):
+            self.board.apply(car["num"], kind, f"{headline} {text}")
         print(f"[rc] {source}: {headline} {text} "
               f"{('#' + car['num'] + ' ' + car['label']) if car else ''}".rstrip())
         return m
@@ -198,6 +316,9 @@ class FlagWatcher:
         for i, car in cars.items():
             cf = int(car_flags[i]) if i < len(car_flags) else 0
             pf = int(pace_flags[i]) if i < len(pace_flags) else 0
+            fall_c = self._prev_car.get(i, cf) & ~cf
+            if fall_c & F_BLACK and not cf & F_DQ and car.get("num"):
+                self.feed.board.served(car["num"])
             rise_c = cf & ~self._prev_car.get(i, cf)
             rise_p = pf & ~self._prev_pace.get(i, pf)
             self._prev_car[i], self._prev_pace[i] = cf, pf
@@ -765,6 +886,7 @@ class RcPoller(SDKPoller):
         if key != self._key:
             self._key = key
             self.flags.reset()
+            self.flags.feed.board.reset()
             self._cars_t = -1e9
         is_race = self._is_race(ir, key, num)
         racing = is_race and ir["SessionState"] == SESSION_STATE_RACING
@@ -835,6 +957,14 @@ def rc_steward():
         secs = None
     feed.add("icas", kind, head, text, car, secs)
     return jsonify({"ok": True})
+
+
+@app.route("/rc/penalties")
+def rc_penalties():
+    """Open penalties per car number - read by the tower (5005)."""
+    resp = jsonify({"penalties": feed.board.get(), "now": time.time()})
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    return resp
 
 
 @app.route("/rc/test", methods=["POST", "GET"])

@@ -186,6 +186,13 @@ NOTED, EOL, wave-by, admin / chat commands never go on air. Each message is a
 "Stream banner NOT reached (…)". iRacing's own black flag / DQ for the same car
 within 20 s is not shown a second time by the banner.
 
+The banner also keeps the OPEN penalties per car (`GET /rc/penalties`), and
+the standings tower (5005) shows them after the name: **DT**, **SG**, **+10s**
+(time penalties add up), red **DSQ**, blue **INV** (under investigation, until
+a decision or 10 min). A DT / S&G is gone once iRacing's black flag for the car
+goes off (served) or the penalties are cleared. Penalties from iRaceControl
+(ATVO) and iRacing's own black flags count too.
+
 ## What works today vs. what is honest to flag
 
 Live timing, the real track map, the incident/event log, gaps and intervals,

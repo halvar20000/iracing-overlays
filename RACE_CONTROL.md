@@ -79,6 +79,17 @@ Quelle „icas“): im iCAS-Header **STREAM BANNER** einschalten, unter
 **Test** zeigt „TEST · iCASControl“. `?icas=0` blendet diese Meldungen in
 einer Quelle aus.
 
+## Offene Strafen im Tower
+
+Das Overlay merkt sich je Auto die offenen Strafen (`/rc/penalties`) — aus
+iCAS, iRaceControl und iRacings eigener schwarzer Flagge. Der Tower (5005)
+zeigt sie hinter dem Namen: **DT**, **SG**, **+10s** (Zeitstrafen addiert),
+rot **DSQ**, blau **INV** (in Untersuchung, bis zur Entscheidung, max.
+10 min). DT / SG verschwinden, sobald iRacings schwarze Flagge für das Auto
+aus ist (abgesessen) oder die Strafen gelöscht werden. Neue Session = leer.
+Im Tower: `?pen=0` aus, `?warn=1` zeigt auch Verwarnungen (W2). Läuft 5019
+nicht, zeigt der Tower einfach keine Strafen.
+
 ## Erster Test (GT3 WCT, Dienstag)
 
 Welche Hub-Methoden iRaceControl aufruft (Namen, Argumente), ist nirgends
