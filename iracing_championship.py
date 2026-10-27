@@ -2398,11 +2398,9 @@ def _table_wct(st: dict) -> dict:
                   key=lambda r: r.get("rank") or 999)
 
     def board(grp, mark=""):
-        lead = grp[0].get("points") or 0 if grp else 0
         return [{"pos": i, "num": r.get("startNumber") or "", "name": r.get("name") or "",
                  "sub": r.get("teamName") or "", "mark": mark,
-                 "value": "" if i == 1 else f"-{lead - (r.get('points') or 0)}",
-                 "pts": r.get("points") or 0} for i, r in enumerate(grp, 1)]
+                 "value": "", "pts": r.get("points") or 0} for i, r in enumerate(grp, 1)]
     if season.get("proAmEnabled") and any(r.get("proAmClass") for r in rows):
         for cls, col in (("PRO", wct_board.PRO_COLOR), ("AM", wct_board.AM_COLOR)):
             grp = sorted([r for r in rows if r.get("proAmClass") == cls],

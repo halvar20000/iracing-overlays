@@ -145,8 +145,8 @@ def srow(rank, name, pts, **kw):
     return dict({"rank": rank, "name": name, "points": pts, "teamName": "T", "startNumber": str(rank)}, **kw)
 d = ch._table_wct({"league": {"name": "CAS PCC"}, "season": {"completedRounds": 8},
                    "standings": [srow(1, "Remo", 484), srow(2, "Maurice", 435), srow(3, "X", 0, excludedAt="x")]})
-check("C1 one table, gap to the leader", d["title"] == "MEISTERSCHAFT - CAS PCC - NACH LAUF 8" and
-      [(r["pos"], r["value"], r["pts"]) for r in d["sections"][0]["rows"]] == [(1, "", 484), (2, "-49", 435)], str(d))
+check("C1 one table, points only (no gap)", d["title"] == "MEISTERSCHAFT - CAS PCC - NACH LAUF 8" and
+      [(r["pos"], r["value"], r["pts"]) for r in d["sections"][0]["rows"]] == [(1, "", 484), (2, "", 435)], str(d))
 d = ch._table_wct({"league": {}, "season": {"proAmEnabled": True}, "standings": [
     srow(1, "P", 90, proAmClass="PRO"), srow(2, "A", 182, proAmClass="AM"), srow(3, "A2", 100, proAmClass="AM")]})
 check("C2 Pro/Am: PRO then AM, class positions", [(s["label"], [r["pos"] for r in s["rows"]]) for s in d["sections"]]
