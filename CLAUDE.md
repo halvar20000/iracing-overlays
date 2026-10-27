@@ -178,6 +178,17 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 27, 2026 (iCASControl German guide + website):** NEW
+`ICASCONTROL_ANLEITUNG.md` (repo root, du-form: install of the overlay app,
+launcher row, updates, UI, incidents, replay, chat commands, race control,
+Auto Steward + sequencer with WCT values, stream banner / tower, several
+stewards incl. follow mode + tunnel, autosave, troubleshooting, data files),
+screenshots in racecontrol/docs/. Linked from racecontrol/README.md + INSTALL.md.
+Shim `iracing_racecontrol.py` now reads optional racecontrol/data/server.json
+{"host": "0.0.0.0", "port": …} (LAN access without a code edit that updates
+would overwrite). Website: simracing-hub.com overlays/racecontrol pages updated +
+new overlays/de/racecontrol-anleitung.html.
+
 **October 27, 2026 (iCASControl 0.1.13 — following YOURSELF refused):**
 Thomas tested Follow with his own tunnel link on the same PC: STEWARDS showed
 "Thomas", "Thomas 2", "Thomas 2 2 → main iCAS" and chat lines never arrived

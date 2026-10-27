@@ -1,5 +1,7 @@
 # Installation & Updates (Windows)
 
+Rennleitung / Stewards: siehe [ICASCONTROL_ANLEITUNG.md](ICASCONTROL_ANLEITUNG.md).
+
 ## Erstinstallation
 
 **Variante A – ZIP:** https://github.com/halvar20000/iracing-overlays/archive/refs/heads/main.zip
