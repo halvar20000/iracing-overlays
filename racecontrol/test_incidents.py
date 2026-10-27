@@ -355,6 +355,27 @@ labels = irs.class_labels([
     {"CarIdx": 3, "CarClassShortName": "LMP2", "CarClassID": 7}])
 check("class null -> never 'None': GT3 / model / real name",
       labels == {0: "GT3", 1: "GT3", 2: "Porsche 911 Cup", 3: "LMP2"}, labels)
+labels2 = irs.class_labels([
+    {"CarIdx": i, "CarClassShortName": None, "CarClassID": 0,
+     "CarScreenNameShort": n} for i, n in enumerate(
+        ["Ferrari 296 GT3", "Chevrolet Corvette Z06 GT3.R", "BMW M4 GT3 EVO"])])
+check("'GT3.R' still shares GT3 (Spa race showed 'Class 0')",
+      set(labels2.values()) == {"GT3"}, labels2)
+rir = fake_ir(70, {})
+rir["CarIdxLastLapTime"] = [144.95, 145.31]
+rir["CarIdxBestLapTime"] = [-1, -1]
+src4 = irs.IRacingSource()
+src4._ir = rir
+rf = {c.car_idx: c for c in src4._read_frame(0.1).cars}
+check("race lap 1: best = last (iRacing leaves the best empty)",
+      rf[0].best_lap == 144.95 and rf[1].best_lap == 145.31, rf)
+rir2 = fake_ir(71, {})
+rir2["CarIdxLastLapTime"] = [146.0, 144.0]
+rir2["CarIdxBestLapTime"] = [-1, -1]
+src4._ir = rir2
+rf = {c.car_idx: c for c in src4._read_frame(0.1).cars}
+check("best keeps the faster lap", rf[0].best_lap == 144.95
+      and rf[1].best_lap == 144.0, rf)
 pir = fake_ir(60, {})
 pir["SessionInfo"]["Sessions"][0]["SessionType"] = "Practice"
 pir["CarIdxBestLapTime"] = [139.5, 138.2]

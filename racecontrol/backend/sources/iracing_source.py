@@ -25,6 +25,7 @@ it.  ``replay_event`` jumps the sim's replay to an incident.
 from __future__ import annotations
 
 import contextlib
+import re
 import io
 import threading
 import time
@@ -128,7 +129,8 @@ def class_labels(drivers: list) -> dict[int, str]:
         if len(names) == 1:
             derived[cid] = next(iter(names))
         elif names:
-            lists = [n.split() for n in names]
+            lists = [[w for w in re.split(r"[^0-9A-Za-z]+", n) if w]
+                     for n in names]
             common = [w for w in lists[0] if all(w in l for l in lists[1:])]
             derived[cid] = " ".join(common) or f"Class {cid}"
         else:
@@ -164,6 +166,8 @@ class IRacingSource(DataSource):
         self._replay_busy = False
         self.sectors = FieldSectors() if FieldSectors else None
         self.inc_debug: dict = {}
+        self._best_seen: dict[int, float] = {}
+        self._best_key = None
         self.sector_status = ({"on": True} if FieldSectors else
                               {"on": False, "error": _SECTOR_IMPORT_ERROR})
         self._sector_key = None
@@ -321,7 +325,12 @@ class IRacingSource(DataSource):
         order = sorted(dist_by_idx.items(), key=lambda kv: kv[1], reverse=True)
         rank = {idx: i for i, (idx, _) in enumerate(order)}
         is_race = "RACE" in session_type
-        bests = {i: float(at(best_lap, i, 0.0)) for i in dist_by_idx}
+        bests = {}
+        for i in dist_by_idx:
+            b = float(at(best_lap, i, 0.0))
+            seen = self._best_seen.get(i) if self._best_key == (
+                session_key, cur_num) else None
+            bests[i] = seen if seen and (b <= 0 or seen < b) else b
         if not is_race:
             # practice / qualifying: ranked by best lap, cars without a time
             # after (by distance); gaps are lap-time gaps to the fastest
@@ -368,6 +377,18 @@ class IRacingSource(DataSource):
 
             ll = float(at(last_lap, idx, 0.0))
             bl = float(at(best_lap, idx, 0.0))
+            # iRacing leaves CarIdxBestLapTime empty for the first race lap
+            # (standing / rolling start) - a car's best is never slower than
+            # any lap it finished in this session
+            if (session_key, cur_num) != self._best_key:
+                self._best_key = (session_key, cur_num)
+                self._best_seen = {}
+            if ll > 0 and not in_replay:
+                seen = self._best_seen.get(idx)
+                if seen is None or ll < seen:
+                    self._best_seen[idx] = ll
+            if self._best_seen.get(idx) and (bl <= 0 or self._best_seen[idx] < bl):
+                bl = self._best_seen[idx]
             cars.append(CarFrame(
                 car_idx=idx,
                 car_number=str(d.get("CarNumber", "0")),

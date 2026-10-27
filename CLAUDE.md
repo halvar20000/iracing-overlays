@@ -212,6 +212,12 @@ reload): StaticFiles sent no Cache-Control, the browser kept the old app.js →
 `sector_timing` (on, sector count, from SplitTimeInfo or not, import error).
 Version 0.1.1. Thomas confirmed: not admin on the stream PC = no live points.
 test 66/66.
+Spa RACE screenshot: BEST empty after lap 1 (iRacing leaves
+CarIdxBestLapTime unset for the first race lap; iRaceControl shows last =
+best) → the source keeps the fastest LAST lap per car and session
+(`_best_seen`, not from replay frames) and uses it when iRacing's best is
+empty or slower. Class read "Class 0": the GT3 field had no common word
+because of "GT3.R" → names split on punctuation. test 69/69.
 
 **October 26, 2026 (iCASControl = our iRaceControl clone, `racecontrol/`
 8080 — STEP 1 of 3: live incidents, replay per line, autosave):** Thomas:
