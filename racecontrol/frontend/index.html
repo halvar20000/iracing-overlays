@@ -392,6 +392,7 @@
         not again for <input id="s-fcy_cooldown_s" type="number" min="0" max="1800"> s</label>
       <label>caution length <input id="s-fcy_laps" type="number" min="0" max="20"> laps
         (!pacelaps once the caution is out; 0 = iRacing decides)</label>
+      <label>not in the last <input id="s-fcy_end_protect_min" type="number" min="0" max="60"> minutes of the race (0 = always)</label>
     </fieldset>
     <fieldset><legend><label><input id="s-quali_split" type="checkbox"> Qualifying AM / PRO (GT3 WCT)</label></legend>
       <label>At the start, to everybody:</label>
@@ -399,12 +400,24 @@
       <label>After <input id="s-quali_split_min" type="number" min="1" max="120"> minutes:</label>
       <input id="s-quali_pro_text" type="text" maxlength="200" class="wide">
     </fieldset>
-    <fieldset><legend><label><input id="s-blue_enabled" type="checkbox"> Blue flags</label></legend>
+    <fieldset><legend>iRacing's blue flag (race)</legend>
+      <label>shown for <input id="s-bf_warn_s" type="number" min="0" max="300"> s - private message (0 = off):</label>
+      <input id="s-bf_warn_text" type="text" maxlength="200" class="wide">
+      <label>shown for <input id="s-bf_dt_s" type="number" min="0" max="300"> s - DRIVE THROUGH + to everybody (0 = off):</label>
+      <input id="s-bf_dt_text" type="text" maxlength="200" class="wide">
+    </fieldset>
+    <fieldset><legend>Fast repair / meatball (race)</legend>
+      <label><input id="s-fr_used" type="number" min="0" max="9"> fast repair(s) used - private message (0 = off):</label>
+      <input id="s-fr_text" type="text" maxlength="200" class="wide">
+      <label><input id="s-meatball_enabled" type="checkbox"> Meatball flag - to everybody:</label>
+      <input id="s-meatball_text" type="text" maxlength="200" class="wide">
+    </fieldset>
+    <fieldset><legend><label><input id="s-blue_enabled" type="checkbox"> Own blue-flag hint (gap check)</label></legend>
       <label>The car about to be lapped gets "BLUE FLAG - let #7 ... pass" when the faster car is
         <input id="s-blue_gap_s" type="number" min="0.2" max="5" step="0.1"> s behind,
         again after <input id="s-blue_repeat_s" type="number" min="0" max="300"> s</label>
     </fieldset>
-    <div class="dlg-note">Chat lines (caution, quali, blue flag) only go out while iRACING CHAT is ON.</div>
+    <div class="dlg-note">Chat lines only go out while iRACING CHAT is ON. In the texts %cnr% = car number, %dname% = driver (as in iRaceControl). Private = "/14 text", only that driver sees it.</div>
     <div class="dlg-btns">
       <button id="sdlg-ok">Save</button>
       <button id="sdlg-cancel">Cancel</button>

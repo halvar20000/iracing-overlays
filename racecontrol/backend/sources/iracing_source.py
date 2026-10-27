@@ -382,6 +382,8 @@ class IRacingSource(DataSource):
             rank = {idx: i for i, (idx, _) in enumerate(order)}
         fastest = min((b for b in bests.values() if b > 0), default=0.0)
         labels = class_labels(drivers)
+        car_flags = self._g("CarIdxSessionFlags", []) or []
+        fast_rep = self._g("CarIdxFastRepairsUsed", None)
 
         for d in drivers:
             idx = int(d.get("CarIdx", -1))
@@ -460,6 +462,9 @@ class IRacingSource(DataSource):
                 is_pace_car=False,
                 is_player=(idx == int(driver_info.get("DriverCarIdx", -2))),
                 finished=False,
+                car_flags=int(at(car_flags, idx, 0) or 0),
+                fast_repairs_used=int(at(fast_rep, idx, -1))
+                if fast_rep else -1,
             ))
 
         # Session-wide state.

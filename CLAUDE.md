@@ -178,6 +178,25 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 27, 2026 (iCASControl 0.1.11 — GT3 WCT Auto Steward ruleset
+from Thomas's iRaceControl screenshot):** race only: iRacing's BLUE flag
+(CarIdxSessionFlags 0x20) shown 20 s (`bf_warn_s`) -> private "BLUE FLAG -
+LET PASS FASTER CAR"; 30 s (`bf_dt_s`) -> !black #N D + "/all #N (driver) -
+DRIVE THROUGH FOR BLUE FLAG" (+ stream banner penalty); once per blue period,
+not under caution / in the pits. Fast repairs (NEW CarIdxFastRepairsUsed on
+CarFrame / Car `fast_repairs_used`) reaching `fr_used` 1 -> private "YOU'VE
+USED UP ALL YOUR FASTREPAIR" once (first sighting = silent baseline).
+Meatball (0x100000, edge) -> "/all #N (driver) - HAS A MEATBALL FLAG". FCY
+defaults now 40x / 15 s, `fcy_end_protect_min` 5 = no auto caution in the
+last 5 min (session_time_remain). Texts take %cnr% / %dname% (steward.fill).
+The old gap-based blue hint is now OFF by default ("Own blue-flag hint").
+PRIVATE chat = "/14 text" (support.iracing.com 31000170165) - chat template
+`notify` changed from "/all #14 text" (menu Notify, RC PRIVATE, blue hints).
+NOTE: a saved data/steward_config.json keeps its old values (e.g. 10x / 10 s,
+blue hint on) - set the WCT values once in Rules. The quali "sequencer"
+screenshot never arrived (quali_split covers the AM / PRO messages).
+test_incidents.py 243/243; rules dialog rendered. NOT tried in iRacing.
+
 **October 27, 2026 (iCASControl 0.1.10 — SUPP follow mode + internet
 tunnel, multi-steward steps 3 + 4):** NEW `racecontrol/backend/follow.py`
 (`Follower`: websockets client to the MAIN iCAS's /ws?name=&pw=, caches

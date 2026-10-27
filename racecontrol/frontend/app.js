@@ -280,12 +280,15 @@ function updateStewardToggle() {
     + ` | caution: ${s.fcy_enabled ? `${s.fcy_incs}x / ${s.fcy_window_s}s (${s.fcy_mode}`
         + `${s.fcy_laps > 0 ? `, ${s.fcy_laps} laps` : ''})` : 'off'}`
     + ` | quali AM/PRO: ${s.quali_split ? s.quali_split_min + ' min' : 'off'}`
-    + ` | blue flag: ${s.blue_enabled ? s.blue_gap_s + 's' : 'off'}`;
+    + ` | blue flag: warn ${s.bf_warn_s || 'off'}s, DT ${s.bf_dt_s || 'off'}s`
+    + ` | fast repair: ${s.fr_used || 'off'} | meatball: ${s.meatball_enabled ? 'on' : 'off'}`;
 }
 
 const STEWARD_FIELDS = ['dt_first', 'dt_every', 'fcy_enabled', 'fcy_incs',
   'fcy_window_s', 'fcy_mode', 'fcy_cooldown_s', 'fcy_laps', 'quali_split', 'quali_split_min',
-  'quali_am_text', 'quali_pro_text', 'blue_enabled', 'blue_gap_s', 'blue_repeat_s'];
+  'quali_am_text', 'quali_pro_text', 'blue_enabled', 'blue_gap_s', 'blue_repeat_s',
+  'fcy_end_protect_min', 'bf_warn_s', 'bf_warn_text', 'bf_dt_s', 'bf_dt_text',
+  'fr_used', 'fr_text', 'meatball_enabled', 'meatball_text'];
 function openStewardRules() {
   const s = State.steward || {};
   STEWARD_FIELDS.forEach((k) => {

@@ -64,7 +64,9 @@ COMMANDS: dict[str, Optional[str]] = {
     # !black takes no message: the reason follows as a second line
     "penalty_reason": "/all #{num} {driver}: {msg}",
     # messages (iRacing documents no private message; /all reaches everybody)
-    "notify": "/all #{num} {msg}",
+    # private: "/<car number> text" reaches only that driver
+    # (support.iracing.com 31000170165)
+    "notify": "/{num} {msg}",
     "warning": "/all #{num} {driver}: WARNING{msg_dash}",
     "message_all": "/all {msg}",
     "message_rc": "/rc {msg}",

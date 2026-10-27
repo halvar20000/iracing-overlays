@@ -907,6 +907,9 @@ eng7.source = type("S", (), {"name": "iracing",
                              "send_chat": lambda self, *a: sent7.append(a[0]) or "ok",
                              "send_command": lambda self, c, **k: "x"})()
 eng7.chat_cfg["enabled"] = True
+# the tests below were written for 10x / 10 s and the own blue-flag hint
+eng7.steward_cfg = steward.clean({"fcy_incs": 10, "fcy_window_s": 10,
+                                  "blue_enabled": True})
 
 
 def step(fr):
@@ -966,8 +969,10 @@ def pts(idx, n):
     return IncidentEvent(idx, n, "incident", 3)
 
 
-check("defaults: 10x within 10 s, automatic",
-      R["fcy_incs"] == 10 and R["fcy_window_s"] == 10 and R["fcy_mode"] == "auto")
+check("defaults = GT3 WCT: 40x within 15 s, automatic, not in the last 5 min",
+      R["fcy_incs"] == 40 and R["fcy_window_s"] == 15 and R["fcy_mode"] == "auto"
+      and R["fcy_end_protect_min"] == 5 and not R["blue_enabled"]
+      and R["bf_warn_s"] == 20 and R["bf_dt_s"] == 30 and R["fr_used"] == 1)
 step(sframe(20, five, [pts(1, 4)]))
 step(sframe(25, five, [pts(2, 4)]))
 check("8x in 10 s: no caution", not autos("auto_caution"))
@@ -1089,7 +1094,7 @@ step(blue_frame(101, 0.50, 0.492))
 a = autos("blue_flag")
 check("0.8 s behind the car he is lapping -> blue flag to #14",
       len(a) == 1 and a[0].car_number == "14" and "let #7 D7 pass" in a[0].text
-      and sent7[-1] == "/all #14 BLUE FLAG - let #7 D7 pass", (sent7[n0:], a))
+      and sent7[-1] == "/14 BLUE FLAG - let #7 D7 pass", (sent7[n0:], a))
 step(blue_frame(105, 0.55, 0.542))
 check("not repeated within 20 s", len(autos("blue_flag")) == 1)
 step(blue_frame(122, 0.70, 0.692))
@@ -1112,6 +1117,94 @@ check("chat OFF: only the log line, no 'not sent' spam",
       and len(autos("blue_flag")) == 4, [e.text for e in eng7.state.events[k:]])
 check("snapshot carries the steward rules",
       snap_of(eng7)["steward"]["dt_first"] == 15)
+
+print("GT3 WCT ruleset (iRaceControl screenshot)")
+eng7.chat_cfg["enabled"] = True
+eng7.steward_cfg = steward.clean({})
+eng7.auto.reset()
+
+
+def wcar(idx, num, flags=0, fr=-1, pit=False):
+    c = scar(idx, num, pit=pit)
+    c.car_flags, c.fast_repairs_used = flags, fr
+    return c
+
+
+BL = steward.FLAG_BLUE
+n0 = len(sent7)
+for t in range(1000, 1021):
+    step(sframe(t, [wcar(0, "7"), wcar(1, "14", BL)], num=4, key="w-1"))
+a = autos("auto_blue_warn")
+check("blue flag 20 s -> private warning to #14",
+      len(a) == 1 and "/14 BLUE FLAG - LET PASS FASTER CAR" in sent7[n0:], sent7[n0:])
+for t in range(1021, 1031):
+    step(sframe(t, [wcar(0, "7"), wcar(1, "14", BL)], num=4, key="w-1"))
+a = autos("auto_blue_dt")
+check("blue flag 30 s -> DRIVE THROUGH + message to all",
+      len(a) == 1 and any(x.startswith("!black #14") for x in sent7[n0:])
+      and "/all #14 (D14) - DRIVE THROUGH FOR BLUE FLAG" in sent7[n0:], sent7[n0:])
+for t in range(1031, 1060):
+    step(sframe(t, [wcar(0, "7"), wcar(1, "14", BL)], num=4, key="w-1"))
+check("only once per blue-flag period", len(autos("auto_blue_dt")) == 1
+      and len(autos("auto_blue_warn")) == 1)
+step(sframe(1060, [wcar(0, "7"), wcar(1, "14")], num=4, key="w-1"))
+for t in range(1061, 1075):
+    step(sframe(t, [wcar(0, "7"), wcar(1, "14", BL)], num=4, key="w-1"))
+check("new blue flag: timer starts again (14 s = nothing yet)",
+      len(autos("auto_blue_warn")) == 1)
+for t in range(1075, 1100):
+    step(sframe(t, [wcar(0, "7"), wcar(1, "14", BL)], num=4, key="w-1",
+                flags=["caution"]))
+check("under a caution: no blue-flag penalty", len(autos("auto_blue_warn")) == 1
+      and len(autos("auto_blue_dt")) == 1)
+for t in range(1100, 1130):
+    step(sframe(t, [wcar(0, "7"), wcar(1, "14", BL)], num=4, key="w-1",
+                stype="OPEN QUALIFY"))
+check("qualifying: no blue-flag rule", len(autos("auto_blue_warn")) == 1)
+
+n0 = len(sent7)
+step(sframe(1200, [wcar(0, "7", fr=1), wcar(1, "14", fr=0)], num=5, key="w-2"))
+check("fast repair already used when iCAS starts: silent", not autos("auto_fast_repair"))
+step(sframe(1201, [wcar(0, "7", fr=1), wcar(1, "14", fr=1)], num=5, key="w-2"))
+a = autos("auto_fast_repair")
+check("#14 uses his fast repair -> private message",
+      len(a) == 1 and "/14 YOU'VE USED UP ALL YOUR FASTREPAIR" in sent7[n0:], sent7[n0:])
+step(sframe(1202, [wcar(0, "7", fr=1), wcar(1, "14", fr=2)], num=5, key="w-2"))
+check("... once", len(autos("auto_fast_repair")) == 1)
+
+MB = steward.FLAG_REPAIR
+n0 = len(sent7)
+step(sframe(1300, [wcar(0, "7", MB), wcar(1, "14")], num=6, key="w-3"))
+step(sframe(1301, [wcar(0, "7", MB), wcar(1, "14", MB)], num=6, key="w-3"))
+a = autos("auto_meatball")
+check("meatball -> RC message to all (not for one already out at the start)",
+      len(a) == 1 and sent7[n0:] == ["/all #14 (D14) - HAS A MEATBALL FLAG"], sent7[n0:])
+
+# FCY 40x / 15 s, not in the last 5 minutes
+eng7.auto.reset()
+eng7.auto._fcy_block_until = -1.0
+
+
+def tframe(t, remain, incs=()):
+    fr = sframe(t, five, incs, num=7, key="w-4")
+    fr.session.session_time_remain = remain
+    return fr
+
+
+step(tframe(2000, 1200, [pts(0, 20), pts(1, 12)]))
+step(tframe(2010, 1190, [pts(2, 4)]))
+check("36x in 15 s: nothing", not [e for e in autos("auto_caution")
+                                    if e.sim_time >= 2000])
+step(tframe(2014, 1186, [pts(3, 4)]))
+check("40x in 15 s -> caution", len([e for e in autos("auto_caution")
+                                      if e.sim_time >= 2000]) == 1)
+eng7.auto._fcy_block_until = -1.0
+step(tframe(3000, 280, [pts(0, 40)]))
+check("last 5 minutes: no caution", len([e for e in autos("auto_caution")
+                                         if e.sim_time >= 2000]) == 1)
+check("texts: %cnr% / %dname% filled",
+      steward.fill("#%cnr% (%dname%) x", type("C", (), {"number": "7",
+                                                        "driver": "Max"})()) == "#7 (Max) x")
 
 print("Multi-steward + camera")
 from backend import access as acc

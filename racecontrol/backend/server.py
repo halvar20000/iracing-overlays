@@ -182,6 +182,34 @@ class Engine:
             ev.kind, ev.source = "auto_quali", "auto"
             self.to_iracing("message_all", msg=text)
             self.to_stream("message", "", text=text)
+        elif kind in ("blue_warn", "fast_repair"):
+            car = act["car"]
+            what = ("blue flag for %.0fs" % act["held"] if kind == "blue_warn"
+                    else f"{act['used']} fast repair(s) used")
+            ev = st._log("flag", f"AUTO STEWARD: private to #{car.number} "
+                         f"({what}): {act['text']}", car=car, lap=car.lap)
+            ev.kind, ev.source = "auto_" + kind, "auto"
+            if self.chat_cfg.get("enabled") and self._chat_capable():
+                self.to_iracing("notify", car=car, msg=act["text"])
+        elif kind == "blue_dt":
+            car = act["car"]
+            ev = st._log("penalty", f"AUTO STEWARD: DRIVE THROUGH #{car.number} "
+                         f"{car.driver} - blue flag ignored for "
+                         f"{act['held']:.0f}s", car=car, lap=car.lap)
+            ev.kind, ev.source = "auto_blue_dt", "auto"
+            result = self.to_iracing("drive_through", car=car,
+                                     verify=CHAT_VERIFY_KIND["drive_through"])
+            st.note_system(f"Blue flag drive through #{car.number}: {result}",
+                           category="flag")
+            self.to_iracing("message_all", msg=act["text"])
+            self.to_stream("penalty", "DRIVE THROUGH", car=car,
+                           text="Blue flag ignored")
+        elif kind == "meatball":
+            car = act["car"]
+            ev = st._log("flag", f"AUTO STEWARD: RC message: {act['text']}",
+                         car=car, lap=car.lap)
+            ev.kind, ev.source = "auto_meatball", "auto"
+            self.to_iracing("message_all", msg=act["text"])
         elif kind == "blue":
             slow, fast = act["car"], act["fast"]
             again = " (again)" if act["again"] else ""
@@ -609,11 +637,15 @@ class Engine:
                 f"Auto Steward {'ON' if c['enabled'] else 'OFF'}: incidents "
                 f"{steward.describe(c)}; caution "
                 + (f"{c['fcy_incs']}x / {c['fcy_window_s']}s "
-                   f"({c['fcy_mode']})" if c["fcy_enabled"] else "off")
+                   f"({c['fcy_mode']}, not in the last "
+                   f"{c['fcy_end_protect_min']} min)" if c["fcy_enabled"] else "off")
                 + "; quali AM/PRO "
                 + (f"{c['quali_split_min']} min" if c["quali_split"] else "off")
-                + "; blue flag "
-                + (f"{c['blue_gap_s']:.1f}s" if c["blue_enabled"] else "off"))
+                + f"; blue flag warn {c['bf_warn_s'] or 'off'}s / DT "
+                f"{c['bf_dt_s'] or 'off'}s; fast repair {c['fr_used'] or 'off'}; "
+                f"meatball {'on' if c['meatball_enabled'] else 'off'}"
+                + ("; own blue hint " + f"{c['blue_gap_s']:.1f}s"
+                   if c["blue_enabled"] else ""))
             return {"type": "ack", "text": "Auto Steward "
                     + ("ON" if c["enabled"] else "OFF")}
 

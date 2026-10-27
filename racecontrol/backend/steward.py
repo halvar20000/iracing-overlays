@@ -15,9 +15,20 @@ Rules dialog:
 * QUALI AM / PRO (GT3 WCT, ``quali_split``) - at the start of a qualifying
   ``quali_am_text`` to everybody, after ``quali_split_min`` minutes
   ``quali_pro_text``.
-* BLUE FLAG - a car about to be lapped with the faster car <= ``blue_gap_s``
-  behind it gets ``/all #14 BLUE FLAG - let #7 ... pass`` (again after
-  ``blue_repeat_s`` if it still holds him up).
+* BLUE FLAG (own gap check, off by default since 0.1.11) - a car about to be
+  lapped with the faster car <= ``blue_gap_s`` behind it gets a private
+  ``BLUE FLAG - let #7 ... pass`` (again after ``blue_repeat_s``).
+
+GT3 WCT's iRaceControl ruleset (Thomas's screenshot, 2026-10-27), race only:
+
+* iRacing's BLUE flag shown to a car for ``bf_warn_s`` (20) s -> private
+  ``bf_warn_text``; for ``bf_dt_s`` (30) s -> DRIVE THROUGH (!black #N D) +
+  ``bf_dt_text`` to everybody.  Once per blue-flag period.
+* Fast repairs used >= ``fr_used`` (1) -> private ``fr_text``, once per car.
+* MEATBALL (repair flag) -> ``meatball_text`` to everybody.
+* Full course caution: not in the last ``fcy_end_protect_min`` (5) minutes.
+
+Texts take %cnr% (car number) and %dname% (driver), like iRaceControl.
 
 The chat lines only go out while the header's iRACING CHAT is ON.
 
@@ -36,19 +47,35 @@ CONFIG_PATH = DATA_DIR / "steward_config.json"
 DEFAULT_CONFIG = {
     "enabled": True,
     "dt_first": 15, "dt_every": 6,
-    "fcy_enabled": True, "fcy_mode": "auto", "fcy_incs": 10,
-    "fcy_window_s": 10, "fcy_cooldown_s": 180, "fcy_laps": 0,
+    "fcy_enabled": True, "fcy_mode": "auto", "fcy_incs": 40,
+    "fcy_window_s": 15, "fcy_cooldown_s": 180, "fcy_laps": 0,
+    "fcy_end_protect_min": 5,
     "quali_split": False, "quali_split_min": 15,
     "quali_am_text": "QUALIFYING: THE FIRST 15 MINUTES ARE RESERVED FOR "
                      "AM DRIVERS",
     "quali_pro_text": "AM QUALIFYING FINISHED - PRO QUALIFYING STARTED",
-    "blue_enabled": True, "blue_gap_s": 1.0, "blue_repeat_s": 20,
+    "blue_enabled": False, "blue_gap_s": 1.0, "blue_repeat_s": 20,
+    "bf_warn_s": 20, "bf_warn_text": "BLUE FLAG - LET PASS FASTER CAR",
+    "bf_dt_s": 30, "bf_dt_text": "#%cnr% (%dname%) - DRIVE THROUGH FOR BLUE FLAG",
+    "fr_used": 1, "fr_text": "YOU'VE USED UP ALL YOUR FASTREPAIR",
+    "meatball_enabled": True, "meatball_text": "#%cnr% (%dname%) - HAS A MEATBALL FLAG",
 }
-_BOOL = ("enabled", "fcy_enabled", "quali_split", "blue_enabled")
+_BOOL = ("enabled", "fcy_enabled", "quali_split", "blue_enabled",
+         "meatball_enabled")
 _INT = ("dt_first", "dt_every", "fcy_incs", "fcy_window_s",
-        "fcy_cooldown_s", "fcy_laps", "quali_split_min", "blue_repeat_s")
+        "fcy_cooldown_s", "fcy_laps", "fcy_end_protect_min",
+        "quali_split_min", "blue_repeat_s", "bf_warn_s", "bf_dt_s", "fr_used")
 _FLOAT = ("blue_gap_s",)
-_TEXT = ("quali_am_text", "quali_pro_text")
+_TEXT = ("quali_am_text", "quali_pro_text", "bf_warn_text", "bf_dt_text",
+         "fr_text", "meatball_text")
+FLAG_BLUE = 0x00000020          # CarIdxSessionFlags
+FLAG_REPAIR = 0x00100000        # the meatball
+
+
+def fill(text: str, car) -> str:
+    """iRaceControl placeholders: %cnr% = car number, %dname% = driver."""
+    return (str(text or "").replace("%cnr%", str(car.number))
+            .replace("%dname%", str(car.driver)))
 
 
 def level(total: int, rules: dict) -> int:
@@ -150,6 +177,11 @@ class AutoSteward:
         self._fcy_block_until = -1.0      # session time
         self._quali_sent: set[str] = set()
         self._blue: dict[tuple[int, int], float] = {}   # (slow, fast) -> t
+        self._bf_since: dict[int, float] = {}   # car -> blue flag shown since
+        self._bf_done: dict[int, set] = {}      # car -> {"warn", "dt"} this period
+        self._fr_seen: dict[int, int] = {}      # car -> fast repairs used
+        self._fr_sent: set[int] = set()
+        self._meatball: dict[int, bool] = {}
 
     def check(self, state, rules: dict) -> list[dict]:
         key = (state.session_key, state.session_num)
@@ -165,6 +197,72 @@ class AutoSteward:
             out += self._quali(state, rules)
         if rules.get("blue_enabled"):
             out += self._blue_flags(state, rules)
+        out += self._iracing_blue(state, rules)
+        out += self._fast_repairs(state, rules)
+        out += self._meatballs(state, rules)
+        return out
+
+    # GT3 WCT ruleset: iRacing's own blue flag, fast repairs, meatball ----------
+
+    def _live_cars(self, state) -> list:
+        live = getattr(state, "frame_cars", None)
+        return [c for c in state.cars.values() if c._seen
+                and (live is None or c.car_idx in live)]
+
+    def _iracing_blue(self, state, rules: dict) -> list[dict]:
+        warn_s, dt_s = int(rules.get("bf_warn_s") or 0), int(rules.get("bf_dt_s") or 0)
+        racing = (_is_race(state) and state.session_state == "RACING"
+                  and not _caution_out(state))
+        now = state.session_time
+        out = []
+        for car in self._live_cars(state):
+            blue = bool(car.car_flags & FLAG_BLUE) and racing \
+                and not car.on_pit_road
+            if not blue:
+                self._bf_since.pop(car.car_idx, None)
+                self._bf_done.pop(car.car_idx, None)
+                continue
+            since = self._bf_since.setdefault(car.car_idx, now)
+            done = self._bf_done.setdefault(car.car_idx, set())
+            held = now - since
+            if dt_s and held >= dt_s and "dt" not in done:
+                done.update(("dt", "warn"))
+                out.append({"type": "blue_dt", "car": car, "held": held,
+                            "text": fill(rules.get("bf_dt_text"), car)})
+            elif warn_s and held >= warn_s and "warn" not in done:
+                done.add("warn")
+                out.append({"type": "blue_warn", "car": car, "held": held,
+                            "text": fill(rules.get("bf_warn_text"), car)})
+        return out
+
+    def _fast_repairs(self, state, rules: dict) -> list[dict]:
+        limit = int(rules.get("fr_used") or 0)
+        out = []
+        for car in self._live_cars(state):
+            used = int(car.fast_repairs_used)
+            if used < 0:
+                continue
+            before = self._fr_seen.get(car.car_idx)
+            self._fr_seen[car.car_idx] = used
+            # first sighting = baseline (iCAS started mid-race): silent
+            if (limit and before is not None and before < limit <= used
+                    and car.car_idx not in self._fr_sent
+                    and _is_race(state)):
+                self._fr_sent.add(car.car_idx)
+                out.append({"type": "fast_repair", "car": car, "used": used,
+                            "text": fill(rules.get("fr_text"), car)})
+        return out
+
+    def _meatballs(self, state, rules: dict) -> list[dict]:
+        out = []
+        for car in self._live_cars(state):
+            on = bool(car.car_flags & FLAG_REPAIR)
+            before = self._meatball.get(car.car_idx)
+            self._meatball[car.car_idx] = on
+            if (on and before is False and rules.get("meatball_enabled")
+                    and _is_race(state)):
+                out.append({"type": "meatball", "car": car,
+                            "text": fill(rules.get("meatball_text"), car)})
         return out
 
     # full course caution ----------------------------------------------------
@@ -181,6 +279,10 @@ class AutoSteward:
             return []
         if now < self._fcy_block_until:
             return []
+        protect = float(rules.get("fcy_end_protect_min") or 0) * 60
+        remain = float(getattr(state, "session_time_remain", 0) or 0)
+        if protect and 0 < remain <= protect:
+            return []                 # the last minutes: no caution any more
         # official incident points (a detection gets its points onto the
         # same line when they arrive)
         recent = [e for e in state.events

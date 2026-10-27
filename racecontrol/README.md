@@ -249,6 +249,14 @@ its dashboard in their browser:
 * `/api/*` (Save download, status) from outside needs the steward's login
   token (the Save link carries it).
 
+### GT3 WCT ruleset in the Auto Steward (0.1.11)
+
+Race only, all in Rules: iRacing's blue flag shown 20 s = private warning,
+30 s = drive through + message to everybody; fast repairs used up = private
+message; meatball = message to everybody; full course caution 40x / 15 s,
+not in the last 5 minutes. Texts with %cnr% / %dname% like iRaceControl.
+Private chat lines are `/14 text` (only that driver sees them).
+
 ### Internet access for the stewards (0.1.10)
 
 On the MAIN PC: STEWARDS > **Access password** first, then **Internet > Start**.

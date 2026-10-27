@@ -61,6 +61,8 @@ class Car:
     laps_down: int = 0
     speed_ms: float = 0.0
     finished: bool = False
+    car_flags: int = 0              # CarIdxSessionFlags
+    fast_repairs_used: int = -1     # -1 = iRacing did not send it
 
     # Accumulated by the engine.
     incident_points: int = 0
@@ -410,6 +412,8 @@ class RaceState:
         car.laps_down = cf.laps_down
         car.speed_ms = cf.speed_ms
         car.finished = cf.finished
+        car.car_flags = cf.car_flags
+        car.fast_repairs_used = cf.fast_repairs_used
         car.sectors = cf.sectors
 
         if first_seen:
