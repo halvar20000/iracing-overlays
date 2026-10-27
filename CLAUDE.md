@@ -181,6 +181,16 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 27, 2026 (The Bend track files swapped BACK + slideshow):** 6fcdfbf
+(Oct 22) was wrong: it put the 4.95 km International loop into thebend_gt /
+thebend_gtcircuit and the 7.76 km GT loop into thebend_international / _intl
+(checked by drawing both on the satellite image: the GT circuit includes the
+outer eastern loop). Restored from 6fcdfbf^; zoom_videos/thebend_gt.mp4
+re-rendered. thebend.json (bare slug) is still the International loop.
+Slideshow for the stream start: drone_videos/thebend_diashow.mp4 (63 s,
+seamless loop, Esri imagery) + stills in drone_videos/thebend_diashow/.
+Restart 5007 + 5012.
+
 **October 27, 2026 (MASTER SWITCH for the AI show — `"ki_show": false`):**
 the moderation auto-started at start_at during a PCC stream (OBS streaming)
 and handed over to REGIE. show_config.json `"ki_show": false` now switches
