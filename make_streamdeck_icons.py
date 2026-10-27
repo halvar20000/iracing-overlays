@@ -587,7 +587,7 @@ document.addEventListener("click", e => {
   if (b.dataset.copyFile) {
     // full path of the loader on THIS PC, from where this page lives
     let p = decodeURIComponent(new URL(b.dataset.copyFile, location.href).pathname);
-    if (/^\/[A-Za-z]:\//.test(p)) p = p.slice(1).replace(/\//g, "\\");
+    if (/^.[A-Za-z]:./.test(p) && p[0] === "/") p = p.slice(1).split("/").join(String.fromCharCode(92));
     copy(p, b);
   }
 });

@@ -88,7 +88,10 @@ overlays:
    the loader; category, symbol, short German label) and run
    `python make_streamdeck_icons.py overlays overlays_off`. That renders
    the on/off Stream Deck pictures AND rewrites `OVERLAY_TABLE.md` (the
-   GitHub table of every overlay: port, loader, icons). Step 4 also
+   GitHub table of every overlay: port, loader, icons) and `OVERLAYS.html`
+   (the searchable overview the launcher's footer link opens: symbol, URL,
+   loader path to copy, size + options taken from OBS_OVERLAYS.md — so give
+   a new overlay its OBS_OVERLAYS.md row too). `--table` = table + page only. Step 4 also
    rewrites the table and prints a WARNING for any loader without an icon
    — commit OVERLAY_TABLE.md together with the new overlay.
 
@@ -177,6 +180,20 @@ an entry to `CAR_PREFIX_TO_BRAND` in `car_brands.py` if it's a car family
 that isn't already prefix-matched.
 
 ## Recent sessions
+
+**October 27, 2026 (OVERLAYS.html — one page with every overlay):** Thomas:
+"ich suche und suche immer wieder". make_streamdeck_icons.write_overview()
+(called by write_table) generates OVERLAYS.html: cards per Stream Deck
+category (on / off symbol, name, URL + copy, loader file + "Pfad kopieren" =
+full Windows path derived from the page's own file:// location, size /
+options cell parsed from OBS_OVERLAYS.md by loader name, YouTube by
+port/path), general tips (zoom / debug / demo / nav keys), the operator pages
+table, live search (all words must match). OVERVIEW_HTML is a NON-raw Python
+string — no backslashes in its JS (a "\\" became "\" and broke the script
+in the first commit; fixed with String.fromCharCode(92)). Launcher footer link
+(packed side=bottom under the log) opens it via webbrowser. Added the
+Frag-Claude status row to OBS_OVERLAYS.md (was missing). Rendered; search
+checked over CDP (tower → 4, "5010 wct" → 4, reifen → 2).
 
 **October 27, 2026 (5010 `/live/wct` — PROVISIONAL championship in the
 board look, PRO / AM):** Thomas wanted the live projection (old /overlay view
