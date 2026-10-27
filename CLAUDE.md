@@ -224,6 +224,13 @@ but we logged "iRacing confirmed" — #11's EOL pace bit was ALREADY set. Now
 send_chat records the state BEFORE the command and only an off → on change
 confirms; already set = "cannot confirm"; EOL / wave-by without a caution =
 "iRacing only accepts this under a caution". test 103/103.
+THEN (same session): EOL of the leader UNDER a caution and Deploy Pace Car
+both confirmed. Version 0.1.2 (visible in the header) + raw flag bits
+[session / car / pace] in the not-confirmed lines. Official INC still 0x
+for everyone while iRaceControl on the SAME PC showed points → 0.1.3 also
+reads DriverInfo.Drivers[].TeamIncidentCount / CurDriverIncidentCount (live
+for an admin; ResultsPositions lagged), highest real value per car wins;
+/api/incidents/debug shows team_inc / driver_inc beside incidents. test 105.
 
 **October 27, 2026 (iCASControl first real run — Thomas's Spa AI practice
 screenshot):** detection works live (spins, "Contact with #28", pit lane).

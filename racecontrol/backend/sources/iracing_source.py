@@ -565,6 +565,32 @@ class IRacingSource(DataSource):
                                 "laps": r.get("LapsComplete")})
                 except (KeyError, TypeError, ValueError):
                     continue
+            # the driver list carries live counts too (TeamIncidentCount =
+            # the car's total, CurDriverIncidentCount = the driver in it) -
+            # 2026-10-27, admin in a hosted session: iRaceControl on the same
+            # PC showed points, ResultsPositions still read 0 for everyone.
+            # Spectators get 0 / -1 there; the highest real value wins.
+            di = self._g("DriverInfo", {}) or {}
+            by_idx = {r["car_idx"]: r for r in raw}
+            for d in di.get("Drivers", []) or []:
+                try:
+                    idx = int(d.get("CarIdx", -1))
+                    if idx < 0 or d.get("CarIsPaceCar") in (1, "1"):
+                        continue
+                    team = int(d.get("TeamIncidentCount", -1) or 0)
+                    cur = int(d.get("CurDriverIncidentCount", -1) or 0)
+                except (TypeError, ValueError):
+                    continue
+                best = max(team, cur)
+                if best >= 0 and best > totals.get(idx, -1):
+                    totals[idx] = best
+                row = by_idx.get(idx)
+                if row is None:
+                    row = by_idx[idx] = {"car_idx": idx, "incidents": None,
+                                         "laps": None}
+                    raw.append(row)
+                row["team_inc"] = team
+                row["driver_inc"] = cur
             self._note_inc_debug(session_num, cur_session, raw)
             for idx, delta, total in self.official.update(session_num, totals):
                 out.append(IncidentEvent(car_idx=idx, points=delta,
@@ -608,7 +634,9 @@ class IRacingSource(DataSource):
             "my_car_idx": me,
             "my_name": names.get(me, ("", ""))[1],
             "result_rows": len(raw),
-            "cars_with_points": sum(1 for r in raw if (r["incidents"] or 0) > 0),
+            "cars_with_points": sum(
+                1 for r in raw if max(r["incidents"] or 0, r.get("team_inc") or 0,
+                                      r.get("driver_inc") or 0) > 0),
             "rows": raw,
             "baseline": {str(k): v for k, v in self.official.totals.items()},
         }

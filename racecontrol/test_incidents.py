@@ -320,6 +320,20 @@ f2 = src._read_frame(0.1)
 pts = [i for i in f2.incidents if i.source == "points"]
 check("rise -> points event", len(pts) == 1 and pts[0].car_idx == 1
       and pts[0].points == 4 and pts[0].total == 4, f2.incidents)
+# 2026-10-27 hosted session, admin: points only in the driver list
+src._inc_next = 0
+ir3 = fake_ir(54, {0: 3, 1: 4})
+ir3["DriverInfo"]["Drivers"][0]["TeamIncidentCount"] = 7
+ir3["DriverInfo"]["Drivers"][0]["CurDriverIncidentCount"] = 5
+ir3["DriverInfo"]["Drivers"][1]["TeamIncidentCount"] = -1
+src._ir = ir3
+f3 = src._read_frame(0.1)
+pts = [i for i in f3.incidents if i.source == "points"]
+check("live count from DriverInfo TeamIncidentCount (results still 3) -> +4x",
+      len(pts) == 1 and pts[0].car_idx == 0 and pts[0].points == 4
+      and pts[0].total == 7 and f3.incident_totals[1] == 4, f3.incidents)
+check("debug shows both sources", src.inc_debug["rows"][0].get("team_inc") == 7
+      and src.inc_debug["rows"][0].get("incidents") == 3, src.inc_debug["rows"])
 check("sector status reported", src.sector_status.get("on") is True
       and src.sector_status.get("sectors") == 3, src.sector_status)
 dbg = src.inc_debug
