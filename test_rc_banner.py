@@ -189,6 +189,19 @@ r = cl.post("/rc/say", json={"text": "Track limits warning #7"})
 st = cl.get("/rc/state").get_json()
 check("W3 manual message", r.status_code == 200 and st["messages"][-1]["text"] == "Track limits warning #7")
 check("W4 empty refused", cl.post("/rc/say", json={"text": " "}).status_code == 400)
+r = cl.post("/rc/steward", json={"kind": "penalty", "headline": "DRIVE THROUGH PENALTY",
+                                  "text": "Avoidable contact", "car": "77", "driver": "Max Muster"})
+m = cl.get("/rc/state").get_json()["messages"][-1]
+check("W5 iCAS steward decision", r.status_code == 200 and m["source"] == "icas" and m["kind"] == "penalty"
+      and m["car"]["num"] == "77" and m["car"]["label"] == "Max Muster", str(m))
+cl.post("/rc/steward", json={"kind": "bogus", "headline": "", "text": "Pit lane open"})
+m = cl.get("/rc/state").get_json()["messages"][-1]
+check("W6 unknown kind -> message", m["kind"] == "message" and m["car"] is None, str(m))
+check("W7 empty steward refused", cl.post("/rc/steward", json={"kind": "penalty"}).status_code == 400)
+n = len(rc.feed.list())
+rc.feed.add("iracing", "penalty", "BLACK FLAG · PENALTY", "", {"num": "77", "label": "Max Muster"})
+check("W8 iRacing black flag after iCAS's penalty for the car: skipped", len(rc.feed.list()) == n)
+check("W9 banner page knows ?icas=", "SHOW_ICAS" in cl.get("/").get_data(as_text=True))
 
 print()
 print("ALL PASS" if not failures else f"FAILURES: {failures}")

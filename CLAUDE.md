@@ -192,6 +192,25 @@ second line `/all #N Driver: DRIVE THROUGH - reason` (REASON_LINE, also for
 resolve). test_incidents.py 100/100; menu checked in Chromium (opens on the
 right car 8/8, preset → car action sent + logged). NOT tried in iRacing.
 
+**October 27, 2026 (iCASControl STEP 3a — decisions onto the stream banner
+5019; Thomas: step 2 all tested, "then start step 3"):** NEW
+`racecontrol/backend/stream.py` (BannerOut: urllib POST in a thread,
+`data/stream_config.json` {enabled OFF by default, banner_url, kinds}) →
+5019 NEW `POST /rc/steward` {kind, headline, text, car number, driver, secs},
+source "icas" (car via poller.find_car, else number + driver from iCAS;
+`?icas=0` hides; `_steward_said` covers "icas" too → iRacing's black flag /
+DQ for the same car within 20 s not shown twice). Engine.to_stream():
+resolve UNDER INVESTIGATION → investigation ("#14 and #7 - reason"), NO ACTION
+/ RACE INCIDENT → nfa, WARNING → warning, DT / S&G / TIME PENALTY ("10 SECOND
+TIME PENALTY") / DSQ → penalty, car menu DT / S&G / time / DSQ / clear, RC
+message → message; NOTED / EOL / wave-by / admin never. Result in the log
+("On the stream banner: …" / "NOT reached (…) - is 5019 running at …?").
+Header STREAM BANNER + Address (dialog) + Test. iCAS often runs on the
+ADMIN's PC, the banner on the stream PC → address = LAN URL. Version 0.1.4.
+test_incidents 120/120, test_rc_banner 55 (W5-W9); real HTTP iCAS sender →
+banner server checked, header rendered. NOT tried live. Next: penalties on
+the tower, Auto Steward. Restart 5019 + iCAS.
+
 **October 27, 2026 (iCASControl STEP 2 — steward commands into the iRacing
 chat; Thomas: incidents now match iRaceControl, selection works, go on):**
 the old IRACECONTROL folder (Y:\mnt\AI\Projects\IRACECONTROL) is the May 22

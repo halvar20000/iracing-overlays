@@ -70,6 +70,15 @@ RACE_CONTROL_MESSAGE / SEQUENCER_MESSAGE → ATVO_INFO · NOTED / INVESTIGATING
 CLEAR_PENALTIES → ATVO_CLEAR_PENALTY · TIME_PENALTY / DRIVE_THROUGH / STOP_GO
 / DSQ → ATVO_PENALTY · alles andere (v. a. PRIVATE) kein ATVO-Ziel.
 
+## Aus unserem iCASControl (8080)
+
+iCAS schickt Steward-Entscheidungen direkt hierher (`POST /rc/steward`,
+Quelle „icas“): im iCAS-Header **STREAM BANNER** einschalten, unter
+**Address** die Adresse dieses Overlays eintragen (auf dem Stream-PC
+`http://192.168.86.138:5019`, auf demselben PC `http://localhost:5019`),
+**Test** zeigt „TEST · iCASControl“. `?icas=0` blendet diese Meldungen in
+einer Quelle aus.
+
 ## Erster Test (GT3 WCT, Dienstag)
 
 Welche Hub-Methoden iRaceControl aufruft (Namen, Argumente), ist nirgends

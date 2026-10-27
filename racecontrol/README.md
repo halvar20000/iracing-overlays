@@ -165,6 +165,27 @@ wave-by, clear or yellow the flag bits are watched for 6 s: the log says
 overridden in `data/chat_config.json` → `"commands": {"notify": "..."}`.
 In simulator / replay mode the commands are only written to the log.
 
+## Decisions on the stream banner (step 3, October 2026)
+
+Header switch **STREAM BANNER** (off by default) + **Address** (the Race
+Control overlay `iracing_rc_banner.py` on the stream PC, e.g.
+`http://192.168.86.138:5019`) + **Test**. Saved in `data/stream_config.json`
+(`"kinds": {"warning": false}` keeps a kind off the stream).
+
+| Decision | Banner |
+|---|---|
+| UNDER INVESTIGATION | blue INVESTIGATION, "#14 and #7 - reason" |
+| NO ACTION / RACE INCIDENT | NO FURTHER ACTION |
+| WARNING | white WARNING + reason |
+| DRIVE THROUGH / STOP/GO / TIME PENALTY (+ seconds) / DSQ | black PENALTY + reason |
+| Clear penalties (car menu) | CLEAR |
+| RC message to all | RACE CONTROL message |
+
+NOTED, EOL, wave-by, admin / chat commands never go on air. Each message is a
+`POST /rc/steward` to the banner; the log says "On the stream banner: …" or
+"Stream banner NOT reached (…)". iRacing's own black flag / DQ for the same car
+within 20 s is not shown a second time by the banner.
+
 ## What works today vs. what is honest to flag
 
 Live timing, the real track map, the incident/event log, gaps and intervals,

@@ -18,6 +18,7 @@ import contextlib
 import json
 import re
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -27,7 +28,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from backend import APP_NAME, __version__
-from backend import chat
+from backend import chat, stream
 from backend.race_state import RaceState, save_json
 from backend.sources.base import DataSource
 from backend.sources.simulator import SimulatorSource
@@ -67,6 +68,10 @@ class Engine:
         self._saved_rev = -1
         self._saved_at = 0.0
         self.chat_cfg = chat.load_config()
+        self.stream_cfg = stream.load_config()
+        self._stream_lock = threading.Lock()
+        self._stream_log: list[str] = []
+        self.banner = stream.BannerOut(self._banner_done)
 
     # -- source management --------------------------------------------------
 
@@ -130,6 +135,7 @@ class Engine:
         if callable(drain):
             for line in drain():
                 self.state.note_system(line, category="flag")
+        self._drain_stream_log()
 
     # -- autosave -----------------------------------------------------------
 
@@ -228,6 +234,48 @@ class Engine:
             text, self.chat_cfg.get("method", "post"),
             float(self.chat_cfg.get("char_delay_ms", 6) or 6), verify)
 
+    # -- decisions onto the stream (step 3) -----------------------------------
+
+    def stream_status(self) -> dict:
+        return {"enabled": bool(self.stream_cfg.get("enabled")),
+                "banner_url": self.stream_cfg.get("banner_url", ""),
+                "kinds": dict(self.stream_cfg.get("kinds") or {})}
+
+    def to_stream(self, kind: str, headline: str, car=None, text: str = "",
+                  force: bool = False, wait: bool = False) -> str:
+        """One message for the Race Control banner (5019)."""
+        cfg = self.stream_cfg
+        if not force:
+            if not cfg.get("enabled"):
+                return "stream OFF"
+            if not (cfg.get("kinds") or {}).get(kind, True):
+                return f"{kind} not sent to the stream (setting)"
+        url = stream.clean_url(cfg.get("banner_url", ""))
+        if not url:
+            return "no banner address set"
+        body = {"kind": kind, "headline": headline, "text": text,
+                "car": car.number if car is not None else "",
+                "driver": car.driver if car is not None else "",
+                "source": "icas"}
+        self.banner.send(url, body, wait=wait)
+        return "to the stream banner"
+
+    def _banner_done(self, ok: bool, info: str, body: dict) -> None:
+        what = (body.get("headline") or body.get("text") or "")[:60]
+        num = f" #{body['car']}" if body.get("car") else ""
+        line = (f"On the stream banner: {what}{num}" if ok else
+                f"Stream banner NOT reached ({info}): {what}{num} - is the "
+                f"Race Control overlay (5019) running at "
+                f"{self.stream_cfg.get('banner_url')}?")
+        with self._stream_lock:
+            self._stream_log.append(line)
+
+    def _drain_stream_log(self) -> None:
+        with self._stream_lock:
+            lines, self._stream_log = self._stream_log, []
+        for line in lines:
+            self.state.note_system(line, category="flag")
+
     # -- client messaging ---------------------------------------------------
 
     def initial_messages(self) -> list[dict]:
@@ -237,7 +285,8 @@ class Engine:
             {"type": "track", **self.state.track_payload()},
             {"type": "events", **self.state.events_payload()},
             {"type": "snapshot", **self.state.snapshot(),
-             "running": self.running, "chat": self.chat_status()},
+             "running": self.running, "chat": self.chat_status(),
+             "stream": self.stream_status()},
         ]
 
     def handle_client_message(self, msg: dict) -> dict | None:
@@ -260,6 +309,28 @@ class Engine:
                 f" (method {self.chat_cfg.get('method', 'post')})")
             return {"type": "ack", "text": "chat to iRacing "
                     + ("ON" if self.chat_cfg["enabled"] else "OFF")}
+
+        if action == "set_stream":
+            if "enabled" in msg:
+                self.stream_cfg["enabled"] = bool(msg.get("enabled"))
+            if "banner_url" in msg:
+                self.stream_cfg["banner_url"] = stream.clean_url(
+                    msg.get("banner_url"))
+            if isinstance(msg.get("kinds"), dict):
+                for k, v in msg["kinds"].items():
+                    if k in stream.KINDS:
+                        self.stream_cfg.setdefault("kinds", {})[k] = bool(v)
+            stream.save_config(self.stream_cfg)
+            st.note_system(
+                f"Decisions to the stream banner "
+                f"{'ON' if self.stream_cfg['enabled'] else 'OFF'} "
+                f"({self.stream_cfg.get('banner_url')})")
+            return {"type": "ack", "text": "stream banner "
+                    + ("ON" if self.stream_cfg["enabled"] else "OFF")}
+
+        if action == "stream_test":
+            return {"type": "ack", "text": self.to_stream(
+                "message", "", text="TEST · iCASControl", force=True)}
 
         if action == "chat_test":
             return {"type": "ack", "text": self.to_iracing("test", force=True)}
@@ -298,6 +369,18 @@ class Engine:
                     "penalty_reason", car=car,
                     msg=f"TIME PENALTY +{seconds:.0f}s"
                     + (f" - {message}" if message else ""))
+            banner = stream.RESOLUTION_BANNER.get(resolution)
+            if banner and car is not None and "->" in result:
+                kind, head = banner
+                if resolution == "TIME PENALTY":
+                    head = stream.time_headline(seconds)
+                text = message
+                if kind in ("investigation", "nfa"):
+                    other = st.cars.get(getattr(ev, "other_car_idx", -1))
+                    if other is not None:
+                        text = (f"#{car.number} and #{other.number}"
+                                + (f" - {message}" if message else ""))
+                result += " | " + self.to_stream(kind, head, car=car, text=text)
             return {"type": "ack", "text": result}
 
         if action == "replay":
@@ -339,6 +422,13 @@ class Engine:
                     result += " | " + self.to_iracing(
                         kind, car=car, msg=reason,
                         verify=CHAT_VERIFY_KIND.get(kind))
+            banner = stream.CAR_BANNER.get(command)
+            if banner and car is not None and result != "car not found":
+                kind, head = banner
+                if command == "time_penalty":
+                    head = stream.time_headline(float(msg.get("seconds", 0.0)))
+                result += " | " + self.to_stream(
+                    kind, head, car=car, text=str(msg.get("message", "")))
             return {"type": "ack", "text": result}
 
         if action == "rc_message":
@@ -348,6 +438,7 @@ class Engine:
             result = st.rc_message(target, text, int(msg.get("car_idx", -1)))
             if target == "RC":
                 result += " | " + self.to_iracing("message_all", msg=text)
+                result += " | " + self.to_stream("message", "", text=text)
             elif target == "PRIVATE" and car is not None:
                 result += " | " + self.to_iracing("notify", car=car, msg=text)
             return {"type": "ack", "text": result}
@@ -499,7 +590,8 @@ async def _race_loop() -> None:
         # The fast snapshot, every tick.
         messages.append(json.dumps(
             {"type": "snapshot", **engine.state.snapshot(),
-             "running": engine.running, "chat": engine.chat_status()}))
+             "running": engine.running, "chat": engine.chat_status(),
+             "stream": engine.stream_status()}))
 
         dead: list[WebSocket] = []
         for client in list(engine.clients):

@@ -113,7 +113,9 @@ function handleMessage(msg) {
       State.snapshot = msg;
       State.running = msg.running;
       State.chat = msg.chat || null;
+      State.stream = msg.stream || null;
       updateChatToggle();
+      updateStreamToggle();
       render();
       break;
     case 'ack':
@@ -197,6 +199,26 @@ function updateChatToggle() {
     + 'commands are only written to the log';
   const m = $('#chat-method');
   if (document.activeElement !== m) m.value = c.method || 'post';
+}
+
+function updateStreamToggle() {
+  const s = State.stream;
+  if (!s) return;
+  const t = $('#stream-toggle');
+  t.textContent = s.enabled ? 'STREAM BANNER ON' : 'STREAM BANNER OFF';
+  t.className = 'chat-toggle stream ' + (s.enabled ? 'on' : 'off');
+  t.title = 'Race Control overlay: ' + (s.banner_url || '-');
+}
+
+async function askStreamUrl() {
+  const r = await askReason({
+    title: 'Stream banner address',
+    label: 'Race Control overlay (5019) on the stream PC, e.g. http://192.168.86.138:5019',
+    value: (State.stream && State.stream.banner_url) || 'http://localhost:5019',
+    required: true,
+  });
+  if (r) send({ action: 'set_stream', banner_url: r.text });
+  return r;
 }
 
 function updateRunToggle() {
@@ -417,7 +439,7 @@ let dlgResolve = null;
 function askReason(opts) {
   $('#dlg-title').textContent = opts.title;
   $('#dlg-label').textContent = opts.label;
-  $('#dlg-text').value = '';
+  $('#dlg-text').value = opts.value || '';
   $('#dlg-secs-row').classList.toggle('hidden', !opts.seconds);
   $('#dlg-secs').value = '5';
   const pre = $('#dlg-presets');
@@ -550,6 +572,15 @@ function wire() {
   });
   $('#chat-test').addEventListener('click', () =>
     send({ action: 'chat_test' }));
+
+  // decisions to the stream banner (step 3)
+  $('#stream-toggle').addEventListener('click', () => {
+    const on = !(State.stream && State.stream.enabled);
+    send({ action: 'set_stream', enabled: on });
+  });
+  $('#stream-url').addEventListener('click', askStreamUrl);
+  $('#stream-test').addEventListener('click', () =>
+    send({ action: 'stream_test' }));
 
   // RUN / STOP
   $('#run-toggle').addEventListener('click', () => {

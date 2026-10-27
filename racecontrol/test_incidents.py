@@ -755,5 +755,87 @@ check("snapshot carries the chat status",
       eng4.initial_messages()[-1]["chat"] == {"enabled": False, "method": "post",
                                               "available": True})
 
+print("Decisions to the stream banner (step 3)")
+from backend import stream  # noqa: E402
+stream.CONFIG_PATH = __import__("pathlib").Path(tmp) / "stream_config.json"
+eng6 = server.Engine(force_sim=True)
+eng6.state = RaceState()
+eng6.state.ingest(frame(10, [cf(0, "7"), cf(1, "14")]))
+posted = []
+eng6.banner.post = lambda url, body: posted.append((url, body)) or (True, "HTTP 200")
+check("stream OFF by default: nothing posted",
+      "stream OFF" in eng6.handle_client_message(
+          {"action": "car", "car_idx": 1, "command": "dsq"})["text"] and not posted)
+eng6.handle_client_message({"action": "set_stream", "enabled": True,
+                            "banner_url": "192.168.86.138:5019/"})
+check("switch + address saved to data/stream_config.json",
+      json.load(open(stream.CONFIG_PATH)) ["banner_url"] == "http://192.168.86.138:5019"
+      and stream.load_config()["enabled"] is True)
+eng6.banner.send = lambda url, body, wait=False: stream.BannerOut.send(
+    eng6.banner, url, body, wait=True)
+eng6.handle_client_message({"action": "car", "car_idx": 1, "command": "drive_through",
+                            "message": "Track Limits"})
+url, body = posted[-1]
+check("car drive-through -> banner penalty for #14 with the reason",
+      url == "http://192.168.86.138:5019/rc/steward" and body["kind"] == "penalty"
+      and body["headline"] == "DRIVE THROUGH PENALTY" and body["car"] == "14"
+      and body["text"] == "Track Limits" and body["source"] == "icas", body)
+eng6.handle_client_message({"action": "car", "car_idx": 1, "command": "time_penalty",
+                            "seconds": 5, "message": ""})
+check("time penalty headline carries the seconds",
+      posted[-1][1]["headline"] == "5 SECOND TIME PENALTY", posted[-1][1])
+eng6.handle_client_message({"action": "car", "car_idx": 1, "command": "clear_penalties"})
+check("clear penalties -> kind clear", posted[-1][1]["kind"] == "clear")
+k = len(posted)
+eng6.handle_client_message({"action": "car", "car_idx": 1, "command": "eol"})
+check("EOL is not a stream message", len(posted) == k)
+eng6.state.ingest(frame(11, [cf(0, "7"), cf(1, "14")],
+                        [IncidentEvent(1, 0, "contact", 3, 0, source="detected",
+                                       text="contact")]))
+inc = [e for e in eng6.state.events if e.is_incident][-1]
+eng6.handle_client_message({"action": "resolve", "id": inc.id,
+                            "resolution": "NOTED"})
+check("NOTED never goes on air", len(posted) == k)
+eng6.handle_client_message({"action": "resolve", "id": inc.id,
+                            "resolution": "UNDER INVESTIGATION"})
+b6 = posted[-1][1]
+check("UNDER INVESTIGATION -> investigation, both cars named",
+      b6["kind"] == "investigation" and b6["text"].startswith("#14 and #7"), b6)
+eng6.handle_client_message({"action": "resolve", "id": inc.id,
+                            "resolution": "WARNING", "message": "Avoidable contact"})
+check("WARNING -> warning with the reason",
+      posted[-1][1]["kind"] == "warning" and posted[-1][1]["text"] == "Avoidable contact")
+def new_inc6(t):
+    eng6.state.ingest(frame(t, [cf(0, "7"), cf(1, "14")],
+                            [IncidentEvent(1, 0, "contact", 3, 0, source="detected",
+                                           text="contact")]))
+    return [e for e in eng6.state.events if e.is_incident][-1]
+eng6.handle_client_message({"action": "resolve", "id": new_inc6(12).id,
+                            "resolution": "TIME PENALTY", "seconds": 10})
+check("decision TIME PENALTY -> '10 SECOND TIME PENALTY'",
+      posted[-1][1]["headline"] == "10 SECOND TIME PENALTY")
+eng6.handle_client_message({"action": "rc_message", "target": "RC",
+                            "text": "Pit lane closed", "car_idx": -1})
+check("RC message -> banner message", posted[-1][1]["kind"] == "message"
+      and posted[-1][1]["text"] == "Pit lane closed" and posted[-1][1]["car"] == "")
+eng6.handle_client_message({"action": "set_stream", "kinds": {"warning": False}})
+k = len(posted)
+ack = eng6.handle_client_message({"action": "resolve", "id": new_inc6(13).id,
+                                  "resolution": "WARNING"})
+check("a kind switched off is not sent", len(posted) == k
+      and "not sent to the stream" in ack["text"], ack)
+eng6._drain_stream_log()
+check("banner result written to the log",
+      any("On the stream banner: DRIVE THROUGH PENALTY #14" in e.text
+          for e in eng6.state.events))
+eng6.banner.post = lambda url, body: (False, "Connection refused")
+eng6.handle_client_message({"action": "stream_test"})
+eng6._drain_stream_log()
+check("banner not reached -> clear log line",
+      any("Stream banner NOT reached (Connection refused)" in e.text
+          for e in eng6.state.events))
+check("snapshot carries the stream status",
+      eng6.initial_messages()[-1]["stream"]["banner_url"] == "http://192.168.86.138:5019")
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

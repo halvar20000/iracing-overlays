@@ -83,6 +83,8 @@ PACE_FLAGS = [
     (P_FREE_PASS, "pace", "FREE PASS"),
 ]
 CAR_REPEAT_S = 30.0       # same flag for the same car: once per 30 s
+STEWARD_SOURCES = ("atvo", "icas")   # steward software: iRaceControl, our iCASControl
+STEWARD_KINDS = ("message", "warning", "penalty", "dq", "investigation", "nfa", "clear")
 STEWARD_COVERS_S = 20.0   # iRaceControl message about a car hides iRacing's flag for it
 
 
@@ -127,7 +129,7 @@ class Feed:
         for m in reversed(self._msgs):
             if now - m["t"] > STEWARD_COVERS_S:
                 break
-            if m["source"] == "atvo" and m.get("car") and m["car"].get("num") == num:
+            if m["source"] in STEWARD_SOURCES and m.get("car") and m["car"].get("num") == num:
                 return True
         return False
 
@@ -809,6 +811,32 @@ def rc_say():
     return jsonify({"ok": True})
 
 
+@app.route("/rc/steward", methods=["POST"])
+def rc_steward():
+    """A steward decision from iCASControl (racecontrol/, 8080):
+    {kind, headline, text, car (number), driver, secs}."""
+    body = request.get_json(silent=True) or {}
+    kind = str(body.get("kind") or "message")
+    if kind not in STEWARD_KINDS:
+        kind = "message"
+    head = str(body.get("headline") or "").strip()[:80]
+    text = str(body.get("text") or "").strip()[:200]
+    if not head and not text:
+        return jsonify({"ok": False, "error": "empty"}), 400
+    num = str(body.get("car") or "").strip().lstrip("#")
+    car = None
+    if num:
+        car = poller.find_car(num) or {
+            "num": num, "label": str(body.get("driver") or "").strip()[:40],
+            "driver": "", "class": "", "color": None, "text": None}
+    try:
+        secs = float(body["secs"]) if body.get("secs") else None
+    except (TypeError, ValueError):
+        secs = None
+    feed.add("icas", kind, head, text, car, secs)
+    return jsonify({"ok": True})
+
+
 @app.route("/rc/test", methods=["POST", "GET"])
 def rc_test():
     feed.add("manual", "message", "", "TEST · Race Control overlay")
@@ -852,13 +880,13 @@ BANNER_HTML = r"""<!DOCTYPE html>
 <script>
 const qs = new URLSearchParams(location.search);
 const SECS = parseFloat(qs.get('secs') || '8');
-const SHOW_FLAGS = qs.get('flags') !== '0', SHOW_ATVO = qs.get('atvo') !== '0';
+const SHOW_FLAGS = qs.get('flags') !== '0', SHOW_ATVO = qs.get('atvo') !== '0', SHOW_ICAS = qs.get('icas') !== '0';
 document.getElementById('wrap').style.setProperty('--z', qs.get('zoom') || '1');
 if (qs.get('debug') === '1') document.body.classList.add('debug');
 document.addEventListener('keydown', e => { if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('debug'); });
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let lastId = null; const queue = []; let busy = false;
-function wanted(m) { return m.source === 'iracing' ? SHOW_FLAGS : m.source === 'atvo' ? SHOW_ATVO : true; }
+function wanted(m) { return m.source === 'iracing' ? SHOW_FLAGS : m.source === 'atvo' ? SHOW_ATVO : m.source === 'icas' ? SHOW_ICAS : true; }
 function show(m) {
   busy = true;
   const rc = document.getElementById('rc');

@@ -162,6 +162,7 @@ button { font-family: var(--sans); cursor: pointer; }
 .chat-toggle.on  { background: #2a1030; border-color: #d36bff; color: #e7a8ff; }
 .chat-toggle.off { background: var(--panel-2); color: var(--mut); }
 .chat-toggle.na  { opacity: .45; }
+.chat-toggle.stream.on { background: #10222e; border-color: #4fc3ff; color: #a8e2ff; }
 .chat-sub { display: flex; gap: 3px; }
 .chat-sub select, .chat-sub button { flex: 1; font-size: 9.5px; padding: 2px 4px;
   background: var(--panel-2); color: var(--dim); border: 1px solid var(--border);

@@ -20,8 +20,9 @@ admin + spin / contact / stopped detection), replay of any log line, replay
 footage never logged, autosave + recovery. Also sector times, best lap from
 lap 1, map colour modes. **Step 2 done (October 27, tested in a hosted session as
 admin):** admin chat commands into iRacing (`backend/chat.py`, see README).
-Next: step 3 = push decisions to the stream (RC banner 5019, tower) and the
-Auto Steward.
+**Step 3a done (October 27):** decisions go to the Race Control banner 5019
+(`backend/stream.py`, header STREAM BANNER). Next: penalties on the tower,
+then the Auto Steward.
 
 These items turn iRacing mode from "accurate timing" into a tool you can steward
 a real CAS Community race with.
