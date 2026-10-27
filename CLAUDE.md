@@ -181,6 +181,17 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 27, 2026 (MASTER SWITCH for the AI show — `"ki_show": false`):**
+the moderation auto-started at start_at during a PCC stream (OBS streaming)
+and handed over to REGIE. show_config.json `"ki_show": false` now switches
+the whole AI show off: show_runner.show_enabled() (file re-read every 2 s by
+mtime — no restart) → ShowRunner.tick returns (a running show is stopped),
+start() / prepare() refuse with a log line (no script, no paid Gabi video),
+dashboard _maybe_post_show skips the Abspann; /show and /abspann say "KI-Show
+AUS". No file / no key = on (old behaviour). REGIE itself only ever comes on
+by hand or from the show. test_show_runner +7. Stream PC had auto_start true,
+start_at 19:05. Restart 5000 once for the code.
+
 **October 27, 2026 (overtake ticker: only PRO > PRO and AM > AM in GT3 WCT):**
 dashboard `_ot_classes()` groups by (CarClassID, PRO / AM / UNRATED) when
 cls_proam says the field is WCT (poller.proam.lookup_field), so a PRO passing

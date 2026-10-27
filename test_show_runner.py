@@ -804,5 +804,38 @@ check("missing sources: completes", wait_for(lambda: r6.state == "done", 15, tic
 check("missing sources: error reported", "Letztes Rennen" in r6.last_error or "Streckenvideo" in r6.last_error
       or any("Letztes Rennen" in e["msg"] for e in r6.log), r6.last_error)
 
+# MASTER SWITCH show_config.json {"ki_show": false}: nothing starts, live
+_real_cfg = sr.CONFIG_FILE
+_tmp = Path(tempfile.mkdtemp()) / "show_config.json"
+sr.CONFIG_FILE = _tmp
+def _flip(on):
+    _tmp.write_text(json.dumps({"ki_show": on}), encoding="utf-8")
+    sr._ENABLED_CACHE.update(t=0.0, mtime=None)
+_flip(False)
+obs9 = FakeObs(SCENES, media={"Streckenvideo": 0.3})
+now9 = dt.datetime.now()
+r9, ev9 = make(obs9, Speaker(), start_at=now9.strftime("%H:%M"), only_while_streaming=False)
+r9.start()
+check("ki_show false: start by button refused", r9.state == "idle" and obs9.current != "Moderator"
+      and "AUS" in r9.last_error, (r9.state, r9.last_error))
+for _ in range(6):
+    r9.tick(); time.sleep(0.05)
+check("ki_show false: no automatic start at start_at", r9.state == "idle" and ev9 == [], r9.state)
+r9.prepare()
+check("ki_show false: no script written", not r9.script, r9.script)
+check("ki_show false: status says so", r9.status()["enabled"] is False)
+_flip(True)
+r9.last_error = ""
+for _ in range(6):
+    r9.tick(); time.sleep(0.05)
+check("ki_show true again (no restart): automatic start works", r9.state in ("running", "done"), r9.state)
+_flip(False)
+r9.tick()
+check("ki_show false while running: show stopped", r9.state == "stopped", r9.state)
+_tmp.unlink()
+sr._ENABLED_CACHE.update(t=0.0, mtime=None)
+check("no file = on", sr.show_enabled() is True)
+sr.CONFIG_FILE = _real_cfg
+
 print(f"\n{'ALL PASS' if not fails else f'{fails} FAILED'}")
 raise SystemExit(1 if fails else 0)

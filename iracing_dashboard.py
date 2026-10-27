@@ -2007,7 +2007,8 @@ class TelemetryPoller:
         """Start the Abspann post_delay_s after the chequered flag of the race
         REGIE is running — once per race."""
         cfg = self.post_show.cfg
-        if not (cfg.get("post_auto") and self.director_enabled and self._cur_is_race):
+        if not (cfg.get("post_auto") and show_runner.show_enabled()
+                and self.director_enabled and self._cur_is_race):
             self._chequered_at = None
             return
         key = (self.ir["SessionUniqueID"], self.ir["SessionNum"])
@@ -5808,7 +5809,9 @@ async function tick() {
                       done: BASE === '/abspann' ? 'fertig' : 'fertig – REGIE übernimmt',
                       stopped: 'gestoppt'}[d.state] || d.state;
     st.className = 'pill ' + d.state;
-    document.getElementById('when').textContent = BASE === '/abspann'
+    document.getElementById('when').textContent = d.enabled === false
+        ? 'KI-Show AUS (show_config.json "ki_show": false) - startet nicht, auch nicht per Knopf'
+        : BASE === '/abspann'
         ? 'Startet automatisch ' + Math.round((d.post_delay_s || 120) / 60) + ' Min. nach der Zielflagge, wenn die REGIE läuft'
         : d.auto_start
         ? 'Automatischer Start ' + d.start_at + ' Uhr, wenn OBS streamt' + (d.ran_today ? ' (heute schon gelaufen)' : '')

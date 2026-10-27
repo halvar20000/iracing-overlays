@@ -164,6 +164,37 @@ WORDS_PER_S = 2.4                     # edge-tts at +10 %: ~2.4 German words / s
 DEADLINE_PAD_S = 15.0                 # a segment moves on this long after its speech should have ended
 
 
+# MASTER SWITCH (Thomas 2026-10-27, after the moderation took over a PCC
+# stream at 19:40): show_config.json {"ki_show": false} switches the whole AI
+# show off - no moderation (automatic or by button), no Abspann, no script /
+# Gabi videos written ahead, so the show never switches REGIE on either.
+# Read from the file every few seconds: takes effect WITHOUT a restart.
+_ENABLED_CACHE = {"mtime": None, "t": 0.0, "on": True}
+
+
+def show_enabled() -> bool:
+    now = time.monotonic()
+    c = _ENABLED_CACHE
+    if now - c["t"] < 2.0:
+        return c["on"]
+    c["t"] = now
+    try:
+        m = CONFIG_FILE.stat().st_mtime
+    except OSError:
+        c["mtime"], c["on"] = None, True        # no file = defaults = on
+        return True
+    if m != c["mtime"]:
+        c["mtime"] = m
+        try:
+            c["on"] = json.loads(CONFIG_FILE.read_text(encoding="utf-8")).get("ki_show", True) is not False
+        except (OSError, ValueError):
+            pass                                # half-written file: keep the last answer
+    return c["on"]
+
+
+OFF_MSG = "KI-Show ist AUS (show_config.json \"ki_show\": false)"
+
+
 def load_config() -> dict:
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
     try:
@@ -1068,6 +1099,7 @@ class ShowRunner:
                     "segments": self.segments, "script": self.script,
                     "script_source": self.script_source, "script_at": self.script_at,
                     "start_at": self.cfg.get("start_at"), "auto_start": self.cfg.get("auto_start"),
+                    "enabled": show_enabled(),
                     "ran_today": self.ran_on == self.local_now().date(),
                     "log": self.log[-30:], "last_error": self.last_error,
                     "facts": self.facts, "order": self.order or self.segments,
@@ -1147,6 +1179,10 @@ class ShowRunner:
 
     def prepare(self):
         """Collect the facts and write the script (blocking: a few seconds with Claude)."""
+        if not show_enabled():
+            self._preparing = False
+            self._note(OFF_MSG + " - kein Skript")
+            return
         self._preparing = True
         with self._lock:
             prev = self.state
@@ -1205,6 +1241,10 @@ class ShowRunner:
                        + (" – Gabi-Video bestellt" if self._avatar_on() and "goodbye" in self._avatar_segs() else ""))
 
     def start(self):
+        if not show_enabled():
+            self._note(OFF_MSG + " - Start abgelehnt")
+            self.last_error = OFF_MSG
+            return
         with self._lock:
             if self.state == "running":
                 return
@@ -1264,6 +1304,11 @@ class ShowRunner:
 
     def tick(self):
         """Call every ~0.5 s."""
+        if not show_enabled():
+            if self.state in ("running", "preparing"):
+                self._note(OFF_MSG + " - Ablauf gestoppt")
+                self.stop()
+            return
         with self._lock:
             if self.state == "running":
                 self._tick_segment()
