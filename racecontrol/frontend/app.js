@@ -674,6 +674,11 @@ function updateIncidentActions() {
   const canReplay = State.events.some((e) => e.id === State.replayEvent);
   $('#ia-replay').disabled = !canReplay;
   $('#ia-replay-long').disabled = !canReplay;
+  $('#ia-replay').title = canReplay
+    ? 'Replay from 8 s before (double-click a log line does the same)'
+    : 'Select a line in the race log first (incident or any event)';
+  $('#ia-replay-long').title = canReplay
+    ? 'Replay from 20 s before' : 'Select a line in the race log first';
   const ev = State.events.find((e) => e.id === State.selectedEvent);
   const buttons = $$('#incident-actions .ia-grid button');
   if (!ev) {
