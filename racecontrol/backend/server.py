@@ -937,7 +937,8 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     engine.clients[ws] = {"name": name, "place": place, "token": token}
     try:
         await ws.send_text(json.dumps({"type": "hello", "name": name,
-                                       "place": place, "token": token}))
+                                       "place": place, "token": token,
+                                       "icas": follow.INSTANCE_ID}))
         for message in engine.initial_messages():
             await ws.send_text(json.dumps(message))
         if engine.follower.active and place == "local":

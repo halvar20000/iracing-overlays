@@ -1553,5 +1553,17 @@ check("named tunnel: token + fixed address", procs[-1].cmd[-3:] == ["run", "--to
       "eyJhIjoi"] and named.status()["url"] == "https://icas.example.com")
 named.stop()
 
+# a follow link that leads back to this very iCAS (own tunnel link)
+from backend import follow as _fol
+fs = _fol.Follower(cfg={})
+fs.state = "connecting"
+r = fs._receive(json.dumps({"type": "hello", "name": "Thomas 2",
+                            "icas": _fol.INSTANCE_ID}))
+check("own tunnel link: refused, not followed",
+      r == "refused" and fs.state == "refused" and "THIS iCAS" in fs.info
+      and not fs.active, fs.info)
+r = fs._receive(json.dumps({"type": "hello", "name": "Thomas 2", "icas": "other"}))
+check("another iCAS: followed", fs.state == "connected", fs.state)
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

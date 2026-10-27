@@ -27,6 +27,7 @@ import collections
 import json
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import quote, urlsplit
@@ -36,6 +37,9 @@ CONFIG_PATH = DATA_DIR / "follow_config.json"
 # Actions this PC does itself while following; everything else goes to MAIN.
 LOCAL_ACTIONS = ("follow", "tunnel", "camera", "replay")
 RETRY_S = (2, 4, 8, 15, 30)
+# Sent in every "hello": a follower that gets its OWN id back has been given
+# a link that leads to itself (e.g. its own tunnel link) - that would loop.
+INSTANCE_ID = uuid.uuid4().hex
 
 
 def load_config(path: Optional[Path] = None) -> dict:
@@ -190,6 +194,13 @@ class Follower:
         if kind == "login":
             self.state = "refused"
             self.info = "main iCAS: " + str(msg.get("error") or "refused")
+            self._ws = None
+            self._lost = True
+            return "refused"
+        if kind == "hello" and msg.get("icas") == INSTANCE_ID:
+            self.state = "refused"
+            self.info = ("that link leads back to THIS iCAS - a steward "
+                         "follows the MAIN iCAS from his own PC")
             self._ws = None
             self._lost = True
             return "refused"

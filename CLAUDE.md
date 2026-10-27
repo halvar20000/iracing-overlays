@@ -178,6 +178,17 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 27, 2026 (iCASControl 0.1.13 — following YOURSELF refused):**
+Thomas tested Follow with his own tunnel link on the same PC: STEWARDS showed
+"Thomas", "Thomas 2", "Thomas 2 2 → main iCAS" and chat lines never arrived
+(the iCAS followed itself: its own actions went upstream to itself, its own
+broadcast stopped while following). is_self() only caught localhost URLs.
+Now every "hello" carries `icas` = follow.INSTANCE_ID (uuid per process);
+a Follower that gets its own id back = "refused" ("that link leads back to
+THIS iCAS"). A steward must follow from HIS OWN PC (or just open the link
+in a browser). test_incidents 251/251; real run: self-follow via the LAN IP
+refused, chat works again.
+
 **October 27, 2026 (iCASControl 0.1.12 — sequencer):** Thomas's
 iRaceControl SEQUENCER screenshot (QUALIFY: MSGT 00:00:01 "Start Qualifying
 AM Klasse", 00:15:00 "Ende Qualifying AM Klasse / Start Qualifying PRO
