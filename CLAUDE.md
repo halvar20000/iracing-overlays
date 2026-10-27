@@ -231,6 +231,9 @@ for everyone while iRaceControl on the SAME PC showed points → 0.1.3 also
 reads DriverInfo.Drivers[].TeamIncidentCount / CurDriverIncidentCount (live
 for an admin; ResultsPositions lagged), highest real value per car wins;
 /api/incidents/debug shows team_inc / driver_inc beside incidents. test 105.
+CONFIRMED by Thomas after the update: official points now show live (AI
+session, ResultsPositions[].Incidents stayed 0 for all 20 cars after 4 laps —
+the DriverInfo counts are the live source for an admin).
 
 **October 27, 2026 (iCASControl first real run — Thomas's Spa AI practice
 screenshot):** detection works live (spins, "Contact with #28", pit lane).
