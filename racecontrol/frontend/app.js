@@ -69,15 +69,29 @@ function toast(text) {
 }
 
 // ---- websocket ------------------------------------------------------------
+// ---- who am I (multi-steward) ----------------------------------------------
+function store(kind, key, val) {
+  try {
+    const st = kind === 'local' ? localStorage : sessionStorage;
+    if (val === undefined) return st.getItem(key) || '';
+    st.setItem(key, val);
+  } catch (e) { /* private window */ }
+  return '';
+}
+const Me = { name: store('local', 'icas_name'), pw: store('session', 'icas_pw'),
+  place: '', token: '', loginOpen: false };
+
 function connect() {
-  const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+  const q = new URLSearchParams({ name: Me.name, pw: Me.pw });
+  const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws?${q}`;
   const ws = new WebSocket(url);
   State.ws = ws;
 
   ws.onopen = () => setBadge('#ws-badge', 'connected', 'good');
   ws.onclose = () => {
-    setBadge('#ws-badge', 'reconnecting…', 'bad');
-    setTimeout(connect, 1500);
+    if (State.ws !== ws) return;          // replaced by a new login
+    setBadge('#ws-badge', Me.loginOpen ? 'login needed' : 'reconnecting…', 'bad');
+    if (!Me.loginOpen) setTimeout(connect, 1500);
   };
   ws.onerror = () => ws.close();
   ws.onmessage = (ev) => {
@@ -109,6 +123,7 @@ function handleMessage(msg) {
       $('#log-count').textContent = msg.total || State.events.length;
       renderLog();
       renderCarLog();
+      updateIncidentActions();
       break;
     case 'snapshot':
       State.snapshot = msg;
@@ -123,6 +138,20 @@ function handleMessage(msg) {
       break;
     case 'ack':
       if (msg.text) toast(msg.text);
+      break;
+    case 'login':                         // refused: name / password
+      openLogin(msg.error || 'password needed');
+      break;
+    case 'hello':
+      Me.name = msg.name; Me.place = msg.place; Me.token = msg.token;
+      $('#stw-me').textContent = msg.name + (msg.place === 'local' ? ' (host)' : '');
+      $('#stw-pw').classList.toggle('hidden', msg.place !== 'local');
+      $('#save-link').href = '/api/save' + (msg.place === 'local' ? ''
+        : '?t=' + encodeURIComponent(msg.token));
+      if (msg.place !== 'local' && !store('local', 'icas_name')) openLogin('');
+      break;
+    case 'stewards':
+      onStewards(msg);
       break;
   }
 }
@@ -140,6 +169,7 @@ function render() {
   renderHeader(s);
   renderTiming(s);
   renderSelected(s);
+  renderCamera(s);
   map.update(s.cars);
   map.setSelected(State.selectedCar);
 }
@@ -449,6 +479,10 @@ function logRowHtml(e, compact) {
     esc(e.resolution || 'DONE')}</span>`;
   else if (e.investigating) badge += '<span class="log-badge inv">INV</span>';
   else if (e.noted) badge += '<span class="log-badge noted">NOTED</span>';
+  if (e.claimed_by && !e.resolved)
+    badge += `<span class="log-badge claim" title="${esc(e.claimed_by)} is looking at it">&#128064; ${esc(e.claimed_by)}</span>`;
+  const who = e.decided_by || e.by;
+  if (who) badge += `<span class="log-by" title="${e.decided_by ? 'decided' : 'done'} by ${esc(who)}">&middot; ${esc(who)}</span>`;
   if (e.kind === 'auto_caution_ask' && !(State.deployed || new Set()).has(e.id)
       && (State.snapshot?.session?.time ?? 0) - e.sim_time < 120)
     badge += `<button class="log-act" data-deploy="${e.id}" title="Sends !yellow">DEPLOY CAUTION</button>`;
@@ -606,6 +640,8 @@ function updateIncidentActions() {
   const ev = State.events.find((e) => e.id === State.selectedEvent);
   const buttons = $$('#incident-actions .ia-grid button');
   if (!ev) {
+    $('#ia-claim').disabled = true;
+    $('#ia-claim').textContent = 'I take it';
     head.textContent = 'No incident selected';
     head.classList.remove('active');
     buttons.forEach((b) => (b.disabled = true));
@@ -614,6 +650,96 @@ function updateIncidentActions() {
   head.textContent = `Incident #${ev.id} – car #${ev.car_number} – L${ev.lap}`;
   head.classList.add('active');
   buttons.forEach((b) => (b.disabled = false));
+  const claim = $('#ia-claim');
+  const mine = ev.claimed_by && ev.claimed_by === Me.name;
+  claim.disabled = !!ev.resolved || (!!ev.claimed_by && !mine);
+  claim.classList.toggle('mine', !!mine);
+  claim.textContent = mine ? 'Release' : ev.claimed_by
+    ? '\u{1F440} ' + ev.claimed_by : 'I take it';
+}
+
+// ---- camera (switches the iRacing of the main iCAS PC) ---------------------
+let camSig = '';
+function renderCamera(s) {
+  const cam = s.camera;
+  const box = $('#cam-groups');
+  if ($('#tab-camera').classList.contains('hidden')) return;
+  if (!cam || !(cam.groups || []).length) {
+    if (camSig !== 'none') {
+      box.innerHTML = '<span class="dim">no camera groups (iRacing not connected?)</span>';
+      camSig = 'none';
+    }
+    $('#cam-car').textContent = '—';
+    return;
+  }
+  const sig = cam.groups.map((g) => g.num + g.name).join('|');
+  if (sig !== camSig) {           // rebuilt only when the list changes
+    box.innerHTML = cam.groups.map((g) =>
+      `<button data-group="${g.num}">${esc(g.name)}</button>`).join('');
+    camSig = sig;
+  }
+  $$('#cam-groups button').forEach((b) =>
+    b.classList.toggle('on', +b.dataset.group === cam.group));
+  const car = (s.cars || []).find((c) => c.car_idx === cam.car_idx);
+  $('#cam-car').textContent = car ? `#${car.number} ${car.driver}`
+    : (cam.car_number ? '#' + cam.car_number : '—');
+}
+
+// ---- stewards: who is online, steward chat ---------------------------------
+const Stw = { lastId: null, unread: 0, data: null };
+function onStewards(msg) {
+  Stw.data = msg;
+  const online = msg.online || [];
+  $('#stw-count').textContent = online.length;
+  $('#stw-online').innerHTML = online.map((o) =>
+    `<span class="${o.name === Me.name ? 'me' : ''}">${esc(o.name)}<small>${
+      o.place === 'local' ? 'host' : o.place === 'lan' ? 'LAN' : 'online'}</small></span>`).join('');
+  const chat = msg.chat || [];
+  const open = !$('#stw-panel').classList.contains('hidden');
+  if (Stw.lastId !== null) {
+    const fresh = chat.filter((l) => l.id > Stw.lastId && l.name !== Me.name);
+    if (fresh.length && !open) {
+      Stw.unread += fresh.length;
+      const l = fresh[fresh.length - 1];
+      toast(`💬 ${l.name}: ${l.text}`);
+    }
+  }
+  Stw.lastId = chat.length ? chat[chat.length - 1].id : (Stw.lastId ?? 0);
+  updateUnread();
+  const list = $('#stw-chat');
+  const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+  list.innerHTML = chat.map((l) => `<div class="stw-line${l.name === Me.name ? ' me' : ''}">
+    <time>${new Date(l.t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time><b>${esc(l.name)}</b>${esc(l.text)}</div>`).join('')
+    || '<span class="dim">No messages yet.</span>';
+  if (atBottom || !open) list.scrollTop = list.scrollHeight;
+  $('#stw-pw-state').textContent = msg.password
+    ? 'password set' : 'no password - LAN only';
+}
+function updateUnread() {
+  const el = $('#stw-unread');
+  el.textContent = Stw.unread;
+  el.classList.toggle('hidden', !Stw.unread);
+}
+function openLogin(error) {
+  Me.loginOpen = true;
+  $('#login-name').value = Me.name && Me.name !== 'Steward' ? Me.name : '';
+  $('#login-pw').value = '';
+  $('#login-err').textContent = error ? 'Main iCAS: ' + error : '';
+  $('#login').classList.remove('hidden');
+  setTimeout(() => $(Me.name ? '#login-pw' : '#login-name').focus(), 30);
+}
+function doLogin() {
+  const name = $('#login-name').value.trim();
+  if (!name) { $('#login-name').focus(); return; }
+  Me.name = name; store('local', 'icas_name', name);
+  const pw = $('#login-pw').value;
+  if (pw || Me.place !== 'local') { Me.pw = pw; store('session', 'icas_pw', pw); }
+  Me.loginOpen = false;
+  $('#login').classList.add('hidden');
+  const old = State.ws;
+  State.ws = null;
+  if (old) old.close();
+  connect();
 }
 
 // ---- misc -----------------------------------------------------------------
@@ -624,6 +750,53 @@ function esc(t) {
 
 // ---- event wiring ---------------------------------------------------------
 function wire() {
+  // stewards panel / chat / login
+  $('#stw-toggle').addEventListener('click', () => {
+    const p = $('#stw-panel');
+    p.classList.toggle('hidden');
+    if (!p.classList.contains('hidden')) {
+      Stw.unread = 0; updateUnread();
+      const list = $('#stw-chat'); list.scrollTop = list.scrollHeight;
+      $('#stw-text').focus();
+    }
+  });
+  $('#stw-x').addEventListener('click', () => $('#stw-panel').classList.add('hidden'));
+  $('#stw-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const text = $('#stw-text').value.trim();
+    if (!text) return;
+    send({ action: 'steward_chat', text });
+    $('#stw-text').value = '';
+  });
+  $('#stw-name').addEventListener('click', () => openLogin(''));
+  $('#stw-pw').addEventListener('click', () => {
+    const pw = prompt('Access password for the other stewards (at least 6 '
+      + 'characters). Empty = remove it (then only this PC and the home network '
+      + 'can connect).');
+    if (pw === null) return;
+    send({ action: 'set_password', password: pw });
+  });
+  $('#login-ok').addEventListener('click', doLogin);
+  $$('#login input').forEach((i) => i.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') doLogin();
+  }));
+  $('#ia-claim').addEventListener('click', () => {
+    const ev = State.events.find((x) => x.id === State.selectedEvent);
+    if (!ev) return;
+    send({ action: 'claim', id: ev.id, on: ev.claimed_by !== Me.name });
+  });
+  // camera tab
+  $('#cam-groups').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-group]');
+    if (b) send({ action: 'camera', op: 'group', group: +b.dataset.group });
+  });
+  $('#cam-prev').addEventListener('click', () => send({ action: 'camera', op: 'prev' }));
+  $('#cam-next').addEventListener('click', () => send({ action: 'camera', op: 'next' }));
+  $('#cam-sel').addEventListener('click', () => {
+    if (State.selectedCar === null) { toast('Select a car in the timing list first'); return; }
+    send({ action: 'camera', op: 'car', car_idx: State.selectedCar });
+  });
+
   // chat to iRacing (step 2)
   $('#chat-toggle').addEventListener('click', () => {
     const on = !(State.chat && State.chat.enabled);
@@ -709,6 +882,8 @@ function wire() {
     b.classList.add('active');
     $('#tab-car').classList.toggle('hidden', b.dataset.tab !== 'car');
     $('#tab-weather').classList.toggle('hidden', b.dataset.tab !== 'weather');
+    $('#tab-camera').classList.toggle('hidden', b.dataset.tab !== 'camera');
+    if (State.snapshot) renderCamera(State.snapshot);
   }));
 
   // log filters
@@ -839,6 +1014,7 @@ function wire() {
         x.classList.toggle('active', x.dataset.tab === 'car'));
       $('#tab-car').classList.remove('hidden');
       $('#tab-weather').classList.add('hidden');
+      $('#tab-camera').classList.add('hidden');
       if (State.snapshot) render();
       return;
     }

@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from backend import APP_NAME, __version__
-from backend import chat, steward, stream
+from backend import access, chat, steward, stream
 from backend.race_state import RaceState, save_json
 from backend.sources.base import DataSource
 from backend.sources.simulator import SimulatorSource
@@ -59,7 +59,11 @@ class Engine:
         self.replay_speed = replay_speed
         self.state = RaceState()
         self.running = True                       # the RUN / STOP toggle
-        self.clients: set[WebSocket] = set()
+        # connected dashboards -> {"name", "place", "token"} (multi-steward)
+        self.clients: dict[WebSocket, dict] = {}
+        self.access_cfg = access.load_config()
+        self.tokens: dict[str, str] = {}      # download token -> steward name
+        self._stewards_sig = None
         self.source: DataSource = self._select_source()
         self._last_event_rev = -1
         self._last_track_rev = -1
@@ -354,6 +358,60 @@ class Engine:
 
     # -- client messaging ---------------------------------------------------
 
+    # -- cameras ----------------------------------------------------------------
+
+    def camera(self, msg: dict) -> str:
+        """Camera group / car on THIS PC's iRacing (the main iCAS)."""
+        op = str(msg.get("op", ""))
+        info = self.camera_info() or {}
+        if op == "group":
+            return self.source.send_command(
+                "cam_group", group=int(msg.get("group", 0)))
+        if op in ("next", "prev"):
+            order = [c for c in sorted(self.state.cars.values(),
+                                       key=lambda c: c.position or 999)
+                     if c.number and (not self.state.frame_cars
+                                      or c.car_idx in self.state.frame_cars)]
+            if not order:
+                return "no cars"
+            idx = [c.car_idx for c in order]
+            cur = info.get("car_idx", -1)
+            i = idx.index(cur) if cur in idx else -1
+            i = (i + (1 if op == "next" else -1)) % len(order)
+            return self.source.send_command("cam_car", number=order[i].number)
+        if op == "car":
+            car = self.state.cars.get(int(msg.get("car_idx", -1)))
+            if car is None or not car.number:
+                return "no such car"
+            return self.source.send_command("cam_car", number=car.number)
+        return f"camera: unknown '{op}'"
+
+    def camera_info(self) -> Optional[dict]:
+        get = getattr(self.source, "camera_info", None)
+        try:
+            info = get() if callable(get) else None
+        except Exception:
+            return None
+        if not info:
+            return None
+        return {k: v for k, v in info.items() if k != "raw_groups"}
+
+    # -- stewards (multi-steward) ----------------------------------------------
+
+    def stewards_payload(self, chat_limit: int = 150) -> dict:
+        return {"type": "stewards",
+                "online": sorted(({"name": c["name"], "place": c["place"]}
+                                  for c in self.clients.values()),
+                                 key=lambda c: c["name"].lower()),
+                "chat": self.state.steward_chat[-chat_limit:],
+                "password": access.has_password(self.access_cfg)}
+
+    def stewards_signature(self) -> tuple:
+        return (tuple(sorted((c["name"], c["place"])
+                             for c in self.clients.values())),
+                self.state.chat_revision,
+                access.has_password(self.access_cfg))
+
     def initial_messages(self) -> list[dict]:
         return [
             {"type": "init", "app": APP_NAME, "version": __version__,
@@ -363,13 +421,50 @@ class Engine:
             {"type": "snapshot", **self.state.snapshot(),
              "running": self.running, "chat": self.chat_status(),
              "stream": self.stream_status(),
-             "steward": self.steward_status()},
+             "steward": self.steward_status(),
+             "camera": self.camera_info()},
+            self.stewards_payload(),
         ]
 
-    def handle_client_message(self, msg: dict) -> dict | None:
-        """Process a message from the dashboard. Returns an optional ack."""
+    def handle_client_message(self, msg: dict, who: str = "",
+                              place: str = "local") -> dict | None:
+        """Process a message from the dashboard (``who`` = the steward, for
+        the log).  Returns an optional ack."""
+        self.state.actor = who
+        try:
+            return self._handle(msg, who, place)
+        finally:
+            self.state.actor = ""
+
+    def _handle(self, msg: dict, who: str, place: str) -> dict | None:
         action = msg.get("action")
         st = self.state
+
+        if action == "steward_chat":
+            line = st.chat(str(msg.get("text", "")))
+            return None if line else {"type": "ack", "text": "empty message"}
+
+        if action == "claim":
+            return {"type": "ack", "text": st.claim(int(msg.get("id", -1)),
+                                                    bool(msg.get("on", True)))}
+
+        if action == "set_password":
+            if place != "local":
+                return {"type": "ack", "text": "the access password can only "
+                        "be changed on the main iCAS PC itself"}
+            pw = str(msg.get("password", ""))
+            if pw and len(pw) < 6:
+                return {"type": "ack", "text": "password: at least 6 characters"}
+            self.access_cfg = access.make_config(pw)
+            access.save_config(self.access_cfg)
+            st.note_system("Steward access password " +
+                           ("set" if pw else "removed - only this PC and the "
+                            "home network can connect"))
+            return {"type": "ack", "text": "access password " +
+                    ("saved" if pw else "removed")}
+
+        if action == "camera":
+            return {"type": "ack", "text": self.camera(msg)}
 
         if action == "set_running":
             self.running = bool(msg.get("running", True))
@@ -625,6 +720,20 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title=APP_NAME, lifespan=lifespan)
 
 
+@app.middleware("http")
+async def _api_guard(request, call_next):
+    """/api/* (race data, the save download) from outside this PC only with a
+    logged-in steward's token (?t=) - the page itself is no secret."""
+    if request.url.path.startswith("/api/") and _place(request) != "local":
+        token = request.query_params.get("t", "")
+        open_lan = (_place(request) == "lan"
+                    and not access.has_password(engine.access_cfg))
+        if not open_lan and token not in engine.tokens:
+            return JSONResponse({"error": "log in on the dashboard first"},
+                                status_code=401)
+    return await call_next(request)
+
+
 @app.get("/api/status")
 async def status() -> JSONResponse:
     return JSONResponse({
@@ -656,11 +765,36 @@ async def download_save() -> Response:
                              f'attachment; filename="{name}"'})
 
 
+def _place(conn) -> str:
+    host = conn.client.host if conn.client else ""
+    return access.where(host, {k.lower(): v for k, v in conn.headers.items()})
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket) -> None:
+    """One dashboard.  ``?name=&pw=``: who it is; everybody but this PC needs
+    the access password (multi-steward)."""
     await ws.accept()
-    engine.clients.add(ws)
+    place = _place(ws)
+    ok, why = access.admit(engine.access_cfg, place, ws.query_params.get("pw", ""))
+    if not ok:
+        await ws.send_text(json.dumps({"type": "login", "error": why,
+                                       "place": place}))
+        await ws.close(code=4401)
+        return
+    name = access.clean_name(ws.query_params.get("name", ""),
+                             "Host" if place == "local" else "Steward")
+    taken = {c["name"] for c in engine.clients.values()}
+    base, n = name, 2
+    while name in taken:                 # two "Thomas" -> "Thomas 2"
+        name = f"{base[:access.MAX_NAME - 3]} {n}"
+        n += 1
+    token = access.new_token()
+    engine.tokens[token] = name
+    engine.clients[ws] = {"name": name, "place": place, "token": token}
     try:
+        await ws.send_text(json.dumps({"type": "hello", "name": name,
+                                       "place": place, "token": token}))
         for message in engine.initial_messages():
             await ws.send_text(json.dumps(message))
         while True:
@@ -669,7 +803,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
                 continue
-            ack = engine.handle_client_message(msg)
+            ack = engine.handle_client_message(msg, name, place)
             if ack is not None:
                 await ws.send_text(json.dumps(ack))
     except WebSocketDisconnect:
@@ -677,7 +811,8 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     except Exception:
         pass
     finally:
-        engine.clients.discard(ws)
+        engine.clients.pop(ws, None)
+        engine.tokens.pop(token, None)
 
 
 async def _race_loop() -> None:
@@ -703,7 +838,13 @@ async def _race_loop() -> None:
             {"type": "snapshot", **engine.state.snapshot(),
              "running": engine.running, "chat": engine.chat_status(),
              "stream": engine.stream_status(),
-             "steward": engine.steward_status()}))
+             "steward": engine.steward_status(),
+             "camera": engine.camera_info()}))
+        # Who is online + the steward chat, when that changed.
+        sig = engine.stewards_signature()
+        if sig != engine._stewards_sig:
+            engine._stewards_sig = sig
+            messages.append(json.dumps(engine.stewards_payload()))
 
         dead: list[WebSocket] = []
         for client in list(engine.clients):
@@ -713,7 +854,7 @@ async def _race_loop() -> None:
             except Exception:
                 dead.append(client)
         for d in dead:
-            engine.clients.discard(d)
+            engine.clients.pop(d, None)
 
         elapsed = time.monotonic() - start
         await asyncio.sleep(max(0.0, interval - elapsed))

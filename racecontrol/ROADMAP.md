@@ -85,6 +85,12 @@ notes sync between them, so a team of stewards can share the workload. The
 browser-based design already makes a lighter version of this easy — several
 people can open the same dashboard on the LAN today.
 
+**Done (0.1.9, October 2026):** several stewards on ONE main iCAS — name +
+access password, who is online, steward chat, "I take it" on an incident,
+"by whom" on log lines and decisions, camera buttons. **Still open:** SUPP
+mode (a steward's own iCAS following the main one, so replay / camera act on
+HIS iRacing) and the internet access (Cloudflare tunnel to port 8080).
+
 ## Phase 6 — broadcast and hardware integrations
 
 **StreamDeck plugin** for one-touch race-control commands. **SDK Gaming**

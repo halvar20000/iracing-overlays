@@ -62,6 +62,10 @@
           <button id="steward-rules" title="Limits, caution, quali AM / PRO, blue flags">Rules</button>
         </div>
       </div>
+      <div class="chat-box" title="Stewards online + steward chat (several stewards at once)">
+        <button id="stw-toggle" class="chat-toggle stw">STEWARDS <b id="stw-count">1</b><i id="stw-unread" class="hidden">0</i></button>
+        <div class="chat-sub"><span id="stw-me" class="dim">&mdash;</span></div>
+      </div>
       <button id="run-toggle" class="run-toggle run" title="RUN / STOP the controller">RUN</button>
       <div class="badges">
         <span id="source-badge" class="badge">source: &mdash;</span>
@@ -100,6 +104,7 @@
         <div class="tabs">
           <button class="tab-btn active" data-tab="car">Selected Car</button>
           <button class="tab-btn" data-tab="weather">Weather</button>
+          <button class="tab-btn" data-tab="camera">Camera</button>
         </div>
 
         <div class="tab-body" id="tab-car">
@@ -136,6 +141,17 @@
             <div class="car-log-head">Car Log</div>
             <div class="car-log" id="car-log"></div>
           </div>
+        </div>
+
+        <div class="tab-body hidden" id="tab-camera">
+          <div class="cam-head">
+            <button id="cam-prev" title="Car ahead">&#9664;</button>
+            <span id="cam-car">&mdash;</span>
+            <button id="cam-next" title="Car behind">&#9654;</button>
+            <button id="cam-sel" title="Camera on the car selected in the timing list">Selected car</button>
+          </div>
+          <div class="cam-groups" id="cam-groups"><span class="dim">no camera groups (iRacing not connected?)</span></div>
+          <div class="dlg-note">Switches the iRacing on the PC running this iCAS (not the viewers' own).</div>
         </div>
 
         <div class="tab-body hidden" id="tab-weather">
@@ -191,7 +207,7 @@
       <div class="panel log-panel">
         <div class="panel-head">
           Race Log <span class="log-count" id="log-count">0</span>
-          <a class="save-link" href="/api/save" title="Download the race log + decisions (also autosaved)">Save</a>
+          <a class="save-link" id="save-link" href="/api/save" title="Download the race log + decisions (also autosaved)">Save</a>
         </div>
         <div class="log-filters" id="log-filters"></div>
         <div class="log-list" id="log-list"></div>
@@ -228,7 +244,10 @@
         </div>
 
         <div class="incident-actions" id="incident-actions">
-          <div class="ia-head" id="ia-head">No incident selected</div>
+          <div class="ia-top">
+            <div class="ia-head" id="ia-head">No incident selected</div>
+            <button id="ia-claim" disabled title="Tell the other stewards you are looking at this one">I take it</button>
+          </div>
           <div class="ia-replay">
             <button id="ia-replay" disabled title="Replay from 8 s before (double-click a log line does the same)">&#9654; Replay</button>
             <button id="ia-replay-long" disabled title="Replay from 20 s before">&#9654; -20s</button>
@@ -284,6 +303,33 @@
 </div>
 
 <!-- reason / message dialog -->
+<div id="stw-panel" class="stw-panel hidden">
+  <div class="dlg-head"><span>Stewards</span><button class="dlg-x" id="stw-x">&times;</button></div>
+  <div class="stw-online" id="stw-online"></div>
+  <div class="stw-chat" id="stw-chat"></div>
+  <form id="stw-form" class="stw-form" autocomplete="off">
+    <input id="stw-text" maxlength="400" placeholder="Message to the other stewards">
+    <button>Send</button>
+  </form>
+  <div class="stw-foot">
+    <button id="stw-name" title="Your name in the log and the chat">Name</button>
+    <button id="stw-pw" class="hidden" title="Password the other stewards need (only on the main iCAS PC)">Access password</button>
+    <span id="stw-pw-state" class="dim"></span>
+  </div>
+</div>
+
+<div id="login" class="dlg-back hidden">
+  <div class="dlg">
+    <div class="dlg-head"><span>iCASControl - steward login</span></div>
+    <label for="login-name">Your name</label>
+    <input id="login-name" type="text" maxlength="24" autocomplete="username">
+    <label for="login-pw">Access password</label>
+    <input id="login-pw" type="password" maxlength="100" autocomplete="current-password">
+    <div class="dlg-note" id="login-err"></div>
+    <div class="dlg-btns"><button id="login-ok">Log in</button></div>
+  </div>
+</div>
+
 <div id="dlg" class="dlg-back hidden">
   <div class="dlg">
     <div class="dlg-head"><span id="dlg-title"></span>

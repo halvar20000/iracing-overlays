@@ -178,6 +178,35 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 27, 2026 (iCASControl 0.1.9 — multi-steward steps 1 + 2: camera
+buttons, login, steward chat):** Thomas: camera switching like iRaceControl,
+and several stewards at once, spread over Germany (not one LAN). Agreed
+plan: MAIN iCAS (admin PC, NOT the stream PC) + remote stewards; camera /
+replay act on the iRacing of the PC that runs the iCAS server → step 3 = SUPP
+mode (own iCAS following MAIN), step 4 = Cloudflare tunnel. DONE now:
+NEW `racecontrol/backend/access.py` — where(host, headers): local (loopback,
+no proxy headers) / lan / remote (cf-* / x-forwarded-* headers or public IP);
+admit(): local always, password (PBKDF2 hash + salt in
+data/access_config.json, gitignored dir) when set, LAN free without one,
+internet REFUSED without one. /ws?name=&pw= → {"type":"login", error} + close
+4401, else "hello" {name, place, token}; duplicate names get " 2";
+engine.clients = dict ws → {name, place, token}; handle_client_message(msg,
+who, place) sets RaceState.actor → RaceEvent.by / decided_by; actions
+steward_chat (RaceState.steward_chat, 300 kept, saved), claim (claimed_by,
+someone else's claim refused), set_password (local only, ≥ 6 chars, "" =
+remove), camera (group / next / prev / car). Broadcast "stewards" {online,
+chat, password} on change. HTTP middleware: /api/* from non-local only with
+?t=<token> (LAN free while no password). IRacingSource.camera_info()
+(CameraInfo groups cached 2 s, no Scenic, CamGroupNumber, CamCarIdx), cam_group
+keeps the car, cam_car now keeps the group (was always group 1;
+pick_cam_group = Scenic → TV1); simulator fake groups. UI: STEWARDS header
+button (count, unread badge, panel with online chips, chat, Name, Access
+password), login dialog, Camera tab, "· name" + "👀 name" log badges, "I take
+it" / Release in the incident actions. test_incidents 204/204; real server run
+(sim): internet without password refused, wrong password refused, right one
+in, chat reaches the host, camera, /api 401 without / 200 with token;
+rendered. NOT tried with real iRacing / over the internet.
+
 **October 27, 2026 (iCASControl 0.1.8 — stayed on CAUTION after the
 restart):** Thomas: the race was green again, iCAS still said caution. The
 source mapped SessionFlags yellow 0x08 and yellow waving 0x100 to "yellow",

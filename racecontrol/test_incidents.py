@@ -10,6 +10,7 @@ import os
 import sys
 import tempfile
 import types
+from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -528,6 +529,10 @@ class _App:
         pass
 
 
+def snap_of(eng):
+    return next(m for m in eng.initial_messages() if m.get("type") == "snapshot")
+
+
 _stub("fastapi", FastAPI=_App, WebSocket=object, WebSocketDisconnect=Exception)
 _stub("fastapi.responses", JSONResponse=dict, Response=dict)
 _stub("fastapi.staticfiles", StaticFiles=type("StaticFiles", (), {"__init__": lambda self, **k: None}))
@@ -785,7 +790,7 @@ check("simulator: command only written to the log",
       and any("Would send to iRacing: !dq #14" in e.text
               for e in eng5.state.events), ack)
 check("snapshot carries the chat status",
-      eng4.initial_messages()[-1]["chat"] == {"enabled": False, "method": "post",
+      snap_of(eng4)["chat"] == {"enabled": False, "method": "post",
                                               "available": True})
 
 print("Decisions to the stream banner (step 3)")
@@ -868,7 +873,7 @@ check("banner not reached -> clear log line",
       any("Stream banner NOT reached (Connection refused)" in e.text
           for e in eng6.state.events))
 check("snapshot carries the stream status",
-      eng6.initial_messages()[-1]["stream"]["banner_url"] == "http://192.168.86.138:5019")
+      snap_of(eng6)["stream"]["banner_url"] == "http://192.168.86.138:5019")
 
 print("Auto Steward (step 3c)")
 from backend import steward  # noqa: E402
@@ -1106,7 +1111,112 @@ check("chat OFF: only the log line, no 'not sent' spam",
       len([e for e in eng7.state.events[k:] if e.category != "pit"]) == 1
       and len(autos("blue_flag")) == 4, [e.text for e in eng7.state.events[k:]])
 check("snapshot carries the steward rules",
-      eng7.initial_messages()[-1]["steward"]["dt_first"] == 15)
+      snap_of(eng7)["steward"]["dt_first"] == 15)
+
+print("Multi-steward + camera")
+from backend import access as acc
+check("this PC: in without a password", acc.admit({}, "local", "") == (True, ""))
+check("LAN without a password set: in", acc.admit({}, "lan", "")[0])
+check("internet without a password set: REFUSED", not acc.admit({}, "remote", "")[0])
+pwc = acc.make_config("geheim123")
+check("only a hash is stored", "geheim123" not in json.dumps(pwc)
+      and acc.password_ok(pwc, "geheim123") and not acc.password_ok(pwc, "x"))
+check("password set: LAN / internet need it",
+      not acc.admit(pwc, "lan", "")[0] and not acc.admit(pwc, "remote", "nope")[0]
+      and acc.admit(pwc, "remote", "geheim123")[0])
+check("loopback + Cloudflare header = internet",
+      acc.where("127.0.0.1", {"cf-connecting-ip": "1.2.3.4"}) == "remote"
+      and acc.where("127.0.0.1", {}) == "local"
+      and acc.where("192.168.86.20", {}) == "lan"
+      and acc.where("82.67.90.231", {}) == "remote")
+check("names cleaned", acc.clean_name("<b>Thomas</b>\n") == "bThomas/b"
+      and acc.clean_name("") == "Steward" and len(acc.clean_name("x" * 60)) == 24)
+
+eng8 = server.Engine(force_sim=True)
+for _ in range(5):
+    eng8.tick()
+st8 = eng8.state
+ack = eng8.handle_client_message({"action": "steward_chat", "text": "  Ich schaue #14 an "},
+                                 "Andreas", "remote")
+check("steward chat line with the name", ack is None and st8.steward_chat[-1]["name"]
+      == "Andreas" and st8.steward_chat[-1]["text"] == "Ich schaue #14 an", st8.steward_chat)
+check("empty chat line refused", eng8.handle_client_message(
+    {"action": "steward_chat", "text": "  "}, "Andreas")["type"] == "ack")
+check("actor reset after the message", st8.actor == "")
+ev = st8._log("incident", "Contact", lap=3)
+ev.is_incident, ev.car_number = True, "14"
+r1 = eng8.handle_client_message({"action": "claim", "id": ev.id, "on": True}, "Andreas")
+r2 = eng8.handle_client_message({"action": "claim", "id": ev.id, "on": True}, "Thomas")
+check("claim: Andreas has it, Thomas is told", ev.claimed_by == "Andreas"
+      and "Andreas" in r2["text"], (r1, r2))
+eng8.handle_client_message({"action": "claim", "id": ev.id, "on": False}, "Thomas")
+check("someone else cannot release it", ev.claimed_by == "Andreas")
+eng8.handle_client_message({"action": "claim", "id": ev.id, "on": False}, "Andreas")
+check("released", ev.claimed_by == "")
+st8.actor = "Thomas"
+st8.resolve_incident(ev.id, "WARNING")
+st8.actor = ""
+check("decision carries who decided", ev.decided_by == "Thomas", ev.to_dict().get("decided_by"))
+cfg_path = acc.CONFIG_PATH
+acc.CONFIG_PATH = Path(tempfile.mkdtemp()) / "access_config.json"
+_save = acc.save_config
+acc.save_config = lambda c, path=None: _save(c, acc.CONFIG_PATH)
+r = eng8.handle_client_message({"action": "set_password", "password": "geheim123"},
+                               "Andreas", "remote")
+check("password cannot be set from outside", not acc.has_password(eng8.access_cfg)
+      and "main iCAS" in r["text"])
+r = eng8.handle_client_message({"action": "set_password", "password": "abc"}, "Host")
+check("too short refused", not acc.has_password(eng8.access_cfg))
+eng8.handle_client_message({"action": "set_password", "password": "geheim123"}, "Host")
+check("set on the main PC, saved as a hash", acc.has_password(eng8.access_cfg)
+      and "geheim123" not in acc.CONFIG_PATH.read_text())
+acc.save_config, acc.CONFIG_PATH = _save, cfg_path
+eng8.clients[object()] = {"name": "Andreas", "place": "remote", "token": "t"}
+sp = eng8.stewards_payload()
+check("stewards payload: online + chat + password flag",
+      sp["online"] == [{"name": "Andreas", "place": "remote"}]
+      and sp["chat"][-1]["name"] == "Andreas" and sp["password"] is True)
+sig = eng8.stewards_signature()
+st8.chat("noch eine")
+check("signature changes with a chat line", eng8.stewards_signature() != sig)
+check("initial messages carry stewards + camera",
+      any(m.get("type") == "stewards" for m in eng8.initial_messages())
+      and snap_of(eng8)["camera"]["groups"][0]["name"] == "TV1")
+# camera on the simulator
+r = eng8.handle_client_message({"action": "camera", "op": "group", "group": 3}, "Andreas")
+check("camera group", eng8.camera_info()["group"] == 3 and "TV3" in r["text"], r)
+check("unknown group refused", "no camera group" in eng8.handle_client_message(
+    {"action": "camera", "op": "group", "group": 99})["text"])
+cars8 = sorted(eng8.state.cars.values(), key=lambda c: c.position or 999)
+if cars8:
+    eng8.handle_client_message({"action": "camera", "op": "car",
+                                "car_idx": cars8[0].car_idx})
+    check("camera on a car", eng8.camera_info()["car_idx"] == cars8[0].car_idx)
+    eng8.handle_client_message({"action": "camera", "op": "next"})
+    check("next = the car behind", eng8.camera_info()["car_idx"] == cars8[1].car_idx,
+          (eng8.camera_info(), [c.car_idx for c in cars8[:3]]))
+    eng8.handle_client_message({"action": "camera", "op": "prev"})
+    check("prev = back", eng8.camera_info()["car_idx"] == cars8[0].car_idx)
+else:
+    check("simulator has cars", False)
+fakeir = FakeIR({"CameraInfo": {"Groups": [{"GroupNum": 1, "GroupName": "Scenic"},
+                 {"GroupNum": 2, "GroupName": "TV1"}, {"GroupNum": 3, "GroupName": "Gyro"}]},
+                 "CamGroupNumber": 3, "CamCarIdx": 1,
+                 "DriverInfo": {"Drivers": [{"CarIdx": 1, "CarNumber": "7"}]}})
+src9 = irs.IRacingSource()
+src9._ir = fakeir
+ci = src9.camera_info()
+check("iRacing camera info: no Scenic, current group + car",
+      [g["name"] for g in ci["groups"]] == ["TV1", "Gyro"] and ci["group"] == 3
+      and ci["car_number"] == "7", ci)
+src9.send_command("cam_group", group=2)
+check("group switch keeps the car on screen", fakeir.calls[-1] == ("cam", "7", 2), fakeir.calls)
+src9.send_command("cam_car", number="14")
+check("car switch keeps the group (Gyro)", fakeir.calls[-1] == ("cam", "14", 3), fakeir.calls)
+fakeir["CamGroupNumber"] = 1
+src9._cam_cache = None
+src9.send_command("cam_car", number="14")
+check("from Scenic -> TV1", fakeir.calls[-1] == ("cam", "14", 2), fakeir.calls)
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

@@ -228,6 +228,27 @@ a decision or 10 min). A DT / S&G is gone once iRacing's black flag for the car
 goes off (served) or the penalties are cleared. Penalties from iRaceControl
 (ATVO) and iRacing's own black flags count too.
 
+## Several stewards at once (0.1.9, October 2026)
+
+One **main iCAS** (the PC whose iRacing account is session admin) holds the
+race log, the decisions and the chat into iRacing. The other stewards open
+its dashboard in their browser:
+
+* **STEWARDS** (header) - who is online, the steward chat (never reaches
+  iRacing; a toast + red counter when a message comes in), your name, and -
+  only on the main PC itself - the **Access password**.
+* Access: the main PC itself always; the home network without a password as
+  long as none is set; over the **internet** (tunnel / proxy headers) ONLY with
+  the access password - with none set, internet stewards are refused. Only a
+  PBKDF2 hash is stored (`data/access_config.json`).
+* Every log line / decision says **who** did it (`· Thomas`), an incident can
+  be taken with **I take it** (`👀 Andreas` for the others, Release frees it).
+* **Camera** tab: every camera group of the track (no Scenic), ◀ ▶ = car
+  ahead / behind, "Selected car". It switches the iRacing on the MAIN iCAS
+  PC - not a remote steward's own (that is the SUPP mode, still to come).
+* `/api/*` (Save download, status) from outside needs the steward's login
+  token (the Save link carries it).
+
 ## What works today vs. what is honest to flag
 
 Live timing, the real track map, the incident/event log, gaps and intervals,

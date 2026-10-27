@@ -668,6 +668,32 @@ class IRacingSource(DataSource):
                 int(self._g("TrackWetness", 1) or 1), "Dry"),
         )
 
+    # -- cameras -----------------------------------------------------------
+
+    def camera_info(self) -> Optional[dict]:
+        """Camera groups of the loaded track + what is on screen now."""
+        if self._ir is None or not self._ir.is_connected:
+            return None
+        now = time.monotonic()
+        cache = getattr(self, "_cam_cache", None)
+        if cache is None or now - cache[0] > 2.0:
+            raw = (self._g("CameraInfo", {}) or {}).get("Groups", []) or []
+            cache = (now, raw)
+            self._cam_cache = cache
+        raw = cache[1]
+        groups = [{"num": int(g.get("GroupNum", -1)),
+                   "name": str(g.get("GroupName", ""))}
+                  for g in raw if int(g.get("GroupNum", -1)) >= 0]
+        groups = [g for g in groups if "scenic" not in g["name"].lower()]
+        car_idx = int(self._g("CamCarIdx", -1) or -1)
+        number = ""
+        for d in (self._g("DriverInfo", {}) or {}).get("Drivers", []) or []:
+            if int(d.get("CarIdx", -2)) == car_idx:
+                number = str(d.get("CarNumber", ""))
+        return {"groups": groups, "raw_groups": raw,
+                "group": int(self._g("CamGroupNumber", 0) or 0),
+                "car_idx": car_idx, "car_number": number}
+
     # -- race-control commands ---------------------------------------------
 
     def send_command(self, command: str, **params) -> str:
@@ -682,8 +708,20 @@ class IRacingSource(DataSource):
         cmd = command.lower()
         try:
             if cmd == "cam_car" and "number" in params:
-                self._ir.cam_switch_num(str(params["number"]))
-                return f"Camera switched to car #{params['number']}"
+                info = self.camera_info() or {}
+                grp = pick_cam_group(info.get("raw_groups", []),
+                                     int(info.get("group", 1) or 1))
+                self._ir.cam_switch_num(str(params["number"]), grp, 0)
+                return f"Camera on car #{params['number']}"
+            if cmd == "cam_group":
+                info = self.camera_info() or {}
+                grp = int(params.get("group", 0))
+                names = {g["num"]: g["name"] for g in info.get("groups", [])}
+                if grp not in names:
+                    return f"no camera group {grp}"
+                number = info.get("car_number") or "1"
+                self._ir.cam_switch_num(str(number), grp, 0)
+                return f"Camera {names[grp]}"
             if cmd == "replay_live":
                 self._ir.replay_search(irsdk.ReplaySearchMode.to_end)
                 self._ir.replay_set_play_speed(1)

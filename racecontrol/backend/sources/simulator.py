@@ -178,6 +178,7 @@ class SimulatorSource(DataSource):
             self._track_display = "Simulation Circuit"
             self._track_config = "Grand Prix"
 
+        self._cam = {"group": 1, "car_idx": 0}
         self._cars: list[_SimCar] = []
         self._build_field(num_gt3, num_gt4)
 
@@ -511,8 +512,31 @@ class SimulatorSource(DataSource):
 
     # -- race-control commands ---------------------------------------------
 
+    SIM_CAMS = ["TV1", "TV2", "TV3", "Chase", "Far Chase", "Cockpit",
+                "Gyro", "Blimp", "Chopper", "Pit Lane"]
+
+    def camera_info(self) -> dict:
+        groups = [{"num": i + 1, "name": n} for i, n in enumerate(self.SIM_CAMS)]
+        idx = self._cam["car_idx"]
+        number = next((c.number for c in self._cars if c.idx == idx), "")
+        return {"groups": groups, "group": self._cam["group"],
+                "car_idx": idx, "car_number": number}
+
     def send_command(self, command: str, **params) -> str:
         cmd = command.lower()
+        if cmd == "cam_group":
+            g = int(params.get("group", 0))
+            if not 1 <= g <= len(self.SIM_CAMS):
+                return f"no camera group {g}"
+            self._cam["group"] = g
+            return f"[SIM] camera {self.SIM_CAMS[g - 1]}"
+        if cmd == "cam_car":
+            car = next((c for c in self._cars
+                        if c.number == str(params.get("number"))), None)
+            if car is None:
+                return "no such car"
+            self._cam["car_idx"] = car.idx
+            return f"[SIM] camera on car #{car.number}"
         if cmd in ("pace_deploy", "fcy"):
             if self.caution:
                 return "Full course yellow already active"
