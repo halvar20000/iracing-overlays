@@ -55,6 +55,7 @@ DEFAULT_CONFIG = {
 MIN_MATCHES     = 3     # auto mode: never switch on for one or two stray drivers
 MIN_MATCH_SHARE = 0.5   # auto mode: share of the field that must be on the roster
 RETRY_SECONDS   = 30    # after a failed fetch
+UNRATED         = "UNRATED"   # WCT field, but CLS has no PRO / AM for him
 
 
 def _load_config() -> dict:
@@ -110,6 +111,20 @@ class ProAmRoster:
             return None
         with self._lock:
             return self._classes.get(uid)
+
+    def lookup_field(self, user_id, active: bool) -> "str | None":
+        """Class for a driver in the session: "PRO" / "AM"; in a WCT field
+        (active) a driver CLS has no class for = "UNRATED" (black bar,
+        2026-10-27: a driver not yet rated races in WCT); else None."""
+        if not active:
+            return None
+        try:
+            uid = int(user_id)
+        except (TypeError, ValueError):
+            return None
+        if uid <= 0:
+            return None
+        return self.lookup(uid) or UNRATED
 
     def active_for(self, user_ids) -> bool:
         """Should the bars be shown for a session with these drivers?"""

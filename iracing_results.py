@@ -229,7 +229,7 @@ class ResultsPoller(SDKPoller):
         # IS a Pro/Am field, same rule as the tower and the driver card.
         proam_active = proam.active_for(d.get("user_id") for d in drivers.values())
         for r in rows:
-            r["proam"] = proam.lookup(r.get("user_id")) if proam_active else None
+            r["proam"] = proam.lookup_field(r.get("user_id"), proam_active)
 
         return {
             "proam_active": proam_active,
@@ -812,8 +812,9 @@ def _section_rows(rows: list, team_event: bool, relative: bool, mark_proam: bool
         else:
             value = wct_board.fmt_gap(gap)
         mark = ""
-        if mark_proam and r.get("proam") in ("PRO", "AM"):
-            mark = wct_board.PRO_COLOR if r["proam"] == "PRO" else wct_board.AM_COLOR
+        if mark_proam and r.get("proam") in ("PRO", "AM", "UNRATED"):
+            mark = {"PRO": wct_board.PRO_COLOR, "AM": wct_board.AM_COLOR}.get(
+                r["proam"], wct_board.UNRATED_COLOR)
         out.append({"pos": pos, "num": r.get("car_number") or "",
                     "name": (r.get("team_name") if team_event and r.get("team_name") else r.get("name")) or "",
                     "sub": r.get("car") or "", "value": value, "mark": mark, "fl": r is best})

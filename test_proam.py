@@ -36,6 +36,14 @@ check("auto: WCT field -> on", r.active_for([100, 101, 102, 104, 900]))
 check("auto: 2 WCT drivers in a PCCD field -> off", not r.active_for([100, 101] + list(range(900, 920))))
 check("auto: under half -> off", not r.active_for([100, 101, 102, 900, 901, 902, 903]))
 check("auto: empty field -> off", not r.active_for([]))
+check("WCT field: no class in CLS -> UNRATED (black bar)",
+      r.lookup_field(103, True) == "UNRATED" and r.lookup_field(999, True) == "UNRATED")
+check("WCT field: PRO / AM stay", r.lookup_field(100, True) == "PRO"
+      and r.lookup_field(101, True) == "AM")
+check("not a WCT field -> None for everybody", r.lookup_field(103, False) is None
+      and r.lookup_field(100, False) is None)
+check("no / bad id (pace car -1) -> None", r.lookup_field(-1, True) is None
+      and r.lookup_field(None, True) is None)
 r._cfg["mode"] = "on";  check("mode on -> always", r.active_for([900]))
 r._cfg["mode"] = "off"; check("mode off -> never", not r.active_for([100, 101, 102]))
 

@@ -29,6 +29,7 @@ import time
 import urllib.request
 
 PRO_COLOR, AM_COLOR = "#e5484d", "#30c45a"     # the tower's Pro/Am bars
+UNRATED_COLOR = "#000000"                        # WCT driver without PRO / AM in CLS
 
 
 class EventInfo:
@@ -228,7 +229,8 @@ function draw() {
     '<div class="row in" style="animation-delay:' + (i * 0.04).toFixed(2) + 's">' +
     '<div class="p">' + esc(r.pos) + '</div>' +
     '<div class="n' + (r.num ? '' : ' none') + '">' + esc(r.num || "") + '</div>' +
-    '<div class="body">' + (r.mark ? '<div class="mk" style="background:' + r.mark + '"></div>' : '') +
+    '<div class="body">' + (r.mark ? '<div class="mk" style="background:' + r.mark
+      + (r.mark === '#000000' ? ';box-shadow:0 0 0 1px #fff' : '') + '"></div>' : '') +
     '<div class="nm"' + (String(r.name || "").length > 30 ? ' style="font-size:12px"' : '') + '>' + esc(r.name || "—") + '</div>' +
     (r.fl ? '<div class="fl" title="fastest lap"></div>' : '') +
     (anySub ? '<div class="sub">' + esc(r.sub || "") + '</div>' : '') +

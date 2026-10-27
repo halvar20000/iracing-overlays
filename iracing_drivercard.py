@@ -121,7 +121,7 @@ class DriverCardPoller(SDKPoller):
         proam_cls = None
         if proam.active_for(x["user_id"] for x in self._drivers.values()):
             focus_d = self._drivers.get(ir["CamCarIdx"])
-            proam_cls = proam.lookup(focus_d["user_id"]) if focus_d else None
+            proam_cls = proam.lookup_field(focus_d["user_id"], True) if focus_d else None
 
         base = {"connected": True, "show": False, "reason": ""}
         focus = ir["CamCarIdx"]
@@ -236,6 +236,7 @@ PAGE_HTML = r"""
     .pa { width: 6px; align-self: stretch; border-radius: 2px; display: none; }
     .pa.pro { display: block; background: #e63946; }
     .pa.am  { display: block; background: #2ecc71; }
+    .pa.nr  { display: block; background: #000; box-shadow: 0 0 0 1px rgba(255,255,255,0.85); }   /* not rated yet */
     .who { display: flex; flex-direction: column; gap: 1px; }
     .who .name { font-size: 29px; font-weight: 800; letter-spacing: 0.4px;
                  white-space: nowrap; color: #ffb38a; }
@@ -366,7 +367,7 @@ async function tick() {
     document.getElementById('cls').textContent = d.class_name || '';
     document.getElementById('numchip').style.setProperty('--cls', d.class_color || '#888');
     document.getElementById('pa').className =
-        'pa' + (d.proam === 'PRO' ? ' pro' : d.proam === 'AM' ? ' am' : '');
+        'pa' + (d.proam === 'PRO' ? ' pro' : d.proam === 'AM' ? ' am' : d.proam === 'UNRATED' ? ' nr' : '');
     document.getElementById('name').textContent = d.name || '—';
     const team = document.getElementById('team');
     team.textContent = d.team || '';

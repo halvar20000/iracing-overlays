@@ -811,7 +811,7 @@ class StandingsPoller(SDKPoller):
         # Only switched on when the field is a WCT field — see cls_proam.py.
         proam_on = proam.active_for(d.get("user_id") for d in drivers.values())
         for r in rows:
-            r["proam"] = proam.lookup(r.get("user_id")) if proam_on else None
+            r["proam"] = proam.lookup_field(r.get("user_id"), proam_on)
 
         # Flag, camera focus, session-best / personal-best marks and the
         # per-class driver count — all for the tower design.
@@ -1197,6 +1197,7 @@ STANDINGS_HTML = """
     }
     .driver .pa.pro { background: #e63946; }
     .driver .pa.am  { background: #2ecc71; }
+    .driver .pa.nr  { background: #000; box-shadow: 0 0 0 1px rgba(255,255,255,0.85); }
     .driver .team { font-size: 16px; color: #7a7a90; font-weight: 500; display: block; margin-top: 3px; }
 
     .interval {
@@ -1444,7 +1445,8 @@ function render(d) {
 
         const name = r.name || 'Unknown';
         const paBar = r.proam === 'PRO' ? '<span class="pa pro" title="PRO"></span>'
-                    : r.proam === 'AM'  ? '<span class="pa am" title="AM"></span>' : '';
+                    : r.proam === 'AM'  ? '<span class="pa am" title="AM"></span>'
+                    : r.proam === 'UNRATED' ? '<span class="pa nr" title="not rated yet"></span>' : '';
         const team = r.team_name && r.team_name !== name ? `<span class="team">${team_esc(r.team_name)}</span>` : '';
 
         // Brand logo — if iRacing gave us a CarPath we can resolve to a
@@ -1665,6 +1667,7 @@ TOWER_HTML = r"""<!DOCTYPE html>
     .pa { width: 5px; height: 15px; border-radius: 2px; justify-self: center; }
     .pa.pro { background: var(--pro); }
     .pa.am  { background: var(--am); }
+    .pa.nr  { background: #000; box-shadow: 0 0 0 1px rgba(255,255,255,0.85); }
     .name {
         padding-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
@@ -1835,6 +1838,7 @@ function rowHtml(r, isRace) {
     const pos = r.class_position || r.position;
     const pa = r.proam === 'PRO' ? '<div class="pa pro"></div>'
              : r.proam === 'AM'  ? '<div class="pa am"></div>'
+             : r.proam === 'UNRATED' ? '<div class="pa nr"></div>'
              : (MULTI && r.class_color) ? `<div class="pa" style="background:${esc(r.class_color)}"></div>`
              : '<div></div>';
     let tags = '';
@@ -1990,6 +1994,7 @@ FASTEST_HTML = r"""<!DOCTYPE html>
     .brand { width: 20px; height: 18px; object-fit: contain; filter: drop-shadow(0 0 1px rgba(0,0,0,0.8)); }
     .pa { display: inline-block; width: 5px; height: 15px; border-radius: 2px; }
     .pa.pro { background: var(--pro); } .pa.am { background: var(--am); }
+    .pa.nr { background: #000; box-shadow: 0 0 0 1px rgba(255,255,255,0.85); }
 
     /* Fastest-lap banner: pops for SHOW_S seconds whenever the session's
        (class) fastest lap improves. Race only unless ?all=1. */
@@ -2036,7 +2041,7 @@ function fmtLap(t) {
 }
 function flagImg(c) { return c ? `<img class="flag" src="/flag/${encodeURIComponent(c)}.svg" alt="">` : ''; }
 function brandImg(r) { return (r.brand && r.brand_logo) ? `<img class="brand" src="/brand/${encodeURIComponent(r.brand)}" alt="">` : ''; }
-function paBar(p) { return p === 'PRO' ? '<span class="pa pro"></span>' : p === 'AM' ? '<span class="pa am"></span>' : ''; }
+function paBar(p) { return p === 'PRO' ? '<span class="pa pro"></span>' : p === 'AM' ? '<span class="pa am"></span>' : p === 'UNRATED' ? '<span class="pa nr"></span>' : ''; }
 async function getStandings() {
     try { const r = await fetch('/standings', { cache: 'no-store' }); return await r.json(); }
     catch (e) { return null; }
@@ -2095,6 +2100,7 @@ MOVERS_HTML = r"""<!DOCTYPE html>
     .brand { width: 20px; height: 18px; object-fit: contain; filter: drop-shadow(0 0 1px rgba(0,0,0,0.8)); }
     .pa { display: inline-block; width: 5px; height: 15px; border-radius: 2px; }
     .pa.pro { background: var(--pro); } .pa.am { background: var(--am); }
+    .pa.nr { background: #000; box-shadow: 0 0 0 1px rgba(255,255,255,0.85); }
 
     /* Biggest movers: top N places gained / lost vs the starting grid
        (the tower's +/-), race sessions only. ?n=3 (default). */
@@ -2142,7 +2148,7 @@ function fmtLap(t) {
 }
 function flagImg(c) { return c ? `<img class="flag" src="/flag/${encodeURIComponent(c)}.svg" alt="">` : ''; }
 function brandImg(r) { return (r.brand && r.brand_logo) ? `<img class="brand" src="/brand/${encodeURIComponent(r.brand)}" alt="">` : ''; }
-function paBar(p) { return p === 'PRO' ? '<span class="pa pro"></span>' : p === 'AM' ? '<span class="pa am"></span>' : ''; }
+function paBar(p) { return p === 'PRO' ? '<span class="pa pro"></span>' : p === 'AM' ? '<span class="pa am"></span>' : p === 'UNRATED' ? '<span class="pa nr"></span>' : ''; }
 async function getStandings() {
     try { const r = await fetch('/standings', { cache: 'no-store' }); return await r.json(); }
     catch (e) { return null; }
@@ -2203,6 +2209,7 @@ PITTIRES_HTML = r"""<!DOCTYPE html>
     .brand { width: 24px; height: 20px; object-fit: contain; filter: drop-shadow(0 0 1px rgba(0,0,0,0.8)); }
     .pa { display: inline-block; width: 5px; height: 18px; border-radius: 2px; }
     .pa.pro { background: var(--pro); } .pa.am { background: var(--am); }
+    .pa.nr { background: #000; box-shadow: 0 0 0 1px rgba(255,255,255,0.85); }
     .top { height: 30px; background: var(--pit); color: #17130a; display: flex; align-items: center;
            padding: 0 12px; font-size: 15px; font-weight: 800; letter-spacing: 2px; }
     .top .sub { margin-left: auto; font-size: 14px; font-weight: 700; letter-spacing: .5px; }
@@ -2275,7 +2282,7 @@ function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','
 function abbrev(full) { const p = String(full || '').trim().split(/\s+/); return p.length < 2 ? (full || '') : `${p[0][0]}. ${p.slice(1).join(' ')}`; }
 function flagImg(c) { return c ? `<img class="flag" src="/flag/${encodeURIComponent(c)}.svg" alt="">` : ''; }
 function brandImg(s) { return s.brand ? `<img class="brand" src="/brand/${encodeURIComponent(s.brand)}" alt="">` : ''; }
-function paBar(p) { return p === 'PRO' ? '<span class="pa pro"></span>' : p === 'AM' ? '<span class="pa am"></span>' : '<span></span>'; }
+function paBar(p) { return p === 'PRO' ? '<span class="pa pro"></span>' : p === 'AM' ? '<span class="pa am"></span>' : p === 'UNRATED' ? '<span class="pa nr"></span>' : '<span></span>'; }
 function avg(t) { return t && t.length ? t.reduce((a, b) => a + b, 0) / t.length : null; }
 function wcol(p) { return p == null ? '#5a5a62' : p >= 85 ? 'var(--w5)' : p >= 70 ? 'var(--w4)' : p >= 55 ? 'var(--w3)' : p >= 40 ? 'var(--w2)' : 'var(--w1)'; }
 function label(s, teamMode) { return teamMode && s.team_name ? s.team_name : abbrev(s.name_iracing || s.driver); }
@@ -2414,6 +2421,7 @@ GAPBAR_HTML = r"""<!DOCTYPE html>
     .brand { width: 20px; height: 18px; object-fit: contain; filter: drop-shadow(0 0 1px rgba(0,0,0,0.8)); }
     .pa { display: inline-block; width: 5px; height: 15px; border-radius: 2px; }
     .pa.pro { background: var(--pro); } .pa.am { background: var(--am); }
+    .pa.nr { background: #000; box-shadow: 0 0 0 1px rgba(255,255,255,0.85); }
 
     /* Gap bar: every car as a dot by its gap to the class leader, so trains
        and battles are visible at a glance. Race sessions only. Gaps are the
@@ -2473,7 +2481,7 @@ function fmtLap(t) {
 }
 function flagImg(c) { return c ? `<img class="flag" src="/flag/${encodeURIComponent(c)}.svg" alt="">` : ''; }
 function brandImg(r) { return (r.brand && r.brand_logo) ? `<img class="brand" src="/brand/${encodeURIComponent(r.brand)}" alt="">` : ''; }
-function paBar(p) { return p === 'PRO' ? '<span class="pa pro"></span>' : p === 'AM' ? '<span class="pa am"></span>' : ''; }
+function paBar(p) { return p === 'PRO' ? '<span class="pa pro"></span>' : p === 'AM' ? '<span class="pa am"></span>' : p === 'UNRATED' ? '<span class="pa nr"></span>' : ''; }
 async function getStandings() {
     try { const r = await fetch('/standings', { cache: 'no-store' }); return await r.json(); }
     catch (e) { return null; }

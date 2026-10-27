@@ -178,6 +178,18 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 27, 2026 (WCT: BLACK bar for a driver not rated PRO / AM yet):**
+Thomas: tonight a driver races in WCT who CLS has not classified. NEW
+`cls_proam.ProAmRoster.lookup_field(user_id, active)` = "PRO" / "AM", in a WCT
+field (active) a driver with no class in CLS (or not on the roster at all) =
+`UNRATED`, not a WCT field / id <= 0 (pace car) = None. Used by the tower 5005
+(all .pa bars: classic, tower, movers / fastest / gapbar / pit pages →
+class `nr`: black + 1 px white ring), driver card 5017, trackmap 5007 (black
+dot, white ring + white number; camera car stays yellow), results 5002 /wct
+(wct_board.UNRATED_COLOR #000000 + white ring). PRO / AM class pages leave
+him out (he is neither). iCAS's PRO-behind rule ignores him. test_proam
+14/14 (+4); tower rendered. Restart 5002, 5005, 5007, 5017.
+
 **October 27, 2026 (iCASControl 0.1.15 — PRO behind an AM, GT3 WCT):**
 Thomas: an AM driver (per CLS) should get ONE hint when a PRO is behind him,
 not repeated (the AM may be faster). NEW `racecontrol/backend/proam.py`

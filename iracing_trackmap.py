@@ -449,7 +449,7 @@ class TrackmapPoller(SDKPoller):
                 "on_pit":     bool(on_pit[idx]) if idx < len(on_pit) else False,
                 "position":   int(positions[idx] or 0) if idx < len(positions) else 0,
                 "cam":        (idx == cam_idx),
-                "proam":      proam.lookup(d.get("UserID")) if proam_on else None,
+                "proam":      proam.lookup_field(d.get("UserID"), proam_on),
             })
             col = ccol.get(int(d.get("CarClassID") or 0)) if multiclass else None
             cars[-1]["color"] = col
@@ -769,8 +769,9 @@ TRACKMAP_HTML = r"""
        dot keeps its class colour, just faded. Camera car stays yellow. */
     .car.pro { fill: #e63946; }
     .car.am  { fill: #2ecc71; }
-    .car.pro.pit, .car.am.pit { fill-opacity: 0.45; }
-    .car.cam.pro, .car.cam.am { fill: #facc15; fill-opacity: 1; }
+    .car.nr  { fill: #000000; stroke: #ffffff; stroke-width: 2; }   /* not rated yet */
+    .car.pro.pit, .car.am.pit, .car.nr.pit { fill-opacity: 0.45; }
+    .car.cam.pro, .car.cam.am, .car.cam.nr { fill: #facc15; fill-opacity: 1; }
     /* Multiclass: class colour from the server (inline fill). The camera car
        KEEPS its class colour and gets a white ring + glow instead of yellow
        (a yellow GT3 class would look like the camera car). */
@@ -934,12 +935,13 @@ function renderCars(d) {
     for (const c of cars) {
         const xy = pctToXY(c.pct);
         if (!xy) continue;
-        const pa  = c.proam === 'PRO' ? ' pro' : c.proam === 'AM' ? ' am' : '';
+        const pa  = c.proam === 'PRO' ? ' pro' : c.proam === 'AM' ? ' am' : c.proam === 'UNRATED' ? ' nr' : '';
         const kc  = (!pa && c.color) ? c.color : '';
         const cls = 'car' + pa + (kc ? ' klass' : '') + (c.cam ? ' cam' : '') + (c.on_pit ? ' pit' : '');
         const r   = c.cam ? 22 : 17;
         const fill = kc ? ` style="fill:${esc(kc)}"` : '';
-        const tfill = kc && c.text ? ` style="fill:${esc(c.text)}"` : '';
+        const tfill = kc && c.text ? ` style="fill:${esc(c.text)}"`
+            : (pa === ' nr' && !c.cam) ? ' style="fill:#ffffff"' : '';
         parts.push(`<circle class="${cls}" cx="${xy[0].toFixed(1)}" cy="${xy[1].toFixed(1)}" r="${r}"${fill}></circle>`);
         parts.push(`<text class="car-label" x="${xy[0].toFixed(1)}" y="${xy[1].toFixed(1)}"${tfill}>${esc(c.num)}</text>`);
     }
