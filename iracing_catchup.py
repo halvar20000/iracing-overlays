@@ -21,6 +21,10 @@ States shown on the pace chip:
     HOLDING   (gray)   — pace within +/-0.05 s/lap
     (gathering)        — fewer than 2 clean laps recorded for either car
 
+GT3 WCT (Pro/Am field, see cls_proam.py): a PRO or AM driver on camera
+battles the next car of HIS Pro/Am class ahead - an AM chases the AM ahead,
+not a PRO in between. Positions are then class positions inside PRO / AM.
+
 Only renders during RACE sessions and when the focused car has a
 same-class car ahead (the class leader on camera hides the banner).
 If the car ahead is a full lap+ up the road, the gap shows "+N LAP"
@@ -44,6 +48,7 @@ from flask import (Flask, Response, abort, jsonify, render_template_string,
                    send_file)
 
 from car_brands import detect_brand, resolve_logo
+from cls_proam import ProAmRoster
 from iracing_sdk_base import SDKPoller, setup_utf8_stdout
 setup_utf8_stdout()
 
@@ -406,6 +411,13 @@ class CatchPoller(SDKPoller):
             if self._drivers[c]["class_id"] == focus_cls
             and c < len(surface) and surface[c] != -1
         ]
+
+        # GT3 WCT: PRO / AM are classes of their own here. A driver with no
+        # rating (UNRATED) or a field that is not WCT keeps the car class.
+        pa = self._proam_of(in_class)
+        focus_pa = pa.get(focus)
+        if focus_pa in ("PRO", "AM"):
+            in_class = [c for c in in_class if pa.get(c) == focus_pa]
         if focus not in in_class:
             base["reason"] = "camera car not in world"
             return base
@@ -464,6 +476,7 @@ class CatchPoller(SDKPoller):
                 "brand": d.get("brand"), "color": d.get("color"),
                 "full_name": d["name"], "class_name": d["class_name"],
                 "class_color": d["class_color"],
+                "proam": pa.get(c),
                 "laps_used": len(self._lap_hist.get(c) or ()),
                 "avg_lap": (mean(self._lap_hist[c])
                             if self._lap_hist.get(c) else None),
@@ -484,6 +497,16 @@ class CatchPoller(SDKPoller):
             "laps": self._compare_laps(ahead, focus),
         }
 
+    def _proam_of(self, cars) -> dict:
+        """cidx -> "PRO" / "AM" / "UNRATED" in a WCT field, else {}."""
+        try:
+            ids = {c: self._drivers[c].get("cust_id") for c in self._drivers}
+            if not proam.active_for(ids.values()):
+                return {}
+            return {c: proam.lookup_field(ids.get(c), True) for c in cars}
+        except Exception:
+            return {}
+
     def _compare_laps(self, a, b, n=4):
         """The last `n` lap NUMBERS both cars have completed, with each
         car's time — for the F1 "LAST 4 LAPS" table."""
@@ -501,6 +524,12 @@ class CatchPoller(SDKPoller):
 # -----------------------------------------------------------------------------
 app = Flask(__name__)
 poller = CatchPoller()
+proam = ProAmRoster()
+
+
+@app.route("/proam")
+def proam_status():
+    return jsonify(proam.status())
 
 
 @app.after_request
@@ -662,7 +691,8 @@ const CAR_RETRY_MS = 20000;   // render server may come up after the overlay
 
 function setDriver(prefix, c) {
     document.getElementById(prefix + '-pos').textContent = 'P' + c.pos;
-    document.getElementById(prefix + '-pos').style.setProperty('--cls', c.class_color || '#888');
+    const paCol = c.proam === 'PRO' ? '#e63946' : c.proam === 'AM' ? '#2ecc71' : null;
+    document.getElementById(prefix + '-pos').style.setProperty('--cls', paCol || c.class_color || '#888');
     document.getElementById(prefix + '-num').textContent = '#' + c.num;
     document.getElementById(prefix + '-name').textContent = c.name || '—';
 
@@ -872,7 +902,7 @@ function render(d) {
     $('c_l').textContent = b.last; nameColor($('c_l'), b);
     setHTML('c_s', sub(b));
     $('c_t').textContent = a.last; $('c_t').style.color = a.color || '#ff8a1f';
-    setHTML('c_for', ordinal(a.pos));
+    setHTML('c_for', ordinal(a.pos) + ((a.proam === 'PRO' || a.proam === 'AM') && a.proam === b.proam ? ' ' + a.proam : ''));
     $('chase').classList.add('on');
   } else if (VIEW === 'laps') {
     const laps = d.laps || [];
@@ -965,6 +995,7 @@ def car_image(cidx: int):
 
 
 if __name__ == "__main__":
+    proam.start()
     t = threading.Thread(target=poller.run, daemon=True)
     t.start()
 

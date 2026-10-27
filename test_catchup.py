@@ -308,6 +308,55 @@ check("cidx in payload", snap["show"] and snap["focus"]["cidx"] == 1
 check("drivers keep raw dict", "raw" in p._drivers[0] and "cust_id" in p._drivers[0])
 
 # ---------------------------------------------------------------------------
+# GT3 WCT: an AM on camera battles the AM ahead, not a PRO in between
+class FakeRoster:
+    def __init__(self, cls, active=True):
+        self.cls, self.active = cls, active
+    def active_for(self, ids):
+        return self.active
+    def lookup_field(self, uid, active):
+        if not active or not uid:
+            return None
+        return self.cls.get(uid, "UNRATED")
+
+def wct_drv(cidx, name, num, uid):
+    d = drv(cidx, name, num); d["UserID"] = uid; return d
+
+real_proam = ic.proam
+ic.proam = FakeRoster({101: "AM", 102: "PRO", 103: "AM", 104: "PRO"})
+field = [wct_drv(0, "Alan Amleader", "1", 101), wct_drv(1, "Peter Pro", "2", 102),
+         wct_drv(2, "Arne Amfocus", "3", 103), wct_drv(3, "Paul Probehind", "4", 104),
+         wct_drv(4, "Nils Norating", "5", 105)]
+p = make_poller(field, 2)
+p.ir.d["CarIdxLap"] = [10] * 5
+p.ir.d["CarIdxLapDistPct"] = [0.60, 0.50, 0.40, 0.30, 0.20]
+p.ir.d["CarIdxF2Time"] = [0.0, 2.0, 4.0, 6.0, 8.0]
+snap = p._read_snapshot()
+check("AM focus chases the AM ahead", snap["show"] and snap["ahead"]["cidx"] == 0,
+      str(snap.get("ahead")))
+check("AM gap skips the PRO", snap["gap"] is not None and abs(snap["gap"] - 4.0) < 1e-6,
+      str(snap.get("gap")))
+check("AM class positions P1/P2", snap["ahead"]["pos"] == 1 and snap["focus"]["pos"] == 2)
+check("proam in payload", snap["focus"]["proam"] == "AM" and snap["ahead"]["proam"] == "AM")
+p.ir.d["CamCarIdx"] = 3
+snap = p._read_snapshot()
+check("PRO focus chases the PRO ahead", snap["show"] and snap["ahead"]["cidx"] == 1
+      and snap["focus"]["pos"] == 2, str(snap.get("ahead")))
+p.ir.d["CamCarIdx"] = 0
+snap = p._read_snapshot()
+check("AM class leader hides", not snap["show"], snap.get("reason", ""))
+p.ir.d["CamCarIdx"] = 4
+snap = p._read_snapshot()
+check("UNRATED focus keeps the car class", snap["show"] and snap["ahead"]["cidx"] == 3,
+      str(snap.get("ahead")))
+ic.proam = FakeRoster({}, active=False)
+p.ir.d["CamCarIdx"] = 2
+snap = p._read_snapshot()
+check("not a WCT field = car class", snap["show"] and snap["ahead"]["cidx"] == 1
+      and snap["focus"]["proam"] is None)
+ic.proam = real_proam
+
+# ---------------------------------------------------------------------------
 print(f"\n{'='*50}\n{len(PASS)} passed, {len(FAIL)} failed")
 if FAIL:
     print("FAILED:", FAIL)
