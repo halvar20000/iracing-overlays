@@ -874,6 +874,11 @@ function sub(c) {
   const logo = c.brand ? '<img src="/brand/' + encodeURIComponent(c.brand) + '" onerror="this.remove()">' : '';
   return esc(c.team || c.car || '') + logo;
 }
+// GT3 WCT: red (PRO) / green (AM) bar under the position, like the tower
+function paMark(el, c) {
+  const col = c.proam === 'PRO' ? '#e63946' : c.proam === 'AM' ? '#2ecc71' : '';
+  el.style.boxShadow = col ? 'inset 0 -6px 0 ' + col : '';
+}
 function nameColor(el, c) { el.style.color = c.color || '#ffffff'; }
 let last = '';
 function setHTML(id, html) { const el = $(id); if (el.innerHTML !== html) el.innerHTML = html; }
@@ -887,6 +892,7 @@ function render(d) {
   const a = d.ahead, b = d.focus;
   if (VIEW === 'gap') {
     $('g_pa').textContent = a.pos; $('g_pb').textContent = b.pos;
+    paMark($('g_pa'), a); paMark($('g_pb'), b);
     $('g_fa').textContent = a.first; $('g_fb').textContent = b.first;
     $('g_la').textContent = a.last;  $('g_lb').textContent = b.last;
     nameColor($('g_la'), a); nameColor($('g_lb'), b);

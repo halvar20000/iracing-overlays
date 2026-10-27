@@ -188,7 +188,8 @@ a PRO / AM focus keeps only cars of the same Pro/Am class (positions = class
 positions inside PRO / AM; gap via F2Time diff stays valid — same car class);
 UNRATED focus or a non-WCT field = car class as before. Payload cars carry
 `proam`; banner position box red / green; /chasing "FOR 2ND AM". `/proam`
-status route. test_catchup 48/48 (+8). Restart 5015.
+status route. /gap (battle_gap): same data, red / green bar under both
+positions (rendered). test_catchup 48/48 (+8). Restart 5015.
 
 **October 27, 2026 (/lastrace/wct showed "?" instead of AM):** CLS WCT
 standings carry a CAR class on 2 of 38 registrations (Maurice Becker "Pro",
