@@ -175,11 +175,12 @@ class Engine:
                 ev = st._log("flag", f"AUTO STEWARD: full course caution? - "
                              f"{why}", lap=st._leader_lap())
                 ev.kind, ev.source = "auto_caution_ask", "auto"
-        elif kind == "quali":
+        elif kind == "sequence":
             text = act["text"]
-            ev = st._log("message", f"AUTO STEWARD: RC message to all: {text}",
+            ev = st._log("message", f"AUTO STEWARD: sequencer "
+                         f"{steward.fmt_time(act['at'])}: RC message to all: {text}",
                          lap=st._leader_lap())
-            ev.kind, ev.source = "auto_quali", "auto"
+            ev.kind, ev.source = "auto_sequence", "auto"
             self.to_iracing("message_all", msg=text)
             self.to_stream("message", "", text=text)
         elif kind in ("blue_warn", "fast_repair"):
@@ -639,8 +640,8 @@ class Engine:
                 + (f"{c['fcy_incs']}x / {c['fcy_window_s']}s "
                    f"({c['fcy_mode']}, not in the last "
                    f"{c['fcy_end_protect_min']} min)" if c["fcy_enabled"] else "off")
-                + "; quali AM/PRO "
-                + (f"{c['quali_split_min']} min" if c["quali_split"] else "off")
+                + "; sequencer "
+                + (f"{len(c['sequence'])} message(s)" if c["seq_enabled"] else "off")
                 + f"; blue flag warn {c['bf_warn_s'] or 'off'}s / DT "
                 f"{c['bf_dt_s'] or 'off'}s; fast repair {c['fr_used'] or 'off'}; "
                 f"meatball {'on' if c['meatball_enabled'] else 'off'}"

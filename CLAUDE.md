@@ -178,6 +178,19 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 27, 2026 (iCASControl 0.1.12 — sequencer):** Thomas's
+iRaceControl SEQUENCER screenshot (QUALIFY: MSGT 00:00:01 "Start Qualifying
+AM Klasse", 00:15:00 "Ende Qualifying AM Klasse / Start Qualifying PRO
+Klase"). The fixed quali_split switch is replaced by `seq_enabled` +
+`sequence` [{session quali|race|practice|warmup|any, at seconds, text}]
+(steward.clean_sequence: "HH:MM:SS" / "MM:SS" / seconds, ≤ 30, sorted);
+AutoSteward._sequence sends each step once while at ≤ SessionTime < at + 120
+→ log kind auto_sequence + /all + stream banner. Old saved configs are
+converted (_migrate: untouched old English defaults → the new WCT texts,
+own texts → two steps). Rules dialog: row list + "+ Add message". Default
+OFF (iCAS also runs IEC). Not built: RANDOM YELLOW (WCT does not use it).
+test_incidents 249/249; dialog rendered.
+
 **October 27, 2026 (iCASControl 0.1.11 — GT3 WCT Auto Steward ruleset
 from Thomas's iRaceControl screenshot):** race only: iRacing's BLUE flag
 (CarIdxSessionFlags 0x20) shown 20 s (`bf_warn_s`) -> private "BLUE FLAG -
@@ -193,8 +206,7 @@ The old gap-based blue hint is now OFF by default ("Own blue-flag hint").
 PRIVATE chat = "/14 text" (support.iracing.com 31000170165) - chat template
 `notify` changed from "/all #14 text" (menu Notify, RC PRIVATE, blue hints).
 NOTE: a saved data/steward_config.json keeps its old values (e.g. 10x / 10 s,
-blue hint on) - set the WCT values once in Rules. The quali "sequencer"
-screenshot never arrived (quali_split covers the AM / PRO messages).
+blue hint on) - set the WCT values once in Rules.
 test_incidents.py 243/243; rules dialog rendered. NOT tried in iRacing.
 
 **October 27, 2026 (iCASControl 0.1.10 — SUPP follow mode + internet

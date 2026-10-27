@@ -279,14 +279,14 @@ function updateStewardToggle() {
   t.title = `Incidents: drive through at ${s.dt_first}x, then every ${s.dt_every}x`
     + ` | caution: ${s.fcy_enabled ? `${s.fcy_incs}x / ${s.fcy_window_s}s (${s.fcy_mode}`
         + `${s.fcy_laps > 0 ? `, ${s.fcy_laps} laps` : ''})` : 'off'}`
-    + ` | quali AM/PRO: ${s.quali_split ? s.quali_split_min + ' min' : 'off'}`
+    + ` | sequencer: ${s.seq_enabled ? (s.sequence || []).length + ' msg' : 'off'}`
     + ` | blue flag: warn ${s.bf_warn_s || 'off'}s, DT ${s.bf_dt_s || 'off'}s`
     + ` | fast repair: ${s.fr_used || 'off'} | meatball: ${s.meatball_enabled ? 'on' : 'off'}`;
 }
 
 const STEWARD_FIELDS = ['dt_first', 'dt_every', 'fcy_enabled', 'fcy_incs',
-  'fcy_window_s', 'fcy_mode', 'fcy_cooldown_s', 'fcy_laps', 'quali_split', 'quali_split_min',
-  'quali_am_text', 'quali_pro_text', 'blue_enabled', 'blue_gap_s', 'blue_repeat_s',
+  'fcy_window_s', 'fcy_mode', 'fcy_cooldown_s', 'fcy_laps', 'seq_enabled',
+  'blue_enabled', 'blue_gap_s', 'blue_repeat_s',
   'fcy_end_protect_min', 'bf_warn_s', 'bf_warn_text', 'bf_dt_s', 'bf_dt_text',
   'fr_used', 'fr_text', 'meatball_enabled', 'meatball_text'];
 function openStewardRules() {
@@ -296,7 +296,31 @@ function openStewardRules() {
     if (el.type === 'checkbox') el.checked = !!s[k];
     else el.value = s[k] ?? '';
   });
+  $('#seq-rows').innerHTML = '';
+  (s.sequence || []).forEach(addSeqRow);
   $('#sdlg').classList.remove('hidden');
+}
+const SEQ_SESSIONS = [['quali', 'Qualifying'], ['race', 'Race'],
+  ['practice', 'Practice'], ['warmup', 'Warmup'], ['any', 'Any session']];
+function fmtSeqTime(sec) {
+  sec = Math.max(0, Math.round(+sec || 0));
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(Math.floor(sec / 3600))}:${p(Math.floor(sec / 60) % 60)}:${p(sec % 60)}`;
+}
+function addSeqRow(st) {
+  st = st || { session: 'quali', at: 0, text: '' };
+  const row = document.createElement('div');
+  row.className = 'seq-row';
+  row.innerHTML = `<select class="seq-s">${SEQ_SESSIONS.map(([v, l]) =>
+    `<option value="${v}">${l}</option>`).join('')}</select>`
+    + '<input class="seq-t" type="text" maxlength="8" placeholder="00:15:00">'
+    + '<input class="seq-x" type="text" maxlength="200" placeholder="message">'
+    + '<button type="button" class="seq-del" title="Remove">&times;</button>';
+  row.querySelector('.seq-s').value = st.session;
+  row.querySelector('.seq-t').value = fmtSeqTime(st.at);
+  row.querySelector('.seq-x').value = st.text;
+  row.querySelector('.seq-del').addEventListener('click', () => row.remove());
+  $('#seq-rows').appendChild(row);
 }
 function saveStewardRules(ok) {
   $('#sdlg').classList.add('hidden');
@@ -307,6 +331,11 @@ function saveStewardRules(ok) {
     msg[k] = el.type === 'checkbox' ? el.checked
       : (el.type === 'number' ? parseFloat(el.value) : el.value);
   });
+  msg.sequence = [...document.querySelectorAll('#seq-rows .seq-row')].map((r) => ({
+    session: r.querySelector('.seq-s').value,
+    at: r.querySelector('.seq-t').value.trim(),
+    text: r.querySelector('.seq-x').value.trim(),
+  })).filter((st) => st.at && st.text);
   send(msg);
 }
 
@@ -909,6 +938,7 @@ function wire() {
     send({ action: 'set_steward', enabled: !(State.steward && State.steward.enabled) }));
   $('#steward-rules').addEventListener('click', openStewardRules);
   $('#sdlg-ok').addEventListener('click', () => saveStewardRules(true));
+  $('#seq-add').addEventListener('click', () => addSeqRow());
   $('#sdlg-cancel').addEventListener('click', () => saveStewardRules(false));
   $('#sdlg-x').addEventListener('click', () => saveStewardRules(false));
   $('#stream-test').addEventListener('click', () =>

@@ -488,6 +488,10 @@ td.dsq { color: var(--red) !important; text-decoration: line-through; }
 .sdlg legend, .sdlg legend label { font-size: 12px; color: var(--text); font-weight: 600; }
 .sdlg input[type=number] { width: 64px; padding: 2px 4px; font-size: 13px; }
 .sdlg input.wide { width: 100%; box-sizing: border-box; font-size: 13px; }
+.seq-row { display: flex; gap: 6px; margin: 4px 0; align-items: center; }
+.seq-row .seq-t { width: 96px; flex: none; font-family: monospace; }
+.seq-row .seq-x { flex: 1; min-width: 0; font-size: 13px; }
+.seq-row .seq-del { padding: 0 8px; }
 .sdlg select { font-size: 12px; }
 .dlg-note { font-size: 11px; color: var(--mut); }
 .log-row.auto .log-text { white-space: normal; overflow: visible; }
@@ -563,3 +567,4 @@ td.dsq { color: var(--red) !important; text-decoration: line-through; }
 .stw-url code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   user-select: all; color: #8fd3ff; }
 .chat-toggle.stw.following { background: #3949ab; color: #fff; }
+.sdlg .note { display: block; font-size: 12px; opacity: 0.7; margin-top: 4px; }

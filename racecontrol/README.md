@@ -186,11 +186,15 @@ Header switch **AUTO STEWARD** (on by default) + **Rules** (saved in
   `!pacelaps N` goes out. By hand: **Caution laps** under the race-control
   buttons — a number + **Set**, or **−1 / +1** (iRacing only takes it under
   a caution, as admin).
-* **Qualifying AM / PRO** (GT3 WCT, off by default — switch it on for WCT):
-  at the start of a qualifying `/all QUALIFYING: THE FIRST 15 MINUTES ARE
-  RESERVED FOR AM DRIVERS`, after 15 min `/all AM QUALIFYING FINISHED - PRO
-  QUALIFYING STARTED` (texts editable; also on the stream banner when it is
-  on). Started mid-quali (> 3 min) = no start message.
+* **Sequencer** (0.1.12, like iRaceControl's, off by default — switch it on
+  for WCT): RC messages to everybody (`/all`) at a session time, per session
+  (Qualifying / Race / Practice / Warmup / Any). Default = the GT3 WCT quali:
+  00:00:01 `Start Qualifying AM Klasse`, 00:15:00 `Ende Qualifying AM Klasse
+  / Start Qualifying PRO Klasse`. Add / remove rows in Rules. Each step goes
+  out once and only within 2 min of its time (iCAS started later in the
+  session does not announce old steps); also on the stream banner when that
+  is on. Replaces 0.1.5's fixed "Qualifying AM / PRO" switch (a saved config
+  is converted).
 * **Blue flag** — a car about to be LAPPED, with the lapping car ≤ 1.0 s
   behind (track gap × the faster car's lap time): `/all #14 BLUE FLAG - let
   #7 Driver pass` + a log line; again after 20 s if he still holds him up,

@@ -56,10 +56,10 @@
           <button id="stream-test" title="Shows 'TEST · iCASControl' on the banner">Test</button>
         </div>
       </div>
-      <div class="chat-box" title="Auto Steward: incident limit (15x, then every 6x), full course caution when several cars crash at once, GT3 WCT quali AM / PRO messages, blue flags">
+      <div class="chat-box" title="Auto Steward: incident limit (15x, then every 6x), full course caution when several cars crash at once, timed sequencer messages (GT3 WCT quali AM / PRO), blue flags">
         <button id="steward-toggle" class="chat-toggle steward off">AUTO STEWARD OFF</button>
         <div class="chat-sub">
-          <button id="steward-rules" title="Limits, caution, quali AM / PRO, blue flags">Rules</button>
+          <button id="steward-rules" title="Limits, caution, sequencer, blue flags">Rules</button>
         </div>
       </div>
       <div class="chat-box" title="Stewards online + steward chat (several stewards at once)">
@@ -394,11 +394,10 @@
         (!pacelaps once the caution is out; 0 = iRacing decides)</label>
       <label>not in the last <input id="s-fcy_end_protect_min" type="number" min="0" max="60"> minutes of the race (0 = always)</label>
     </fieldset>
-    <fieldset><legend><label><input id="s-quali_split" type="checkbox"> Qualifying AM / PRO (GT3 WCT)</label></legend>
-      <label>At the start, to everybody:</label>
-      <input id="s-quali_am_text" type="text" maxlength="200" class="wide">
-      <label>After <input id="s-quali_split_min" type="number" min="1" max="120"> minutes:</label>
-      <input id="s-quali_pro_text" type="text" maxlength="200" class="wide">
+    <fieldset><legend><label><input id="s-seq_enabled" type="checkbox"> Sequencer - RC message to everybody at a session time</label></legend>
+      <div id="seq-rows"></div>
+      <button type="button" id="seq-add">+ Add message</button>
+      <span class="note">time = since the session started (HH:MM:SS); sent once, only within 2 min of its time</span>
     </fieldset>
     <fieldset><legend>iRacing's blue flag (race)</legend>
       <label>shown for <input id="s-bf_warn_s" type="number" min="0" max="300"> s - private message (0 = off):</label>

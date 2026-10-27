@@ -12,9 +12,11 @@ Rules dialog:
   under green.  ``fcy_mode`` "auto" (default) = !yellow goes out at once,
   "ask" = a log line with a DEPLOY button.  ``fcy_laps`` > 0: once the
   caution is out, ``!pacelaps N`` sets its length (0 = iRacing decides).
-* QUALI AM / PRO (GT3 WCT, ``quali_split``) - at the start of a qualifying
-  ``quali_am_text`` to everybody, after ``quali_split_min`` minutes
-  ``quali_pro_text``.
+* SEQUENCER (``seq_enabled`` + ``sequence``, like iRaceControl's) - RC
+  messages to everybody at a session time, e.g. GT3 WCT quali 00:00:01
+  "Start Qualifying AM Klasse", 00:15:00 "Ende Qualifying AM Klasse /
+  Start Qualifying PRO Klasse".  A step is sent once, and only within 2 min
+  of its time (iCAS started later does not announce old steps).
 * BLUE FLAG (own gap check, off by default since 0.1.11) - a car about to be
   lapped with the faster car <= ``blue_gap_s`` behind it gets a private
   ``BLUE FLAG - let #7 ... pass`` (again after ``blue_repeat_s``).
@@ -50,24 +52,31 @@ DEFAULT_CONFIG = {
     "fcy_enabled": True, "fcy_mode": "auto", "fcy_incs": 40,
     "fcy_window_s": 15, "fcy_cooldown_s": 180, "fcy_laps": 0,
     "fcy_end_protect_min": 5,
-    "quali_split": False, "quali_split_min": 15,
-    "quali_am_text": "QUALIFYING: THE FIRST 15 MINUTES ARE RESERVED FOR "
-                     "AM DRIVERS",
-    "quali_pro_text": "AM QUALIFYING FINISHED - PRO QUALIFYING STARTED",
+    # sequencer (like iRaceControl's): an RC message to everybody at a
+    # session time; default = the GT3 WCT quali AM / PRO split
+    "seq_enabled": False,
+    "sequence": [
+        {"session": "quali", "at": 1, "text": "Start Qualifying AM Klasse"},
+        {"session": "quali", "at": 900,
+         "text": "Ende Qualifying AM Klasse / Start Qualifying PRO Klasse"},
+    ],
     "blue_enabled": False, "blue_gap_s": 1.0, "blue_repeat_s": 20,
     "bf_warn_s": 20, "bf_warn_text": "BLUE FLAG - LET PASS FASTER CAR",
     "bf_dt_s": 30, "bf_dt_text": "#%cnr% (%dname%) - DRIVE THROUGH FOR BLUE FLAG",
     "fr_used": 1, "fr_text": "YOU'VE USED UP ALL YOUR FASTREPAIR",
     "meatball_enabled": True, "meatball_text": "#%cnr% (%dname%) - HAS A MEATBALL FLAG",
 }
-_BOOL = ("enabled", "fcy_enabled", "quali_split", "blue_enabled",
+_BOOL = ("enabled", "fcy_enabled", "seq_enabled", "blue_enabled",
          "meatball_enabled")
 _INT = ("dt_first", "dt_every", "fcy_incs", "fcy_window_s",
         "fcy_cooldown_s", "fcy_laps", "fcy_end_protect_min",
-        "quali_split_min", "blue_repeat_s", "bf_warn_s", "bf_dt_s", "fr_used")
+        "blue_repeat_s", "bf_warn_s", "bf_dt_s", "fr_used")
 _FLOAT = ("blue_gap_s",)
-_TEXT = ("quali_am_text", "quali_pro_text", "bf_warn_text", "bf_dt_text",
+_TEXT = ("bf_warn_text", "bf_dt_text",
          "fr_text", "meatball_text")
+SEQ_SESSIONS = ("quali", "race", "practice", "warmup", "any")
+SEQ_MAX = 30
+SEQ_LATE_S = 120        # a step is still sent this long after its time
 FLAG_BLUE = 0x00000020          # CarIdxSessionFlags
 FLAG_REPAIR = 0x00100000        # the meatball
 
@@ -100,9 +109,70 @@ def describe(rules: dict) -> str:
         else f"limit {first}x"
 
 
+def parse_time(v) -> Optional[int]:
+    """Seconds from 90 / "90" / "1:30" / "00:15:00"; None if unusable."""
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return int(v) if v >= 0 else None
+    parts = str(v or "").strip().split(":")
+    try:
+        nums = [float(p) for p in parts]
+    except ValueError:
+        return None
+    if not 1 <= len(nums) <= 3 or any(n < 0 for n in nums):
+        return None
+    secs = 0.0
+    for n in nums:
+        secs = secs * 60 + n
+    return int(secs)
+
+
+def fmt_time(secs: int) -> str:
+    return f"{secs // 3600:02d}:{secs // 60 % 60:02d}:{secs % 60:02d}"
+
+
+def clean_sequence(steps) -> list[dict]:
+    out = []
+    for st in steps if isinstance(steps, list) else []:
+        if not isinstance(st, dict):
+            continue
+        at = parse_time(st.get("at"))
+        text = " ".join(str(st.get("text") or "").split())[:200]
+        session = str(st.get("session") or "quali").lower()
+        if at is None or not text:
+            continue
+        out.append({"session": session if session in SEQ_SESSIONS else "quali",
+                    "at": at, "text": text})
+    out.sort(key=lambda st: (SEQ_SESSIONS.index(st["session"]), st["at"]))
+    return out[:SEQ_MAX]
+
+
+def _migrate(cfg: dict) -> dict:
+    """0.1.5 - 0.1.11 had a fixed quali AM / PRO switch -> two steps."""
+    if "sequence" in cfg or not any(k.startswith("quali_") for k in cfg):
+        return cfg
+    cfg = dict(cfg)
+    old = {"quali_am_text": "QUALIFYING: THE FIRST 15 MINUTES ARE RESERVED "
+                            "FOR AM DRIVERS",
+           "quali_pro_text": "AM QUALIFYING FINISHED - PRO QUALIFYING STARTED"}
+    if all(cfg.get(k, v) == v for k, v in old.items()) \
+            and (parse_time(cfg.get("quali_split_min")) or 15) == 15:
+        cfg["seq_enabled"] = bool(cfg.get("quali_split"))
+        return cfg               # untouched old defaults -> the new defaults
+    split = parse_time(cfg.get("quali_split_min")) or 15
+    steps = [{"session": "quali", "at": 1, "text": cfg.get("quali_am_text")},
+             {"session": "quali", "at": split * 60,
+              "text": cfg.get("quali_pro_text")}]
+    steps = [st for st in steps if st["text"]]
+    if steps:
+        cfg["sequence"] = steps
+    cfg.setdefault("seq_enabled", bool(cfg.get("quali_split")))
+    return cfg
+
+
 def clean(cfg: dict) -> dict:
     out = dict(DEFAULT_CONFIG)
-    out.update({k: v for k, v in (cfg or {}).items() if k in DEFAULT_CONFIG})
+    out.update({k: v for k, v in _migrate(cfg or {}).items()
+                if k in DEFAULT_CONFIG})
     for k in _BOOL:
         out[k] = bool(out[k])
     for k, conv in [(k, int) for k in _INT] + [(k, float) for k in _FLOAT]:
@@ -112,6 +182,7 @@ def clean(cfg: dict) -> dict:
             out[k] = DEFAULT_CONFIG[k]
     for k in _TEXT:
         out[k] = " ".join(str(out[k] or "").split())[:200]
+    out["sequence"] = clean_sequence(out["sequence"])
     if out["fcy_mode"] not in ("ask", "auto"):
         out["fcy_mode"] = "auto"
     out["fcy_incs"] = max(1, out["fcy_incs"])
@@ -152,6 +223,15 @@ def _is_quali(state) -> bool:
     return "QUALIF" in str(state.session_type).upper()
 
 
+def session_kind(state) -> str:
+    t = str(state.session_type).upper()
+    for word, kind in (("QUALIF", "quali"), ("RACE", "race"),
+                       ("WARM", "warmup"), ("PRACT", "practice")):
+        if word in t:
+            return kind
+    return ""
+
+
 def _caution_out(state) -> bool:
     """Full course caution (incl. its one-to-green lap).  A LOCAL yellow is
     not one - counting it kept iCAS on caution after the restart."""
@@ -175,7 +255,7 @@ class AutoSteward:
     def reset(self) -> None:
         self._session = None
         self._fcy_block_until = -1.0      # session time
-        self._quali_sent: set[str] = set()
+        self._seq_sent: set[int] = set()
         self._blue: dict[tuple[int, int], float] = {}   # (slow, fast) -> t
         self._bf_since: dict[int, float] = {}   # car -> blue flag shown since
         self._bf_done: dict[int, set] = {}      # car -> {"warn", "dt"} this period
@@ -193,8 +273,8 @@ class AutoSteward:
         out: list[dict] = []
         if rules.get("fcy_enabled"):
             out += self._fcy(state, rules)
-        if rules.get("quali_split"):
-            out += self._quali(state, rules)
+        if rules.get("seq_enabled"):
+            out += self._sequence(state, rules)
         if rules.get("blue_enabled"):
             out += self._blue_flags(state, rules)
         out += self._iracing_blue(state, rules)
@@ -302,26 +382,24 @@ class AutoSteward:
                  "window": window, "numbers": nums,
                  "mode": rules.get("fcy_mode", "auto")}]
 
-    # GT3 WCT qualifying: AM first, then PRO ----------------------------------
+    # sequencer: timed RC messages -------------------------------------------
 
-    def _quali(self, state, rules: dict) -> list[dict]:
-        if not _is_quali(state):
+    def _sequence(self, state, rules: dict) -> list[dict]:
+        kind = session_kind(state)
+        if not kind:
             return []
         elapsed = state.session_time
-        split = float(rules.get("quali_split_min") or 15) * 60
         out = []
-        tag = f"{state.session_key}:{state.session_num}"
-        # the start message only at the start (a restart of iCAS mid-quali
-        # must not announce it again)
-        if elapsed < 180 and elapsed < split and tag + ":am" not in self._quali_sent:
-            self._quali_sent.add(tag + ":am")
-            out.append({"type": "quali", "phase": "am",
-                        "text": rules.get("quali_am_text", "")})
-        if split <= elapsed < split + 120 and tag + ":pro" not in self._quali_sent:
-            self._quali_sent.add(tag + ":pro")
-            out.append({"type": "quali", "phase": "pro",
-                        "text": rules.get("quali_pro_text", "")})
-        return [a for a in out if a["text"]]
+        for n, st in enumerate(rules.get("sequence") or []):
+            if st["session"] not in (kind, "any") or n in self._seq_sent:
+                continue
+            # only close to its time: iCAS started (or restarted) later in
+            # the session must not announce old steps
+            if st["at"] <= elapsed < st["at"] + SEQ_LATE_S:
+                self._seq_sent.add(n)
+                out.append({"type": "sequence", "at": st["at"],
+                            "session": kind, "text": st["text"]})
+        return out
 
     # blue flags ---------------------------------------------------------------
 

@@ -1059,26 +1059,60 @@ eng7.handle_client_message({"action": "set_steward", "fcy_laps": 0})
 eng7._want_caution_laps()
 check("fcy_laps 0: iRacing decides, nothing planned", eng7._pending_laps is None)
 
-# quali AM / PRO
-eng7.handle_client_message({"action": "set_steward", "quali_split": True})
+# sequencer (default = GT3 WCT quali AM / PRO)
+eng7.handle_client_message({"action": "set_steward", "seq_enabled": True})
 q = [scar(0, "7")]
 step(sframe(30, q, stype="OPEN QUALIFY", num=1, key="q-1"))
-a = autos("auto_quali")
+a = autos("auto_sequence")
 check("quali start: AM message to everybody (+ chat /all)",
-      len(a) == 1 and "AM DRIVERS" in a[0].text
-      and sent7[-1] == "/all QUALIFYING: THE FIRST 15 MINUTES ARE RESERVED FOR AM DRIVERS",
-      sent7[-1])
+      len(a) == 1 and "00:00:01" in a[0].text
+      and sent7[-1] == "/all Start Qualifying AM Klasse", sent7[-1])
 step(sframe(600, q, stype="OPEN QUALIFY", num=1, key="q-1"))
-check("no repeat at 10 min", len(autos("auto_quali")) == 1)
+check("no repeat at 10 min", len(autos("auto_sequence")) == 1)
 step(sframe(901, q, stype="OPEN QUALIFY", num=1, key="q-1"))
-a = autos("auto_quali")
+a = autos("auto_sequence")
 check("15 min: AM finished, PRO started",
-      len(a) == 2 and sent7[-1] == "/all AM QUALIFYING FINISHED - PRO QUALIFYING STARTED")
+      len(a) == 2 and sent7[-1]
+      == "/all Ende Qualifying AM Klasse / Start Qualifying PRO Klasse")
 step(sframe(905, q, stype="OPEN QUALIFY", num=1, key="q-1"))
-check("PRO message once", len(autos("auto_quali")) == 2)
+check("PRO message once", len(autos("auto_sequence")) == 2)
 eng7.auto.reset()
 step(sframe(1300, q, stype="OPEN QUALIFY", num=1, key="q-1"))
-check("iCAS started mid-quali (20 min): nothing announced", len(autos("auto_quali")) == 2)
+check("iCAS started mid-quali (20 min): nothing announced",
+      len(autos("auto_sequence")) == 2)
+eng7.handle_client_message({"action": "set_steward", "sequence": [
+    {"session": "race", "at": "00:05:00", "text": "  Track limits   T4 "},
+    {"session": "any", "at": "1:00", "text": "Hello"},
+    {"session": "race", "at": "bad", "text": "x"},
+    {"session": "quali", "at": 10, "text": ""}]})
+seq = eng7.steward_cfg["sequence"]
+check("sequence cleaned: times parsed, empty / bad dropped, sorted",
+      seq == [{"session": "race", "at": 300, "text": "Track limits T4"},
+              {"session": "any", "at": 60, "text": "Hello"}], seq)
+rq = [scar(0, "7")]
+step(sframe(70, rq, num=2, key="r-1"))
+check("'any' step in the race", sent7[-1] == "/all Hello", sent7[-1])
+step(sframe(301, rq, num=2, key="r-1"))
+check("race step at 5 min", sent7[-1] == "/all Track limits T4", sent7[-1])
+check("practice: race step not sent",
+      steward.AutoSteward()._sequence(type("S", (), {
+          "session_type": "PRACTICE", "session_time": 301.0})(),
+          eng7.steward_cfg) == [])
+old = steward.clean({"quali_split": True, "quali_split_min": 15,
+                     "quali_am_text": "QUALIFYING: THE FIRST 15 MINUTES ARE "
+                                      "RESERVED FOR AM DRIVERS",
+                     "quali_pro_text": "AM QUALIFYING FINISHED - PRO "
+                                       "QUALIFYING STARTED"})
+check("old config with old default texts -> new WCT defaults, switch kept",
+      old["seq_enabled"] and old["sequence"][0]["text"]
+      == "Start Qualifying AM Klasse")
+own = steward.clean({"quali_split": False, "quali_split_min": 20,
+                     "quali_am_text": "AM now", "quali_pro_text": "PRO now"})
+check("old config with own texts -> two steps (20 min)",
+      not own["seq_enabled"] and [(x["at"], x["text"]) for x in own["sequence"]]
+      == [(1, "AM now"), (1200, "PRO now")], own["sequence"])
+eng7.handle_client_message({"action": "set_steward", "seq_enabled": False,
+                            "sequence": steward.DEFAULT_CONFIG["sequence"]})
 
 # blue flags (100 s laps -> 0.01 lap = 1 s)
 def blue_frame(t, slow_pct, fast_pct, fast_lap=5, slow_lap=4):
