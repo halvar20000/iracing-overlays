@@ -370,7 +370,9 @@ async function tick() {
     document.getElementById('numchip').style.setProperty('--cls', d.class_color || '#888');
     document.getElementById('pa').className =
         'pa' + (d.proam === 'PRO' ? ' pro' : d.proam === 'AM' ? ' am' : d.proam === 'UNRATED' ? ' nr' : '');
-    document.getElementById('name').textContent = d.name || '—';
+    // full name incl. first name (2026-10-27, Thomas); ?short=1 = "M. Becker"
+    document.getElementById('name').textContent =
+        (qs.get('short') === '1' ? d.name : (d.full_name || d.name)) || '—';
     const team = document.getElementById('team');
     team.textContent = d.team || '';
     team.style.display = d.team ? '' : 'none';

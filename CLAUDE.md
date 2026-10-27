@@ -181,7 +181,8 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
-**October 27, 2026 (driver card: CLS team under the name):** solo sessions
+**October 27, 2026 (driver card: CLS team under the name + FULL name):** the
+card now shows the full name with first name (?short=1 = old "M. Becker"). Solo sessions
 (WCT, PCCD) send no real team (TeamName = driver → hidden), so the card
 (/ and /simple) had no team line. cls_proam now also collects `teamName` per
 league in the all-league roster fetch (`_teams` {slug: {iracing id: team}},
