@@ -38,6 +38,18 @@ from backend.models import (
 from backend.sources.base import DataSource
 from backend.incidents import BehaviourDetector, OfficialIncidents
 from backend.tracks import load_track
+
+# Sector timing is shared with the Quali Delta overlay (repo root).
+import os as _os
+import sys as _sys
+_ROOT = _os.path.dirname(_os.path.dirname(_os.path.dirname(
+    _os.path.dirname(_os.path.abspath(__file__)))))
+if _ROOT not in _sys.path:
+    _sys.path.append(_ROOT)
+try:
+    from field_sectors import FieldSectors
+except Exception:                       # racecontrol copied on its own
+    FieldSectors = None
 from backend.car_brands import detect_brand
 
 try:                                  # pyirsdk is Windows-only in practice
@@ -147,6 +159,8 @@ class IRacingSource(DataSource):
         self._totals: Optional[dict[int, int]] = None
         self._session_num = 0
         self._replay_busy = False
+        self.sectors = FieldSectors() if FieldSectors else None
+        self._sector_key = None
 
     # -- DataSource interface ----------------------------------------------
 
@@ -359,6 +373,7 @@ class IRacingSource(DataSource):
                                        & 0xFFFFFF),
                 class_short=labels.get(idx, ""),
                 car_brand=detect_brand(d.get("CarPath"), d.get("CarScreenName")),
+                car_model=str(d.get("CarScreenName") or ""),
                 position=(int(at(positions, idx, r + 1)) or (r + 1))
                 if is_race else r + 1,
                 class_position=int(at(class_pos, idx, 0)),
@@ -413,6 +428,8 @@ class IRacingSource(DataSource):
             session_num=cur_num, session_key=session_key, in_replay=in_replay,
         )
 
+        self._read_sectors(cars, cur_num, session_key, session.session_time,
+                           track_len_km, pct, surface, on_pit, in_replay)
         incidents = self._read_incidents(cur_num, cur_session, cars,
                                          session.session_time, state_id,
                                          track_len_km, in_replay)
@@ -422,6 +439,46 @@ class IRacingSource(DataSource):
             track_path=self._track_path, pit_path=self._pit_path,
             source_name=self.name, connected=True,
         )
+
+    def _read_sectors(self, cars: list[CarFrame], session_num: int,
+                      session_key: str, t: float, track_km: float,
+                      pcts, surfaces, on_pits, in_replay: bool) -> None:
+        """Sector times of each car's lap in progress (field_sectors, the
+        sectors of SplitTimeInfo).  Replay footage never counts - it would
+        set bests from the past."""
+        fs = self.sectors
+        if fs is None:
+            return
+        key = (session_key, session_num)
+        if key != self._sector_key:
+            self._sector_key = key
+            fs.reset()
+        bounds = []
+        try:
+            for sec in (self._g("SplitTimeInfo", {}) or {}).get("Sectors") or []:
+                if sec.get("SectorStartPct") is not None:
+                    bounds.append(float(sec["SectorStartPct"]))
+        except Exception:
+            bounds = []
+        fs.configure(bounds or [0.0, 1 / 3, 2 / 3], track_km * 1000.0)
+        if not in_replay:
+            fs.update(t, list(pcts), list(surfaces), list(on_pits))
+        n = fs.n
+        for c in cars:
+            row = fs.car_last.get(c.car_idx) or [None] * n
+            mine = fs.car_best.get(c.car_idx) or [None] * n
+            out = []
+            for i in range(n):
+                v = row[i] if i < len(row) else None
+                if v is None:
+                    out.append(None)
+                    continue
+                best = fs.best[i]
+                kind = ("overall" if best and v <= best[0] + 1e-9 else
+                        "personal" if mine[i] is not None
+                        and v <= mine[i] + 1e-9 else "")
+                out.append([round(v, 3), kind])
+            c.sectors = out
 
     def _read_incidents(self, session_num: int, cur_session: dict,
                         cars: list[CarFrame], t: float, state_id: int,

@@ -76,6 +76,7 @@ class CarFrame:
     class_color: str = "#6c7a89"
     class_short: str = ""
     car_brand: str = ""            # manufacturer slug, e.g. 'porsche'
+    car_model: str = ""            # CarScreenName, e.g. 'Ferrari 296 GT3'
     position: int = 0
     class_position: int = 0
     lap: int = 0
@@ -93,6 +94,8 @@ class CarFrame:
     is_pace_car: bool = False
     is_player: bool = False
     finished: bool = False
+    # this lap's sector times: [seconds, "overall" | "personal" | ""] or None
+    sectors: list = field(default_factory=list)
 
     @property
     def in_world(self) -> bool:

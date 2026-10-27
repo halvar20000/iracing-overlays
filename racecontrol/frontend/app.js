@@ -191,8 +191,35 @@ function updateRunToggle() {
 }
 
 // ---- timing table ---------------------------------------------------------
+// Sector columns S1..Sn before "Last" - as many as the track has.
+function syncSectorHead(n) {
+  if (State.sectorCount === n) return;
+  State.sectorCount = n;
+  document.querySelectorAll('th.c-sec').forEach((th) => th.remove());
+  const last = document.querySelector('th.c-last');
+  for (let i = 1; i <= n; i++) {
+    const th = document.createElement('th');
+    th.className = 'c-sec';
+    th.textContent = `S${i}`;
+    last.parentNode.insertBefore(th, last);
+  }
+}
+
+function sectorCells(c, n) {
+  let out = '';
+  for (let i = 0; i < n; i++) {
+    const v = (c.sectors || [])[i];
+    const cls = v && v[1] === 'overall' ? ' class="best-overall"'
+      : v && v[1] === 'personal' ? ' class="best-class"' : '';
+    out += `<td class="c-sec"><span${cls}>${v ? v[0].toFixed(2) : ''}</span></td>`;
+  }
+  return out;
+}
+
 function renderTiming(s) {
   const body = $('#timing-body');
+  const nSec = (s.session && s.session.sector_count) || 0;
+  syncSectorHead(nSec);
   const rows = s.cars.map((c) => {
     const sel = c.car_idx === State.selectedCar ? ' selected' : '';
     const pit = c.on_pit_road ? ' pit' : '';
@@ -224,13 +251,14 @@ function renderTiming(s) {
           style="background:${c.class_color}">${esc(c.class_short)}</span></td>
       <td class="c-cpos">${c.class_position || '—'}</td>
       <td class="c-lap">${c.laps_completed}</td>
-      <td class="c-last"><span${lastCls}>${fmtLap(c.last_lap)}</span></td>
+      ${sectorCells(c, nSec)}<td class="c-last"><span${lastCls}>${fmtLap(c.last_lap)}</span></td>
       <td class="c-best"><span${bestCls}>${fmtLap(c.best_lap)}</span></td>
       <td class="c-gap"><span${gapCls}>${fmtGap(c)}</span></td>
       <td class="c-inc" title="${c.unresolved > 0
         ? c.unresolved + ' open in the log (no decision yet)' : ''}"><span class="${incCls}">${
         c.incidents}x${c.unresolved > 0 ? ` <small>(${c.unresolved})</small>` : ''}</span></td>
       <td class="c-pit">${c.pit_stops}</td>
+      <td class="c-car" title="${esc(c.car_model || '')}">${esc(c.car_model || '')}</td>
       <td class="c-spd ${State.showSpeed ? '' : 'off'}">${
         Math.round((c.speed_ms || 0) * 3.6)}</td>
     </tr>`;

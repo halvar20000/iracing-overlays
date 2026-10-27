@@ -270,6 +270,7 @@ class ReplaySource(DataSource):
                 class_color=meta["class_color"],
                 class_short=_class_short(meta["car_class"]),
                 car_brand=meta.get("brand", ""),
+                car_model=meta.get("car", ""),
                 position=st["position"] if st["position"] > 0 else pos_i,
                 class_position=st["class_pos"],
                 lap=st["lap"], laps_completed=st["laps_completed"],

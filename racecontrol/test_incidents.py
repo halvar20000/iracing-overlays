@@ -381,6 +381,50 @@ rs4.ingest(pract2)
 check("no 'takes the lead' in practice",
       not any("lead" in e.text for e in rs4.events))
 
+print("Sector times")
+src3 = irs.IRacingSource()
+check("sector timing available", src3.sectors is not None)
+
+
+def sec_ir(t, p0, p1, replay=False):
+    ir = fake_ir(t, {})
+    ir["SplitTimeInfo"] = {"Sectors": [{"SectorNum": 0, "SectorStartPct": 0.0},
+                                       {"SectorNum": 1, "SectorStartPct": 0.5}]}
+    ir["CarIdxLapDistPct"] = [p0, p1]
+    ir["IsReplayPlaying"] = replay
+    ir["ReplayFrameNumEnd"] = 900 if replay else 0
+    return ir
+
+
+# car 0 at 0.01 / lap (fast), car 1 at 0.009 / lap, 1 sample per 0.5 s
+last = None
+for k in range(260):
+    t = 100 + k * 0.5
+    src3._ir = sec_ir(t, (0.30 + k * 0.01) % 1.0, (0.28 + k * 0.009) % 1.0)
+    last = src3._read_frame(0.5)
+by = {c.car_idx: c.sectors for c in last.cars}
+check("two sector columns per car", len(by[0]) == 2 and len(by[1]) == 2, by)
+s0 = [v for v in by[0] if v]
+check("car 0: sector times ~25 s, fastest = overall (purple)",
+      s0 and all(abs(v[0] - 25.0) < 0.05 for v in s0)
+      and all(v[1] == "overall" for v in s0), by[0])
+s1 = [v for v in by[1] if v]
+check("car 1: slower, its own best = personal (green)",
+      s1 and all(v[1] == "personal" for v in s1), by[1])
+rs5 = RaceState()
+rs5.ingest(last)
+snap = rs5.snapshot()
+check("snapshot: sector_count + per-car sectors",
+      snap["session"]["sector_count"] == 2
+      and snap["cars"][0]["sectors"] == by[snap["cars"][0]["car_idx"]])
+before = dict(src3.sectors.best and {i: b for i, b in enumerate(src3.sectors.best)})
+for k in range(60):
+    t = 50 + k * 0.5                     # replay of earlier footage, faster
+    src3._ir = sec_ir(t, (k * 0.03) % 1.0, 0.5, replay=True)
+    src3._read_frame(0.5)
+check("replay footage sets no sector times",
+      {i: b for i, b in enumerate(src3.sectors.best)} == before)
+
 print("Engine autosave / restore (FastAPI stubbed)")
 
 

@@ -42,6 +42,7 @@ class Car:
     class_color: str = "#6c7a89"
     class_short: str = ""
     car_brand: str = ""
+    car_model: str = ""
 
     position: int = 0
     class_position: int = 0
@@ -72,6 +73,7 @@ class Car:
     _prev_surface: str = SURFACE_ON_TRACK
     _prev_on_pit: bool = False
     _pit_enter_t: Optional[float] = None   # None = entry not seen
+    sectors: list = field(default_factory=list)
     _seen: bool = False
 
 
@@ -336,6 +338,7 @@ class RaceState:
         car.class_color = cf.class_color
         car.class_short = cf.class_short or cf.car_class
         car.car_brand = cf.car_brand
+        car.car_model = cf.car_model
         car.position = cf.position
         car.class_position = cf.class_position
         car.lap = cf.lap
@@ -348,6 +351,7 @@ class RaceState:
         car.laps_down = cf.laps_down
         car.speed_ms = cf.speed_ms
         car.finished = cf.finished
+        car.sectors = cf.sectors
 
         if first_seen:
             car._prev_surface = cf.track_surface
@@ -535,7 +539,7 @@ class RaceState:
                 "driver": c.driver, "team": c.team,
                 "car_class": c.car_class, "class_color": c.class_color,
                 "class_short": c.class_short,
-                "brand": c.car_brand,
+                "brand": c.car_brand, "car_model": c.car_model,
                 "brand_logo": logo_url(c.car_brand),
                 "position": c.position, "class_position": c.class_position,
                 "lap": c.lap, "laps_completed": c.laps_completed,
@@ -551,6 +555,7 @@ class RaceState:
                 "niw": c.niw_count, "pit_stops": c.pit_stops,
                 "time_penalty": c.time_penalty, "dsq": c.dsq,
                 "finished": c.finished,
+                "sectors": c.sectors,
                 "notes": len(c.notes),
                 "best_overall": c.best_lap > 0 and c.best_lap == best_overall,
                 "best_in_class": c.best_lap > 0 and
@@ -563,6 +568,7 @@ class RaceState:
             "session": {
                 "track": self.session_track, "config": self.session_config,
                 "length_km": self.session_length_km,
+                "sector_count": max((len(c.sectors) for c in cars), default=0),
                 "type": self.session_type, "state": self.session_state,
                 "time": self.session_time,
                 "time_remain": self.session_time_remain,

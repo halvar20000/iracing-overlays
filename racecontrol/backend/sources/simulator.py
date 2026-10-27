@@ -444,6 +444,7 @@ class SimulatorSource(DataSource):
                 team_name=c.team, car_class=c.car_class, class_id=c.class_id,
                 class_color=c.class_color, class_short=c.car_class,
                 car_brand=c.brand,
+                car_model=c.brand.replace("-", " ").title(),
                 position=pos,
                 class_position=class_counts[c.class_id],
                 lap=c.lap_number, laps_completed=c.laps_completed,

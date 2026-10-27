@@ -78,6 +78,7 @@ class FieldSectors:
         self.best = []           # per sector: (time, car_idx) or None
         self.car_best = {}       # car_idx -> [time or None] per sector
         self.top = []            # per sector: {car_idx: best km/h}
+        self.car_last = {}       # car_idx -> [time or None] per sector, this lap
 
     def configure(self, bounds, track_m):
         """Sector start pcts (any order, 0.0 added) and track length in m.
@@ -170,11 +171,17 @@ class FieldSectors:
             top = self.top[s]
             if car.cur_max > top.get(idx, 0.0):
                 top[idx] = car.cur_max
+        # the sectors of the lap in progress; the previous lap stays readable
+        # until the first sector of the new one is done
+        row = self.car_last.setdefault(idx, [None] * len(self.bounds))
+        if s == 0:
+            row[:] = [None] * len(self.bounds)
         if not car.clean:
             return
         st = tc - car.enter_t
         if not (SECTOR_MIN_S <= st <= SECTOR_MAX_S):
             return
+        row[s] = st
         mine = self.car_best.setdefault(idx, [None] * len(self.bounds))
         if mine[s] is None or st < mine[s]:
             mine[s] = st

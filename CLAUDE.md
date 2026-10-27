@@ -191,6 +191,15 @@ lines outside a race. Leaving the pit stall at session start logged
 detections without a decision, tooltip. Still open: official points 0 in
 that practice (nobody had a timed lap yet - check again in the race); RC
 messages are only logged, not sent to iRacing (step 2). test 58/58.
+SAME DAY (Thomas's iRaceControl screenshot: sector times + car type):
+timing table gained S1..Sn before "Last" (as many as SplitTimeInfo has, else
+3 equal) = the lap in progress, the previous lap stays until S1 of the new one
+is done; purple = session best of that sector, green = the car's own best.
+From the shared `field_sectors.py` (repo root, imported via sys.path; it now
+keeps `car_last` per car); reset per session, replay footage never counts.
+"Car" column = CarScreenName (replay source: the log's car, sim: brand).
+Fixed on the way: driver names were RIGHT-aligned (`#timing tbody td` beat
+`td.c-name`). test 64/64; table rendered with the simulator.
 
 **October 26, 2026 (iCASControl = our iRaceControl clone, `racecontrol/`
 8080 — STEP 1 of 3: live incidents, replay per line, autosave):** Thomas:
