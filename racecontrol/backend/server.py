@@ -288,6 +288,16 @@ class Engine:
                 result += " | " + self.to_iracing(
                     kind, car=car, msg=message, sec=seconds,
                     verify=CHAT_VERIFY_KIND.get(kind))
+                if kind in REASON_LINE and message:
+                    result += " | " + self.to_iracing(
+                        "penalty_reason", car=car,
+                        msg=f"{REASON_LINE[kind]} - {message}")
+            elif (resolution == "TIME PENALTY" and car is not None
+                    and "->" in result and seconds):
+                result += " | " + self.to_iracing(
+                    "penalty_reason", car=car,
+                    msg=f"TIME PENALTY +{seconds:.0f}s"
+                    + (f" - {message}" if message else ""))
             return {"type": "ack", "text": result}
 
         if action == "replay":
@@ -309,11 +319,26 @@ class Engine:
                                    str(msg.get("message", "")),
                                    float(msg.get("seconds", 0.0)))
             car = st.cars.get(car_idx)
+            reason = str(msg.get("message", ""))
             if command in CAR_CHAT and car is not None:
                 kind = CAR_CHAT[command]
-                result += " | " + self.to_iracing(
-                    kind, car=car, msg=str(msg.get("message", "")),
-                    verify=CHAT_VERIFY_KIND.get(kind))
+                if command == "time_penalty":
+                    secs = float(msg.get("seconds", 0.0))
+                    reason = f"+{secs:.0f}s" + (f" - {reason}" if reason else "")
+                if command in REASON_LINE:
+                    line = REASON_LINE[command] + (
+                        f" {reason}" if command == "time_penalty"
+                        else (f" - {reason}" if reason else ""))
+                    if kind != "penalty_reason":
+                        result += " | " + self.to_iracing(
+                            kind, car=car, verify=CHAT_VERIFY_KIND.get(kind))
+                    if reason or command == "time_penalty":
+                        result += " | " + self.to_iracing(
+                            "penalty_reason", car=car, msg=line)
+                else:
+                    result += " | " + self.to_iracing(
+                        kind, car=car, msg=reason,
+                        verify=CHAT_VERIFY_KIND.get(kind))
             return {"type": "ack", "text": result}
 
         if action == "rc_message":
@@ -339,7 +364,15 @@ RESOLUTION_CHAT = {"DRIVE THROUGH": "drive_through", "STOP/GO": "stop_go",
 # Selected-car buttons -> chat command kind.
 CAR_CHAT = {"wave_around": "wave_around", "eol": "eol",
             "clear_penalties": "clear_penalties", "dsq": "dsq",
-            "notify": "notify"}
+            "notify": "notify", "drive_through": "drive_through",
+            "stop_go": "stop_go", "add_admin": "add_admin",
+            "remove_admin": "remove_admin", "chat_on": "chat_on",
+            "chat_off": "chat_off", "remove": "remove",
+            "time_penalty": "penalty_reason"}
+# Penalties whose command takes no message: the reason goes out as
+# "/all #14 Driver: DRIVE THROUGH - Track Limits" right after it.
+REASON_LINE = {"drive_through": "DRIVE THROUGH", "stop_go": "STOP AND GO",
+               "time_penalty": "TIME PENALTY"}
 # How the result shows in the telemetry (IRacingSource._chat_effect).
 CHAT_VERIFY_KIND = {"drive_through": "black", "stop_go": "black", "dsq": "dq",
                     "eol": "eol", "wave_around": "waveby",

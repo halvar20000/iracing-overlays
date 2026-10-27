@@ -384,6 +384,96 @@ function renderLog() {
   if (atBottom) list.scrollTop = list.scrollHeight;
 }
 
+// ---- right-click menu, reason dialog, car commands ------------------------
+const PENALTY_REASONS = ['Track Limits', 'Forcing another driver off the track',
+                         'Causing a collision'];
+const CAR_DIALOG = {
+  drive_through: { title: 'Drive through penalty',
+                   label: 'Reason for drive through:', presets: PENALTY_REASONS },
+  stop_go: { title: 'Stop and go penalty', label: 'Reason for stop and go:',
+             presets: PENALTY_REASONS },
+  time_penalty: { title: 'Time penalty', label: 'Reason for the time penalty:',
+                  presets: PENALTY_REASONS, seconds: true },
+  dsq: { title: 'Disqualification', label: 'Reason for the DQ:',
+         presets: PENALTY_REASONS.concat(['Unsportsmanlike conduct']) },
+  notify: { title: 'Notify driver', label: 'Message to the driver:',
+            required: true,
+            presets: ['Watch your track limits', 'Blue flag - let the faster car through',
+                      'Rejoin the track safely'] },
+  remove: { title: 'Remove from the session',
+            label: 'Reason (the driver is removed for good):',
+            presets: ['Unsportsmanlike conduct'] },
+};
+const RES_DIALOG = {
+  'DRIVE THROUGH': CAR_DIALOG.drive_through,
+  'STOP/GO': CAR_DIALOG.stop_go,
+  'TIME PENALTY': CAR_DIALOG.time_penalty,
+  DSQ: CAR_DIALOG.dsq,
+  WARNING: { title: 'Warning', label: 'Reason for the warning:',
+             presets: PENALTY_REASONS },
+};
+
+let dlgResolve = null;
+function askReason(opts) {
+  $('#dlg-title').textContent = opts.title;
+  $('#dlg-label').textContent = opts.label;
+  $('#dlg-text').value = '';
+  $('#dlg-secs-row').classList.toggle('hidden', !opts.seconds);
+  $('#dlg-secs').value = '5';
+  const pre = $('#dlg-presets');
+  pre.innerHTML = '';
+  (opts.presets || []).forEach((p) => {
+    const b = document.createElement('button');
+    b.textContent = p;
+    b.addEventListener('click', () => { $('#dlg-text').value = p; closeDialog(true); });
+    pre.appendChild(b);
+  });
+  State.dlgRequired = !!opts.required;
+  $('#dlg').classList.remove('hidden');
+  setTimeout(() => $('#dlg-text').focus(), 0);
+  return new Promise((res) => { dlgResolve = res; });
+}
+
+function closeDialog(ok) {
+  const text = $('#dlg-text').value.trim();
+  if (ok && State.dlgRequired && !text) { $('#dlg-text').focus(); return; }
+  $('#dlg').classList.add('hidden');
+  const r = dlgResolve; dlgResolve = null;
+  if (r) r(ok ? { text, seconds: parseFloat($('#dlg-secs').value) || 0 } : null);
+}
+
+function openCtxMenu(idx, x, y) {
+  const car = State.snapshot?.cars.find((c) => c.car_idx === idx);
+  if (!car) return;
+  State.ctxCar = idx;
+  const m = $('#ctx-menu');
+  $('#ctx-title').textContent = `#${car.number}  ${car.driver}`;
+  m.classList.remove('hidden', 'flip');
+  const w = m.offsetWidth, h = m.offsetHeight;
+  const left = Math.min(x, window.innerWidth - w - 4);
+  m.style.left = left + 'px';
+  m.style.top = Math.max(4, Math.min(y, window.innerHeight - h - 4)) + 'px';
+  if (left + w + 190 > window.innerWidth) m.classList.add('flip');
+}
+
+function closeCtxMenu() { $('#ctx-menu').classList.add('hidden'); }
+
+/* One steward action on a car: the dialog (reason / message) where the
+   command needs one, then to the server (which types it into iRacing). */
+async function carCommand(idx, cmd) {
+  if (idx === null || idx === undefined) { toast('Select a car first'); return; }
+  let message = '', seconds = 0;
+  const dlg = CAR_DIALOG[cmd];
+  if (dlg) {
+    const r = await askReason(dlg);
+    if (!r) return;
+    message = r.text; seconds = r.seconds;
+    if (cmd === 'remove' && !confirm('Remove this driver from the session '
+        + 'for good?')) return;
+  }
+  send({ action: 'car', car_idx: idx, command: cmd, message, seconds });
+}
+
 // ---- selection ------------------------------------------------------------
 // Second press on the same row within 400 ms = double click.
 const lastPress = { where: '', key: null, t: 0 };
@@ -562,20 +652,19 @@ function wire() {
 
   // incident resolution buttons
   $$('#incident-actions .ia-grid button').forEach((b) =>
-    b.addEventListener('click', () => {
+    b.addEventListener('click', async () => {
       if (State.selectedEvent === null) return;
+      const evId = State.selectedEvent;
       const res = b.dataset.res;
       let seconds = 0;
-      if (b.dataset.needsSeconds) {
-        const v = prompt('Time penalty in seconds:', '5');
-        if (v === null) return;
-        seconds = parseFloat(v) || 0;
+      let message = '';
+      const dlg = RES_DIALOG[res];
+      if (dlg) {                          // reason (+ seconds) = the confirmation
+        const r = await askReason(dlg);
+        if (!r) return;
+        message = r.text; seconds = r.seconds;
       }
-      if (res === 'DSQ' && !confirm('Disqualify this car?')) return;
-      if (['DRIVE THROUGH', 'STOP/GO'].includes(res) && State.chat
-          && State.chat.enabled && !confirm(`${res} - send to iRacing?`)) return;
-      const message = '';
-      send({ action: 'resolve', id: State.selectedEvent,
+      send({ action: 'resolve', id: evId,
              resolution: res, message, seconds });
       // optimistic: drop selection if final
       if (!['NOTED', 'UNDER INVESTIGATION'].includes(res)) {
@@ -589,15 +678,57 @@ function wire() {
     b.addEventListener('click', () => {
       if (State.selectedCar === null) { toast('Select a car first'); return; }
       const cmd = b.dataset.carCmd;
-      let message = '', seconds = 0;
-      if (cmd === 'dsq' && !confirm('Disqualify this car?')) return;
-      if (cmd === 'notify') {
-        message = prompt('Message to driver:', '') || '';
-        if (!message) return;
-      }
-      send({ action: 'car', car_idx: State.selectedCar,
-             command: cmd, message, seconds });
+      carCommand(State.selectedCar, cmd);
     }));
+
+  // right-click menu on a timing row.  The row is taken on the right PRESS
+  // (rows are rebuilt ~11x a second, the contextmenu event can land on a
+  // row that is already gone).
+  let ctxPress = { idx: null, t: 0 };
+  $('#timing-body').addEventListener('pointerdown', (e) => {
+    if (e.button !== 2) return;
+    const tr = e.target.closest('tr');
+    if (!tr) return;
+    ctxPress = { idx: parseInt(tr.dataset.idx, 10), t: performance.now() };
+    State.selectedCar = ctxPress.idx;
+    if (State.snapshot) render();
+    renderCarLog(); renderLog();
+  });
+  document.addEventListener('contextmenu', (e) => {
+    if (ctxPress.idx === null || performance.now() - ctxPress.t > 1500) return;
+    e.preventDefault();
+    openCtxMenu(ctxPress.idx, e.clientX, e.clientY);
+    ctxPress = { idx: null, t: 0 };
+  });
+  document.addEventListener('pointerdown', (e) => {
+    if (!e.target.closest('#ctx-menu')) closeCtxMenu();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeCtxMenu();
+  });
+  $$('#ctx-menu button').forEach((b) => b.addEventListener('click', () => {
+    const idx = State.ctxCar;
+    closeCtxMenu();
+    if (b.dataset.ctx === 'info') {
+      State.selectedCar = idx;
+      $$('.tab-btn').forEach((x) =>
+        x.classList.toggle('active', x.dataset.tab === 'car'));
+      $('#tab-car').classList.remove('hidden');
+      $('#tab-weather').classList.add('hidden');
+      if (State.snapshot) render();
+      return;
+    }
+    carCommand(idx, b.dataset.ctx);
+  }));
+
+  // dialog buttons
+  $('#dlg-ok').addEventListener('click', () => closeDialog(true));
+  $('#dlg-cancel').addEventListener('click', () => closeDialog(false));
+  $('#dlg-cancel-x').addEventListener('click', () => closeDialog(false));
+  $('#dlg-text').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') closeDialog(true);
+    if (e.key === 'Escape') closeDialog(false);
+  });
 
   // map dot colours (kept per browser)
   const mapColor = $('#map-color');

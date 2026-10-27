@@ -482,11 +482,24 @@ class RaceState:
                       f"DISQUALIFIED{(' - ' + message) if message else ''}",
                       car=car, lap=car.lap)
             return f"car #{car.number} disqualified"
+        why = f" - {message}" if message else ""
         if cmd == "time_penalty":
             car.time_penalty += seconds
-            self._log(LOG_PENALTY, f"Time penalty {seconds:+.0f}s",
+            self._log(LOG_PENALTY, f"Time penalty {seconds:+.0f}s{why}",
                       car=car, lap=car.lap)
             return f"car #{car.number} time penalty {seconds:+.0f}s"
+        if cmd in ("drive_through", "stop_go"):
+            label = "Drive through" if cmd == "drive_through" else "Stop and go"
+            self._log(LOG_PENALTY, f"{label}{why}", car=car, lap=car.lap)
+            return f"{label.lower()} - car #{car.number}"
+        if cmd in ("add_admin", "remove_admin", "chat_on", "chat_off",
+                   "remove"):
+            label = {"add_admin": "Made admin", "remove_admin": "Admin removed",
+                     "chat_on": "Chat enabled", "chat_off": "Chat disabled",
+                     "remove": "REMOVED from the session"}[cmd]
+            self._log(LOG_PENALTY if cmd == "remove" else LOG_INFO,
+                      f"{label}{why}", car=car, lap=car.lap)
+            return f"{label.lower()} - car #{car.number}"
         if cmd == "clear_penalties":
             self._log(LOG_INFO, "iRacing penalties cleared", car=car,
                       lap=car.lap)

@@ -665,6 +665,32 @@ check("decision DRIVE THROUGH -> '!black #14 D', verify black",
 eng4.handle_client_message({"action": "command", "command": "pace_deploy"})
 check("Deploy Pace Car -> '!yellow', verify the caution",
       sent[-1] == ("!yellow", "post", 6.0, ("yellow", -1)), sent[-1])
+# right-click menu (car actions with a reason)
+k = len(sent)
+eng4.handle_client_message({"action": "car", "car_idx": 1, "command": "drive_through",
+                            "message": "Track Limits", "seconds": 0})
+check("menu Drive through + reason -> '!black #14 D' then the reason line",
+      [x[0] for x in sent[k:]] == ["!black #14 D", "/all #14 D14: DRIVE THROUGH - Track Limits"],
+      sent[k:])
+k = len(sent)
+eng4.handle_client_message({"action": "car", "car_idx": 1, "command": "stop_go",
+                            "message": "", "seconds": 0})
+check("menu Stop and Go without reason -> only '!black #14'",
+      [x[0] for x in sent[k:]] == ["!black #14"], sent[k:])
+k = len(sent)
+eng4.handle_client_message({"action": "car", "car_idx": 1, "command": "time_penalty",
+                            "message": "Causing a collision", "seconds": 5})
+check("menu Time penalty -> only the announcement (iRacing has none)",
+      len(sent) - k == 1 and "TIME PENALTY" in sent[-1][0]
+      and "Causing a collision" in sent[-1][0], sent[k:])
+for cmd, txt in (("add_admin", "!admin #14"), ("remove_admin", "!nadmin #14"),
+                 ("chat_on", "!chat #14"), ("chat_off", "!nchat #14"),
+                 ("remove", "!remove #14 Unsportsmanlike")):
+    eng4.handle_client_message({"action": "car", "car_idx": 1, "command": cmd,
+                                "message": "Unsportsmanlike" if cmd == "remove" else ""})
+    check(f"menu {cmd} -> '{txt}'", sent[-1][0] == txt, sent[-1])
+check("menu penalties are in the log with the reason",
+      any("Track Limits" in e.text for e in eng4.state.events))
 n = len(sent)
 ack = eng4.handle_client_message({"action": "command", "command": "red_flag"})
 check("red flag: no iRacing command, only logged", len(sent) == n

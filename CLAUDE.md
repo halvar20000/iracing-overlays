@@ -178,6 +178,20 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 27, 2026 (iCASControl: right-click menu like iRaceControl):**
+right PRESS on a timing row selects the car and opens `#ctx-menu` (taken on
+pointerdown — rows are rebuilt ~11x/s): car info, Penalties ▸ (clear, time,
+DT, S&G, DQ), Pacing ▸ (EOL, wave around), Notify, add / remove admin, chat
+on / off, remove. Reason dialog `#dlg` (askReason(): presets Track Limits /
+Forcing another driver off the track / Causing a collision, seconds row for
+time penalties) also replaces prompt()/confirm() on the incident decision
+buttons. Server: car commands drive_through / stop_go / time_penalty /
+add_admin (!admin) / remove_admin (!nadmin) / chat_on (!chat) / chat_off
+(!nchat) / remove (!remove); `!black` takes no text, so a reason goes out as a
+second line `/all #N Driver: DRIVE THROUGH - reason` (REASON_LINE, also for
+resolve). test_incidents.py 100/100; menu checked in Chromium (opens on the
+right car 8/8, preset → car action sent + logged). NOT tried in iRacing.
+
 **October 27, 2026 (iCASControl STEP 2 — steward commands into the iRacing
 chat; Thomas: incidents now match iRaceControl, selection works, go on):**
 the old IRACECONTROL folder (Y:\mnt\AI\Projects\IRACECONTROL) is the May 22

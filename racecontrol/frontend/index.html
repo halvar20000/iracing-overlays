@@ -231,6 +231,57 @@
   </main>
 </div>
 
+<!-- right-click menu on a timing row (like iRaceControl) -->
+<div id="ctx-menu" class="ctx hidden">
+  <div class="ctx-title" id="ctx-title"></div>
+  <button data-ctx="info">Show car info</button>
+  <hr>
+  <div class="ctx-sub">
+    <span>Penalties</span>
+    <div class="ctx-subm">
+      <button data-ctx="clear_penalties">Clear Penalties</button>
+      <hr>
+      <button data-ctx="time_penalty">Time Penalty</button>
+      <button data-ctx="drive_through">Drive through</button>
+      <button data-ctx="stop_go">Stop and Go</button>
+      <button data-ctx="dsq" class="danger">DQ</button>
+    </div>
+  </div>
+  <div class="ctx-sub">
+    <span>Pacing</span>
+    <div class="ctx-subm">
+      <button data-ctx="eol">End of line</button>
+      <button data-ctx="wave_around">Wave around</button>
+    </div>
+  </div>
+  <hr>
+  <button data-ctx="notify">Notify</button>
+  <button data-ctx="add_admin">Add admin</button>
+  <button data-ctx="remove_admin">Remove admin</button>
+  <button data-ctx="chat_on">Enable chat</button>
+  <button data-ctx="chat_off">Disable chat</button>
+  <button data-ctx="remove" class="danger">Remove</button>
+</div>
+
+<!-- reason / message dialog -->
+<div id="dlg" class="dlg-back hidden">
+  <div class="dlg">
+    <div class="dlg-head"><span id="dlg-title"></span>
+      <button class="dlg-x" id="dlg-cancel-x">&times;</button></div>
+    <label id="dlg-label" for="dlg-text"></label>
+    <input id="dlg-text" type="text" maxlength="120" autocomplete="off">
+    <div class="dlg-secs hidden" id="dlg-secs-row">
+      <label for="dlg-secs">Seconds</label>
+      <input id="dlg-secs" type="number" min="1" max="600" value="5">
+    </div>
+    <div class="dlg-btns">
+      <button id="dlg-ok">OK</button>
+      <button id="dlg-cancel">Cancel</button>
+    </div>
+    <div class="dlg-presets" id="dlg-presets"></div>
+  </div>
+</div>
+
 <script src="trackmap.js"></script>
 <script src="app.js"></script>
 </body>

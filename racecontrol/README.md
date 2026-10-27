@@ -147,6 +147,15 @@ admins see it) even while OFF.
 | Message RC / Private | `/all text` / `/all #14 text` |
 | Red Flag, Green Flag, Wave Lapped, Time Pen. | none in iRacing - log only |
 
+**Right-click a driver** in the timing table (like iRaceControl): Show car
+info, Penalties (Clear / Time Penalty / Drive through / Stop and Go / DQ),
+Pacing (End of line / Wave around), Notify, Add / Remove admin
+(`!admin` / `!nadmin`), Enable / Disable chat (`!chat` / `!nchat`), Remove
+(`!remove`). Penalties ask for a reason (free text or Track Limits / Forcing
+another driver off the track / Causing a collision); since `!black` takes no
+text, the reason follows as `/all #14 Driver: DRIVE THROUGH - Track Limits`.
+A time penalty has no iRacing command: only that announcement goes out.
+
 How it types: the SDK opens the chat (`chat_command begin_chat`), then
 method **post** (default) posts each character as WM_CHAR + Enter to the sim
 window (`SimWinClass`) in the background; method **focus** brings iRacing to

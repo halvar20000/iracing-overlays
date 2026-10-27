@@ -56,6 +56,13 @@ COMMANDS: dict[str, Optional[str]] = {
     "eol": "!eol #{num} {msg}",
     "wave_around": "!waveby #{num} {msg}",
     "clear_penalties": "!clear #{num} {msg}",
+    "add_admin": "!admin #{num}",
+    "remove_admin": "!nadmin #{num}",
+    "chat_on": "!chat #{num}",
+    "chat_off": "!nchat #{num}",
+    "remove": "!remove #{num} {msg}",
+    # !black takes no message: the reason follows as a second line
+    "penalty_reason": "/all #{num} {driver}: {msg}",
     # messages (iRacing documents no private message; /all reaches everybody)
     "notify": "/all #{num} {msg}",
     "warning": "/all #{num} {driver}: WARNING{msg_dash}",
