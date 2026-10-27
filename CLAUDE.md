@@ -178,6 +178,20 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 27, 2026 (launcher: iCAS dot stayed grey after the first run —
+Andre):** first Start = green (sim demo, Silverstone), after "off" Start never
+went green again and the browser on :8080 still showed the old demo. Cause:
+the old iCAS kept running with nobody owning it (closing the launcher stopped
+overlays in daemon threads and destroyed the window after a FIXED 1.5 s —
+before the 3 s grace + kill, and uvicorn does not quit at once), and Start
+refuses a busy port (only a log line). Now: `_on_close` waits until every
+stop is done (≤ 10 s); stop() ends the whole tree (`taskkill /T /F`, iCAS's
+cloudflared too); Start on a busy port asks netstat (state word is localised —
+matched by the 0.0.0.0:0 remote address) + tasklist for the owner and ends it
+if it is python*.exe (anything else is left alone, old error line). Tested on
+Unraid with faked owner / kill (python holder ended + started, Teams.exe left).
+NOT tried on Windows.
+
 **October 27, 2026 (iCASControl German guide + website):** NEW
 `ICASCONTROL_ANLEITUNG.md` (repo root, du-form: install of the overlay app,
 launcher row, updates, UI, incidents, replay, chat commands, race control,

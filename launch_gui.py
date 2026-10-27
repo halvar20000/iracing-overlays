@@ -126,6 +126,49 @@ def _port_in_use(port, host="127.0.0.1", timeout=0.4):
         return False
 
 
+def _port_owner(port):
+    """(pid, image name) of the process LISTENING on the port, Windows only
+    (netstat -ano + tasklist); None when unknown."""
+    if os.name != "nt":
+        return None
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True,
+                             text=True, errors="replace", timeout=5,
+                             creationflags=flags).stdout
+    except Exception:
+        return None
+    pid = None
+    for line in out.splitlines():
+        parts = line.split()
+        if (len(parts) >= 5 and parts[1].endswith(":%d" % port)
+                and parts[2] in ("0.0.0.0:0", "[::]:0", "*:*")):   # listening
+            # (the state word is localised: LISTENING / ABHÖREN …)
+            pid = parts[4]
+            break
+    if not pid or not pid.isdigit() or pid == "0":
+        return None
+    name = ""
+    try:
+        out = subprocess.run(["tasklist", "/FI", "PID eq %s" % pid, "/FO", "CSV", "/NH"],
+                             capture_output=True, text=True, errors="replace",
+                             timeout=5, creationflags=flags).stdout
+        name = out.strip().split(",")[0].strip('"') if out.strip() else ""
+    except Exception:
+        pass
+    return int(pid), name
+
+
+def _kill_tree(pid):
+    """End a process and its children (Windows taskkill /T /F)."""
+    try:
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                       capture_output=True, timeout=10,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:
+        pass
+
+
 class OverlayController:
     def __init__(self, tag, script, log_queue, port=None):
         self.tag = tag
@@ -150,6 +193,8 @@ class OverlayController:
         if not script_path.exists():
             self.log_queue.put((self.tag, f"ERROR: {self.script} not found next to launcher."))
             return
+        if self.port and _port_in_use(self.port):
+            self._free_port()
         if self.port and _port_in_use(self.port):
             self.log_queue.put((self.tag,
                 f"ERROR: port {self.port} is already in use — an old copy of "
@@ -181,6 +226,26 @@ class OverlayController:
             daemon=True,
         )
         self._reader_thread.start()
+
+    def _free_port(self):
+        """An old copy of OUR script still holds the port (launcher closed
+        while it ran, or it ignored the stop) - the dot stays grey and Start
+        did nothing (2026-10-27, Andre: iCAS after the first demo run). End
+        it when it is a Python process; anything else is left alone."""
+        owner = _port_owner(self.port)
+        if not owner:
+            return
+        pid, name = owner
+        if not name.lower().startswith("python"):
+            self.log_queue.put((self.tag, f"port {self.port} is held by {name or '?'} "
+                                f"(pid {pid}) - not ours, left alone"))
+            return
+        self.log_queue.put((self.tag, f"an old copy still runs on port {self.port} "
+                            f"({name}, pid {pid}) - ending it"))
+        _kill_tree(pid)
+        deadline = time.time() + 5
+        while _port_in_use(self.port) and time.time() < deadline:
+            time.sleep(0.2)
 
     def _read_output(self):
         assert self.proc is not None
@@ -215,8 +280,14 @@ class OverlayController:
             time.sleep(0.1)
 
         if self.is_running:
+            if os.name == "nt":
+                _kill_tree(self.proc.pid)   # children too (iCAS: cloudflared)
             try:
                 self.proc.kill()
+            except Exception:
+                pass
+            try:
+                self.proc.wait(timeout=3)
             except Exception:
                 pass
 
@@ -723,10 +794,20 @@ class LauncherApp(tk.Tk):
         running = [c for c in self.controllers.values() if c.is_running]
         if running:
             self._append_log("launcher", f"stopping {len(running)} overlay(s)…")
-            for c in running:
-                threading.Thread(target=c.stop, daemon=True).start()
-            # give them a moment
-            self.after(1500, self.destroy)
+            threads = [threading.Thread(target=c.stop, daemon=True) for c in running]
+            for t in threads:
+                t.start()
+            # Wait until every stop is DONE (grace + kill): destroying after a
+            # fixed 1.5 s ended the stop threads before their kill, and a slow
+            # iCAS (uvicorn) lived on with nobody owning it.
+            deadline = time.time() + 10
+
+            def wait():
+                if any(t.is_alive() for t in threads) and time.time() < deadline:
+                    self.after(200, wait)
+                else:
+                    self.destroy()
+            wait()
         else:
             self.destroy()
 
