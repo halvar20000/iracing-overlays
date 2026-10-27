@@ -39,6 +39,16 @@
       REPLAY &middot; log paused &middot; <b>LIVE</b></button>
 
     <div class="conn">
+      <div class="chat-box" title="Steward commands typed into the iRacing chat. This PC's iRacing account must be ADMIN of the session.">
+        <button id="chat-toggle" class="chat-toggle off">iRACING CHAT OFF</button>
+        <div class="chat-sub">
+          <select id="chat-method" title="post = in the background (default); focus = iRacing comes to the front for a moment">
+            <option value="post">post</option>
+            <option value="focus">focus</option>
+          </select>
+          <button id="chat-test" title="Sends '/rc iCASControl chat test' - only the admins see it">Test</button>
+        </div>
+      </div>
       <button id="run-toggle" class="run-toggle run" title="RUN / STOP the controller">RUN</button>
       <div class="badges">
         <span id="source-badge" class="badge">source: &mdash;</span>

@@ -530,5 +530,162 @@ check("initial messages serialise (dashboard connect)",
       bool(json.dumps(eng2.initial_messages())))
 check("simulator: no autosave path", eng3.save_path() is None)
 
+print("Chat commands into iRacing (step 2)")
+from backend import chat  # noqa: E402
+chat.CONFIG_PATH = __import__("pathlib").Path(tmp) / "chat_config.json"
+b = chat.build
+check("official syntax",
+      b("drive_through", num="14") == "!black #14 D"
+      and b("stop_go", num="#14") == "!black #14"
+      and b("stop_go", num="14", sec=30) == "!black #14 30"
+      and b("dsq", num="7", msg="Track limits") == "!dq #7 Track limits"
+      and b("eol", num="3") == "!eol #3" and b("wave_around", num="3") == "!waveby #3"
+      and b("clear_penalties", num="3") == "!clear #3"
+      and b("clear_all") == "!clearall" and b("pace_deploy") == "!yellow"
+      and b("pit_close") == "!pitclose" and b("message_all", msg="Hi\nall") == "/all Hi all"
+      and b("warning", num="9", driver="A Hill", msg="track limits")
+      == "/all #9 A Hill: WARNING - track limits",
+      [b("drive_through", num="14"), b("stop_go", num="#14")])
+check("no command -> None (red flag, car missing)",
+      b("red_flag") is None and b("drive_through") is None)
+check("template override from the config",
+      b("notify", {"notify": "/#{num} {msg}"}, num="5", msg="box") == "/#5 box")
+
+
+class FakeKeys:
+    def __init__(self):
+        self.out = []
+
+    def find_window(self):
+        return 77
+
+    def post_char(self, hwnd, ch):
+        self.out.append(("c", hwnd, ch))
+
+    def post_enter(self, hwnd):
+        self.out.append(("enter", hwnd))
+
+    def foreground(self):
+        return 5
+
+    def set_foreground(self, h):
+        self.out.append(("fg", h))
+        return True
+
+    def type_text(self, text, delay):
+        self.out.append(("type", text))
+
+
+fk = FakeKeys()
+done = []
+opened = []
+cs = chat.ChatSender(lambda: opened.append(1),
+                     lambda t, ok, i: done.append((t, ok, i)), lambda: fk)
+cs.send("!eol #3", "post", 0)
+cs.send("/rc x", "focus", 0)
+for _ in range(50):
+    if len(done) == 2:
+        break
+    _t.sleep(0.1)
+chars = "".join(o[2] for o in fk.out if o[0] == "c")
+check("post: chat opened, every char posted, then Enter",
+      chars == "!eol #3" and ("enter", 77) in fk.out and len(opened) == 2
+      and done[0] == ("!eol #3", True, "posted"), fk.out)
+check("focus: iRacing to the front, typed, focus given back",
+      fk.out[-3:] == [("fg", 77), ("type", "/rc x"), ("fg", 5)], fk.out[-4:])
+nowin = chat.ChatSender(lambda: None, lambda t, ok, i: done.append((t, ok, i)),
+                        lambda: type("K", (FakeKeys,), {"find_window": lambda s: 0})())
+nowin.send("x", "post", 0)
+for _ in range(30):
+    if len(done) == 3:
+        break
+    _t.sleep(0.1)
+check("no iRacing window -> reported, not crashed",
+      done[-1] == ("x", False, "iRacing window not found"), done)
+
+# IRacingSource: send + verification by flag bits
+chat_ir = fake_ir(80, {})
+chat_ir["CarIdxSessionFlags"] = [0, 0]
+chat_ir["CarIdxPaceFlags"] = [0, 0]
+chat_ir.chat_command = lambda mode: chat_ir.calls.append(("chat", mode))
+csrc = irs.IRacingSource()
+csrc._ir = chat_ir
+csrc._chat.keys_factory = lambda: fk
+r = csrc.send_chat("!black #11 D", "post", 0, ("black", 1))
+for _ in range(50):
+    if csrc._chat_checks:
+        break
+    _t.sleep(0.1)
+check("send_chat: SDK opens the chat (begin_chat)", ("chat", 1) in chat_ir.calls
+      and r == "to iRacing: !black #11 D", (chat_ir.calls, r))
+csrc._check_chat()
+check("not confirmed yet -> still waiting", len(csrc._chat_checks) == 1
+      and not csrc.drain_command_log())
+chat_ir["CarIdxSessionFlags"] = [0, irs.FLAG_BLACK]
+csrc._check_chat()
+check("black flag bit set -> 'iRacing confirmed'",
+      csrc.drain_command_log() == ["iRacing confirmed: !black #11 D"])
+csrc.send_chat("!eol #11", "post", 0, ("eol", 1))
+for _ in range(50):
+    if csrc._chat_checks:
+        break
+    _t.sleep(0.1)
+csrc._chat_checks[0]["until"] = 0
+csrc._check_chat()
+log = csrc.drain_command_log()
+check("no effect within the time -> warning (admin? method?)",
+      len(log) == 1 and "did NOT confirm" in log[0] and "admin" in log[0], log)
+
+# Engine routing
+eng4 = server.Engine(force_sim=True)
+eng4.state = RaceState()
+eng4.state.ingest(frame(10, [cf(0, "7"), cf(1, "14")]))
+sent = []
+eng4.source = type("S", (), {"name": "iracing",
+                             "send_chat": lambda self, *a: sent.append(a) or "to iRacing: " + a[0],
+                             "send_command": lambda self, c, **k: "x"})()
+check("chat OFF by default: nothing typed, logged",
+      not eng4.chat_cfg["enabled"]
+      and "chat OFF" in eng4.handle_client_message(
+          {"action": "car", "car_idx": 1, "command": "eol"})["text"] and not sent)
+eng4.handle_client_message({"action": "set_chat", "enabled": True})
+check("switch saved to data/chat_config.json",
+      json.load(open(chat.CONFIG_PATH))["enabled"] is True)
+eng4.handle_client_message({"action": "car", "car_idx": 1, "command": "eol"})
+check("car EOL -> '!eol #14', verify eol on car 1",
+      sent[-1] == ("!eol #14", "post", 6.0, ("eol", 1)), sent)
+eng4.state.ingest(frame(11, [cf(0, "7"), cf(1, "14")],
+                        [IncidentEvent(1, 0, "contact", 3, 0, source="detected",
+                                       text="contact")]))
+inc = [e for e in eng4.state.events if e.is_incident][-1]
+eng4.handle_client_message({"action": "resolve", "id": inc.id,
+                            "resolution": "DRIVE THROUGH"})
+check("decision DRIVE THROUGH -> '!black #14 D', verify black",
+      sent[-1] == ("!black #14 D", "post", 6.0, ("black", 1)), sent[-1])
+eng4.handle_client_message({"action": "command", "command": "pace_deploy"})
+check("Deploy Pace Car -> '!yellow', verify the caution",
+      sent[-1] == ("!yellow", "post", 6.0, ("yellow", -1)), sent[-1])
+n = len(sent)
+ack = eng4.handle_client_message({"action": "command", "command": "red_flag"})
+check("red flag: no iRacing command, only logged", len(sent) == n
+      and "logged only" in ack["text"])
+eng4.handle_client_message({"action": "rc_message", "target": "RC",
+                            "text": "Track limits T4", "car_idx": -1})
+check("RC message -> '/all ...'", sent[-1][0] == "/all Track limits T4")
+eng4.handle_client_message({"action": "set_chat", "enabled": False})
+eng4.handle_client_message({"action": "chat_test"})
+check("Test works while OFF ('/rc', admins only)",
+      sent[-1][0] == "/rc iCASControl chat test")
+eng5 = server.Engine(force_sim=True)
+eng5.state = eng4.state
+ack = eng5.handle_client_message({"action": "car", "car_idx": 1, "command": "dsq"})
+check("simulator: command only written to the log",
+      "not iRacing" in ack["text"]
+      and any("Would send to iRacing: !dq #14" in e.text
+              for e in eng5.state.events), ack)
+check("snapshot carries the chat status",
+      eng4.initial_messages()[-1]["chat"] == {"enabled": False, "method": "post",
+                                              "available": True})
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

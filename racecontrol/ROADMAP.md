@@ -17,9 +17,11 @@ Thomas's companion overlay project.
 
 **Done (October 2026, step 1 of 3):** live incidents (official points when
 admin + spin / contact / stopped detection), replay of any log line, replay
-footage never logged, autosave + recovery. Next: step 2 = admin chat commands
-(penalties, flags, RC messages into iRacing); step 3 = push decisions to the
-stream (RC banner 5019, tower) and the Auto Steward.
+footage never logged, autosave + recovery. Also sector times, best lap from
+lap 1, map colour modes. **Step 2 built (October 27, not yet tried in a live
+session):** admin chat commands into iRacing (`backend/chat.py`, see README).
+Next: step 3 = push decisions to the stream (RC banner 5019, tower) and the
+Auto Steward.
 
 These items turn iRacing mode from "accurate timing" into a tool you can steward
 a real CAS Community race with.
@@ -32,9 +34,10 @@ drops, and two cars close together going slow, and classify those into 1x / 2x
 
 **Admin command delivery.** iRacing has no SDK broadcast for full-course
 yellows, black flags or pit open/close — those are admin *chat commands*
-(`!yellow`, `!black`, `!pitclose`, …). The plan is to deliver them by focusing
-the iRacing window and sending the keystrokes, with a configurable safety
-confirmation. This needs testing on a Windows rig with iRacing.
+(`!yellow`, `!black`, `!pitclose`, …). Built: the SDK opens the chat, the text
+is posted as WM_CHAR (or typed with the window focused), confirmations for
+penalties, and the result is checked in the flag bits. Needs its first test in
+a hosted session where the PC running it is admin.
 
 **Sector times and blue-flag logging.** Add the three-sector split to the
 timing table, and calculate blue flags (iRacing does not expose them) using the

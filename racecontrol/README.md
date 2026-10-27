@@ -128,6 +128,34 @@ the PC) during the race and it carries on where it was; points scored while it
 was down are logged as one line each, never doubled. **Save** (race log
 header) downloads the same file.
 
+## Steward commands into iRacing (step 2, October 2026)
+
+Penalties and race control go into the **iRacing chat** as admin commands
+(official syntax, support.iracing.com article 31000133518). **The iRacing
+account on this PC must be admin of the session** - otherwise iRacing ignores
+them. Header switch **iRACING CHAT** (OFF by default, kept in
+`data/chat_config.json`); **Test** sends `/rc iCASControl chat test` (only the
+admins see it) even while OFF.
+
+| Dashboard | iRacing chat |
+|---|---|
+| Deploy Pace Car / End Pace Car | `!yellow` / `!pacelaps 1` |
+| Pit Open / Pit Close / Clear Penalties | `!pitopen` / `!pitclose` / `!clearall` |
+| Drive Thru / Stop/Go / DSQ (incident) | `!black #14 D` / `!black #14` / `!dq #14` |
+| Warning (incident) | `/all #14 Driver: WARNING` |
+| Car: Wave / EOL / Clr Pens / DSQ / Notify | `!waveby #14` / `!eol #14` / `!clear #14` / `!dq #14` / `/all #14 text` |
+| Message RC / Private | `/all text` / `/all #14 text` |
+| Red Flag, Green Flag, Wave Lapped, Time Pen. | none in iRacing - log only |
+
+How it types: the SDK opens the chat (`chat_command begin_chat`), then
+method **post** (default) posts each character as WM_CHAR + Enter to the sim
+window (`SimWinClass`) in the background; method **focus** brings iRacing to
+the front for a moment and types with SendInput. After a black flag, DQ, EOL,
+wave-by, clear or yellow the flag bits are watched for 6 s: the log says
+"iRacing confirmed" or "did NOT confirm (admin? method?)". Templates can be
+overridden in `data/chat_config.json` → `"commands": {"notify": "..."}`.
+In simulator / replay mode the commands are only written to the log.
+
 ## What works today vs. what is honest to flag
 
 Live timing, the real track map, the incident/event log, gaps and intervals,
@@ -142,9 +170,8 @@ roadmap:
 
 * Official incident points arrive live only for a session admin (see above);
   the detection works for everybody.
-* iRacing's SDK has no broadcast message for admin actions (full-course yellow,
-  black flags, pit open/close). For those, the app shows the iRacing chat
-  command to use; automating delivery is planned.
+* Admin actions go in as chat commands (see above) - built, but not yet tried
+  in a live session.
 
 These are testable and tunable on your Windows rig — the simulator let the
 whole interface be built and verified without a live session.

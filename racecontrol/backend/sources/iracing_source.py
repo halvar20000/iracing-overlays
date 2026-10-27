@@ -38,6 +38,7 @@ from backend.models import (
 )
 from backend.sources.base import DataSource
 from backend.incidents import BehaviourDetector, OfficialIncidents
+from backend.chat import ChatSender
 from backend.tracks import load_track
 
 # Sector timing is shared with the Quali Delta overlay (repo root).
@@ -84,6 +85,12 @@ _FLAG_BITS = [
 ]
 
 
+CHAT_VERIFY_S = 6.0
+CAUTION_BITS = 0x4000 | 0x8000          # SessionFlags caution / caution waving
+FLAG_BLACK = 0x00010000                 # CarIdxSessionFlags
+FLAG_DQ = 0x00020000
+PACE_EOL = 0x01                         # CarIdxPaceFlags
+PACE_WAVED = 0x04
 INC_POLL_S = 2.0          # ResultsPositions = a full session-info parse
 REPLAY_PREROLL_S = 8.0    # replay starts this long before the incident
 REPLAY_BEHIND_FRAMES = 60  # > 1 s behind the live tip = watching a replay
@@ -180,6 +187,10 @@ class IRacingSource(DataSource):
         self._speed_ms: dict[int, float] = {}
         self._prev_pct: dict[int, float] = {}
         self._command_log: list[str] = []
+        self._log_lock = threading.Lock()
+        self._chat = ChatSender(self._open_chat, self._chat_done)
+        self._chat_checks: list[dict] = []      # waiting for iRacing to act
+        self._chat_verify: dict[str, tuple] = {}  # text -> (kind, car_idx)
         self.detector = BehaviourDetector()
         self.official = OfficialIncidents()
         self._inc_next = 0.0
@@ -258,6 +269,7 @@ class IRacingSource(DataSource):
         try:
             self._ir.freeze_var_buffer_latest()
             frame = self._read_frame(dt)
+            self._check_chat()
         except Exception:
             frame = None
         finally:
@@ -622,10 +634,9 @@ class IRacingSource(DataSource):
     def send_command(self, command: str, **params) -> str:
         """Execute a command against iRacing.
 
-        Camera and replay commands use real SDK broadcast messages.  iRacing's
-        SDK has no broadcast for admin actions (FCY, black flags, pit open /
-        close), so for those this returns the iRacing chat command text the
-        steward should issue.  Automating chat delivery is a roadmap item.
+        Camera and replay commands use real SDK broadcast messages.  Admin
+        actions (FCY, black flags, pit open / close ...) are iRacing chat
+        commands - the engine sends them with ``send_chat``.
         """
         if self._ir is None or not self._ir.is_connected:
             return "iRacing not connected"
@@ -643,19 +654,7 @@ class IRacingSource(DataSource):
         except Exception as exc:                  # pragma: no cover
             return f"command failed: {exc}"
 
-        # Admin commands -> iRacing chat command text.
-        chat = {
-            "pace_deploy": "!yellow", "pace_end": "!pacelaps 0",
-            "pit_open": "!pitopen", "pit_close": "!pitclose",
-            "red_flag": "(post red flag in race log)",
-            "wave_around": "!waveby {num}", "eol": "!eol {num}",
-            "black_flag": "!black {num} {sec}", "dq": "!dq {num}",
-            "clear": "!clear {num}",
-        }.get(cmd)
-        if chat:
-            self._command_log.append(f"iRacing chat command needed: {chat}")
-            return (f"SDK cannot send admin commands directly. "
-                    f"iRacing chat command: {chat}")
+        # Admin actions are chat commands: Engine.to_iracing -> send_chat.
         return f"command '{command}' acknowledged (logged only)"
 
     def _start_replay(self, params: dict) -> str:
@@ -702,7 +701,7 @@ class IRacingSource(DataSource):
                 if landed:
                     break
             if not landed:
-                self._command_log.append(
+                self._note(
                     "Replay jump did not land (is the replay recorded "
                     "that far back?)")
                 return
@@ -714,11 +713,84 @@ class IRacingSource(DataSource):
                 time.sleep(0.3)
             ir.replay_set_play_speed(1, False)
         except Exception as exc:                  # pragma: no cover
-            self._command_log.append(f"Replay failed: {exc}")
+            self._note(f"Replay failed: {exc}")
         finally:
             self._replay_busy = False
 
     def drain_command_log(self) -> list[str]:
-        out = self._command_log[:]
-        self._command_log.clear()
+        with self._log_lock:
+            out = self._command_log[:]
+            self._command_log.clear()
         return out
+
+    def _note(self, line: str) -> None:
+        with self._log_lock:
+            self._command_log.append(line)
+
+    # -- chat commands into iRacing (step 2) --------------------------------
+
+    def _open_chat(self) -> None:
+        self._ir.chat_command(1)                # ChatCommandMode.begin_chat
+
+    def send_chat(self, text: str, method: str = "post",
+                  char_delay_ms: float = 6, verify: Optional[tuple] = None) -> str:
+        """Type ``text`` into the iRacing chat (background thread).
+        ``verify`` = (kind, car_idx): afterwards the flag bits tell whether
+        iRacing really did it (kinds: black, dq, eol, waveby, clear,
+        yellow)."""
+        if self._ir is None or not self._ir.is_connected:
+            return "iRacing not connected"
+        if verify:
+            self._chat_verify[text] = verify
+        self._chat.send(text, method, char_delay_ms)
+        return f"to iRacing: {text}"
+
+    def _chat_done(self, text: str, ok: bool, info: str) -> None:
+        verify = self._chat_verify.pop(text, None)
+        if not ok:
+            self._note(f"NOT sent to iRacing: {text} - {info}")
+            return
+        if verify:
+            self._chat_checks.append({"text": text, "kind": verify[0],
+                                      "car": verify[1],
+                                      "until": time.monotonic() + CHAT_VERIFY_S})
+        else:
+            self._note(f"Sent to iRacing chat: {text}")
+
+    def _chat_effect(self, kind: str, car: int) -> Optional[bool]:
+        """Is the commanded state visible in the telemetry?"""
+        if kind == "yellow":
+            return bool(int(self._g("SessionFlags", 0) or 0) & CAUTION_BITS)
+        flags = self._g("CarIdxSessionFlags", []) or []
+        pace = self._g("CarIdxPaceFlags", []) or []
+        f = int(flags[car]) if 0 <= car < len(flags) else 0
+        p = int(pace[car]) if 0 <= car < len(pace) else 0
+        if kind == "black":
+            return bool(f & FLAG_BLACK)
+        if kind == "dq":
+            return bool(f & FLAG_DQ)
+        if kind == "eol":
+            return bool(p & PACE_EOL)
+        if kind == "waveby":
+            return bool(p & PACE_WAVED)
+        if kind == "clear":
+            return not (f & (FLAG_BLACK | FLAG_DQ)) and not (p & PACE_EOL)
+        return None
+
+    def _check_chat(self) -> None:
+        if not self._chat_checks:
+            return
+        now = time.monotonic()
+        keep = []
+        for c in self._chat_checks:
+            done = self._chat_effect(c["kind"], c["car"])
+            if done:
+                self._note(f"iRacing confirmed: {c['text']}")
+            elif now > c["until"]:
+                self._note(f"iRacing did NOT confirm after "
+                           f"{CHAT_VERIFY_S:.0f} s: {c['text']} - is this PC "
+                           f"admin of the session? (else try chat method "
+                           f"'focus')")
+            else:
+                keep.append(c)
+        self._chat_checks = keep

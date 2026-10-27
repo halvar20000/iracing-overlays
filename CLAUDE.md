@@ -178,6 +178,32 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 27, 2026 (iCASControl STEP 2 — steward commands into the iRacing
+chat; Thomas: incidents now match iRaceControl, selection works, go on):**
+the old IRACECONTROL folder (Y:\mnt\AI\Projects\IRACECONTROL) is the May 22
+v0.1, byte-identical to the June merge — chat sending was NEVER built (it only
+showed the command text). NEW `racecontrol/backend/chat.py`: templates in the
+OFFICIAL syntax (support.iracing.com 31000133518: `!black #14 D` drive-through,
+`!black #14 [sec]` stop-and-go, `!dq / !eol / !waveby / !clear #14`,
+`!clearall`, `!yellow`, `!pacelaps 1`, `!pitopen / !pitclose`, `/all`, `/rc`;
+red / green flag, wave lapped, time pen = none → log only; no documented
+private message → notify = `/all #14 text`), overridable in
+data/chat_config.json (enabled OFF by default, method, char_delay_ms,
+commands). `ChatSender` (thread, one line at a time): SDK
+`chat_command(begin_chat)` opens the chat, then method "post" = WM_CHAR per
+char + VK_RETURN posted to FindWindow("SimWinClass") (background), "focus" =
+SetForegroundWindow + SendInput unicode, focus back; ctypes argtypes set
+(0xC01C0001 lParam). IRacingSource.send_chat + verification for 6 s in the
+telemetry: CarIdxSessionFlags black 0x10000 / DQ 0x20000, CarIdxPaceFlags EOL
+0x01 / waved 0x04, SessionFlags caution → log "iRacing confirmed" or "did NOT
+confirm … admin? method?". Engine.to_iracing routes: race-control buttons,
+incident decisions (DT, S&G, DSQ, WARNING), car buttons, RC / private
+messages; sim / replay = "Would send …" in the log. Header switch iRACING CHAT
++ method + Test (`/rc iCASControl chat test`, admins only, works while OFF);
+confirm() for yellow / pit close / clear all / DT / S&G. NEEDS the admin PC:
+the stream PC's account is not admin. test 91/91 (fake keys, fake IR flags,
+engine routing). NOT tried on Windows / in iRacing at all.
+
 **October 27, 2026 (iCASControl first real run — Thomas's Spa AI practice
 screenshot):** detection works live (spins, "Contact with #28", pit lane).
 Fixed: CLS column read "None" for every car — hosted / AI sessions send

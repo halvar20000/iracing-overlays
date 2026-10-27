@@ -27,6 +27,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from backend import APP_NAME, __version__
+from backend import chat
 from backend.race_state import RaceState, save_json
 from backend.sources.base import DataSource
 from backend.sources.simulator import SimulatorSource
@@ -65,6 +66,7 @@ class Engine:
         self._restored_key: Optional[str] = None
         self._saved_rev = -1
         self._saved_at = 0.0
+        self.chat_cfg = chat.load_config()
 
     # -- source management --------------------------------------------------
 
@@ -189,6 +191,43 @@ class Engine:
         except Exception as exc:
             print(f"[autosave] failed: {exc}", file=sys.stderr)
 
+    # -- chat commands into iRacing (step 2) ----------------------------------
+
+    def _chat_capable(self) -> bool:
+        return callable(getattr(self.source, "send_chat", None))
+
+    def chat_status(self) -> dict:
+        return {"enabled": bool(self.chat_cfg.get("enabled")),
+                "method": self.chat_cfg.get("method", "post"),
+                "available": self._chat_capable()}
+
+    def to_iracing(self, kind: str, car=None, msg: str = "", sec: float = 0,
+                   verify=None, force: bool = False) -> str:
+        """Build the chat command for ``kind`` and type it into iRacing.
+        ``verify`` = flag kind to watch for the given car (car_idx added
+        here).  Off / no iRacing / no such command -> only logged."""
+        text = chat.build(kind, self.chat_cfg.get("commands") or {},
+                          num=car.number if car else "",
+                          driver=car.driver if car else "", msg=msg, sec=sec)
+        st = self.state
+        if text is None:
+            st.note_system(f"{_command_label(kind)}: no iRacing command - "
+                           f"logged only", category="flag")
+            return "logged only (iRacing has no command for it)"
+        if not self._chat_capable():
+            st.note_system(f"Would send to iRacing: {text} "
+                           f"({self.source.name} mode)", category="flag")
+            return f"not iRacing ({self.source.name}): {text}"
+        if not (self.chat_cfg.get("enabled") or force):
+            st.note_system(f"Chat to iRacing is OFF - not sent: {text}",
+                           category="flag")
+            return f"chat OFF - not sent: {text}"
+        if isinstance(verify, str):
+            verify = (verify, car.car_idx if car else -1)
+        return self.source.send_chat(
+            text, self.chat_cfg.get("method", "post"),
+            float(self.chat_cfg.get("char_delay_ms", 6) or 6), verify)
+
     # -- client messaging ---------------------------------------------------
 
     def initial_messages(self) -> list[dict]:
@@ -198,7 +237,7 @@ class Engine:
             {"type": "track", **self.state.track_payload()},
             {"type": "events", **self.state.events_payload()},
             {"type": "snapshot", **self.state.snapshot(),
-             "running": self.running},
+             "running": self.running, "chat": self.chat_status()},
         ]
 
     def handle_client_message(self, msg: dict) -> dict | None:
@@ -211,16 +250,44 @@ class Engine:
             st.note_system(f"Controller set to {'RUN' if self.running else 'STOP'}")
             return {"type": "ack", "text": f"{'RUN' if self.running else 'STOP'}"}
 
+        if action == "set_chat":
+            self.chat_cfg["enabled"] = bool(msg.get("enabled", False))
+            if msg.get("method") in ("post", "focus"):
+                self.chat_cfg["method"] = msg["method"]
+            chat.save_config(self.chat_cfg)
+            st.note_system(
+                f"Chat to iRacing {'ON' if self.chat_cfg['enabled'] else 'OFF'}"
+                f" (method {self.chat_cfg.get('method', 'post')})")
+            return {"type": "ack", "text": "chat to iRacing "
+                    + ("ON" if self.chat_cfg["enabled"] else "OFF")}
+
+        if action == "chat_test":
+            return {"type": "ack", "text": self.to_iracing("test", force=True)}
+
         if action == "command":
             command = str(msg.get("command", ""))
+            if command in CHAT_RACE_COMMANDS and self._chat_capable():
+                result = self.to_iracing(
+                    command, verify=("yellow", -1)
+                    if command == "pace_deploy" else None)
+                return {"type": "ack", "text": result}
             result = self.source.send_command(command, **msg.get("params", {}))
             st.note_system(f"{_command_label(command)}: {result}", category="flag")
             return {"type": "ack", "text": result}
 
         if action == "resolve":
-            result = st.resolve_incident(
-                int(msg.get("id", -1)), str(msg.get("resolution", "")),
-                str(msg.get("message", "")), float(msg.get("seconds", 0.0)))
+            ev_id = int(msg.get("id", -1))
+            resolution = str(msg.get("resolution", ""))
+            seconds = float(msg.get("seconds", 0.0))
+            message = str(msg.get("message", ""))
+            ev = next((e for e in st.events if e.id == ev_id), None)
+            result = st.resolve_incident(ev_id, resolution, message, seconds)
+            kind = RESOLUTION_CHAT.get(resolution)
+            car = st.cars.get(ev.car_idx) if ev is not None else None
+            if kind and car is not None and "->" in result:
+                result += " | " + self.to_iracing(
+                    kind, car=car, msg=message, sec=seconds,
+                    verify=CHAT_VERIFY_KIND.get(kind))
             return {"type": "ack", "text": result}
 
         if action == "replay":
@@ -241,20 +308,42 @@ class Engine:
             result = st.car_action(car_idx, command,
                                    str(msg.get("message", "")),
                                    float(msg.get("seconds", 0.0)))
-            # Mirror controllable commands to the data source as well.
-            if command in ("wave_around", "eol", "notify", "clear_penalties"):
-                car = st.cars.get(car_idx)
-                if car is not None:
-                    self.source.send_command(command, number=car.number)
+            car = st.cars.get(car_idx)
+            if command in CAR_CHAT and car is not None:
+                kind = CAR_CHAT[command]
+                result += " | " + self.to_iracing(
+                    kind, car=car, msg=str(msg.get("message", "")),
+                    verify=CHAT_VERIFY_KIND.get(kind))
             return {"type": "ack", "text": result}
 
         if action == "rc_message":
-            result = st.rc_message(str(msg.get("target", "RC")),
-                                   str(msg.get("text", "")),
-                                   int(msg.get("car_idx", -1)))
+            target = str(msg.get("target", "RC"))
+            text = str(msg.get("text", ""))
+            car = st.cars.get(int(msg.get("car_idx", -1)))
+            result = st.rc_message(target, text, int(msg.get("car_idx", -1)))
+            if target == "RC":
+                result += " | " + self.to_iracing("message_all", msg=text)
+            elif target == "PRIVATE" and car is not None:
+                result += " | " + self.to_iracing("notify", car=car, msg=text)
             return {"type": "ack", "text": result}
 
         return {"type": "ack", "text": f"unknown action '{action}'"}
+
+
+# Race-control buttons that are iRacing chat commands.
+CHAT_RACE_COMMANDS = ("pace_deploy", "pace_end", "pit_open", "pit_close",
+                      "clear_all", "red_flag", "green_flag", "wave_lapped")
+# Steward decisions on an incident -> chat command kind.
+RESOLUTION_CHAT = {"DRIVE THROUGH": "drive_through", "STOP/GO": "stop_go",
+                   "DSQ": "dsq", "WARNING": "warning"}
+# Selected-car buttons -> chat command kind.
+CAR_CHAT = {"wave_around": "wave_around", "eol": "eol",
+            "clear_penalties": "clear_penalties", "dsq": "dsq",
+            "notify": "notify"}
+# How the result shows in the telemetry (IRacingSource._chat_effect).
+CHAT_VERIFY_KIND = {"drive_through": "black", "stop_go": "black", "dsq": "dq",
+                    "eol": "eol", "wave_around": "waveby",
+                    "clear_penalties": "clear"}
 
 
 def _command_label(command: str) -> str:
@@ -377,7 +466,7 @@ async def _race_loop() -> None:
         # The fast snapshot, every tick.
         messages.append(json.dumps(
             {"type": "snapshot", **engine.state.snapshot(),
-             "running": engine.running}))
+             "running": engine.running, "chat": engine.chat_status()}))
 
         dead: list[WebSocket] = []
         for client in list(engine.clients):

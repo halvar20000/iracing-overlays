@@ -112,6 +112,8 @@ function handleMessage(msg) {
     case 'snapshot':
       State.snapshot = msg;
       State.running = msg.running;
+      State.chat = msg.chat || null;
+      updateChatToggle();
       render();
       break;
     case 'ack':
@@ -182,6 +184,19 @@ function renderHeader(s) {
     srcBadge.className = 'badge';
   }
   updateRunToggle();
+}
+
+function updateChatToggle() {
+  const c = State.chat;
+  const t = $('#chat-toggle');
+  if (!c) return;
+  t.textContent = c.enabled ? 'iRACING CHAT ON' : 'iRACING CHAT OFF';
+  t.className = 'chat-toggle ' + (c.enabled ? 'on' : 'off')
+    + (c.available ? '' : ' na');
+  t.title = c.available ? '' : 'Only with iRacing running - in this mode the '
+    + 'commands are only written to the log';
+  const m = $('#chat-method');
+  if (document.activeElement !== m) m.value = c.method || 'post';
 }
 
 function updateRunToggle() {
@@ -431,6 +446,21 @@ function esc(t) {
 
 // ---- event wiring ---------------------------------------------------------
 function wire() {
+  // chat to iRacing (step 2)
+  $('#chat-toggle').addEventListener('click', () => {
+    const on = !(State.chat && State.chat.enabled);
+    if (on && !confirm('Send steward commands (penalties, yellow, pit '
+        + 'close ...) into the iRacing chat?\n\nThis PC\'s iRacing account '
+        + 'must be ADMIN of the session.')) return;
+    send({ action: 'set_chat', enabled: on, method: $('#chat-method').value });
+  });
+  $('#chat-method').addEventListener('change', () => {
+    send({ action: 'set_chat', enabled: !!(State.chat && State.chat.enabled),
+           method: $('#chat-method').value });
+  });
+  $('#chat-test').addEventListener('click', () =>
+    send({ action: 'chat_test' }));
+
   // RUN / STOP
   $('#run-toggle').addEventListener('click', () => {
     State.running = !State.running;
@@ -522,6 +552,11 @@ function wire() {
   $$('.command-grid .cmd').forEach((b) => b.addEventListener('click', () => {
     const cmd = b.dataset.cmd;
     if (cmd === 'red_flag' && !confirm('Post a RED FLAG?')) return;
+    const ask = { pace_deploy: 'Full course yellow (!yellow)?',
+                  pit_close: 'Close the pit entry (!pitclose)?',
+                  clear_all: 'Clear ALL penalties of the field (!clearall)?' };
+    if (ask[cmd] && State.chat && State.chat.enabled && !confirm(ask[cmd]))
+      return;
     send({ action: 'command', command: cmd });
   }));
 
@@ -537,6 +572,8 @@ function wire() {
         seconds = parseFloat(v) || 0;
       }
       if (res === 'DSQ' && !confirm('Disqualify this car?')) return;
+      if (['DRIVE THROUGH', 'STOP/GO'].includes(res) && State.chat
+          && State.chat.enabled && !confirm(`${res} - send to iRacing?`)) return;
       const message = '';
       send({ action: 'resolve', id: State.selectedEvent,
              resolution: res, message, seconds });
