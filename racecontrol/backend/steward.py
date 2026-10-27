@@ -10,7 +10,8 @@ Rules dialog:
 * FULL COURSE CAUTION - ``fcy_incs`` incident points or more (all cars
   together, e.g. 10x) within ``fcy_window_s`` seconds (e.g. 10) in a race
   under green.  ``fcy_mode`` "auto" (default) = !yellow goes out at once,
-  "ask" = a log line with a DEPLOY button.
+  "ask" = a log line with a DEPLOY button.  ``fcy_laps`` > 0: once the
+  caution is out, ``!pacelaps N`` sets its length (0 = iRacing decides).
 * QUALI AM / PRO (GT3 WCT, ``quali_split``) - at the start of a qualifying
   ``quali_am_text`` to everybody, after ``quali_split_min`` minutes
   ``quali_pro_text``.
@@ -36,7 +37,7 @@ DEFAULT_CONFIG = {
     "enabled": True,
     "dt_first": 15, "dt_every": 6,
     "fcy_enabled": True, "fcy_mode": "auto", "fcy_incs": 10,
-    "fcy_window_s": 10, "fcy_cooldown_s": 180,
+    "fcy_window_s": 10, "fcy_cooldown_s": 180, "fcy_laps": 0,
     "quali_split": False, "quali_split_min": 15,
     "quali_am_text": "QUALIFYING: THE FIRST 15 MINUTES ARE RESERVED FOR "
                      "AM DRIVERS",
@@ -45,7 +46,7 @@ DEFAULT_CONFIG = {
 }
 _BOOL = ("enabled", "fcy_enabled", "quali_split", "blue_enabled")
 _INT = ("dt_first", "dt_every", "fcy_incs", "fcy_window_s",
-        "fcy_cooldown_s", "quali_split_min", "blue_repeat_s")
+        "fcy_cooldown_s", "fcy_laps", "quali_split_min", "blue_repeat_s")
 _FLOAT = ("blue_gap_s",)
 _TEXT = ("quali_am_text", "quali_pro_text")
 
@@ -88,6 +89,7 @@ def clean(cfg: dict) -> dict:
         out["fcy_mode"] = "auto"
     out["fcy_incs"] = max(1, out["fcy_incs"])
     out["fcy_window_s"] = max(1, out["fcy_window_s"])
+    out["fcy_laps"] = min(20, max(0, out["fcy_laps"]))
     return out
 
 

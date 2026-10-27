@@ -1,4 +1,4 @@
 """iCASControl - a race control / stewarding tool for iRacing leagues."""
 
-__version__ = "0.1.6"
+__version__ = "0.1.7"
 APP_NAME = "iCASControl"

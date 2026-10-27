@@ -234,13 +234,14 @@ function updateStewardToggle() {
   t.textContent = s.enabled ? 'AUTO STEWARD ON' : 'AUTO STEWARD OFF';
   t.className = 'chat-toggle steward ' + (s.enabled ? 'on' : 'off');
   t.title = `Incidents: drive through at ${s.dt_first}x, then every ${s.dt_every}x`
-    + ` | caution: ${s.fcy_enabled ? `${s.fcy_incs}x / ${s.fcy_window_s}s (${s.fcy_mode})` : 'off'}`
+    + ` | caution: ${s.fcy_enabled ? `${s.fcy_incs}x / ${s.fcy_window_s}s (${s.fcy_mode}`
+        + `${s.fcy_laps > 0 ? `, ${s.fcy_laps} laps` : ''})` : 'off'}`
     + ` | quali AM/PRO: ${s.quali_split ? s.quali_split_min + ' min' : 'off'}`
     + ` | blue flag: ${s.blue_enabled ? s.blue_gap_s + 's' : 'off'}`;
 }
 
 const STEWARD_FIELDS = ['dt_first', 'dt_every', 'fcy_enabled', 'fcy_incs',
-  'fcy_window_s', 'fcy_mode', 'fcy_cooldown_s', 'quali_split', 'quali_split_min',
+  'fcy_window_s', 'fcy_mode', 'fcy_cooldown_s', 'fcy_laps', 'quali_split', 'quali_split_min',
   'quali_am_text', 'quali_pro_text', 'blue_enabled', 'blue_gap_s', 'blue_repeat_s'];
 function openStewardRules() {
   const s = State.steward || {};
@@ -721,7 +722,7 @@ function wire() {
       const id = parseInt(dep.dataset.deploy, 10);
       if (!confirm('Deploy a FULL COURSE CAUTION now (!yellow)?')) return;
       (State.deployed = State.deployed || new Set()).add(id);
-      send({ action: 'command', command: 'pace_deploy' });
+      send({ action: 'command', command: 'pace_deploy', auto: true });
       renderLog();
       return;
     }
@@ -755,6 +756,15 @@ function wire() {
       return;
     send({ action: 'command', command: cmd });
   }));
+
+  // caution length (!pacelaps): exact number or one lap more / less
+  const paceLaps = (n) => send({ action: 'command', command: 'pace_laps', n });
+  $('#pace-laps-set').addEventListener('click', () => {
+    const n = parseInt($('#pace-laps-n').value, 10);
+    if (n >= 1 && n <= 20) paceLaps(String(n));
+  });
+  $$('.pace-laps [data-laps]').forEach((b) =>
+    b.addEventListener('click', () => paceLaps(b.dataset.laps)));
 
   // incident resolution buttons
   $$('#incident-actions .ia-grid button').forEach((b) =>

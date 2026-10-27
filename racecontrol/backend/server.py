@@ -71,6 +71,8 @@ class Engine:
         self.stream_cfg = stream.load_config()
         self.steward_cfg = steward.load_config()
         self.auto = steward.AutoSteward()
+        # (laps, deadline) - !pacelaps for an auto caution once it is out
+        self._pending_laps: Optional[tuple[int, float]] = None
         self._stream_lock = threading.Lock()
         self._stream_log: list[str] = []
         self.banner = stream.BannerOut(self._banner_done)
@@ -134,6 +136,7 @@ class Engine:
             self._maybe_restore()
             for act in self.auto.check(self.state, self.steward_cfg):
                 self._steward_action(act)
+            self._maybe_caution_laps()
             self._maybe_autosave()
         # Surface any messages the source generated (auto cautions, etc.).
         drain = getattr(self.source, "drain_command_log", None)
@@ -157,6 +160,7 @@ class Engine:
                 ev.kind, ev.source = "auto_caution", "auto"
                 result = self.to_iracing("pace_deploy", verify=("yellow", -1))
                 st.note_system(f"Auto caution: {result}", category="flag")
+                self._want_caution_laps()
             else:
                 ev = st._log("flag", f"AUTO STEWARD: full course caution? - "
                              f"{why}", lap=st._leader_lap())
@@ -181,6 +185,29 @@ class Engine:
                 self.to_iracing("notify", car=slow,
                                 msg=f"BLUE FLAG - let #{fast.number} "
                                     f"{fast.driver} pass")
+
+    def _want_caution_laps(self) -> None:
+        """Remember the Rules' caution length for the caution just called;
+        iRacing only takes !pacelaps once the caution is out."""
+        laps = int(self.steward_cfg.get("fcy_laps") or 0)
+        if laps > 0 and self.chat_cfg.get("enabled") and self._chat_capable():
+            self._pending_laps = (laps, time.monotonic() + CAUTION_LAPS_WAIT_S)
+
+    def _maybe_caution_laps(self) -> None:
+        if self._pending_laps is None:
+            return
+        laps, deadline = self._pending_laps
+        st = self.state
+        if steward._caution_out(st) and not st.in_replay:
+            self._pending_laps = None
+            result = self.to_iracing("pace_laps", n=laps)
+            st.note_system(f"Auto caution: {laps} caution lap(s) - {result}",
+                           category="flag")
+        elif time.monotonic() > deadline:
+            self._pending_laps = None
+            st.note_system(f"Auto caution: no caution seen within "
+                           f"{CAUTION_LAPS_WAIT_S:.0f}s - caution laps "
+                           f"({laps}) not set", category="flag")
 
     # -- autosave -----------------------------------------------------------
 
@@ -253,13 +280,14 @@ class Engine:
                 "available": self._chat_capable()}
 
     def to_iracing(self, kind: str, car=None, msg: str = "", sec: float = 0,
-                   verify=None, force: bool = False) -> str:
+                   verify=None, force: bool = False, n="") -> str:
         """Build the chat command for ``kind`` and type it into iRacing.
         ``verify`` = flag kind to watch for the given car (car_idx added
         here).  Off / no iRacing / no such command -> only logged."""
         text = chat.build(kind, self.chat_cfg.get("commands") or {},
                           num=car.number if car else "",
-                          driver=car.driver if car else "", msg=msg, sec=sec)
+                          driver=car.driver if car else "", msg=msg, sec=sec,
+                          n=n)
         st = self.state
         if text is None:
             st.note_system(f"{_command_label(kind)}: no iRacing command - "
@@ -406,10 +434,21 @@ class Engine:
 
         if action == "command":
             command = str(msg.get("command", ""))
+            if command == "pace_laps":
+                n = str(msg.get("n", "")).strip()
+                if not re.fullmatch(r"[+-]?\d{1,2}", n) or n.lstrip("+-") == "0":
+                    return {"type": "ack", "text": f"caution laps '{n}'?"}
+                result = self.to_iracing("pace_laps", n=n)
+                if not steward._caution_out(st):
+                    result += " (iRacing only accepts this under a caution)"
+                st.note_system(f"Caution laps {n}: {result}", category="flag")
+                return {"type": "ack", "text": result}
             if command in CHAT_RACE_COMMANDS and self._chat_capable():
                 result = self.to_iracing(
                     command, verify=("yellow", -1)
                     if command == "pace_deploy" else None)
+                if command == "pace_deploy" and msg.get("auto"):
+                    self._want_caution_laps()
                 return {"type": "ack", "text": result}
             result = self.source.send_command(command, **msg.get("params", {}))
             st.note_system(f"{_command_label(command)}: {result}", category="flag")
@@ -515,6 +554,8 @@ class Engine:
         return {"type": "ack", "text": f"unknown action '{action}'"}
 
 
+# How long an auto caution may take to show before its !pacelaps is dropped.
+CAUTION_LAPS_WAIT_S = 30.0
 # Race-control buttons that are iRacing chat commands.
 CHAT_RACE_COMMANDS = ("pace_deploy", "pace_end", "pit_open", "pit_close",
                       "clear_all", "red_flag", "green_flag", "wave_lapped")
@@ -542,6 +583,7 @@ CHAT_VERIFY_KIND = {"drive_through": "black", "stop_go": "black", "dsq": "dq",
 def _command_label(command: str) -> str:
     return {
         "pace_deploy": "Pace car deploy", "pace_end": "Pace car end",
+        "pace_laps": "Caution laps",
         "pit_open": "Pit entry open", "pit_close": "Pit entry close",
         "race_start": "Race start", "race_hold": "Race start hold",
         "red_flag": "Red flag", "green_flag": "Green flag",

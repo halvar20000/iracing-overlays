@@ -277,12 +277,14 @@ main {
 
 .sel-actions { display: grid; grid-template-columns: repeat(3, 1fr);
   gap: 6px; margin: 12px 0; }
-.sel-actions button, .ia-grid button, .ia-replay button, .command-grid .cmd {
+.sel-actions button, .ia-grid button, .ia-replay button, .command-grid .cmd,
+.pace-laps button {
   background: var(--panel-2); border: 1px solid var(--border-2);
   color: var(--text); padding: 8px 4px; border-radius: 4px;
   font-size: 11px; font-weight: 600; transition: .12s;
 }
-.sel-actions button:hover, .ia-grid button:hover, .ia-replay button:hover, .cmd:hover {
+.sel-actions button:hover, .ia-grid button:hover, .ia-replay button:hover, .cmd:hover,
+.pace-laps button:hover {
   background: var(--head); border-color: var(--orange); }
 .danger { color: var(--red) !important; border-color: #4a1e22 !important; }
 .danger:hover { background: #2e0d10 !important; }
@@ -419,6 +421,11 @@ td.dsq { color: var(--red) !important; text-decoration: line-through; }
 .command-grid { display: grid; grid-template-columns: repeat(2, 1fr);
   gap: 6px; padding: 10px; }
 .cmd { letter-spacing: .5px; }
+.pace-laps { display: flex; align-items: center; gap: 6px; padding: 0 10px 10px; }
+.pace-laps span { flex: 1; font-size: 12px; color: var(--dim); }
+.pace-laps input { width: 48px; padding: 6px 4px; background: var(--panel-2);
+  border: 1px solid var(--border-2); color: var(--text); border-radius: 4px; }
+.pace-laps button { padding: 6px 10px; }
 .cmd-yellow { color: var(--yellow); border-color: #4a3e0e !important; }
 .cmd-green  { color: var(--green);  border-color: #1e4a31 !important; }
 .cmd-red    { color: var(--red);    border-color: #4a1e22 !important; }

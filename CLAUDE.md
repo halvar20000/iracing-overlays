@@ -178,6 +178,16 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 27, 2026 (iCASControl 0.1.7 — caution length):** Thomas: how long
+does the pace car stay out? iRacing decides itself; `!pacelaps N|+n|-n` (admin,
+under a caution) sets it. Race-control panel: row "Caution laps" (number +
+Set, −1, +1 → command `pace_laps` {n}, validated `[+-]?\d{1,2}`, not 0; a hint
+when no caution is out). Rules: `fcy_laps` (0 = iRacing decides, max 20) →
+after an AUTO caution (and the ask line's DEPLOY, sent with `auto: true`)
+Engine._pending_laps waits up to CAUTION_LAPS_WAIT_S 30 s for the caution
+flag, then `!pacelaps N` once; only with iRACING CHAT on. test_incidents.py
+168/168; panel + rules rendered. NOT tried in iRacing.
+
 **October 27, 2026 (iCASControl 0.1.5 step 3c — Auto Steward):** Thomas's
 rules: incident limit DT at 15x, then every 6x — ONLY a message (the league's
 iRacing settings give the penalty); full course caution when too many

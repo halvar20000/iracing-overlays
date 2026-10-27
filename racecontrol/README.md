@@ -182,6 +182,10 @@ Header switch **AUTO STEWARD** (on by default) + **Rules** (saved in
   line with a **DEPLOY CAUTION** button (2 min). Not under a caution, not for
   180 s after one it called; incidents of a caution never count after the
   restart.
+  *Caution length* (Rules, 0 = iRacing decides): once the caution is out,
+  `!pacelaps N` goes out. By hand: **Caution laps** under the race-control
+  buttons — a number + **Set**, or **−1 / +1** (iRacing only takes it under
+  a caution, as admin).
 * **Qualifying AM / PRO** (GT3 WCT, off by default — switch it on for WCT):
   at the start of a qualifying `/all QUALIFYING: THE FIRST 15 MINUTES ARE
   RESERVED FOR AM DRIVERS`, after 15 min `/all AM QUALIFYING FINISHED - PRO

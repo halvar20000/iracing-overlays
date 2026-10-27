@@ -876,6 +876,7 @@ def step(fr):
     eng7.state.ingest(fr)
     for act in eng7.auto.check(eng7.state, eng7.steward_cfg):
         eng7._steward_action(act)
+    eng7._maybe_caution_laps()
 
 
 def autos(kind):
@@ -962,6 +963,58 @@ check("ask mode: question with DEPLOY, nothing typed",
       and not any("!yellow" in x for x in sent7[n0:]), a and a[0].text)
 step(sframe(160, five, [pts(0, 4), pts(1, 4)], stype="PRACTICE"))
 check("practice: no caution", len(autos("auto_caution_ask")) == 1)
+
+import time
+# caution length: !pacelaps N once the auto caution is out
+check("fcy_laps default 0 (iRacing decides), clamped to 20",
+      steward.DEFAULT_CONFIG["fcy_laps"] == 0
+      and steward.clean({"fcy_laps": 25})["fcy_laps"] == 20)
+eng7.handle_client_message({"action": "set_steward", "fcy_mode": "auto",
+                            "fcy_laps": 2, "fcy_incs": 6, "fcy_window_s": 5})
+eng7.auto._fcy_block_until = -1.0
+n0 = len(sent7)
+step(sframe(300, five, [pts(0, 4), pts(1, 4)]))
+check("auto caution: !yellow now, !pacelaps waits for the caution",
+      any(x.startswith("!yellow") for x in sent7[n0:])
+      and not any("pacelaps" in x for x in sent7[n0:]), sent7[n0:])
+step(sframe(301, five))
+check("no caution yet: still waiting", not any("pacelaps" in x for x in sent7[n0:]))
+step(sframe(303, five, flags=["caution"]))
+check("caution out -> !pacelaps 2 once", [x for x in sent7[n0:] if "pacelaps" in x]
+      == ["!pacelaps 2"], sent7[n0:])
+step(sframe(304, five, flags=["caution"]))
+check("... and only once", len([x for x in sent7[n0:] if "pacelaps" in x]) == 1)
+n0 = len(sent7)
+r = eng7.handle_client_message({"action": "command", "command": "pace_laps", "n": "+1"})
+check("button +1 -> !pacelaps +1", sent7[n0:] == ["!pacelaps +1"], (r, sent7[n0:]))
+r = eng7.handle_client_message({"action": "command", "command": "pace_laps", "n": "4"})
+check("Set 4 -> !pacelaps 4", sent7[-1] == "!pacelaps 4", r)
+n0 = len(sent7)
+for bad in ("0", "abc", "+", "123", "3; !dq #1"):
+    eng7.handle_client_message({"action": "command", "command": "pace_laps", "n": bad})
+check("bad lap values are refused", len(sent7) == n0, sent7[n0:])
+step(sframe(330, five))
+r = eng7.handle_client_message({"action": "command", "command": "pace_laps", "n": "-1"})
+check("not under a caution: sent, with a hint", "only accepts this under a caution"
+      in r["text"], r)
+eng7._want_caution_laps()
+eng7._pending_laps = (2, time.monotonic() - 1)
+n0 = len(sent7)
+step(sframe(331, five))
+check("caution never came: dropped with a log line",
+      eng7._pending_laps is None and not sent7[n0:]
+      and any("caution laps (2) not set" in e.text for e in eng7.state.events[-5:]))
+eng7.handle_client_message({"action": "command", "command": "pace_deploy", "auto": True})
+check("DEPLOY of the ask line also sets the laps", eng7._pending_laps is not None
+      and eng7._pending_laps[0] == 2)
+eng7._pending_laps = None
+eng7.chat_cfg["enabled"] = False
+eng7._want_caution_laps()
+check("chat OFF: no !pacelaps planned", eng7._pending_laps is None)
+eng7.chat_cfg["enabled"] = True
+eng7.handle_client_message({"action": "set_steward", "fcy_laps": 0})
+eng7._want_caution_laps()
+check("fcy_laps 0: iRacing decides, nothing planned", eng7._pending_laps is None)
 
 # quali AM / PRO
 eng7.handle_client_message({"action": "set_steward", "quali_split": True})

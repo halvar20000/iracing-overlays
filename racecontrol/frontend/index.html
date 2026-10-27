@@ -219,6 +219,13 @@
           <button data-cmd="red_flag" class="cmd cmd-red">Red Flag</button>
           <button data-cmd="green_flag" class="cmd cmd-green">Green Flag</button>
         </div>
+        <div class="pace-laps" title="!pacelaps - iRacing only takes it under a caution">
+          <span>Caution laps</span>
+          <input id="pace-laps-n" type="number" min="1" max="20" value="3">
+          <button id="pace-laps-set" class="cmd-yellow">Set</button>
+          <button data-laps="-1" title="One caution lap less">&minus;1</button>
+          <button data-laps="+1" title="One caution lap more">+1</button>
+        </div>
 
         <div class="incident-actions" id="incident-actions">
           <div class="ia-head" id="ia-head">No incident selected</div>
@@ -311,6 +318,8 @@
         <option value="auto">deploy the caution at once (!yellow)</option>
         <option value="ask">ask me (DEPLOY button in the log)</option></select>,
         not again for <input id="s-fcy_cooldown_s" type="number" min="0" max="1800"> s</label>
+      <label>caution length <input id="s-fcy_laps" type="number" min="0" max="20"> laps
+        (!pacelaps once the caution is out; 0 = iRacing decides)</label>
     </fieldset>
     <fieldset><legend><label><input id="s-quali_split" type="checkbox"> Qualifying AM / PRO (GT3 WCT)</label></legend>
       <label>At the start, to everybody:</label>
