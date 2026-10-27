@@ -175,11 +175,13 @@ Header switch **AUTO STEWARD** (on by default) + **Rules** (saved in
   plus a pop-up. Only a message: the league's iRacing settings give the
   drive-through. Race sessions only; the level is autosaved per car, so a
   restart does not repeat it.
-* **Full course caution** — 3 different cars with a spin / contact / stopped
-  car (or official points of 2x+) within 20 s in a race under green. Mode
-  *ask* (default): an amber line with a **DEPLOY CAUTION** button (2 min);
-  *auto*: `!yellow` goes out at once. Not under a caution, not for 180 s
-  after one it called; incidents of a caution never count after the restart.
+* **Full course caution** — the official incident points of ALL cars
+  together reach *N*x within *S* seconds in a race under green (Rules dialog;
+  default 10x within 10 s — points need admin, detections alone do not
+  count). Mode *auto* (default): `!yellow` goes out at once; *ask*: an amber
+  line with a **DEPLOY CAUTION** button (2 min). Not under a caution, not for
+  180 s after one it called; incidents of a caution never count after the
+  restart.
 * **Qualifying AM / PRO** (GT3 WCT, off by default — switch it on for WCT):
   at the start of a qualifying `/all QUALIFYING: THE FIRST 15 MINUTES ARE
   RESERVED FOR AM DRIVERS`, after 15 min `/all AM QUALIFYING FINISHED - PRO

@@ -234,12 +234,12 @@ function updateStewardToggle() {
   t.textContent = s.enabled ? 'AUTO STEWARD ON' : 'AUTO STEWARD OFF';
   t.className = 'chat-toggle steward ' + (s.enabled ? 'on' : 'off');
   t.title = `Incidents: drive through at ${s.dt_first}x, then every ${s.dt_every}x`
-    + ` | caution: ${s.fcy_enabled ? `${s.fcy_cars} cars / ${s.fcy_window_s}s (${s.fcy_mode})` : 'off'}`
+    + ` | caution: ${s.fcy_enabled ? `${s.fcy_incs}x / ${s.fcy_window_s}s (${s.fcy_mode})` : 'off'}`
     + ` | quali AM/PRO: ${s.quali_split ? s.quali_split_min + ' min' : 'off'}`
     + ` | blue flag: ${s.blue_enabled ? s.blue_gap_s + 's' : 'off'}`;
 }
 
-const STEWARD_FIELDS = ['dt_first', 'dt_every', 'fcy_enabled', 'fcy_cars',
+const STEWARD_FIELDS = ['dt_first', 'dt_every', 'fcy_enabled', 'fcy_incs',
   'fcy_window_s', 'fcy_mode', 'fcy_cooldown_s', 'quali_split', 'quali_split_min',
   'quali_am_text', 'quali_pro_text', 'blue_enabled', 'blue_gap_s', 'blue_repeat_s'];
 function openStewardRules() {

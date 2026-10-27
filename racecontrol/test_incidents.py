@@ -918,37 +918,50 @@ rs9.steward_rules = steward.clean({"enabled": False})
 rs9.ingest(sframe(6, five, totals={1: 16}))
 check("Auto Steward OFF: no line", not [e for e in rs9.events if e.kind == "auto_steward"])
 
-# full course caution
+# full course caution: incident points of all cars within the window
 def det(idx, kind="spin"):
     return IncidentEvent(idx, 0, kind, 3, source="detected", text=kind)
 
 
-step(sframe(20, five, [det(1)]))
-step(sframe(25, five, [det(2, "contact")]))
-check("2 cars: no caution", not autos("auto_caution_ask"))
-step(sframe(28, five, [IncidentEvent(3, 1, "off-track", 3, total=1)], totals={0: 22, 3: 1}))
-check("a 1x off-track does not count", not autos("auto_caution_ask"))
-step(sframe(30, five, [det(3, "stopped")]))
-a = autos("auto_caution_ask")
-check("3 cars within 20 s -> caution question (ask), nothing typed",
-      len(a) == 1 and "3 cars" in a[0].text and "#11" in a[0].text
-      and not any("!yellow" in x for x in sent7), a and a[0].text)
-step(sframe(33, five, [det(4)]))
-check("not again inside the cooldown", len(autos("auto_caution_ask")) == 1)
-eng7.handle_client_message({"action": "set_steward", "fcy_mode": "auto",
-                            "fcy_cooldown_s": 0})
-check("rules saved", steward.load_config()["fcy_mode"] == "auto")
-step(sframe(40, five, flags=["caution"]))
-step(sframe(41, five, [det(0), det(1), det(2)], flags=["caution"]))
-check("under a caution: nothing", not autos("auto_caution"))
+def pts(idx, n):
+    return IncidentEvent(idx, n, "incident", 3)
+
+
+check("defaults: 10x within 10 s, automatic",
+      R["fcy_incs"] == 10 and R["fcy_window_s"] == 10 and R["fcy_mode"] == "auto")
+step(sframe(20, five, [pts(1, 4)]))
+step(sframe(25, five, [pts(2, 4)]))
+check("8x in 10 s: no caution", not autos("auto_caution"))
+n0 = len(sent7)
+step(sframe(28, five, [pts(3, 2)]))
+a = autos("auto_caution")
+check("10x within 10 s -> FULL COURSE CAUTION, !yellow typed at once",
+      len(a) == 1 and "10x within 10s" in a[0].text and "#11" in a[0].text
+      and any(x.startswith("!yellow") for x in sent7[n0:]), (a and a[0].text, sent7[n0:]))
+step(sframe(33, five, [pts(4, 4)]))
+check("not again inside the cooldown", len(autos("auto_caution")) == 1)
+eng7.handle_client_message({"action": "set_steward", "fcy_mode": "ask",
+                            "fcy_cooldown_s": 0, "fcy_incs": 6, "fcy_window_s": 5})
+check("rules saved (6x / 5 s, ask)", steward.load_config()["fcy_incs"] == 6
+      and steward.load_config()["fcy_mode"] == "ask")
+eng7.auto._fcy_block_until = -1.0   # the first caution's 180 s cooldown is over
+step(sframe(60, five, flags=["caution"]))
+step(sframe(61, five, [pts(0, 4), pts(1, 4)], flags=["caution"]))
+check("under a caution: nothing", not autos("auto_caution_ask"))
 step(sframe(80, five))
-step(sframe(81, five, [det(0)]))
-step(sframe(82, five, [det(1)]))
-step(sframe(83, five, [det(2)]))
-check("auto mode: !yellow typed", len(autos("auto_caution")) == 1
-      and any(x.startswith("!yellow") for x in sent7), sent7)
-step(sframe(90, five, [det(0)], stype="PRACTICE"))
-check("practice: no caution", len(autos("auto_caution")) == 1)
+step(sframe(81, five, [det(0), det(1), det(2), det(3), det(4)]))
+check("detections without points do not count", not autos("auto_caution_ask"))
+step(sframe(110, five, [pts(0, 4)]))
+step(sframe(117, five, [pts(1, 4)]))
+check("8x but spread over 7 s > 5 s window: nothing", not autos("auto_caution_ask"))
+n0 = len(sent7)
+step(sframe(120, five, [pts(2, 2)]))
+a = autos("auto_caution_ask")
+check("ask mode: question with DEPLOY, nothing typed",
+      len(a) == 1 and "6x within 5s" in a[0].text
+      and not any("!yellow" in x for x in sent7[n0:]), a and a[0].text)
+step(sframe(160, five, [pts(0, 4), pts(1, 4)], stype="PRACTICE"))
+check("practice: no caution", len(autos("auto_caution_ask")) == 1)
 
 # quali AM / PRO
 eng7.handle_client_message({"action": "set_steward", "quali_split": True})

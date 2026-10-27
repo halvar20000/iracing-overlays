@@ -7,10 +7,10 @@ Rules dialog:
   (15x), then one more at every further ``dt_every`` (21x, 27x ...).  Only a
   highlighted log line: the league's iRacing settings give the penalty
   itself.  (RaceState._auto_steward, the level is autosaved per car.)
-* FULL COURSE CAUTION - ``fcy_cars`` different cars with a spin / contact /
-  stopped car (or official points >= 2x) within ``fcy_window_s`` seconds in
-  a race under green.  ``fcy_mode`` "ask" = a log line with a DEPLOY
-  button, "auto" = !yellow goes out at once.
+* FULL COURSE CAUTION - ``fcy_incs`` incident points or more (all cars
+  together, e.g. 10x) within ``fcy_window_s`` seconds (e.g. 10) in a race
+  under green.  ``fcy_mode`` "auto" (default) = !yellow goes out at once,
+  "ask" = a log line with a DEPLOY button.
 * QUALI AM / PRO (GT3 WCT, ``quali_split``) - at the start of a qualifying
   ``quali_am_text`` to everybody, after ``quali_split_min`` minutes
   ``quali_pro_text``.
@@ -35,8 +35,8 @@ CONFIG_PATH = DATA_DIR / "steward_config.json"
 DEFAULT_CONFIG = {
     "enabled": True,
     "dt_first": 15, "dt_every": 6,
-    "fcy_enabled": True, "fcy_mode": "ask", "fcy_cars": 3,
-    "fcy_window_s": 20, "fcy_cooldown_s": 180,
+    "fcy_enabled": True, "fcy_mode": "auto", "fcy_incs": 10,
+    "fcy_window_s": 10, "fcy_cooldown_s": 180,
     "quali_split": False, "quali_split_min": 15,
     "quali_am_text": "QUALIFYING: THE FIRST 15 MINUTES ARE RESERVED FOR "
                      "AM DRIVERS",
@@ -44,7 +44,7 @@ DEFAULT_CONFIG = {
     "blue_enabled": True, "blue_gap_s": 1.0, "blue_repeat_s": 20,
 }
 _BOOL = ("enabled", "fcy_enabled", "quali_split", "blue_enabled")
-_INT = ("dt_first", "dt_every", "fcy_cars", "fcy_window_s",
+_INT = ("dt_first", "dt_every", "fcy_incs", "fcy_window_s",
         "fcy_cooldown_s", "quali_split_min", "blue_repeat_s")
 _FLOAT = ("blue_gap_s",)
 _TEXT = ("quali_am_text", "quali_pro_text")
@@ -85,8 +85,9 @@ def clean(cfg: dict) -> dict:
     for k in _TEXT:
         out[k] = " ".join(str(out[k] or "").split())[:200]
     if out["fcy_mode"] not in ("ask", "auto"):
-        out["fcy_mode"] = "ask"
-    out["fcy_cars"] = max(2, out["fcy_cars"])
+        out["fcy_mode"] = "auto"
+    out["fcy_incs"] = max(1, out["fcy_incs"])
+    out["fcy_window_s"] = max(1, out["fcy_window_s"])
     return out
 
 
@@ -143,7 +144,6 @@ class AutoSteward:
     def reset(self) -> None:
         self._session = None
         self._fcy_block_until = -1.0      # session time
-        self._fcy_counted: set[int] = set()   # event ids already used
         self._quali_sent: set[str] = set()
         self._blue: dict[tuple[int, int], float] = {}   # (slow, fast) -> t
 
@@ -177,21 +177,24 @@ class AutoSteward:
             return []
         if now < self._fcy_block_until:
             return []
+        # official incident points (a detection gets its points onto the
+        # same line when they arrive)
         recent = [e for e in state.events
-                  if e.is_incident and e.car_idx >= 0
+                  if e.is_incident and e.car_idx >= 0 and e.inc_points > 0
                   and e.session_num == state.session_num
-                  and 0 <= now - e.sim_time <= window
-                  and e.id not in self._fcy_counted
-                  and (e.source == "detected" or e.inc_points >= 2)]
-        cars = {e.car_idx for e in recent}
-        if len(cars) < int(rules.get("fcy_cars") or 3):
+                  and 0 <= now - e.sim_time <= window]
+        points = sum(e.inc_points for e in recent)
+        if points < int(rules.get("fcy_incs") or 10):
             return []
-        self._fcy_counted |= {e.id for e in recent}
-        self._fcy_block_until = now + float(rules.get("fcy_cooldown_s") or 0)
+        # what triggered it must not count again
+        self._fcy_block_until = now + max(
+            window, float(rules.get("fcy_cooldown_s") or 0))
+        cars = {e.car_idx for e in recent}
         nums = sorted({state.cars[i].number for i in cars if i in state.cars},
                       key=lambda n: (len(n), n))
-        return [{"type": "caution", "cars": len(cars), "window": window,
-                 "numbers": nums, "mode": rules.get("fcy_mode", "ask")}]
+        return [{"type": "caution", "points": points, "cars": len(cars),
+                 "window": window, "numbers": nums,
+                 "mode": rules.get("fcy_mode", "auto")}]
 
     # GT3 WCT qualifying: AM first, then PRO ----------------------------------
 

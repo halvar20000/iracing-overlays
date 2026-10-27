@@ -149,8 +149,8 @@ class Engine:
         kind = act["type"]
         if kind == "caution":
             who = ", ".join("#" + n for n in act["numbers"][:8])
-            why = (f"{act['cars']} cars in incidents within "
-                   f"{act['window']:.0f}s ({who})")
+            why = (f"{act['points']}x within {act['window']:.0f}s "
+                   f"({act['cars']} cars: {who})")
             if act["mode"] == "auto":
                 ev = st._log("flag", f"AUTO STEWARD: FULL COURSE CAUTION - {why}",
                              lap=st._leader_lap())
@@ -388,7 +388,7 @@ class Engine:
             st.note_system(
                 f"Auto Steward {'ON' if c['enabled'] else 'OFF'}: incidents "
                 f"{steward.describe(c)}; caution "
-                + (f"{c['fcy_cars']} cars / {c['fcy_window_s']}s "
+                + (f"{c['fcy_incs']}x / {c['fcy_window_s']}s "
                    f"({c['fcy_mode']})" if c["fcy_enabled"] else "off")
                 + "; quali AM/PRO "
                 + (f"{c['quali_split_min']} min" if c["quali_split"] else "off")

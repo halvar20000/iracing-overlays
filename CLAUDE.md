@@ -187,17 +187,17 @@ when the faster car is within 1 s. NEW `racecontrol/backend/steward.py`
 (config data/steward_config.json, `AutoSteward` kept by the Engine, reset per
 session key / num; acts only live, not in replay): limit = RaceState
 `_auto_steward()` (Car.steward_level autosaved; attach at 28x = ONE line for
-DT #3; counts that drop reset the level; race only); FCY = >= fcy_cars (3)
-distinct cars with a detected incident or points >= 2x within fcy_window_s
-(20) under green, mode ask (log line + DEPLOY CAUTION button, 2 min) or auto
-(!yellow), cooldown 180 s, events counted once, a caution blocks the window;
+DT #3; counts that drop reset the level; race only); FCY = the official incident POINTS of all cars together >= fcy_incs within
+fcy_window_s under green (0.1.6, Thomas: "configurable, e.g. 10 incs within
+10 s" — default 10x / 10 s, mode auto = !yellow at once; ask = log line +
+DEPLOY CAUTION button, 2 min), cooldown 180 s, a caution blocks the window;
 quali split (default OFF) by SessionTime (start msg only < 3 min, PRO msg in
 [split, split+2 min]) → /all + stream banner; blue = lapping car (progress
 diff > 0.5 lap) behind on track with d × its best/last lap ≤ blue_gap_s,
 cars of the LAST frame only (stale disconnected cars gave phantom flags in the
 test), not pit / caution, repeat after 20 s, re-armed after the pass; chat
 only when iRACING CHAT is on. UI: header AUTO STEWARD + Rules dialog (#sdlg),
-amber auto rows + toast. test_incidents.py 153/153; header, log + rules
+amber auto rows + toast. test_incidents.py 155/155; header, log + rules
 dialog rendered with the simulator. NOT tried in iRacing.
 
 **October 27, 2026 (iCASControl: right-click menu like iRaceControl):**

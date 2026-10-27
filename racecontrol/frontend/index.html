@@ -305,11 +305,11 @@
         then every further <input id="s-dt_every" type="number" min="0" max="99">x</label>
     </fieldset>
     <fieldset><legend><label><input id="s-fcy_enabled" type="checkbox"> Full course caution</label></legend>
-      <label><input id="s-fcy_cars" type="number" min="2" max="20"> different cars in an incident
-        (spin, contact, stopped, 2x+) within <input id="s-fcy_window_s" type="number" min="3" max="120"> s</label>
+      <label><input id="s-fcy_incs" type="number" min="1" max="200">x incident points (all cars together)
+        within <input id="s-fcy_window_s" type="number" min="1" max="300"> s</label>
       <label>then <select id="s-fcy_mode">
-        <option value="ask">ask me (DEPLOY button in the log)</option>
-        <option value="auto">deploy the caution at once (!yellow)</option></select>,
+        <option value="auto">deploy the caution at once (!yellow)</option>
+        <option value="ask">ask me (DEPLOY button in the log)</option></select>,
         not again for <input id="s-fcy_cooldown_s" type="number" min="0" max="1800"> s</label>
     </fieldset>
     <fieldset><legend><label><input id="s-quali_split" type="checkbox"> Qualifying AM / PRO (GT3 WCT)</label></legend>
