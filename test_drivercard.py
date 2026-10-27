@@ -69,7 +69,7 @@ def drv(cidx, name, **kw):
          "CarClassColor": kw.get("cls_color", 0xFF6B35),
          "CurDriverIncidentCount": kw.get("inc", 4),
          "TeamIncidentCount": kw.get("team_inc", 9),
-         "CarIsPaceCar": 0, "IsSpectator": 0}
+         "CarIsPaceCar": 0, "IsSpectator": 0, "UserID": kw.get("uid", 0)}
     return d
 
 
@@ -144,6 +144,18 @@ pace["CarIsPaceCar"] = 1
 p = make_poller([drv(0, "Thomas Herbrig"), pace], 1)
 s = p._read_snapshot()
 check("pace car not a target", not s["show"], s.get("reason", ""))
+
+print("\n[9] solo session: team from CLS (league with the most drivers of the field)")
+dc.proam._teams = {"cas-gt3-wct": {101: "Speed Monkeys II", 102: "REVORYX", 103: "NEON"},
+                   "cas-pccd": {101: "Porsche Team X", 104: "Y"}}
+field = [drv(i, f"Driver {i}", uid=101 + i) for i in range(3)]
+s = make_poller(field, 0)._read_snapshot()
+check("CLS team of the matching league", s["team"] == "Speed Monkeys II", repr(s["team"]))
+s = make_poller([drv(0, "Driver 0", uid=101, team="Real Team")] + field[1:], 0)._read_snapshot()
+check("iRacing team wins", s["team"] == "Real Team", repr(s["team"]))
+s = make_poller([drv(0, "Driver 0", uid=101), drv(1, "Other", uid=999)], 0)._read_snapshot()
+check("field matches no league -> no team", s["team"] == "", repr(s["team"]))
+dc.proam._teams = {}
 
 print(f"\n{'='*50}\n{len(PASS)} passed, {len(FAIL)} failed")
 if FAIL:

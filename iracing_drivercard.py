@@ -151,7 +151,9 @@ class DriverCardPoller(SDKPoller):
         return {
             "connected": True, "show": True, "reason": "",
             "cidx": focus,
-            "name": d["short"], "full_name": d["name"], "team": d["team"],
+            "name": d["short"], "full_name": d["name"],
+            # iRacing's team (team events), else the driver's CLS team
+            "team": d["team"] or proam.team(d["user_id"], (x["user_id"] for x in self._drivers.values())) or "",
             "num": d["num"], "irating": d["irating"],
             "lic": d["lic"], "lic_color": d["lic_color"],
             "class_name": d["class_name"], "class_color": d["class_color"],

@@ -181,6 +181,19 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 27, 2026 (driver card: CLS team under the name):** solo sessions
+(WCT, PCCD) send no real team (TeamName = driver → hidden), so the card
+(/ and /simple) had no team line. cls_proam now also collects `teamName` per
+league in the all-league roster fetch (`_teams` {slug: {iracing id: team}},
+cache proam_teams.json — gitignored + updater PROTECTED); `team(uid,
+field_ids)` takes the league whose roster holds the most drivers of the field
+(≥ 3), so a driver in two leagues gets the right team. The card uses iRacing's
+team first, else this. test_drivercard 22/22; live CLS: Maurice Becker →
+REVORYX eSports. Restart 5017.
+
+**October 27, 2026 (/table/wct: points only):** the "-20" gap to the class
+leader in front of the points is gone (Thomas). Restart 5010.
+
 **October 27, 2026 (The Bend track files swapped BACK + slideshow):** 6fcdfbf
 (Oct 22) was wrong: it put the 4.95 km International loop into thebend_gt /
 thebend_gtcircuit and the 7.76 km GT loop into thebend_international / _intl

@@ -43,6 +43,7 @@ SCRIPT_DIR  = Path(__file__).resolve().parent
 CONFIG_PATH = SCRIPT_DIR / "proam_config.json"
 CACHE_PATH  = SCRIPT_DIR / "proam_cache.json"
 COUNTRY_CACHE_PATH = SCRIPT_DIR / "proam_countries.json"
+TEAM_CACHE_PATH = SCRIPT_DIR / "proam_teams.json"
 
 DEFAULT_CONFIG = {
     "api_base":        "https://league.simracing-hub.com",
@@ -86,6 +87,14 @@ class ProAmRoster:
                 self._countries = {int(k): v for k, v in raw.items()}
         except Exception as e:
             print(f"[proam] Could not read {COUNTRY_CACHE_PATH.name}: {e}")
+        # CLS team per league: {league slug: {iracing id: team name}}
+        self._teams: dict[str, dict[int, str]] = {}
+        try:
+            if TEAM_CACHE_PATH.exists():
+                raw = json.loads(TEAM_CACHE_PATH.read_text(encoding="utf-8"))
+                self._teams = {lg: {int(k): v for k, v in m.items()} for lg, m in raw.items()}
+        except Exception as e:
+            print(f"[proam] Could not read {TEAM_CACHE_PATH.name}: {e}")
 
     # -- public -----------------------------------------------------------
     def start(self) -> None:
@@ -103,6 +112,28 @@ class ProAmRoster:
             return None
         with self._lock:
             return self._countries.get(uid)
+
+    def team(self, user_id, field_ids) -> "str | None":
+        """CLS team of a driver (2026-10-27, driver card): taken from the
+        league whose roster holds the most drivers of this field (needs at
+        least 3), so a driver racing in two leagues shows the right team."""
+        try:
+            uid = int(user_id)
+        except (TypeError, ValueError):
+            return None
+        ids = set()
+        for u in field_ids:
+            try:
+                ids.add(int(u))
+            except (TypeError, ValueError):
+                pass
+        with self._lock:
+            best, hits = None, 2
+            for m in self._teams.values():
+                n = sum(1 for u in ids if u in m)
+                if n > hits:
+                    best, hits = m, n
+            return best.get(uid) if best else None
 
     def lookup(self, user_id) -> "str | None":
         try:
@@ -187,6 +218,7 @@ class ProAmRoster:
         season(s) — the fallback for drivers without an iRacing flair."""
         leagues = self._get_json("/api/overlay/leagues").get("leagues") or []
         found: dict[int, str] = {}
+        teams: dict[str, dict[int, str]] = {}
         for lg in leagues:
             for season in lg.get("seasons") or []:
                 body = self._get_json("/api/overlay/standings",
@@ -199,6 +231,18 @@ class ProAmRoster:
                         continue
                     if cc and uid not in found:
                         found[uid] = cc
+                    tn = (row.get("teamName") or "").strip()
+                    if tn:
+                        teams.setdefault(lg.get("slug") or "", {}).setdefault(uid, tn)
+        if teams:
+            with self._lock:
+                tchanged = teams != self._teams
+                self._teams = teams
+            if tchanged:
+                try:
+                    TEAM_CACHE_PATH.write_text(json.dumps(teams), encoding="utf-8")
+                except Exception as e:
+                    print(f"[proam] Could not write {TEAM_CACHE_PATH.name}: {e}")
         if not found:
             return
         with self._lock:
