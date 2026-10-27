@@ -134,6 +134,7 @@ function handleMessage(msg) {
       updateChatToggle();
       updateStreamToggle();
       updateStewardToggle();
+      renderNet(msg.net);
       render();
       break;
     case 'ack':
@@ -144,8 +145,12 @@ function handleMessage(msg) {
       break;
     case 'hello':
       Me.name = msg.name; Me.place = msg.place; Me.token = msg.token;
-      $('#stw-me').textContent = msg.name + (msg.place === 'local' ? ' (host)' : '');
-      $('#stw-pw').classList.toggle('hidden', msg.place !== 'local');
+      Me.following = !!msg.following;
+      $('#stw-me').textContent = msg.name + (Me.following ? ' → main iCAS'
+        : msg.place === 'local' ? ' (host)' : '');
+      $('#stw-toggle').classList.toggle('following', Me.following);
+      $('#stw-pw').classList.toggle('hidden', msg.place !== 'local' || Me.following);
+      $('#stw-net').classList.toggle('hidden', msg.place !== 'local');
       $('#save-link').href = '/api/save' + (msg.place === 'local' ? ''
         : '?t=' + encodeURIComponent(msg.token));
       if (msg.place !== 'local' && !store('local', 'icas_name')) openLogin('');
@@ -715,6 +720,58 @@ function onStewards(msg) {
   $('#stw-pw-state').textContent = msg.password
     ? 'password set' : 'no password - LAN only';
 }
+// ---- internet access (tunnel) + follow a main iCAS ---------------------------
+const TUN_TEXT = { off: 'off', starting: 'starting…', on: 'ON', error: 'error',
+  downloading: 'downloading cloudflared…' };
+function renderNet(net) {
+  if (!net) return;
+  const t = net.tunnel || {}, f = net.follow || {};
+  const ts = $('#tun-state');
+  ts.textContent = t.state === 'error' ? (t.error || 'error')
+    : t.state === 'off' && !net.password ? 'off - set an access password first'
+    : (TUN_TEXT[t.state] || t.state || 'off') + (t.named && t.state === 'on' ? ' (fixed address)' : '');
+  ts.className = t.state === 'on' ? 'good' : t.state === 'error' ? 'bad'
+    : t.state === 'starting' || t.state === 'downloading' ? 'warn' : 'dim';
+  ts.title = t.error || '';
+  const running = t.state === 'on' || t.state === 'starting';
+  $('#tun-btn').textContent = running ? 'Stop' : 'Start';
+  $('#tun-btn').disabled = t.state === 'downloading' || f.state === 'connected';
+  $('#tun-dl').classList.toggle('hidden', !!t.binary || t.state === 'downloading');
+  const following = f.state === 'connected' || f.state === 'connecting';
+  $('#tun-line').classList.toggle('hidden', following);
+  $('#tun-row').classList.toggle('hidden', !t.url || !running || following);
+  $('#tun-url').textContent = t.url || '';
+  const fs = $('#fol-state');
+  const since = f.since ? ` · ${Math.floor(f.since / 60)} min` : '';
+  fs.textContent = f.state === 'connected'
+    ? `as ${f.as || f.name} → ${f.url}${since}` + (f.warning ? ' ⚠ ' + f.warning : '')
+    : f.state === 'connecting' ? `connecting to ${f.url}… ${f.info || ''}`
+    : f.state === 'refused' || f.state === 'error' ? (f.info || f.state)
+    : 'off - own data';
+  fs.className = f.state === 'connected' ? (f.warning ? 'warn' : 'good')
+    : f.state === 'connecting' ? 'warn'
+    : f.state === 'refused' || f.state === 'error' ? 'bad' : 'dim';
+  fs.title = fs.textContent;
+  $('#fol-btn').textContent = f.state === 'off' || f.state === 'refused'
+    || f.state === 'error' ? 'Follow main iCAS…' : 'Stop following';
+  Me.net = net;
+}
+function openFollow() {
+  const f = (Me.net && Me.net.follow) || {};
+  $('#fol-url').value = f.url || '';
+  $('#fol-name').value = f.name || (Me.name !== 'Host' ? Me.name : '');
+  $('#fol-pw').value = '';
+  $('#follow-dlg').classList.remove('hidden');
+  setTimeout(() => $(f.url ? '#fol-pw' : '#fol-url').focus(), 30);
+}
+function doFollow() {
+  const url = $('#fol-url').value.trim(), name = $('#fol-name').value.trim();
+  if (!url) { $('#fol-url').focus(); return; }
+  if (!name) { $('#fol-name').focus(); return; }
+  send({ action: 'follow', op: 'start', url, name, password: $('#fol-pw').value });
+  $('#follow-dlg').classList.add('hidden');
+}
+
 function updateUnread() {
   const el = $('#stw-unread');
   el.textContent = Stw.unread;
@@ -777,6 +834,31 @@ function wire() {
     send({ action: 'set_password', password: pw });
   });
   $('#login-ok').addEventListener('click', doLogin);
+  $('#tun-btn').addEventListener('click', () => {
+    const t = (Me.net && Me.net.tunnel) || {};
+    if (t.state === 'on' || t.state === 'starting') {
+      if (confirm('Switch internet access off? The other stewards lose the connection.'))
+        send({ action: 'tunnel', op: 'stop' });
+    } else send({ action: 'tunnel', op: 'start' });
+  });
+  $('#tun-dl').addEventListener('click', () => send({ action: 'tunnel', op: 'download' }));
+  $('#tun-copy').addEventListener('click', () => {
+    const url = $('#tun-url').textContent;
+    (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject())
+      .then(() => toast('Link copied - send it to the stewards'),
+        () => toast(url));
+  });
+  $('#fol-btn').addEventListener('click', () => {
+    const f = (Me.net && Me.net.follow) || {};
+    if (f.state === 'connected' || f.state === 'connecting') {
+      send({ action: 'follow', op: 'stop' });
+    } else openFollow();
+  });
+  $('#fol-x').addEventListener('click', () => $('#follow-dlg').classList.add('hidden'));
+  $('#fol-ok').addEventListener('click', doFollow);
+  $$('#follow-dlg input').forEach((i) => i.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') doFollow();
+  }));
   $$('#login input').forEach((i) => i.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') doLogin();
   }));

@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from backend import APP_NAME, __version__
-from backend import access, chat, steward, stream
+from backend import access, chat, follow, steward, stream, tunnel
 from backend.race_state import RaceState, save_json
 from backend.sources.base import DataSource
 from backend.sources.simulator import SimulatorSource
@@ -80,6 +80,9 @@ class Engine:
         self._stream_lock = threading.Lock()
         self._stream_log: list[str] = []
         self.banner = stream.BannerOut(self._banner_done)
+        # multi-steward: follow a main iCAS (SUPP) / internet access (tunnel)
+        self.follower = follow.Follower()
+        self.tunnel = tunnel.Tunnel()
 
     # -- source management --------------------------------------------------
 
@@ -137,6 +140,9 @@ class Engine:
         if frame is not None:
             self.state.steward_rules = self.steward_cfg
             self.state.ingest(frame)
+        if frame is not None and not self.follower.active:
+            # following a main iCAS: its Auto Steward / autosave count, not
+            # ours (own iRacing only for replay + camera)
             self._maybe_restore()
             for act in self.auto.check(self.state, self.steward_cfg):
                 self._steward_action(act)
@@ -367,24 +373,35 @@ class Engine:
         if op == "group":
             return self.source.send_command(
                 "cam_group", group=int(msg.get("group", 0)))
+        cars = self._camera_cars()
         if op in ("next", "prev"):
-            order = [c for c in sorted(self.state.cars.values(),
-                                       key=lambda c: c.position or 999)
-                     if c.number and (not self.state.frame_cars
-                                      or c.car_idx in self.state.frame_cars)]
+            order = sorted((c for c in cars if c[1] and c[3]),
+                           key=lambda c: c[2] or 999)
             if not order:
                 return "no cars"
-            idx = [c.car_idx for c in order]
+            idx = [c[0] for c in order]
             cur = info.get("car_idx", -1)
             i = idx.index(cur) if cur in idx else -1
             i = (i + (1 if op == "next" else -1)) % len(order)
-            return self.source.send_command("cam_car", number=order[i].number)
+            return self.source.send_command("cam_car", number=order[i][1])
         if op == "car":
-            car = self.state.cars.get(int(msg.get("car_idx", -1)))
-            if car is None or not car.number:
+            want = int(msg.get("car_idx", -1))
+            number = next((c[1] for c in cars if c[0] == want), "")
+            if not number:
                 return "no such car"
-            return self.source.send_command("cam_car", number=car.number)
+            return self.source.send_command("cam_car", number=number)
         return f"camera: unknown '{op}'"
+
+    def _camera_cars(self) -> list[tuple]:
+        """(car_idx, number, position, running) - from the main iCAS while
+        following (CarIdx is the same on every PC of one iRacing session)."""
+        if self.follower.active:
+            return [(int(c.get("car_idx", -1)), str(c.get("number", "")),
+                     int(c.get("position") or 0), bool(c.get("in_world", True)))
+                    for c in self.follower.cars()]
+        fc = self.state.frame_cars
+        return [(c.car_idx, c.number, c.position,
+                 not fc or c.car_idx in fc) for c in self.state.cars.values()]
 
     def camera_info(self) -> Optional[dict]:
         get = getattr(self.source, "camera_info", None)
@@ -395,6 +412,78 @@ class Engine:
         if not info:
             return None
         return {k: v for k, v in info.items() if k != "raw_groups"}
+
+    # -- follow a main iCAS / internet access (multi-steward 3 + 4) -------------
+
+    def net_status(self) -> dict:
+        fol = self.follower.status()
+        if self.follower.active:
+            fol["warning"] = self.follower.session_mismatch(
+                self.state.session_track, self.state.connected)
+        return {"follow": fol, "tunnel": self.tunnel.status(),
+                "password": access.has_password(self.access_cfg)}
+
+    def follow_action(self, msg: dict, place: str, who: str) -> str:
+        if place != "local":
+            return "follow mode can only be set on this iCAS's own PC"
+        op = str(msg.get("op", ""))
+        if op == "stop":
+            text = self.follower.stop()
+            self.state.note_system("Follow mode off - own data again")
+            return text
+        if op == "start":
+            url = str(msg.get("url", "")).strip()
+            try:
+                follow.ws_url(url, "", "")
+            except ValueError as exc:
+                return str(exc)
+            if follow.is_self(url, self.tunnel.port):
+                return "that is this iCAS itself - enter the MAIN iCAS's address"
+            name = access.clean_name(msg.get("name") or who, "Steward")
+            self.state.note_system(f"Following the main iCAS at {url} as {name}")
+            return self.follower.start(url, name, str(msg.get("password", "")))
+        return f"follow: unknown '{op}'"
+
+    def tunnel_action(self, msg: dict, place: str) -> str:
+        if place != "local":
+            return "internet access can only be switched on the main iCAS PC"
+        op = str(msg.get("op", ""))
+        if op == "start":
+            if not access.has_password(self.access_cfg):
+                return ("set an access password first (STEWARDS > Access "
+                        "password) - without one nobody may come in over the "
+                        "internet")
+            if self.follower.active:
+                return "this iCAS follows another one - no internet access here"
+            text = self.tunnel.start()
+            self.state.note_system(f"Internet access: {text}")
+            return text
+        if op == "stop":
+            text = self.tunnel.stop()
+            self.state.note_system(f"Internet access: {text}")
+            return text
+        if op == "download":
+            return self.tunnel.download()
+        return f"tunnel: unknown '{op}'"
+
+    def snapshot_message(self) -> dict:
+        return {"type": "snapshot", **self.state.snapshot(),
+                "running": self.running, "chat": self.chat_status(),
+                "stream": self.stream_status(),
+                "steward": self.steward_status(),
+                "camera": self.camera_info(), "net": self.net_status()}
+
+    def follow_outgoing(self) -> list[tuple[Optional[WebSocket], str]]:
+        """Messages from the main iCAS for our dashboards: (only to, text);
+        snapshots carry OUR camera + net status."""
+        out = []
+        for msg in self.follower.drain():
+            to = msg.pop("_to", None)
+            if msg.get("type") == "snapshot":
+                msg = {**msg, "camera": self.camera_info(),
+                       "net": self.net_status()}
+            out.append((to, json.dumps(msg)))
+        return out
 
     # -- stewards (multi-steward) ----------------------------------------------
 
@@ -418,11 +507,7 @@ class Engine:
              "source": self.source.name, "running": self.running},
             {"type": "track", **self.state.track_payload()},
             {"type": "events", **self.state.events_payload()},
-            {"type": "snapshot", **self.state.snapshot(),
-             "running": self.running, "chat": self.chat_status(),
-             "stream": self.stream_status(),
-             "steward": self.steward_status(),
-             "camera": self.camera_info()},
+            self.snapshot_message(),
             self.stewards_payload(),
         ]
 
@@ -457,6 +542,9 @@ class Engine:
                 return {"type": "ack", "text": "password: at least 6 characters"}
             self.access_cfg = access.make_config(pw)
             access.save_config(self.access_cfg)
+            if not pw and self.tunnel.status()["state"] != "off":
+                self.tunnel.stop()
+                st.note_system("Internet access off - no password any more")
             st.note_system("Steward access password " +
                            ("set" if pw else "removed - only this PC and the "
                             "home network can connect"))
@@ -466,7 +554,16 @@ class Engine:
         if action == "camera":
             return {"type": "ack", "text": self.camera(msg)}
 
+        if action == "follow":
+            return {"type": "ack", "text": self.follow_action(msg, place, who)}
+
+        if action == "tunnel":
+            return {"type": "ack", "text": self.tunnel_action(msg, place)}
+
         if action == "set_running":
+            if place != "local":
+                return {"type": "ack", "text": "RUN / STOP only on the main "
+                        "iCAS PC itself"}
             self.running = bool(msg.get("running", True))
             st.note_system(f"Controller set to {'RUN' if self.running else 'STOP'}")
             return {"type": "ack", "text": f"{'RUN' if self.running else 'STOP'}"}
@@ -585,6 +682,17 @@ class Engine:
                                 + (f" - {message}" if message else ""))
                 result += " | " + self.to_stream(kind, head, car=car, text=text)
             return {"type": "ack", "text": result}
+
+        if action == "replay" and self.follower.active:
+            # a line of the MAIN iCAS's log, replayed in OUR iRacing
+            ev = self.follower.event(int(msg.get("id", -1)))
+            if ev is None:
+                return {"type": "ack", "text": "event not found"}
+            return {"type": "ack", "text": self.source.send_command(
+                "replay_event", session_num=int(ev.get("session_num") or 0),
+                sim_time=float(ev.get("sim_time") or 0),
+                number=str(ev.get("car_number") or ""),
+                preroll=float(msg.get("preroll", 8) or 8))}
 
         if action == "replay":
             ev = next((e for e in st.events
@@ -712,6 +820,8 @@ async def lifespan(_app: FastAPI):
     task = asyncio.create_task(_race_loop())
     yield
     engine._maybe_autosave(force=True)
+    engine.follower.stop(quiet=True)
+    engine.tunnel.stop()
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task
@@ -797,13 +907,23 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                                        "place": place, "token": token}))
         for message in engine.initial_messages():
             await ws.send_text(json.dumps(message))
+        if engine.follower.active and place == "local":
+            for message in engine.follower.initial_messages():
+                if message.get("type") == "snapshot":   # OUR camera + net
+                    message = {**message, "camera": engine.camera_info(),
+                               "net": engine.net_status()}
+                await ws.send_text(json.dumps(message))
         while True:
             raw = await ws.receive_text()
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
                 continue
-            ack = engine.handle_client_message(msg, name, place)
+            if (engine.follower.active and place == "local"
+                    and msg.get("action") not in follow.LOCAL_ACTIONS):
+                ack = await engine.follower.send(msg, reply_to=ws)
+            else:
+                ack = engine.handle_client_message(msg, name, place)
             if ack is not None:
                 await ws.send_text(json.dumps(ack))
     except WebSocketDisconnect:
@@ -822,6 +942,22 @@ async def _race_loop() -> None:
         start = time.monotonic()
         engine.tick()
 
+        if engine.follower.active:
+            await _send_following()
+            elapsed = time.monotonic() - start
+            await asyncio.sleep(max(0.0, interval - elapsed))
+            continue
+        engine.follower.drain()
+        if engine.follower.take_lost():
+            # back to our own data: resend everything, our own names
+            engine._last_event_rev = engine._last_track_rev = -1
+            engine._stewards_sig = None
+            for client, info in list(engine.clients.items()):
+                with contextlib.suppress(Exception):
+                    await client.send_text(json.dumps(
+                        {"type": "hello", "name": info["name"],
+                         "place": info["place"], "token": info["token"]}))
+
         messages: list[str] = []
         # Event log only when it changed.
         if engine.state.event_revision != engine._last_event_rev:
@@ -834,12 +970,7 @@ async def _race_loop() -> None:
             messages.append(json.dumps(
                 {"type": "track", **engine.state.track_payload()}))
         # The fast snapshot, every tick.
-        messages.append(json.dumps(
-            {"type": "snapshot", **engine.state.snapshot(),
-             "running": engine.running, "chat": engine.chat_status(),
-             "stream": engine.stream_status(),
-             "steward": engine.steward_status(),
-             "camera": engine.camera_info()}))
+        messages.append(json.dumps(engine.snapshot_message()))
         # Who is online + the steward chat, when that changed.
         sig = engine.stewards_signature()
         if sig != engine._stewards_sig:
@@ -858,6 +989,23 @@ async def _race_loop() -> None:
 
         elapsed = time.monotonic() - start
         await asyncio.sleep(max(0.0, interval - elapsed))
+
+
+async def _send_following() -> None:
+    """Following a main iCAS: pass its messages on to our dashboards."""
+    out = engine.follow_outgoing()
+    dead: list[WebSocket] = []
+    for client in list(engine.clients):
+        if engine.clients[client]["place"] != "local":
+            continue                     # only this PC's own browser follows
+        try:
+            for to, text in out:
+                if to is None or to is client:
+                    await client.send_text(text)
+        except Exception:
+            dead.append(client)
+    for d in dead:
+        engine.clients.pop(d, None)
 
 
 # Static front-end - mounted last so /ws and /api take precedence.
@@ -888,6 +1036,7 @@ def main() -> None:
     parser.add_argument("--replay-speed", type=float, default=1.0,
                         help="replay speed multiplier (e.g. 4 = 4x faster)")
     args, _ = parser.parse_known_args()
+    engine.tunnel.port = args.port
 
     import uvicorn
     mode = ("REPLAY" if args.replay else

@@ -316,6 +316,32 @@
     <button id="stw-pw" class="hidden" title="Password the other stewards need (only on the main iCAS PC)">Access password</button>
     <span id="stw-pw-state" class="dim"></span>
   </div>
+  <div class="stw-net hidden" id="stw-net">
+    <div class="stw-row" id="tun-line" title="Internet access for the other stewards: a Cloudflare tunnel to this iCAS (needs the access password)">
+      <b>Internet</b><span id="tun-state" class="dim">off</span>
+      <button id="tun-btn">Start</button>
+      <button id="tun-dl" class="hidden">Download cloudflared</button>
+    </div>
+    <div class="stw-url hidden" id="tun-row"><code id="tun-url"></code><button id="tun-copy">Copy link</button></div>
+    <div class="stw-row" title="SUPP: show a MAIN iCAS here - replay and camera then act on THIS PC's iRacing">
+      <b>Follow</b><span id="fol-state" class="dim">off - own data</span>
+      <button id="fol-btn">Follow main iCAS…</button>
+    </div>
+  </div>
+</div>
+
+<div id="follow-dlg" class="dlg-back hidden">
+  <div class="dlg">
+    <div class="dlg-head"><span>Follow a main iCAS</span><button class="dlg-x" id="fol-x">&times;</button></div>
+    <div class="dlg-note">Your dashboard then shows the main iCAS (log, timing, decisions, chat) and your decisions go there under your name. Replay and camera stay on THIS PC's iRacing - join the same session as a spectator.</div>
+    <label for="fol-url">Address of the main iCAS (the link the main steward sent)</label>
+    <input id="fol-url" type="text" placeholder="https://….trycloudflare.com" autocomplete="url">
+    <label for="fol-name">Your name</label>
+    <input id="fol-name" type="text" maxlength="24" autocomplete="username">
+    <label for="fol-pw">Access password of the main iCAS</label>
+    <input id="fol-pw" type="password" maxlength="100" autocomplete="current-password">
+    <div class="dlg-btns"><button id="fol-ok">Connect</button></div>
+  </div>
 </div>
 
 <div id="login" class="dlg-back hidden">

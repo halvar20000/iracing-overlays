@@ -245,9 +245,34 @@ its dashboard in their browser:
   be taken with **I take it** (`👀 Andreas` for the others, Release frees it).
 * **Camera** tab: every camera group of the track (no Scenic), ◀ ▶ = car
   ahead / behind, "Selected car". It switches the iRacing on the MAIN iCAS
-  PC - not a remote steward's own (that is the SUPP mode, still to come).
+  PC - not a remote steward's own (use Follow mode for that, below).
 * `/api/*` (Save download, status) from outside needs the steward's login
   token (the Save link carries it).
+
+### Internet access for the stewards (0.1.10)
+
+On the MAIN PC: STEWARDS > **Access password** first, then **Internet > Start**.
+iCAS starts `cloudflared` (Cloudflare quick tunnel, no account, no router
+setting) and shows a link `https://<words>.trycloudflare.com` - **Copy link**
+and send it to the stewards. A new link on every start; Stop = the link is
+dead. No cloudflared yet: **Download cloudflared** (official release from
+github.com/cloudflare, saved to `data/bin/`) or `winget install
+Cloudflare.cloudflared`. Removing the password stops the tunnel. A fixed
+address instead: create a named tunnel in Cloudflare (public hostname ->
+`http://localhost:8080`) and put `{"token": "...", "hostname": "icas.example.com"}`
+into `data/tunnel_config.json`.
+
+### Follow mode (SUPP, 0.1.10)
+
+A steward who has iRacing himself (spectating the same session) runs his own
+iCAS and uses STEWARDS > **Follow main iCAS…** (the link, his name, the access
+password). His dashboard then shows the MAIN iCAS - log, timing, decisions,
+steward chat - and everything he does goes to the main iCAS under his name.
+Only **replay** and **camera** stay on his PC: they move HIS iRacing, never the
+main PC's (= the stream). His own Auto Steward / autosave pause while
+following. A warning shows when his iRacing is in another session. The
+password is not saved (asked again after a restart). RUN / STOP of the main
+iCAS only on the main PC itself.
 
 ## What works today vs. what is honest to flag
 

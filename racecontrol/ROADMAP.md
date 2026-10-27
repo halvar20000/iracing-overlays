@@ -87,9 +87,10 @@ people can open the same dashboard on the LAN today.
 
 **Done (0.1.9, October 2026):** several stewards on ONE main iCAS — name +
 access password, who is online, steward chat, "I take it" on an incident,
-"by whom" on log lines and decisions, camera buttons. **Still open:** SUPP
-mode (a steward's own iCAS following the main one, so replay / camera act on
-HIS iRacing) and the internet access (Cloudflare tunnel to port 8080).
+"by whom" on log lines and decisions, camera buttons. **Done (0.1.10):** SUPP
+mode (STEWARDS > Follow: a steward's own iCAS shows the main one, replay /
+camera act on HIS iRacing) and internet access (Cloudflare quick tunnel
+started from iCAS, password required).
 
 ## Phase 6 — broadcast and hardware integrations
 

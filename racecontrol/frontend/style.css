@@ -547,3 +547,19 @@ td.dsq { color: var(--red) !important; text-decoration: line-through; }
 .dim { color: var(--dim); }
 .ia-top { display: flex; align-items: center; gap: 6px; }
 .ia-top .ia-head { flex: 1; }
+
+/* stewards: internet access (tunnel) + follow a main iCAS */
+.stw-net { border-top: 1px solid var(--border); padding: 6px 10px 8px; font-size: 11px; }
+.stw-net.hidden, .stw-net .hidden { display: none; }
+.stw-row { display: flex; gap: 6px; align-items: center; margin: 3px 0; }
+.stw-row b { width: 52px; color: var(--dim); font-weight: 600; }
+.stw-row span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stw-row span.good { color: #4caf50; }
+.stw-row span.bad { color: #ef5350; }
+.stw-row span.warn { color: #ffb300; }
+.stw-net button { background: var(--panel-2); color: var(--text); border: 1px solid var(--border-2);
+  border-radius: 4px; padding: 2px 8px; font-size: 11px; cursor: pointer; }
+.stw-url { display: flex; gap: 6px; align-items: center; margin: 2px 0 4px 58px; }
+.stw-url code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  user-select: all; color: #8fd3ff; }
+.chat-toggle.stw.following { background: #3949ab; color: #fff; }

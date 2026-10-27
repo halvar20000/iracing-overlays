@@ -178,6 +178,33 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 27, 2026 (iCASControl 0.1.10 — SUPP follow mode + internet
+tunnel, multi-steward steps 3 + 4):** NEW `racecontrol/backend/follow.py`
+(`Follower`: websockets client to the MAIN iCAS's /ws?name=&pw=, caches
+init / track / events / snapshot / stewards, passes them to THIS PC's own
+browser (hello as the upstream name, `following`), every action except
+LOCAL_ACTIONS (follow, tunnel, camera, replay) goes upstream, acks routed to
+the sender, reconnect 2-30 s, "login" = refused + stop; password in memory
+only, data/follow_config.json {url, name}). While following: own Auto
+Steward / autosave / restore paused, replay = the MAIN log line
+(session_num, sim_time, car_number) in OUR iRacing, camera next / prev / car
+from MAIN's cars (CarIdx same on every PC), snapshot carries OUR camera +
+`net` (follow status, session-mismatch warning). NEW `backend/tunnel.py`
+(cloudflared quick tunnel `tunnel --no-autoupdate --url
+http://127.0.0.1:<port>`, link parsed from its output, "Registered tunnel
+connection" = on; named tunnel via data/tunnel_config.json token + hostname;
+binary from data/bin / PATH / Program Files, Download button = official
+GitHub release, curl fallback). Tunnel only with an access password, only
+from the main PC itself; removing the password stops it; set_running only
+local. UI: STEWARDS panel rows Internet (Start / Stop / Copy link /
+Download) + Follow (dialog URL / name / password). test_incidents.py
+229/229. REAL test from Unraid: two sim servers, follower over the LAN
+(wrong password refused, chat both ways, own camera, RUN/STOP refused) AND
+over a real trycloudflare.com tunnel (page 200, /api 401 without token, WS
+place "remote", follow works; link dead after Stop). NOT tried: Windows
+(cloudflared.exe download / CREATE_NO_WINDOW), real iRacing replay on a
+follower.
+
 **October 27, 2026 (iCASControl 0.1.9 — multi-steward steps 1 + 2: camera
 buttons, login, steward chat):** Thomas: camera switching like iRaceControl,
 and several stewards at once, spread over Germany (not one LAN). Agreed

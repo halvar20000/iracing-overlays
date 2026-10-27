@@ -1218,5 +1218,213 @@ src9._cam_cache = None
 src9.send_command("cam_car", number="14")
 check("from Scenic -> TV1", fakeir.calls[-1] == ("cam", "14", 2), fakeir.calls)
 
+
+print("Follow a main iCAS (SUPP) + internet access (tunnel)")
+import asyncio as _aio
+from backend import follow as fol, tunnel as tun
+fol.CONFIG_PATH = Path(tempfile.mkdtemp()) / "follow_config.json"
+check("address -> websocket",
+      fol.ws_url("https://abc-def.trycloudflare.com", "Andreas", "a b&c")
+      == "wss://abc-def.trycloudflare.com/ws?name=Andreas&pw=a%20b%26c"
+      and fol.ws_url("192.168.86.20:8080/", "X", "")
+      == "ws://192.168.86.20:8080/ws?name=X&pw=")
+try:
+    fol.ws_url("ftp://x", "a", "b"); bad = False
+except ValueError:
+    bad = True
+check("not an address refused", bad)
+check("own address detected", fol.is_self("http://localhost:8080", 8080)
+      and not fol.is_self("http://localhost:8080", 8090)
+      and not fol.is_self("https://x.trycloudflare.com", 8080))
+
+
+class FakeUp:
+    """The main iCAS's websocket, seen from the follower."""
+    def __init__(self, script):
+        self.script, self.sent, self.url = list(script), [], None
+        self.inbox = _aio.Queue()
+    def __call__(self, url):
+        self.url = url
+        return self
+    async def __aenter__(self):
+        for m in self.script:
+            await self.inbox.put(json.dumps(m))
+        return self
+    async def __aexit__(self, *a):
+        return False
+    def __aiter__(self):
+        return self
+    async def __anext__(self):
+        m = await self.inbox.get()
+        if m is None:
+            raise StopAsyncIteration
+        return m
+    async def send(self, text):
+        self.sent.append(json.loads(text))
+
+
+MAIN_EVENTS = {"type": "events", "events": [
+    {"id": 41, "car_number": "14", "session_num": 2, "sim_time": 812.4,
+     "text": "Contact"}]}
+MAIN_SNAP = {"type": "snapshot", "session": {"track": "Spa"}, "camera": {"x": 1},
+             "cars": [{"car_idx": 3, "number": "14", "position": 1, "in_world": True},
+                      {"car_idx": 5, "number": "7", "position": 2, "in_world": True}]}
+
+
+async def follow_run():
+    up = FakeUp([{"type": "hello", "name": "Andreas", "place": "remote", "token": "t"},
+                 {"type": "init", "version": "x"}, MAIN_EVENTS, MAIN_SNAP,
+                 {"type": "stewards", "online": [{"name": "Thomas"}, {"name": "Andreas"}]}])
+    f = fol.Follower(connect=up, cfg={})
+    f.start("https://abc.trycloudflare.com", "Andreas", "geheim123")
+    for _ in range(50):
+        await _aio.sleep(0.01)
+        if f.active and f.snapshot:
+            break
+    res = {"active": f.active, "url": up.url, "as": f.as_name,
+           "out": [m["type"] for m in f.drain()], "ev": f.event(41)}
+    me = object()
+    r = await f.send({"action": "steward_chat", "text": "hi"}, reply_to=me)
+    await up.inbox.put(json.dumps({"type": "ack", "text": "ok from main"}))
+    await _aio.sleep(0.05)
+    res["sent"] = up.sent
+    res["ack"] = [(m.get("_to") is me, m["text"]) for m in f.drain()]
+    res["r"] = r
+    res["init"] = [m["type"] for m in f.initial_messages()]
+    await up.inbox.put(None)                    # main went away
+    await _aio.sleep(0.05)
+    res["after"] = (f.state, f.take_lost())
+    f.stop(quiet=True)
+    up2 = FakeUp([{"type": "login", "error": "wrong password"}])
+    f2 = fol.Follower(connect=up2, cfg={})
+    f2.start("https://abc.trycloudflare.com", "Andreas", "falsch")
+    await _aio.sleep(0.05)
+    res["refused"] = (f2.state, f2.info, f2._task.done())
+    return res, f
+
+fres, fobj = _aio.run(follow_run())
+check("follower logs in with name + password", fres["url"]
+      == "wss://abc.trycloudflare.com/ws?name=Andreas&pw=geheim123" and fres["active"]
+      and fres["as"] == "Andreas", fres)
+check("main's picture passed on (hello as Andreas first)",
+      fres["out"] == ["hello", "init", "events", "snapshot", "stewards"], fres["out"])
+check("main's log line kept for our replay", fres["ev"]["sim_time"] == 812.4)
+check("action goes to main, its ack back to the sender",
+      fres["sent"] == [{"action": "steward_chat", "text": "hi"}] and fres["r"] is None
+      and fres["ack"] == [(True, "ok from main")], fres)
+check("a dashboard opened later gets main's picture",
+      fres["init"] == ["hello", "init", "events", "snapshot", "stewards"], fres["init"])
+check("main gone: reconnecting, own data again", fres["after"] == ("connecting", True),
+      fres["after"])
+check("wrong password: stops, says why", fres["refused"][0] == "refused"
+      and "wrong password" in fres["refused"][1] and fres["refused"][2], fres["refused"])
+check("password not saved to disk", "geheim123" not in fol.CONFIG_PATH.read_text()
+      and "abc.trycloudflare.com" in fol.CONFIG_PATH.read_text())
+
+
+class Recorder:
+    name = "iracing"
+    def __init__(self):
+        self.calls = []
+    def send_command(self, cmd, **kw):
+        self.calls.append((cmd, kw))
+        return f"done {cmd}"
+    def camera_info(self):
+        return {"groups": [{"num": 2, "name": "TV1"}], "group": 2, "car_idx": 3,
+                "car_number": "14"}
+
+
+eng10 = server.Engine(force_sim=True)
+rec = Recorder()
+eng10.source = rec
+eng10.follower = fobj
+fobj.state = "connected"
+fobj.snapshot, fobj.events = MAIN_SNAP, {41: MAIN_EVENTS["events"][0]}
+r = eng10.handle_client_message({"action": "replay", "id": 41, "preroll": 8}, "Andreas")
+check("replay of a MAIN log line in OUR iRacing", rec.calls[-1] == ("replay_event", {
+    "session_num": 2, "sim_time": 812.4, "number": "14", "preroll": 8.0}), rec.calls)
+eng10.handle_client_message({"action": "camera", "op": "car", "car_idx": 5})
+check("camera on a MAIN car in OUR iRacing", rec.calls[-1] == ("cam_car", {"number": "7"}))
+eng10.handle_client_message({"action": "camera", "op": "next"})
+check("next = main's car behind ours", rec.calls[-1] == ("cam_car", {"number": "7"}))
+out = eng10.follow_outgoing()
+fobj.outbox.append(dict(MAIN_SNAP))
+out = eng10.follow_outgoing()
+snapx = json.loads(out[0][1])
+check("main's snapshot carries OUR camera + follow status",
+      snapx["camera"]["car_number"] == "14" and snapx["net"]["follow"]["state"]
+      == "connected" and snapx["cars"][1]["number"] == "7", snapx.get("net"))
+eng10.state.session_track, eng10.state.connected = "Monza", True
+check("other session in our iRacing: warned",
+      "Monza" in eng10.net_status()["follow"]["warning"])
+r = eng10.handle_client_message({"action": "follow", "op": "start",
+                                 "url": "http://x:8080"}, "Andreas", "remote")
+check("follow mode not settable from outside", "own PC" in r["text"])
+r = eng10.handle_client_message({"action": "set_running", "running": False},
+                                "Andreas", "remote")
+check("RUN / STOP not from outside", eng10.running and "main" in r["text"])
+fobj.state = "off"
+
+
+class FakeProc:
+    def __init__(self, cmd, **kw):
+        self.cmd, self.kw, self.code = cmd, kw, None
+        self.lines = _queue.Queue()
+        self.stdout = iter(self.lines.get, None)
+    def poll(self):
+        return self.code
+    def terminate(self):
+        self.code = 0
+        self.lines.put(None)
+    def wait(self, timeout=None):
+        return 0
+    def kill(self):
+        self.code = -9
+
+
+import queue as _queue
+procs = []
+def fake_popen(cmd, **kw):
+    procs.append(FakeProc(cmd, **kw))
+    return procs[-1]
+tun.find_binary = lambda: "/opt/cloudflared"
+eng11 = server.Engine(force_sim=True)
+eng11.tunnel = tun.Tunnel(port=8080, popen=fake_popen, cfg={})
+eng11.access_cfg = {}
+r = eng11.handle_client_message({"action": "tunnel", "op": "start"}, "Host")
+check("no tunnel without an access password", not procs and "password" in r["text"])
+eng11.access_cfg = acc.make_config("geheim123")
+r = eng11.handle_client_message({"action": "tunnel", "op": "start"}, "Andreas", "remote")
+check("tunnel not switchable from outside", not procs)
+eng11.handle_client_message({"action": "tunnel", "op": "start"}, "Host")
+check("quick tunnel to our port", procs and procs[0].cmd == [
+    "/opt/cloudflared", "tunnel", "--no-autoupdate", "--url", "http://127.0.0.1:8080"],
+    procs and procs[0].cmd)
+procs[0].lines.put("2026-10-27T18:00:00Z INF |  https://brave-red-fox.trycloudflare.com  |")
+procs[0].lines.put("2026-10-27T18:00:01Z INF Registered tunnel connection connIndex=0")
+check("link read, tunnel ON", tun.wait_for(eng11.tunnel, "on")
+      and eng11.net_status()["tunnel"]["url"] == "https://brave-red-fox.trycloudflare.com",
+      eng11.net_status()["tunnel"])
+_save2, _cp2 = acc.save_config, acc.CONFIG_PATH
+acc.CONFIG_PATH = Path(tempfile.mkdtemp()) / "access_config.json"
+eng11.handle_client_message({"action": "set_password", "password": ""}, "Host")
+acc.CONFIG_PATH = _cp2
+check("password removed -> tunnel off", eng11.tunnel.status()["state"] == "off"
+      and procs[0].code == 0)
+eng11.access_cfg = acc.make_config("geheim123")
+eng11.handle_client_message({"action": "tunnel", "op": "start"}, "Host")
+procs[1].code = 1
+procs[1].lines.put("ERR failed to request quick Tunnel")
+time.sleep(0.05)
+stt = eng11.tunnel.status()
+check("cloudflared died: error with its last line", stt["state"] == "error"
+      and "quick Tunnel" in stt["error"], stt)
+named = tun.Tunnel(port=8080, popen=fake_popen,
+                   cfg={"token": "eyJhIjoi", "hostname": "icas.example.com"})
+named.start()
+check("named tunnel: token + fixed address", procs[-1].cmd[-3:] == ["run", "--token",
+      "eyJhIjoi"] and named.status()["url"] == "https://icas.example.com")
+named.stop()
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
