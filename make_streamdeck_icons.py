@@ -410,6 +410,189 @@ def write_table():
              "[streamdeck_icons/README.md](streamdeck_icons/README.md).", ""]
     TABLE.write_text("\n".join(rows), encoding="utf-8")
     print("wrote", TABLE.name)
+    write_overview(loaders)
+
+
+OVERVIEW = HERE / "OVERLAYS.html"
+SIZES_MD = HERE / "OBS_OVERLAYS.md"
+
+
+def _md_inline(text):
+    """`code`, **bold** and links of OBS_OVERLAYS.md cells -> HTML."""
+    import re
+    t = html.escape(text, quote=False)
+    t = re.sub(r"`([^`]+)`", r"<code>\1</code>", t)
+    t = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", t)
+    t = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', t)
+    return t
+
+
+def _read_sizes():
+    """OBS_OVERLAYS.md -> ({loader name: size/notes cell}, [operator page rows])."""
+    import re
+    sizes, tools = {}, []
+    try:
+        lines = SIZES_MD.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return sizes, tools
+    section = ""
+    for ln in lines:
+        if ln.startswith("## "):
+            section = ln[3:]
+            continue
+        if not ln.startswith("|") or ln.startswith("|---") or ln.startswith("| Overlay") \
+                or ln.startswith("| Seite"):
+            continue
+        cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+        if section.startswith("Bedienseiten") and len(cells) >= 3:
+            tools.append(cells[:3])
+            for name in re.findall(r"([a-z0-9_]+)\.html", cells[2]):
+                sizes.setdefault(name, cells[2])
+            continue
+        if len(cells) < 4:
+            continue
+        for name in re.findall(r"([a-z0-9_]+)\.html", cells[2]):
+            sizes.setdefault(name, cells[3])
+        # no loader file (YouTube): by "port/path"
+        sizes.setdefault(cells[1].replace("`", "").replace(" ", ""), cells[3])
+    return sizes, tools
+
+
+def write_overview(loaders):
+    """OVERLAYS.html - one page with every overlay: Stream Deck symbol, URL,
+    OBS loader (full path to copy), size + options. Opened from the
+    launcher's footer link; generated, never edited by hand (2026-10-27,
+    Thomas: "ich suche und suche immer wieder")."""
+    sizes, tools = _read_sizes()
+    groups = {}
+    for name, cat, _glyph, label in OVERLAY_ICONS:
+        friendly, port, path, loader = loaders[name]
+        groups.setdefault(cat, []).append((name, label, friendly, port, path, loader))
+    order = ["live", "battle", "quali", "champ", "pre", "post", "tool"]
+    cards = []
+    for cat in order + [c for c in groups if c not in order]:
+        if cat not in groups:
+            continue
+        strip, color = CAT[cat]
+        cards.append('<h2 style="--c:%s">%s</h2><div class="grid">' % (color, html.escape(strip)))
+        for name, label, friendly, port, path, loader in groups[cat]:
+            url = "http://localhost:%d%s" % (port, path) if port else ""
+            words = " ".join([name, label, friendly, url, loader or "", sizes.get(name, "")]).lower()
+            ld = ""
+            if loader:
+                fn = loader.split("/")[-1]
+                ld = ('<div class="k">OBS-Loader</div><div><code>%s</code> '
+                      '<button data-copy-file="%s">Pfad kopieren</button></div>'
+                      % (html.escape(fn), html.escape(loader)))
+            else:
+                ld = ('<div class="k">OBS-Loader</div><div>keiner - URL-Quelle '
+                      '<code>%s</code></div>' % html.escape(url))
+            u = ('<div class="k">Adresse</div><div><a href="%s" target="_blank">%s</a> '
+                 '<button data-copy="%s">kopieren</button></div>'
+                 % (html.escape(url), html.escape(url), html.escape(url))) if url else ""
+            sz = sizes.get(name) or (sizes.get("%s%s" % (port, path)) if port else None)
+            sz = '<div class="k">Größe / Optionen</div><div>%s</div>' % _md_inline(sz) if sz else \
+                 '<div class="k">Größe / Optionen</div><div class="m">siehe Seite</div>'
+            cards.append(
+                '<div class="card" data-words="%s"><div class="ic">'
+                '<img src="streamdeck_icons/overlays/%s.png" alt="">'
+                '<img src="streamdeck_icons/overlays_off/%s.png" alt=""></div>'
+                '<div class="tx"><div class="t">%s</div><div class="f">%s</div>'
+                '<div class="kv">%s%s%s</div></div></div>'
+                % (html.escape(words, quote=True), name, name, html.escape(label),
+                   html.escape(friendly), u, ld, sz))
+        cards.append("</div>")
+    trows = "".join(
+        '<tr data-words="%s"><td>%s</td><td>%s</td><td>%s</td></tr>'
+        % (html.escape(" ".join(r).lower(), quote=True), _md_inline(r[0]),
+           _md_inline(r[1]), _md_inline(r[2])) for r in tools)
+    page = OVERVIEW_HTML.replace("@@CARDS@@", "\n".join(cards)).replace("@@TOOLS@@", trows)
+    OVERVIEW.write_text(page, encoding="utf-8")
+    print("wrote", OVERVIEW.name)
+
+
+OVERVIEW_HTML = """<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overlay-Übersicht</title>
+<!-- generated by make_streamdeck_icons.py - do not edit by hand -->
+<style>
+:root { --bg: #121218; --panel: #1c1c26; --line: #2c2c3a; --text: #ececf2; --muted: #a2a2b4; --acc: #ff6b35; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 'Segoe UI', Arial, sans-serif; }
+header { position: sticky; top: 0; z-index: 2; background: #0d0d12; border-bottom: 1px solid var(--line);
+         padding: 12px 20px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+header h1 { font-size: 18px; margin: 0; } header h1 span { color: var(--acc); }
+#q { flex: 1; min-width: 220px; max-width: 460px; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--line);
+     background: var(--panel); color: var(--text); font-size: 15px; }
+main { padding: 8px 20px 40px; max-width: 1500px; margin: 0 auto; }
+.tips { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; margin: 14px 0;
+        color: var(--muted); }
+.tips b { color: var(--text); }
+h2 { font-size: 13px; letter-spacing: 1.5px; margin: 26px 0 10px; padding-left: 10px; border-left: 5px solid var(--c); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); gap: 10px; }
+.card { display: flex; gap: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+.ic { display: flex; flex-direction: column; gap: 6px; flex: none; }
+.ic img { width: 64px; height: 64px; border-radius: 6px; display: block; }
+.tx { min-width: 0; flex: 1; }
+.t { font-weight: 700; font-size: 15px; } .f { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+.kv { display: grid; grid-template-columns: 112px 1fr; gap: 3px 8px; font-size: 13px; }
+.k { color: var(--muted); } .m { color: var(--muted); }
+code { background: #0d0d12; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; font-size: 12px; word-break: break-all; }
+a { color: #7cc4ff; }
+button { background: #2a2a38; color: var(--text); border: 1px solid var(--line); border-radius: 4px; font-size: 11px;
+         padding: 1px 7px; cursor: pointer; margin-left: 4px; }
+button.ok { background: #1f6b3a; }
+table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 8px; overflow: hidden; }
+td { border-top: 1px solid var(--line); padding: 7px 10px; vertical-align: top; font-size: 13px; }
+td:first-child { font-weight: 600; width: 26%; } td:nth-child(2) { width: 26%; }
+.hide { display: none !important; }
+@media (max-width: 520px) { .grid { grid-template-columns: 1fr; } .kv { grid-template-columns: 1fr; } }
+</style></head><body>
+<header><h1>iRacing Overlays · <span>Übersicht</span></h1>
+<input id="q" type="search" placeholder="Suchen: Tower, 5010, PRO, grid_cars, Reifen …" autofocus></header>
+<main>
+<div class="tips"><b>In OBS:</b> Browserquelle → „Lokale Datei“ → Loader-Datei (Knopf „Pfad kopieren“) → Breite / Höhe eintragen →
+<b>Strg+R</b>. <b>Für alle Seiten:</b> <code>?zoom=1.5</code> größer (Breite / Höhe mitmultiplizieren, dann URL-Quelle statt Loader),
+<code>?debug=1</code> oder Taste <b>H</b> = dunkler Hintergrund zum Einrichten, <code>?demo=1</code> = Beispieldaten ohne iRacing (wo vorhanden).
+<b>Seiten blättern</b> nur per Stream Deck: <code>http://localhost:5001/nav/next</code> · <code>/prev</code> · <code>/first</code>.
+Linkes Symbol = Taste an, rechtes = aus.</div>
+@@CARDS@@
+<h2 style="--c:#9aa3b5">BEDIENSEITEN (NICHT FÜR DEN STREAM)</h2>
+<table>@@TOOLS@@</table>
+</main>
+<script>
+const q = document.getElementById("q");
+q.addEventListener("input", () => {
+  const words = q.value.toLowerCase().split(/\s+/).filter(Boolean);
+  document.querySelectorAll("[data-words]").forEach(el => {
+    const w = el.dataset.words;
+    el.classList.toggle("hide", !words.every(x => w.includes(x)));
+  });
+  document.querySelectorAll("h2").forEach(h => {
+    const box = h.nextElementSibling;
+    const any = box && [...box.querySelectorAll("[data-words]")].some(e => !e.classList.contains("hide"));
+    h.classList.toggle("hide", !any); if (box) box.classList.toggle("hide", !any);
+  });
+});
+function copy(text, btn) {
+  const done = () => { const t = btn.textContent; btn.textContent = "kopiert"; btn.classList.add("ok");
+                       setTimeout(() => { btn.textContent = t; btn.classList.remove("ok"); }, 1200); };
+  if (navigator.clipboard && window.isSecureContext !== false) {
+    navigator.clipboard.writeText(text).then(done, () => { prompt("Kopieren:", text); });
+  } else { prompt("Kopieren:", text); }
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.copy) copy(b.dataset.copy, b);
+  if (b.dataset.copyFile) {
+    // full path of the loader on THIS PC, from where this page lives
+    let p = decodeURIComponent(new URL(b.dataset.copyFile, location.href).pathname);
+    if (/^\/[A-Za-z]:\//.test(p)) p = p.slice(1).replace(/\//g, "\\");
+    copy(p, b);
+  }
+});
+</script></body></html>
+"""
 
 
 def main():

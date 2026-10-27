@@ -33,6 +33,7 @@ Quelle: `?auto=1` (+ `?secs=`), `?cycle=20` (lastrace / table) oder
 | Reifen aller Boxenstopps (Liste) | 5005 `/pittires/list` | `pittires_list.html` | ≈ 780 × 450 (12 Stopps, `?top=`) |
 | Überhol-Ticker | 5000 `/ticker` | `ticker.html` | ✓ 650 × 56 |
 | Kommentar (REGIE) | 5000 `/commentary/overlay` | `commentary.html` | ≈ 1130 × 110 (zwei Zeilen; `?width=` ändert die Breite) |
+| Frag Claude: Status (HÖRT ZU / DENKT NACH / ANTWORT BEREIT) | 5000 `/ask/overlay` | `ask_status.html` | ≈ 520 × 90, unsichtbar wenn nichts läuft (`?text=1` mit Frage + Antwort, `?demo=1`), siehe FRAG_CLAUDE.md |
 | Kommentar-Stimme (REGIE) | 5000 `/commentary/voice` | `commentary_voice.html` | unsichtbar, nur Ton — in OBS **„Audio über OBS steuern“** anhaken (beliebige Größe, z. B. 400 × 100) |
 | Driver Card | 5017 | `driver.html` | ✓ 1000 × 130 |
 | Driver Card ohne iRating / Safety Rating | 5017 `/simple` | `driver_simple.html` | ✓ 800 × 130 |
