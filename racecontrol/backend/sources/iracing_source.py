@@ -761,7 +761,8 @@ class IRacingSource(DataSource):
             kind, car, before = verify
             if kind in ("eol", "waveby") and not self._chat_effect("yellow", -1):
                 self._note(f"Sent to iRacing: {text} - iRacing only accepts "
-                           f"this under a caution (none is out)")
+                           f"this under a full course caution (none is out)"
+                           f" {self._flag_info(car)}")
                 return
             if before:
                 self._note(f"Sent to iRacing: {text} - cannot confirm, the "
@@ -792,6 +793,18 @@ class IRacingSource(DataSource):
             return not (f & (FLAG_BLACK | FLAG_DQ)) and not (p & PACE_EOL)
         return None
 
+    def _flag_info(self, car: int) -> str:
+        """Raw bits for the log, so a refusal can be read afterwards."""
+        try:
+            flags = self._g("CarIdxSessionFlags", []) or []
+            pace = self._g("CarIdxPaceFlags", []) or []
+            f = int(flags[car]) if 0 <= car < len(flags) else 0
+            p = int(pace[car]) if 0 <= car < len(pace) else 0
+            sf = int(self._g("SessionFlags", 0) or 0)
+            return f"[session 0x{sf:x}, car 0x{f:x}, pace 0x{p:x}]"
+        except Exception:
+            return ""
+
     def _check_chat(self) -> None:
         if not self._chat_checks:
             return
@@ -802,10 +815,13 @@ class IRacingSource(DataSource):
             if done:
                 self._note(f"iRacing confirmed: {c['text']}")
             elif now > c["until"]:
+                why = ("EOL / wave-by need a full course caution"
+                       if c["kind"] in ("eol", "waveby") else
+                       "is this PC admin of the session? (else try chat "
+                       "method 'focus')")
                 self._note(f"iRacing did NOT confirm after "
-                           f"{CHAT_VERIFY_S:.0f} s: {c['text']} - is this PC "
-                           f"admin of the session? (else try chat method "
-                           f"'focus')")
+                           f"{CHAT_VERIFY_S:.0f} s: {c['text']} - {why} "
+                           f"{self._flag_info(c['car'])}")
             else:
                 keep.append(c)
         self._chat_checks = keep

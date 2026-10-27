@@ -639,7 +639,7 @@ csrc.send_chat("!eol #11", "post", 0, ("eol", 1))
 wait_log()
 log = csrc.drain_command_log()
 check("EOL with no caution out -> no 'confirmed', says caution needed",
-      len(log) == 1 and "only accepts this under a caution" in log[0]
+      len(log) == 1 and "only accepts this under a full course caution" in log[0]
       and not csrc._chat_checks, log)
 chat_ir["SessionFlags"] = 0x4000
 csrc.send_chat("!eol #11", "post", 0, ("eol", 1))
@@ -660,8 +660,9 @@ wait_log()
 csrc._chat_checks[0]["until"] = 0
 csrc._check_chat()
 log = csrc.drain_command_log()
-check("no effect within the time -> warning (admin? method?)",
-      len(log) == 1 and "did NOT confirm" in log[0] and "admin" in log[0], log)
+check("no effect within the time -> warning with the raw flag bits",
+      len(log) == 1 and "did NOT confirm" in log[0] and "caution" in log[0]
+      and "pace 0x0" in log[0], log)
 
 # Engine routing
 eng4 = server.Engine(force_sim=True)
