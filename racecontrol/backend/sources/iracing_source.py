@@ -843,8 +843,10 @@ class IRacingSource(DataSource):
             if done:
                 self._note(f"iRacing confirmed: {c['text']}")
             elif now > c["until"]:
-                why = ("EOL / wave-by need a full course caution"
-                       if c["kind"] in ("eol", "waveby") else
+                why = ("EOL needs a full course caution" if c["kind"] == "eol"
+                       else "wave-by needs a full course caution and the car "
+                       "lined up in the pace field (not in the pits, not "
+                       "already at the end)" if c["kind"] == "waveby" else
                        "is this PC admin of the session? (else try chat "
                        "method 'focus')")
                 self._note(f"iRacing did NOT confirm after "
