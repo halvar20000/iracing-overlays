@@ -198,7 +198,9 @@ cars of the LAST frame only (stale disconnected cars gave phantom flags in the
 test), not pit / caution, repeat after 20 s, re-armed after the pass; chat
 only when iRACING CHAT is on. UI: header AUTO STEWARD + Rules dialog (#sdlg),
 amber auto rows + toast. test_incidents.py 155/155; header, log + rules
-dialog rendered with the simulator. NOT tried in iRacing.
+dialog rendered with the simulator.
+CONFIRMED by Thomas in iRacing (0.1.6, same day): the points-based FCY
+works ("Funktioniert").
 
 **October 27, 2026 (iCASControl: right-click menu like iRaceControl):**
 right PRESS on a timing row selects the car and opens `#ctx-menu` (taken on

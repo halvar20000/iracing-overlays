@@ -26,7 +26,8 @@ on the tower (5019 `/rc/penalties` → 5005: DT / SG / +5s / DSQ / INV after the
 name). **Step 3c done:** the Auto Steward (`backend/steward.py`, header AUTO
 STEWARD + Rules): incident-limit message (15x, then every 6x), full course
 caution at N incident points within S seconds (default 10x / 10 s, automatic), GT3 WCT quali AM / PRO
-messages, blue flags at 1 s. Not yet tried in a real session.
+messages, blue flags at 1 s. The automatic caution is confirmed in iRacing;
+the other rules are not tried in a real session yet.
 
 These items turn iRacing mode from "accurate timing" into a tool you can steward
 a real CAS Community race with.
