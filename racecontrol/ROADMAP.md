@@ -18,8 +18,8 @@ Thomas's companion overlay project.
 **Done (October 2026, step 1 of 3):** live incidents (official points when
 admin + spin / contact / stopped detection), replay of any log line, replay
 footage never logged, autosave + recovery. Also sector times, best lap from
-lap 1, map colour modes. **Step 2 built (October 27, not yet tried in a live
-session):** admin chat commands into iRacing (`backend/chat.py`, see README).
+lap 1, map colour modes. **Step 2 done (October 27, tested in a hosted session as
+admin):** admin chat commands into iRacing (`backend/chat.py`, see README).
 Next: step 3 = push decisions to the stream (RC banner 5019, tower) and the
 Auto Steward.
 

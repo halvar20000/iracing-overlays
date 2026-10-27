@@ -234,6 +234,9 @@ for an admin; ResultsPositions lagged), highest real value per car wins;
 CONFIRMED by Thomas after the update: official points now show live (AI
 session, ResultsPositions[].Incidents stayed 0 for all 20 cars after 4 laps —
 the DriverInfo counts are the live source for an admin).
+STEP 2 FULLY TESTED by Thomas (same session): pace car, EOL / wave-around
+(iRacing: only under caution, wave-around only for a car in the pace field),
+drive through / stop & go with reason, clear, DQ via the button — all work.
 
 **October 27, 2026 (iCASControl first real run — Thomas's Spa AI practice
 screenshot):** detection works live (spins, "Contact with #28", pit lane).
