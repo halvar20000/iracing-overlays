@@ -214,7 +214,9 @@ to live. Follow mode: the LIVE button (`command replay_live`) went to the MAIN
 PC → `follow.is_local()` (LOCAL_COMMANDS) keeps it here; source notes
 ("Replay jump did not land") were written to the hidden own log → toast (ack)
 to this PC's browser; the REPLAY bar showed MAIN's in_replay → snapshot
-`session.in_replay` = OUR state. test_incidents 252/252. NOT tried in iRacing.
+`session.in_replay` = OUR state. test_incidents 252/252.
+THEN Thomas: "Sorry, falsch. Es funktioniert" - replay works (the report was
+a mistake); the 0.1.14 changes stay (pause first = same as dashboard).
 
 **October 27, 2026 (iCASControl 0.1.11 — GT3 WCT Auto Steward ruleset
 from Thomas's iRaceControl screenshot):** race only: iRacing's BLUE flag
