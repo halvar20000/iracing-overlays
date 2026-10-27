@@ -152,7 +152,12 @@ class Engine:
         drain = getattr(self.source, "drain_command_log", None)
         if callable(drain):
             for line in drain():
-                self.state.note_system(line, category="flag")
+                if self.follower.active:
+                    # our own log is not on screen while following: a toast
+                    # (e.g. "Replay jump did not land")
+                    self.follower.outbox.append({"type": "ack", "text": line})
+                else:
+                    self.state.note_system(line, category="flag")
         self._drain_stream_log()
 
     # -- Auto Steward (step 3c) ------------------------------------------------
@@ -509,7 +514,10 @@ class Engine:
         for msg in self.follower.drain():
             to = msg.pop("_to", None)
             if msg.get("type") == "snapshot":
-                msg = {**msg, "camera": self.camera_info(),
+                # OUR camera, OUR replay state (REPLAY bar), net status
+                session = {**(msg.get("session") or {}),
+                           "in_replay": self.state.in_replay}
+                msg = {**msg, "session": session, "camera": self.camera_info(),
                        "net": self.net_status()}
             out.append((to, json.dumps(msg)))
         return out
@@ -954,7 +962,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             except json.JSONDecodeError:
                 continue
             if (engine.follower.active and place == "local"
-                    and msg.get("action") not in follow.LOCAL_ACTIONS):
+                    and not follow.is_local(msg)):
                 ack = await engine.follower.send(msg, reply_to=ws)
             else:
                 ack = engine.handle_client_message(msg, name, place)

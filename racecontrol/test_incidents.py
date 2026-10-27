@@ -388,9 +388,14 @@ for _ in range(50):
         break
     _t.sleep(0.1)
 check("replay_event accepted", "replay of #14" in msg, msg)
-check("replay: seek, camera (Scenic -> TV1), play",
-      ir.calls == [("seek", 0, 112000), ("cam", "14", 10), ("play", 1)],
-      ir.calls)
+check("replay: PAUSE, seek, camera (Scenic -> TV1), play",
+      ir.calls == [("play", 0), ("seek", 0, 112000), ("cam", "14", 10),
+                   ("play", 1)], ir.calls)
+from backend import follow as _fw  # noqa: E402
+check("follow: replay + LIVE button stay on this PC, the rest goes upstream",
+      _fw.is_local({"action": "replay", "id": 3})
+      and _fw.is_local({"action": "command", "command": "replay_live"})
+      and not _fw.is_local({"action": "command", "command": "yellow"}))
 
 print("Real-session fixes (Spa AI practice 27.10.)")
 labels = irs.class_labels([

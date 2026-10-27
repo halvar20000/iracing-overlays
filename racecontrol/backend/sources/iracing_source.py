@@ -766,6 +766,11 @@ class IRacingSource(DataSource):
         ir = self._ir
         target_ms = replay_target(t_event, preroll)
         try:
+            # PAUSE first: a seek sent straight from the live picture is
+            # often ignored by iRacing (dashboard + highlight runner both
+            # pause first; without it the replay never started, 27.10.)
+            ir.replay_set_play_speed(0, False)
+            time.sleep(0.1)
             landed = False
             for _attempt in range(2):
                 ir.replay_search_session_time(session_num, target_ms)
@@ -784,8 +789,14 @@ class IRacingSource(DataSource):
                     break
             if not landed:
                 self._note(
-                    "Replay jump did not land (is the replay recorded "
-                    "that far back?)")
+                    f"Replay jump did not land: wanted session {session_num} "
+                    f"at {target_ms / 1000:.0f}s, iRacing is at session "
+                    f"{self._g('SessionNum', '?')} "
+                    f"{float(self._g('SessionTime', 0) or 0):.0f}s (is the "
+                    "replay recorded that far back?)")
+                with contextlib.suppress(Exception):
+                    ir.replay_search(irsdk.ReplaySearchMode.to_end)
+                    ir.replay_set_play_speed(1, False)
                 return
             if number:
                 groups = (self._g("CameraInfo", {}) or {}).get("Groups", []) or []

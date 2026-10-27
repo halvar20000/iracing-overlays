@@ -205,6 +205,17 @@ own texts → two steps). Rules dialog: row list + "+ Add message". Default
 OFF (iCAS also runs IEC). Not built: RANDOM YELLOW (WCT does not use it).
 test_incidents 249/249; dialog rendered.
 
+**October 27, 2026 (iCASControl 0.1.14 — replay did nothing, host AND
+follower; camera switching worked):** `_replay_worker` sought straight from the
+live picture; iRacing often ignores that (the dashboard and highlight_runner
+both PAUSE first) → now `replay_set_play_speed(0)` + 0.1 s before the seek; a
+jump that does not land names wanted vs actual session / time and goes back
+to live. Follow mode: the LIVE button (`command replay_live`) went to the MAIN
+PC → `follow.is_local()` (LOCAL_COMMANDS) keeps it here; source notes
+("Replay jump did not land") were written to the hidden own log → toast (ack)
+to this PC's browser; the REPLAY bar showed MAIN's in_replay → snapshot
+`session.in_replay` = OUR state. test_incidents 252/252. NOT tried in iRacing.
+
 **October 27, 2026 (iCASControl 0.1.11 — GT3 WCT Auto Steward ruleset
 from Thomas's iRaceControl screenshot):** race only: iRacing's BLUE flag
 (CarIdxSessionFlags 0x20) shown 20 s (`bf_warn_s`) -> private "BLUE FLAG -

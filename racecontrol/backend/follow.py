@@ -36,6 +36,14 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 CONFIG_PATH = DATA_DIR / "follow_config.json"
 # Actions this PC does itself while following; everything else goes to MAIN.
 LOCAL_ACTIONS = ("follow", "tunnel", "camera", "replay")
+LOCAL_COMMANDS = ("replay_live",)        # LIVE button = OUR iRacing
+
+
+def is_local(msg: dict) -> bool:
+    """Done by this PC itself while following (acts on OUR iRacing)."""
+    return (msg.get("action") in LOCAL_ACTIONS
+            or (msg.get("action") == "command"
+                and msg.get("command") in LOCAL_COMMANDS))
 RETRY_S = (2, 4, 8, 15, 30)
 # Sent in every "hello": a follower that gets its OWN id back has been given
 # a link that leads to itself (e.g. its own tunnel link) - that would loop.
