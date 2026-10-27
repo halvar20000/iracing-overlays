@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from backend import APP_NAME, __version__
-from backend import access, chat, follow, steward, stream, tunnel
+from backend import access, chat, follow, proam, steward, stream, tunnel
 from backend.race_state import RaceState, save_json
 from backend.sources.base import DataSource
 from backend.sources.simulator import SimulatorSource
@@ -75,6 +75,7 @@ class Engine:
         self.stream_cfg = stream.load_config()
         self.steward_cfg = steward.load_config()
         self.auto = steward.AutoSteward()
+        self.proam = proam.ProAm()            # CLS PRO / AM (GT3 WCT)
         # (laps, deadline) - !pacelaps for an auto caution once it is out
         self._pending_laps: Optional[tuple[int, float]] = None
         self._stream_lock = threading.Lock()
@@ -144,6 +145,8 @@ class Engine:
             # following a main iCAS: its Auto Steward / autosave count, not
             # ours (own iRacing only for replay + camera)
             self._maybe_restore()
+            if self.steward_cfg.get("pro_enabled"):
+                self.proam.apply(self.state)
             for act in self.auto.check(self.state, self.steward_cfg):
                 self._steward_action(act)
             self._maybe_caution_laps()
@@ -197,6 +200,14 @@ class Engine:
             ev.kind, ev.source = "auto_" + kind, "auto"
             if self.chat_cfg.get("enabled") and self._chat_capable():
                 self.to_iracing("notify", car=car, msg=act["text"])
+        elif kind == "pro_behind":
+            am, pro = act["car"], act["pro"]
+            ev = st._log("flag", f"AUTO STEWARD: private to #{am.number} (AM, "
+                         f"PRO #{pro.number} {pro.driver} {act['gap']:.1f}s "
+                         f"behind, once): {act['text']}", car=am, lap=am.lap)
+            ev.kind, ev.source = "auto_pro_behind", "auto"
+            if self.chat_cfg.get("enabled") and self._chat_capable():
+                self.to_iracing("notify", car=am, msg=act["text"])
         elif kind == "blue_dt":
             car = act["car"]
             ev = st._log("penalty", f"AUTO STEWARD: DRIVE THROUGH #{car.number} "

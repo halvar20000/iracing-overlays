@@ -284,10 +284,11 @@ wenn **iRACING CHAT** an ist.
 | **Blaue Flagge** | Zeigt iRacing einem Auto 20 s lang die blaue Flagge: private Nachricht „BLUE FLAG - LET PASS FASTER CAR“. Nach 30 s: Drive Through + Nachricht an alle. | 20 s / 30 s |
 | **Fast Repair** | Fast Repairs aufgebraucht: private Nachricht | 1 |
 | **Meatball** | Meatball-Flagge: Nachricht an alle | an |
+| **PRO hinter AM** | Nur im WCT-Feld (PRO / AM aus CLS): Ist ein PRO-Auto höchstens 1 s hinter einem AM-Fahrer (gleiche Runde, nicht beim Überrunden – das ist die blaue Flagge), bekommt der AM-Fahrer **einmal** eine private Nachricht „PRO CAR BEHIND YOU - #7 …“. Pro AM/PRO-Paar und Rennen nur ein Hinweis, nie wiederholt (der AM kann ja schneller sein). Ab Runde 3, nicht unter Caution. | an, 1 s, ab Runde 3 |
 | **Eigener Blue-Flag-Hinweis** | Alte Variante nach Abstand. Standard aus. | aus |
 
 In den Texten werden `%cnr%` (Startnummer) und `%dname%` (Fahrername) ersetzt, wie
-in iRaceControl.
+in iRaceControl; beim PRO-Hinweis zusätzlich `%pcnr%` / `%pdname%` (das PRO-Auto).
 
 **Wichtig:** Wer iCASControl schon vor dem 27.10.2026 benutzt hat, hat alte Werte
 gespeichert (z. B. 10x / 10 s). Einmal **Rules** öffnen, die WCT-Werte eintragen und

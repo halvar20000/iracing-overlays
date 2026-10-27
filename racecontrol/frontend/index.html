@@ -411,6 +411,13 @@
       <label><input id="s-meatball_enabled" type="checkbox"> Meatball flag - to everybody:</label>
       <input id="s-meatball_text" type="text" maxlength="200" class="wide">
     </fieldset>
+    <fieldset><legend><label><input id="s-pro_enabled" type="checkbox"> PRO behind an AM driver (GT3 WCT, classes from CLS)</label></legend>
+      <label>The AM driver gets ONE private hint per PRO car when it is
+        <input id="s-pro_gap_s" type="number" min="0.2" max="5" step="0.1"> s behind him, from lap
+        <input id="s-pro_from_lap" type="number" min="1" max="50"> on:</label>
+      <input id="s-pro_text" type="text" maxlength="200" class="wide">
+      <span class="note">%pcnr% / %pdname% = the PRO car; never repeated (the AM may be the faster one); only in a WCT field</span>
+    </fieldset>
     <fieldset><legend><label><input id="s-blue_enabled" type="checkbox"> Own blue-flag hint (gap check)</label></legend>
       <label>The car about to be lapped gets "BLUE FLAG - let #7 ... pass" when the faster car is
         <input id="s-blue_gap_s" type="number" min="0.2" max="5" step="0.1"> s behind,

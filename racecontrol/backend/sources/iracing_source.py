@@ -436,6 +436,7 @@ class IRacingSource(DataSource):
                 car_idx=idx,
                 car_number=str(d.get("CarNumber", "0")),
                 driver_name=str(d.get("UserName", "")),
+                user_id=int(d.get("UserID", 0) or 0),
                 team_name=str(d.get("TeamName", "") or d.get("UserName", "")),
                 car_class=labels.get(idx, ""),
                 class_id=int(d.get("CarClassID", 0) or 0),

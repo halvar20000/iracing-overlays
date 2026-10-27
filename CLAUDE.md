@@ -178,6 +178,20 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 27, 2026 (iCASControl 0.1.15 — PRO behind an AM, GT3 WCT):**
+Thomas: an AM driver (per CLS) should get ONE hint when a PRO is behind him,
+not repeated (the AM may be faster). NEW `racecontrol/backend/proam.py`
+(wraps the repo root's cls_proam.ProAmRoster — same CLS roster + "is this a
+WCT field" rule as the tower bars; started only once a car with an iRacing
+UserID is seen, so simulator / tests fetch nothing); CarFrame / Car carry
+`user_id`, Car `proam`. Steward rule `pro_enabled` (default ON — saved
+configs get it), `pro_gap_s` 1.0, `pro_from_lap` 3, `pro_text` "PRO CAR
+BEHIND YOU - #%pcnr% %pdname%": race, racing, no caution, both cars racing,
+PRO behind on track within the gap (its best / last lap × pct diff), NOT a
+lap+ apart (= blue flag); once per (AM, PRO) pair per session → private
+notify + log kind auto_pro_behind. Rules dialog fieldset. test_incidents
+263/263. NOT tried in iRacing.
+
 **October 27, 2026 (launcher: iCAS dot stayed grey after the first run —
 Andre):** first Start = green (sim demo, Silverstone), after "off" Start never
 went green again and the browser on :8080 still showed the old demo. Cause:

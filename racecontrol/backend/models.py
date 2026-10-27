@@ -98,6 +98,7 @@ class CarFrame:
     finished: bool = False
     car_flags: int = 0             # CarIdxSessionFlags (blue 0x20, repair 0x100000)
     fast_repairs_used: int = -1    # CarIdxFastRepairsUsed, -1 = not sent
+    user_id: int = 0               # DriverInfo UserID (iRacing customer id)
     # this lap's sector times: [seconds, "overall" | "personal" | ""] or None
     sectors: list = field(default_factory=list)
 

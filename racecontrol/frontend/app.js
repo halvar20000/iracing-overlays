@@ -281,14 +281,16 @@ function updateStewardToggle() {
         + `${s.fcy_laps > 0 ? `, ${s.fcy_laps} laps` : ''})` : 'off'}`
     + ` | sequencer: ${s.seq_enabled ? (s.sequence || []).length + ' msg' : 'off'}`
     + ` | blue flag: warn ${s.bf_warn_s || 'off'}s, DT ${s.bf_dt_s || 'off'}s`
-    + ` | fast repair: ${s.fr_used || 'off'} | meatball: ${s.meatball_enabled ? 'on' : 'off'}`;
+    + ` | fast repair: ${s.fr_used || 'off'} | meatball: ${s.meatball_enabled ? 'on' : 'off'}`
+    + ` | PRO behind AM: ${s.pro_enabled ? `${s.pro_gap_s}s, once` : 'off'}`;
 }
 
 const STEWARD_FIELDS = ['dt_first', 'dt_every', 'fcy_enabled', 'fcy_incs',
   'fcy_window_s', 'fcy_mode', 'fcy_cooldown_s', 'fcy_laps', 'seq_enabled',
   'blue_enabled', 'blue_gap_s', 'blue_repeat_s',
   'fcy_end_protect_min', 'bf_warn_s', 'bf_warn_text', 'bf_dt_s', 'bf_dt_text',
-  'fr_used', 'fr_text', 'meatball_enabled', 'meatball_text'];
+  'fr_used', 'fr_text', 'meatball_enabled', 'meatball_text',
+  'pro_enabled', 'pro_gap_s', 'pro_from_lap', 'pro_text'];
 function openStewardRules() {
   const s = State.steward || {};
   STEWARD_FIELDS.forEach((k) => {

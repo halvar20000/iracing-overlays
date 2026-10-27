@@ -1570,5 +1570,84 @@ check("own tunnel link: refused, not followed",
 r = fs._receive(json.dumps({"type": "hello", "name": "Thomas 2", "icas": "other"}))
 check("another iCAS: followed", fs.state == "connected", fs.state)
 
+print("PRO behind an AM driver (GT3 WCT, CLS classes)")
+from backend import proam as _pa
+
+
+class FakeRoster:
+    classes = {107: "PRO", 114: "AM", 121: "AM"}
+
+    def active_for(self, ids):
+        return sum(1 for i in ids if i in self.classes) >= 3
+
+    def lookup(self, uid):
+        return self.classes.get(uid)
+
+
+eng7.steward_cfg = steward.clean({})
+eng7.auto.reset()
+eng7.chat_cfg["enabled"] = True
+eng7.proam = _pa.ProAm(roster=FakeRoster())
+
+
+def pcar(idx, num, uid, pct, lap=5, done=4, best=100.0):
+    c = scar(idx, num, lap=lap, pct=pct, best=best)
+    c.user_id, c.laps_completed = uid, done
+    return c
+
+
+def pstep(fr):
+    eng7.state.steward_rules = eng7.steward_cfg
+    eng7.state.ingest(fr)
+    eng7.proam._next = 0
+    eng7.proam.apply(eng7.state)
+    for act in eng7.auto.check(eng7.state, eng7.steward_cfg):
+        eng7._steward_action(act)
+
+
+def pframe(t, pro_pct, am_pct=0.50, **kw):
+    return sframe(t, [pcar(0, "7", 107, pro_pct, **kw), pcar(1, "14", 114, am_pct),
+                      pcar(2, "21", 121, 0.10)], num=6, key="p-1")
+
+
+n0 = len(sent7)
+pstep(pframe(2000, 0.48))
+check("classes from the roster", eng7.state.cars[0].proam == "PRO"
+      and eng7.state.cars[1].proam == "AM", eng7.proam.active)
+check("PRO 2 s behind: nothing", not autos("auto_pro_behind"))
+pstep(pframe(2001, 0.492))
+a = autos("auto_pro_behind")
+check("PRO 0.8 s behind the AM -> ONE private hint",
+      len(a) == 1 and "/14 PRO CAR BEHIND YOU - #7 D7" in sent7[n0:], sent7[n0:])
+for t in range(2002, 2030):
+    pstep(pframe(t, 0.495))
+pstep(pframe(2030, 0.40))
+pstep(pframe(2031, 0.495))
+check("never again for this pair (AM may be faster)", len(autos("auto_pro_behind")) == 1)
+pstep(sframe(2040, [pcar(0, "7", 107, 0.091), pcar(1, "14", 114, 0.6),
+                    pcar(2, "21", 121, 0.10)], num=6, key="p-1"))
+check("another AM car gets its own hint", len(autos("auto_pro_behind")) == 2
+      and autos("auto_pro_behind")[-1].car_number == "21")
+pstep(sframe(2100, [pcar(0, "7", 107, 0.492, done=1), pcar(1, "14", 114, 0.50, done=1),
+                    pcar(2, "21", 121, 0.10, done=1)], num=7, key="p-2"))
+check("new race, lap 2: not yet (packed field)", len(autos("auto_pro_behind")) == 2)
+pstep(sframe(2101, [pcar(0, "7", 107, 0.492, lap=6), pcar(1, "14", 114, 0.50),
+                    pcar(2, "21", 121, 0.10)], num=7, key="p-2"))
+check("PRO a lap ahead = lapping him (blue flag), no hint",
+      len(autos("auto_pro_behind")) == 2)
+pstep(sframe(2102, [pcar(0, "7", 107, 0.492), pcar(1, "14", 114, 0.50),
+                    pcar(2, "21", 121, 0.10)], num=7, key="p-2", flags=["caution"]))
+check("under caution: no hint", len(autos("auto_pro_behind")) == 2)
+pstep(sframe(2103, [pcar(0, "7", 107, 0.50), pcar(1, "14", 114, 0.492),
+                    pcar(2, "21", 121, 0.10)], num=7, key="p-2"))
+check("AM behind the PRO: no hint", len(autos("auto_pro_behind")) == 2)
+FakeRoster.classes = {107: "PRO", 114: "AM"}       # 2 of 3 = not a WCT field
+pstep(sframe(2104, [pcar(0, "7", 107, 0.492), pcar(1, "14", 114, 0.50),
+                    pcar(2, "99", 999, 0.10)], num=7, key="p-2"))
+check("not a WCT field: no classes, no hint", eng7.state.cars[1].proam == ""
+      and len(autos("auto_pro_behind")) == 2)
+check("old saved rules get the new rule switched on",
+      steward.clean({"dt_first": 15})["pro_enabled"] is True)
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

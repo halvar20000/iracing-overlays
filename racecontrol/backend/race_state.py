@@ -63,6 +63,8 @@ class Car:
     finished: bool = False
     car_flags: int = 0              # CarIdxSessionFlags
     fast_repairs_used: int = -1     # -1 = iRacing did not send it
+    user_id: int = 0                # iRacing customer id (DriverInfo UserID)
+    proam: str = ""                 # "PRO" / "AM" from CLS (GT3 WCT), else ""
 
     # Accumulated by the engine.
     incident_points: int = 0
@@ -392,6 +394,7 @@ class RaceState:
         car._seen = True
         car.number = cf.car_number
         car.driver = cf.driver_name
+        car.user_id = int(getattr(cf, "user_id", 0) or 0)
         car.team = cf.team_name or cf.driver_name
         car.car_class = cf.car_class
         car.class_color = cf.class_color

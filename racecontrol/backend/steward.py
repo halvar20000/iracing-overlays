@@ -30,7 +30,15 @@ GT3 WCT's iRaceControl ruleset (Thomas's screenshot, 2026-10-27), race only:
 * MEATBALL (repair flag) -> ``meatball_text`` to everybody.
 * Full course caution: not in the last ``fcy_end_protect_min`` (5) minutes.
 
-Texts take %cnr% (car number) and %dname% (driver), like iRaceControl.
+* PRO BEHIND (GT3 WCT, from CLS Pro/Am): an AM driver gets ONE private
+  ``pro_text`` when a PRO car is within ``pro_gap_s`` behind him on track
+  (same race, not lapping him - that is the blue flag), from lap
+  ``pro_from_lap`` on, not under caution.  Once per AM / PRO pair and race:
+  the AM may well be the faster one, so it is never repeated.  Only in a
+  WCT field (backend/proam.py); every other league has no PRO / AM.
+
+Texts take %cnr% (car number) and %dname% (driver), like iRaceControl;
+the PRO-behind text also %pcnr% / %pdname% (the PRO car).
 
 The chat lines only go out while the header's iRACING CHAT is ON.
 
@@ -65,15 +73,17 @@ DEFAULT_CONFIG = {
     "bf_dt_s": 30, "bf_dt_text": "#%cnr% (%dname%) - DRIVE THROUGH FOR BLUE FLAG",
     "fr_used": 1, "fr_text": "YOU'VE USED UP ALL YOUR FASTREPAIR",
     "meatball_enabled": True, "meatball_text": "#%cnr% (%dname%) - HAS A MEATBALL FLAG",
+    "pro_enabled": True, "pro_gap_s": 1.0, "pro_from_lap": 3,
+    "pro_text": "PRO CAR BEHIND YOU - #%pcnr% %pdname%",
 }
 _BOOL = ("enabled", "fcy_enabled", "seq_enabled", "blue_enabled",
-         "meatball_enabled")
+         "meatball_enabled", "pro_enabled")
 _INT = ("dt_first", "dt_every", "fcy_incs", "fcy_window_s",
         "fcy_cooldown_s", "fcy_laps", "fcy_end_protect_min",
-        "blue_repeat_s", "bf_warn_s", "bf_dt_s", "fr_used")
-_FLOAT = ("blue_gap_s",)
+        "blue_repeat_s", "bf_warn_s", "bf_dt_s", "fr_used", "pro_from_lap")
+_FLOAT = ("blue_gap_s", "pro_gap_s")
 _TEXT = ("bf_warn_text", "bf_dt_text",
-         "fr_text", "meatball_text")
+         "fr_text", "meatball_text", "pro_text")
 SEQ_SESSIONS = ("quali", "race", "practice", "warmup", "any")
 SEQ_MAX = 30
 SEQ_LATE_S = 120        # a step is still sent this long after its time
@@ -85,6 +95,11 @@ def fill(text: str, car) -> str:
     """iRaceControl placeholders: %cnr% = car number, %dname% = driver."""
     return (str(text or "").replace("%cnr%", str(car.number))
             .replace("%dname%", str(car.driver)))
+
+
+def fill_pro(text: str, am, pro) -> str:
+    return (fill(text, am).replace("%pcnr%", str(pro.number))
+            .replace("%pdname%", str(pro.driver)))
 
 
 def level(total: int, rules: dict) -> int:
@@ -262,6 +277,7 @@ class AutoSteward:
         self._fr_seen: dict[int, int] = {}      # car -> fast repairs used
         self._fr_sent: set[int] = set()
         self._meatball: dict[int, bool] = {}
+        self._pro_sent: set[tuple[int, int]] = set()    # (AM, PRO) told
 
     def check(self, state, rules: dict) -> list[dict]:
         key = (state.session_key, state.session_num)
@@ -280,6 +296,8 @@ class AutoSteward:
         out += self._iracing_blue(state, rules)
         out += self._fast_repairs(state, rules)
         out += self._meatballs(state, rules)
+        if rules.get("pro_enabled"):
+            out += self._pro_behind(state, rules)
         return out
 
     # GT3 WCT ruleset: iRacing's own blue flag, fast repairs, meatball ----------
@@ -343,6 +361,42 @@ class AutoSteward:
                     and _is_race(state)):
                 out.append({"type": "meatball", "car": car,
                             "text": fill(rules.get("meatball_text"), car)})
+        return out
+
+    def _pro_behind(self, state, rules: dict) -> list[dict]:
+        if not _is_race(state) or state.session_state != "RACING" \
+                or _caution_out(state):
+            return []
+        gap_max = float(rules.get("pro_gap_s") or 1.0)
+        from_lap = int(rules.get("pro_from_lap") or 0)
+        length_m = float(state.session_length_km or 0) * 1000
+        cars = [c for c in self._live_cars(state) if _racing_car(c)]
+        pros = [c for c in cars if getattr(c, "proam", "") == "PRO"]
+        out = []
+        for am in cars:
+            # the opening laps: the field is packed, everybody is "behind"
+            if getattr(am, "proam", "") != "AM" or am.laps_completed + 1 < from_lap:
+                continue
+            for pro in pros:
+                if (am.car_idx, pro.car_idx) in self._pro_sent:
+                    continue
+                # a PRO a lap (or more) ahead is lapping him - blue flag rule
+                if abs((pro.lap + pro.lap_dist_pct)
+                       - (am.lap + am.lap_dist_pct)) >= 0.5:
+                    continue
+                d = (am.lap_dist_pct - pro.lap_dist_pct) % 1.0
+                if d >= 0.5:
+                    continue                    # the PRO is ahead
+                lap_t = pro.best_lap or pro.last_lap
+                if not lap_t and pro.speed_ms > 10 and length_m:
+                    lap_t = length_m / pro.speed_ms
+                if not lap_t or d * lap_t > gap_max:
+                    continue
+                self._pro_sent.add((am.car_idx, pro.car_idx))
+                out.append({"type": "pro_behind", "car": am, "pro": pro,
+                            "gap": d * lap_t,
+                            "text": fill_pro(rules.get("pro_text"), am, pro)})
+                break                           # one line per frame and AM
         return out
 
     # full course caution ----------------------------------------------------
