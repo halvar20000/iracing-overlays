@@ -200,6 +200,12 @@ keeps `car_last` per car); reset per session, replay footage never counts.
 "Car" column = CarScreenName (replay source: the log's car, sim: brand).
 Fixed on the way: driver names were RIGHT-aligned (`#timing tbody td` beat
 `td.c-name`). test 64/64; table rendered with the simulator.
+THEN: iRaceControl (on Thomas's own PC) showed 2x for Terence Groening, we
+showed nothing. Same source (ResultsPositions[].Incidents) — expected cause:
+the stream PC's iRacing account is not session admin. NEW
+`GET /api/incidents/debug` (8080) = raw rows exactly as iRacing sent them
+(number, driver, incidents, laps), whose car this PC is, SessionInfoUpdate,
+the baseline. test 65/65.
 
 **October 26, 2026 (iCASControl = our iRaceControl clone, `racecontrol/`
 8080 — STEP 1 of 3: live incidents, replay per line, autosave):** Thomas:

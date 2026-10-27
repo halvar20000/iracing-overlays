@@ -320,6 +320,11 @@ f2 = src._read_frame(0.1)
 pts = [i for i in f2.incidents if i.source == "points"]
 check("rise -> points event", len(pts) == 1 and pts[0].car_idx == 1
       and pts[0].points == 4 and pts[0].total == 4, f2.incidents)
+dbg = src.inc_debug
+check("debug: raw rows as iRacing sent them",
+      dbg["result_rows"] == 2 and dbg["cars_with_points"] == 2
+      and dbg["rows"][1]["incidents"] == 4 and dbg["rows"][1]["number"] == "11",
+      dbg)
 src._ir = fake_ir(53, {0: 3, 1: 4}, replay=True)
 check("in_replay flagged", src._read_frame(0.1).session.in_replay)
 

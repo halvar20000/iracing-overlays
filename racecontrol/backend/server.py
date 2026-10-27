@@ -311,6 +311,15 @@ async def status() -> JSONResponse:
     })
 
 
+@app.get("/api/incidents/debug")
+async def incidents_debug() -> JSONResponse:
+    """The raw incident counts iRacing sends this PC (ResultsPositions).
+    All 0 while iRaceControl on another PC shows points = this PC's iRacing
+    account is not admin of the session."""
+    return JSONResponse({"source": engine.source.name,
+                         **(getattr(engine.source, "inc_debug", None) or {})})
+
+
 @app.get("/api/save")
 async def download_save() -> Response:
     """The whole race (log + decisions) as JSON - for the stewards' files."""

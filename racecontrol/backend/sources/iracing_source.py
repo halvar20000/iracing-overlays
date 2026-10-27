@@ -160,6 +160,7 @@ class IRacingSource(DataSource):
         self._session_num = 0
         self._replay_busy = False
         self.sectors = FieldSectors() if FieldSectors else None
+        self.inc_debug: dict = {}
         self._sector_key = None
 
     # -- DataSource interface ----------------------------------------------
@@ -490,11 +491,16 @@ class IRacingSource(DataSource):
         if now >= self._inc_next:
             self._inc_next = now + INC_POLL_S
             totals: dict[int, int] = {}
+            raw = []
             for r in cur_session.get("ResultsPositions") or []:
                 try:
                     totals[int(r["CarIdx"])] = int(r.get("Incidents", 0) or 0)
+                    raw.append({"car_idx": int(r["CarIdx"]),
+                                "incidents": r.get("Incidents"),
+                                "laps": r.get("LapsComplete")})
                 except (KeyError, TypeError, ValueError):
                     continue
+            self._note_inc_debug(session_num, cur_session, raw)
             for idx, delta, total in self.official.update(session_num, totals):
                 out.append(IncidentEvent(car_idx=idx, points=delta,
                                          kind="incident", lap=laps.get(idx, 0),
@@ -518,6 +524,29 @@ class IRacingSource(DataSource):
                                          other_car_idx=d.other_car_idx,
                                          source="detected", text=d.text))
         return out
+
+    def _note_inc_debug(self, session_num: int, cur_session: dict,
+                        raw: list) -> None:
+        """What iRacing really sent - for /api/incidents/debug."""
+        di = self._g("DriverInfo", {}) or {}
+        me = int(di.get("DriverCarIdx", -1) if di.get("DriverCarIdx")
+                 is not None else -1)
+        names = {int(d.get("CarIdx", -1)): (str(d.get("CarNumber", "")),
+                                            str(d.get("UserName", "")))
+                 for d in di.get("Drivers", []) or []}
+        for r in raw:
+            r["number"], r["driver"] = names.get(r["car_idx"], ("", ""))
+        self.inc_debug = {
+            "session_num": session_num,
+            "session_type": cur_session.get("SessionType"),
+            "session_info_update": self._g("SessionInfoUpdate", None),
+            "my_car_idx": me,
+            "my_name": names.get(me, ("", ""))[1],
+            "result_rows": len(raw),
+            "cars_with_points": sum(1 for r in raw if (r["incidents"] or 0) > 0),
+            "rows": raw,
+            "baseline": {str(k): v for k, v in self.official.totals.items()},
+        }
 
     def _read_weather(self) -> Weather:
         return Weather(
