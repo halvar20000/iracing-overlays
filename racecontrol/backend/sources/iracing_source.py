@@ -94,6 +94,38 @@ def pick_cam_group(groups: list[dict], current: int) -> int:
     return current
 
 
+def class_labels(drivers: list) -> dict[int, str]:
+    """CarIdx -> class label.  Hosted / AI sessions often send NO
+    CarClassShortName (YAML null - str() made it "None"): then a class with
+    one car model is named after the model, a mixed one after the words all
+    its models share ("GT3"), else "Class <id>"."""
+    def txt(v) -> str:
+        return "" if v is None else str(v).strip()
+    models: dict[int, set] = {}
+    for d in drivers:
+        if d.get("CarIsPaceCar", 0) == 1:
+            continue
+        models.setdefault(int(d.get("CarClassID", 0) or 0), set()).add(
+            txt(d.get("CarScreenNameShort")) or txt(d.get("CarScreenName")))
+    derived: dict[int, str] = {}
+    for cid, names in models.items():
+        names.discard("")
+        if len(names) == 1:
+            derived[cid] = next(iter(names))
+        elif names:
+            lists = [n.split() for n in names]
+            common = [w for w in lists[0] if all(w in l for l in lists[1:])]
+            derived[cid] = " ".join(common) or f"Class {cid}"
+        else:
+            derived[cid] = f"Class {cid}"
+    out = {}
+    for d in drivers:
+        idx = int(d.get("CarIdx", -1))
+        cid = int(d.get("CarClassID", 0) or 0)
+        out[idx] = txt(d.get("CarClassShortName")) or derived.get(cid, "")
+    return out
+
+
 class IRacingSource(DataSource):
     """Reads live data from a running copy of iRacing."""
 
@@ -268,6 +300,18 @@ class IRacingSource(DataSource):
 
         order = sorted(dist_by_idx.items(), key=lambda kv: kv[1], reverse=True)
         rank = {idx: i for i, (idx, _) in enumerate(order)}
+        is_race = "RACE" in session_type
+        bests = {i: float(at(best_lap, i, 0.0)) for i in dist_by_idx}
+        if not is_race:
+            # practice / qualifying: ranked by best lap, cars without a time
+            # after (by distance); gaps are lap-time gaps to the fastest
+            timed = sorted((i for i in dist_by_idx if bests[i] > 0),
+                           key=lambda i: bests[i])
+            rest = [i for i, _ in order if bests[i] <= 0]
+            order = [(i, dist_by_idx[i]) for i in timed + rest]
+            rank = {idx: i for i, (idx, _) in enumerate(order)}
+        fastest = min((b for b in bests.values() if b > 0), default=0.0)
+        labels = class_labels(drivers)
 
         for d in drivers:
             idx = int(d.get("CarIdx", -1))
@@ -286,14 +330,21 @@ class IRacingSource(DataSource):
             self._speed_ms[idx] = spd
 
             this_dist = dist_by_idx[idx]
-            behind = leader_dist - this_dist
-            laps_down = int(behind) if behind >= 1.0 else 0
-            gap = round((behind - laps_down) * est_lap, 2)
             r = rank.get(idx, 0)
             interval = 0.0
-            if r > 0:
-                ahead_idx = order[r - 1][0]
-                interval = round((dist_by_idx[ahead_idx] - this_dist) * est_lap, 2)
+            if is_race:
+                behind = leader_dist - this_dist
+                laps_down = int(behind) if behind >= 1.0 else 0
+                gap = round((behind - laps_down) * est_lap, 2)
+                if r > 0:
+                    ahead_idx = order[r - 1][0]
+                    interval = round((dist_by_idx[ahead_idx] - this_dist)
+                                     * est_lap, 2)
+            else:
+                laps_down = 0
+                gap = round(bests[idx] - fastest, 3) if bests[idx] > 0 else 0.0
+                if r > 0 and bests[idx] > 0:
+                    interval = round(bests[idx] - bests[order[r - 1][0]], 3)
 
             ll = float(at(last_lap, idx, 0.0))
             bl = float(at(best_lap, idx, 0.0))
@@ -302,16 +353,17 @@ class IRacingSource(DataSource):
                 car_number=str(d.get("CarNumber", "0")),
                 driver_name=str(d.get("UserName", "")),
                 team_name=str(d.get("TeamName", "") or d.get("UserName", "")),
-                car_class=str(d.get("CarClassShortName", "")
-                               or d.get("CarClassID", "")),
+                car_class=labels.get(idx, ""),
                 class_id=int(d.get("CarClassID", 0) or 0),
-                class_color="#%06x" % (int(d.get("CarClassColor", 0)) & 0xFFFFFF),
-                class_short=str(d.get("CarClassShortName", "")),
+                class_color="#%06x" % (int(d.get("CarClassColor", 0) or 0)
+                                       & 0xFFFFFF),
+                class_short=labels.get(idx, ""),
                 car_brand=detect_brand(d.get("CarPath"), d.get("CarScreenName")),
-                position=int(at(positions, idx, r + 1)) or (r + 1),
+                position=(int(at(positions, idx, r + 1)) or (r + 1))
+                if is_race else r + 1,
                 class_position=int(at(class_pos, idx, 0)),
-                lap=int(at(laps, idx, 0)),
-                laps_completed=int(at(laps_done, idx, 0)),
+                lap=max(0, int(at(laps, idx, 0))),
+                laps_completed=max(0, int(at(laps_done, idx, 0))),
                 lap_dist_pct=round(p, 5),
                 on_pit_road=bool(at(on_pit, idx, False)),
                 track_surface=_SURFACE_MAP.get(int(at(surface, idx, 3)),

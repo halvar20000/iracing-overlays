@@ -71,7 +71,7 @@ class Car:
     # Internal bookkeeping.
     _prev_surface: str = SURFACE_ON_TRACK
     _prev_on_pit: bool = False
-    _pit_enter_t: float = 0.0
+    _pit_enter_t: Optional[float] = None   # None = entry not seen
     _seen: bool = False
 
 
@@ -374,8 +374,13 @@ class RaceState:
             if cf.on_pit_road:
                 car._pit_enter_t = self.session_time
                 self._log(LOG_PIT, "Entered pit lane", car=car, lap=cf.lap)
+            elif car._pit_enter_t is None:
+                # in the pits when we first saw it (garage / session start):
+                # leaving is not a stop
+                self._log(LOG_PIT, "Left the pits", car=car, lap=cf.lap)
             else:
                 dur = max(0.0, self.session_time - car._pit_enter_t)
+                car._pit_enter_t = None
                 car.pit_stops += 1
                 self._log(LOG_PIT,
                           f"Exited pit lane - stop #{car.pit_stops} "
@@ -389,7 +394,8 @@ class RaceState:
         leader = min(cars, key=lambda c: c.position if c.position > 0 else 999)
         prev = self._leader_idx
         if prev != leader.car_idx and leader.car_idx in self.cars:
-            if prev is not None:
+            # a lead change means nothing in practice / qualifying
+            if prev is not None and "RACE" in self.session_type.upper():
                 self._log(LOG_INFO,
                           f"Car #{self.cars[leader.car_idx].number} "
                           f"takes the lead", car=self.cars[leader.car_idx],

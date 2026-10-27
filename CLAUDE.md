@@ -178,6 +178,20 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 27, 2026 (iCASControl first real run — Thomas's Spa AI practice
+screenshot):** detection works live (spins, "Contact with #28", pit lane).
+Fixed: CLS column read "None" for every car — hosted / AI sessions send
+CarClassShortName as YAML null and str() made it "None"; `class_labels()`
+names the class after its single model or the words all models share ("GT3").
+LAP showed -1 (CarIdxLapCompleted before the first lap) → clamped to 0.
+Practice / quali: order + gap by BEST LAP (was distance), no "takes the lead"
+lines outside a race. Leaving the pit stall at session start logged
+"Exited pit lane - stop #1 (73.8s)" → "Left the pits", no stop counted
+(`_pit_enter_t` None = entry not seen). INC cell: red "0x (1)" = open
+detections without a decision, tooltip. Still open: official points 0 in
+that practice (nobody had a timed lap yet - check again in the race); RC
+messages are only logged, not sent to iRacing (step 2). test 58/58.
+
 **October 26, 2026 (iCASControl = our iRaceControl clone, `racecontrol/`
 8080 — STEP 1 of 3: live incidents, replay per line, autosave):** Thomas:
 finishing our own clone would be simpler than the SignalR bridge. It was

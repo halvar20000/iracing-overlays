@@ -337,6 +337,50 @@ check("replay: seek, camera (Scenic -> TV1), play",
       ir.calls == [("seek", 0, 112000), ("cam", "14", 10), ("play", 1)],
       ir.calls)
 
+print("Real-session fixes (Spa AI practice 27.10.)")
+labels = irs.class_labels([
+    {"CarIdx": 0, "CarClassShortName": None, "CarClassID": 5,
+     "CarScreenNameShort": "BMW M4 GT3"},
+    {"CarIdx": 1, "CarClassShortName": None, "CarClassID": 5,
+     "CarScreenNameShort": "Porsche 911 GT3 R"},
+    {"CarIdx": 2, "CarClassShortName": None, "CarClassID": 9,
+     "CarScreenNameShort": "Porsche 911 Cup"},
+    {"CarIdx": 3, "CarClassShortName": "LMP2", "CarClassID": 7}])
+check("class null -> never 'None': GT3 / model / real name",
+      labels == {0: "GT3", 1: "GT3", 2: "Porsche 911 Cup", 3: "LMP2"}, labels)
+pir = fake_ir(60, {})
+pir["SessionInfo"]["Sessions"][0]["SessionType"] = "Practice"
+pir["CarIdxBestLapTime"] = [139.5, 138.2]
+pir["CarIdxLapCompleted"] = [-1, 3]
+pir["CarIdxLap"] = [-1, 4]
+src2 = irs.IRacingSource()
+src2._ir = pir
+pf = {c.car_idx: c for c in src2._read_frame(0.1).cars}
+check("practice: order by best lap, gap = lap-time gap",
+      pf[1].position == 1 and pf[0].position == 2
+      and abs(pf[0].gap_to_leader - 1.3) < 1e-6, (pf[0], pf[1]))
+check("lap -1 shown as 0", pf[0].laps_completed == 0 and pf[0].lap == 0)
+rs3 = RaceState()
+rs3.ingest(frame(1, [cf(0, "7", pit=True), cf(1, "14")]))
+rs3.ingest(frame(80, [cf(0, "7"), cf(1, "14")]))
+rs3.ingest(frame(90, [cf(0, "7", pit=True), cf(1, "14")]))
+rs3.ingest(frame(120, [cf(0, "7"), cf(1, "14")]))
+pits = [e.text for e in rs3.events if e.category == "pit"]
+check("leaving the pits at the start is no stop; a real one is #1",
+      pits == ["Left the pits", "Entered pit lane",
+               "Exited pit lane - stop #1 (30.0s)"]
+      and rs3.cars[0].pit_stops == 1, pits)
+rs4 = RaceState()
+pract = frame(1, [cf(0, "7"), cf(1, "14")])
+pract.session.session_type = "PRACTICE"
+rs4.ingest(pract)
+pract2 = frame(2, [cf(1, "14"), cf(0, "7")])
+pract2.cars[0].position, pract2.cars[1].position = 1, 2
+pract2.session.session_type = "PRACTICE"
+rs4.ingest(pract2)
+check("no 'takes the lead' in practice",
+      not any("lead" in e.text for e in rs4.events))
+
 print("Engine autosave / restore (FastAPI stubbed)")
 
 

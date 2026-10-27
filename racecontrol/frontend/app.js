@@ -227,7 +227,9 @@ function renderTiming(s) {
       <td class="c-last"><span${lastCls}>${fmtLap(c.last_lap)}</span></td>
       <td class="c-best"><span${bestCls}>${fmtLap(c.best_lap)}</span></td>
       <td class="c-gap"><span${gapCls}>${fmtGap(c)}</span></td>
-      <td class="c-inc"><span class="${incCls}">${c.incidents}x</span></td>
+      <td class="c-inc" title="${c.unresolved > 0
+        ? c.unresolved + ' open in the log (no decision yet)' : ''}"><span class="${incCls}">${
+        c.incidents}x${c.unresolved > 0 ? ` <small>(${c.unresolved})</small>` : ''}</span></td>
       <td class="c-pit">${c.pit_stops}</td>
       <td class="c-spd ${State.showSpeed ? '' : 'off'}">${
         Math.round((c.speed_ms || 0) * 3.6)}</td>
