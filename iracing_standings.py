@@ -1600,7 +1600,10 @@ TOWER_HTML = r"""<!DOCTYPE html>
     }
     body.debug-mode { background: #23262b; }
     .tower { width: 440px; }
-    .tower.cars { width: 482px; }   /* /cars: +42 px for the livery column */
+    .tower.cars { width: 482px; }
+    /* compact RACE tower (pos · name · brand · interval · pit): the name column
+       needs no 240 px - 360 px still fits "B. Krumpschmied". ?slim=0 = 440. */
+    .tower.slim { width: 360px; }   /* /cars: +42 px for the livery column */
 
     /* --- info bar ------------------------------------------------------ */
     .info {
@@ -1895,6 +1898,7 @@ function render(d) {
     let rows = d.standings || [];
     SHOW_BRAND = brandColumn(rows);       // whole field, before ?rows= trims it
     el.classList.toggle('cars', SHOW_CARS);
+    el.classList.toggle('slim', COMPACT && isRace && !TEAM_MODE && qs.get('slim') !== '0');
     el.style.setProperty('--bw', SHOW_CARS ? '70px' : SHOW_BRAND ? '28px' : '0px');
     // ?rows=N: top N positions only. The car on camera is kept visible — if it
     // is further back it takes the last slot (after a thin gap).
@@ -2787,7 +2791,7 @@ def standings():
 # Bump on every change: http://localhost:5005/version shows which code the
 # running process actually loaded (the stream PC gets this folder through
 # Nextcloud, so a restart can still pick up the previous file).
-CODE_VERSION = "2026-10-27 tower-penalties"
+CODE_VERSION = "2026-10-27 tower-slim"
 
 
 @app.route("/version")

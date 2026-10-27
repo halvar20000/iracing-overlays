@@ -181,6 +181,16 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 27, 2026 (tower: slim race layout + brand logos):** Thomas's WCT
+screenshot: no logo for the Corvette (brand "chevrolet" had no file), McLaren /
+Aston Martin read as thin dark lines (wide wordmarks at 20 px). NEW
+brands/chevrolet.svg (drawn bowtie on a white chip); mclaren.svg = the red
+speedmark only on a white square; aston-martin.svg = wings only, dark strokes,
+cropped wide (wordmark below removed). Compact RACE tower (not teams / cars)
+`.tower.slim` 360 px instead of 440 (name column ~160 px, "B. Krumpschmied"
+fits); `?slim=0` = old width. CODE_VERSION "2026-10-27 tower-slim". Rendered
+with the stream PC's live /standings. Restart 5005 (logos also on 5001 / 5015).
+
 **October 27, 2026 (battle overlay 5015: PRO / AM in GT3 WCT):** Thomas: an
 AM on camera must battle the AM ahead, not a PRO in between. CatchPoller
 `_proam_of()` (cls_proam.ProAmRoster, same "WCT field" rule as the tower) →
