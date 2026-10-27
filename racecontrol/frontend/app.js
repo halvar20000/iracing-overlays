@@ -105,6 +105,7 @@ function handleMessage(msg) {
       break;
     case 'events':
       State.events = msg.events || [];
+      announceAuto();
       $('#log-count').textContent = msg.total || State.events.length;
       renderLog();
       renderCarLog();
@@ -114,8 +115,10 @@ function handleMessage(msg) {
       State.running = msg.running;
       State.chat = msg.chat || null;
       State.stream = msg.stream || null;
+      State.steward = msg.steward || null;
       updateChatToggle();
       updateStreamToggle();
+      updateStewardToggle();
       render();
       break;
     case 'ack':
@@ -208,6 +211,56 @@ function updateStreamToggle() {
   t.textContent = s.enabled ? 'STREAM BANNER ON' : 'STREAM BANNER OFF';
   t.className = 'chat-toggle stream ' + (s.enabled ? 'on' : 'off');
   t.title = 'Race Control overlay: ' + (s.banner_url || '-');
+}
+
+// ---- Auto Steward (step 3c) ------------------------------------------------
+const AUTO_ALERT = ['auto_steward', 'auto_caution_ask', 'auto_caution'];
+function announceAuto() {
+  let max = State.lastAutoId || 0;
+  const fresh = State.events.filter((e) => e.source === 'auto'
+    && AUTO_ALERT.includes(e.kind) && e.id > max);
+  State.events.forEach((e) => { if (e.id > max) max = e.id; });
+  if (State.lastAutoId !== undefined && fresh.length)
+    toast((fresh[fresh.length - 1].car_number
+      ? '#' + fresh[fresh.length - 1].car_number + ' ' : '')
+      + fresh[fresh.length - 1].text);
+  State.lastAutoId = max;
+}
+
+function updateStewardToggle() {
+  const s = State.steward;
+  if (!s) return;
+  const t = $('#steward-toggle');
+  t.textContent = s.enabled ? 'AUTO STEWARD ON' : 'AUTO STEWARD OFF';
+  t.className = 'chat-toggle steward ' + (s.enabled ? 'on' : 'off');
+  t.title = `Incidents: drive through at ${s.dt_first}x, then every ${s.dt_every}x`
+    + ` | caution: ${s.fcy_enabled ? `${s.fcy_cars} cars / ${s.fcy_window_s}s (${s.fcy_mode})` : 'off'}`
+    + ` | quali AM/PRO: ${s.quali_split ? s.quali_split_min + ' min' : 'off'}`
+    + ` | blue flag: ${s.blue_enabled ? s.blue_gap_s + 's' : 'off'}`;
+}
+
+const STEWARD_FIELDS = ['dt_first', 'dt_every', 'fcy_enabled', 'fcy_cars',
+  'fcy_window_s', 'fcy_mode', 'fcy_cooldown_s', 'quali_split', 'quali_split_min',
+  'quali_am_text', 'quali_pro_text', 'blue_enabled', 'blue_gap_s', 'blue_repeat_s'];
+function openStewardRules() {
+  const s = State.steward || {};
+  STEWARD_FIELDS.forEach((k) => {
+    const el = $('#s-' + k);
+    if (el.type === 'checkbox') el.checked = !!s[k];
+    else el.value = s[k] ?? '';
+  });
+  $('#sdlg').classList.remove('hidden');
+}
+function saveStewardRules(ok) {
+  $('#sdlg').classList.add('hidden');
+  if (!ok) return;
+  const msg = { action: 'set_steward' };
+  STEWARD_FIELDS.forEach((k) => {
+    const el = $('#s-' + k);
+    msg[k] = el.type === 'checkbox' ? el.checked
+      : (el.type === 'number' ? parseFloat(el.value) : el.value);
+  });
+  send(msg);
 }
 
 async function askStreamUrl() {
@@ -387,8 +440,12 @@ function logRowHtml(e, compact) {
     esc(e.resolution || 'DONE')}</span>`;
   else if (e.investigating) badge += '<span class="log-badge inv">INV</span>';
   else if (e.noted) badge += '<span class="log-badge noted">NOTED</span>';
+  if (e.kind === 'auto_caution_ask' && !(State.deployed || new Set()).has(e.id)
+      && (State.snapshot?.session?.time ?? 0) - e.sim_time < 120)
+    badge += `<button class="log-act" data-deploy="${e.id}" title="Sends !yellow">DEPLOY CAUTION</button>`;
+  const auto = e.source === 'auto' ? ` auto ${esc(e.kind)}` : '';
   const num = e.car_number ? `#${e.car_number} ` : '';
-  return `<div class="log-row ${e.category}${sel}${resolved}"
+  return `<div class="log-row ${e.category}${sel}${resolved}${auto}"
        data-event="${e.id}" data-car="${e.car_idx}">
     <span class="log-time">${fmtClock(e.sim_time, false)}</span>
     <span class="log-cat ${e.category}"></span>
@@ -579,6 +636,14 @@ function wire() {
     send({ action: 'set_stream', enabled: on });
   });
   $('#stream-url').addEventListener('click', askStreamUrl);
+
+  // Auto Steward (step 3c)
+  $('#steward-toggle').addEventListener('click', () =>
+    send({ action: 'set_steward', enabled: !(State.steward && State.steward.enabled) }));
+  $('#steward-rules').addEventListener('click', openStewardRules);
+  $('#sdlg-ok').addEventListener('click', () => saveStewardRules(true));
+  $('#sdlg-cancel').addEventListener('click', () => saveStewardRules(false));
+  $('#sdlg-x').addEventListener('click', () => saveStewardRules(false));
   $('#stream-test').addEventListener('click', () =>
     send({ action: 'stream_test' }));
 
@@ -650,6 +715,16 @@ function wire() {
   // log rows (rebuilt on every new line - same press handling)
   $('#log-list').addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
+    const dep = e.target.closest('[data-deploy]');
+    if (dep) {
+      e.stopPropagation();
+      const id = parseInt(dep.dataset.deploy, 10);
+      if (!confirm('Deploy a FULL COURSE CAUTION now (!yellow)?')) return;
+      (State.deployed = State.deployed || new Set()).add(id);
+      send({ action: 'command', command: 'pace_deploy' });
+      renderLog();
+      return;
+    }
     const row = e.target.closest('.log-row');
     if (!row) return;
     const id = parseInt(row.dataset.event, 10);

@@ -20,6 +20,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
+from backend import steward
 from backend.car_brands import logo_url
 from backend.models import (
     Frame, CarFrame,
@@ -70,6 +71,7 @@ class Car:
     time_penalty: float = 0.0
     dsq: bool = False
     notes: list[str] = field(default_factory=list)
+    steward_level: int = 0         # drive-throughs the Auto Steward announced
 
     # Internal bookkeeping.
     _prev_surface: str = SURFACE_ON_TRACK
@@ -125,7 +127,7 @@ MATCH_POINTS_S = 20.0
 # Fields of a Car that survive a restart (autosave).
 _SAVED_CAR_FIELDS = ("number", "driver", "team", "incident_points",
                      "unresolved", "niw_count", "pit_stops", "laps_led",
-                     "time_penalty", "dsq", "notes")
+                     "time_penalty", "dsq", "notes", "steward_level")
 
 
 # How much of the log to keep in memory / send to clients.  Incidents and
@@ -169,6 +171,8 @@ class RaceState:
         self.session_key = ""
         self.in_replay = False
         self.official_points = False     # official counts arrive live
+        self.steward_rules: dict = dict(steward.DEFAULT_CONFIG)
+        self.frame_cars: set[int] = set()   # the cars of the last live frame
 
     # -- logging ------------------------------------------------------------
 
@@ -255,13 +259,16 @@ class RaceState:
         # change ...).  The timing table keeps the last live picture.
         if s.in_replay:
             self._ingest_incidents(frame)
+            self._auto_steward()       # the totals are live even in a replay
             return
 
         # Per-car updates.
+        self.frame_cars = {cf.car_idx for cf in frame.cars}
         for cf in frame.cars:
             self._update_car(cf)
 
         self._ingest_incidents(frame)
+        self._auto_steward()
 
         # Laps-led accounting.
         self._update_laps_led(frame.cars)
@@ -314,6 +321,29 @@ class RaceState:
                            is_incident=True)
             ev.source, ev.kind = "points", inc.kind
             car.unresolved += 1
+
+    def _auto_steward(self) -> None:
+        """Incident limit reached -> one highlighted line when a drive-through
+        is due (15x, 21x, 27x ...).  Only a message: the league's iRacing
+        settings give the penalty itself."""
+        rules = self.steward_rules or {}
+        active = bool(rules.get("enabled")) and \
+            "RACE" in str(self.session_type).upper()
+        for car in self.cars.values():
+            due = steward.level(car.incident_points, rules)
+            if due < car.steward_level:    # counts reset (new session)
+                car.steward_level = due
+            if not active or due <= car.steward_level:
+                continue
+            nth = "" if due == 1 else f" #{due}"
+            ev = self._log(
+                LOG_PENALTY,
+                f"AUTO STEWARD: {car.team or car.driver} reached "
+                f"{steward.threshold(due, rules)}x (now {car.incident_points}x)"
+                f" - drive through{nth} due ({steward.describe(rules)})",
+                car=car, lap=car.lap)
+            ev.kind, ev.source = "auto_steward", "auto"
+            car.steward_level = due
 
     def _recent_detection(self, car_idx: int) -> Optional[RaceEvent]:
         for ev in reversed(self.events):

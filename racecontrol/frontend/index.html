@@ -56,6 +56,12 @@
           <button id="stream-test" title="Shows 'TEST · iCASControl' on the banner">Test</button>
         </div>
       </div>
+      <div class="chat-box" title="Auto Steward: incident limit (15x, then every 6x), full course caution when several cars crash at once, GT3 WCT quali AM / PRO messages, blue flags">
+        <button id="steward-toggle" class="chat-toggle steward off">AUTO STEWARD OFF</button>
+        <div class="chat-sub">
+          <button id="steward-rules" title="Limits, caution, quali AM / PRO, blue flags">Rules</button>
+        </div>
+      </div>
       <button id="run-toggle" class="run-toggle run" title="RUN / STOP the controller">RUN</button>
       <div class="badges">
         <span id="source-badge" class="badge">source: &mdash;</span>
@@ -286,6 +292,42 @@
       <button id="dlg-cancel">Cancel</button>
     </div>
     <div class="dlg-presets" id="dlg-presets"></div>
+  </div>
+</div>
+
+<!-- Auto Steward rules -->
+<div id="sdlg" class="dlg-back hidden">
+  <div class="dlg sdlg">
+    <div class="dlg-head"><span>Auto Steward rules</span>
+      <button class="dlg-x" id="sdlg-x">&times;</button></div>
+    <fieldset><legend>Incident limit (message only - iRacing gives the penalty)</legend>
+      <label>Drive through at <input id="s-dt_first" type="number" min="0" max="99">x,
+        then every further <input id="s-dt_every" type="number" min="0" max="99">x</label>
+    </fieldset>
+    <fieldset><legend><label><input id="s-fcy_enabled" type="checkbox"> Full course caution</label></legend>
+      <label><input id="s-fcy_cars" type="number" min="2" max="20"> different cars in an incident
+        (spin, contact, stopped, 2x+) within <input id="s-fcy_window_s" type="number" min="3" max="120"> s</label>
+      <label>then <select id="s-fcy_mode">
+        <option value="ask">ask me (DEPLOY button in the log)</option>
+        <option value="auto">deploy the caution at once (!yellow)</option></select>,
+        not again for <input id="s-fcy_cooldown_s" type="number" min="0" max="1800"> s</label>
+    </fieldset>
+    <fieldset><legend><label><input id="s-quali_split" type="checkbox"> Qualifying AM / PRO (GT3 WCT)</label></legend>
+      <label>At the start, to everybody:</label>
+      <input id="s-quali_am_text" type="text" maxlength="200" class="wide">
+      <label>After <input id="s-quali_split_min" type="number" min="1" max="120"> minutes:</label>
+      <input id="s-quali_pro_text" type="text" maxlength="200" class="wide">
+    </fieldset>
+    <fieldset><legend><label><input id="s-blue_enabled" type="checkbox"> Blue flags</label></legend>
+      <label>The car about to be lapped gets "BLUE FLAG - let #7 ... pass" when the faster car is
+        <input id="s-blue_gap_s" type="number" min="0.2" max="5" step="0.1"> s behind,
+        again after <input id="s-blue_repeat_s" type="number" min="0" max="300"> s</label>
+    </fieldset>
+    <div class="dlg-note">Chat lines (caution, quali, blue flag) only go out while iRACING CHAT is ON.</div>
+    <div class="dlg-btns">
+      <button id="sdlg-ok">Save</button>
+      <button id="sdlg-cancel">Cancel</button>
+    </div>
   </div>
 </div>
 

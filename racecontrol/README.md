@@ -165,6 +165,35 @@ wave-by, clear or yellow the flag bits are watched for 6 s: the log says
 overridden in `data/chat_config.json` → `"commands": {"notify": "..."}`.
 In simulator / replay mode the commands are only written to the log.
 
+## Auto Steward (step 3c, October 2026)
+
+Header switch **AUTO STEWARD** (on by default) + **Rules** (saved in
+`data/steward_config.json`). The rules (`backend/steward.py`):
+
+* **Incident limit** — when a car reaches 15x, and again at 21x, 27x … (every
+  further 6x), an amber `AUTO STEWARD: … drive through due` line in the log
+  plus a pop-up. Only a message: the league's iRacing settings give the
+  drive-through. Race sessions only; the level is autosaved per car, so a
+  restart does not repeat it.
+* **Full course caution** — 3 different cars with a spin / contact / stopped
+  car (or official points of 2x+) within 20 s in a race under green. Mode
+  *ask* (default): an amber line with a **DEPLOY CAUTION** button (2 min);
+  *auto*: `!yellow` goes out at once. Not under a caution, not for 180 s
+  after one it called; incidents of a caution never count after the restart.
+* **Qualifying AM / PRO** (GT3 WCT, off by default — switch it on for WCT):
+  at the start of a qualifying `/all QUALIFYING: THE FIRST 15 MINUTES ARE
+  RESERVED FOR AM DRIVERS`, after 15 min `/all AM QUALIFYING FINISHED - PRO
+  QUALIFYING STARTED` (texts editable; also on the stream banner when it is
+  on). Started mid-quali (> 3 min) = no start message.
+* **Blue flag** — a car about to be LAPPED, with the lapping car ≤ 1.0 s
+  behind (track gap × the faster car's lap time): `/all #14 BLUE FLAG - let
+  #7 Driver pass` + a log line; again after 20 s if he still holds him up,
+  re-armed once the pass is done. Not in the pits, not under a caution, not
+  between cars on the same lap.
+
+Chat lines only go out while **iRACING CHAT** is on (blue flags with the chat
+off are only logged — no "not sent" line each time).
+
 ## Decisions on the stream banner (step 3, October 2026)
 
 Header switch **STREAM BANNER** (off by default) + **Address** (the Race

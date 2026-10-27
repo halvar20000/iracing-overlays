@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from backend import APP_NAME, __version__
-from backend import chat, stream
+from backend import chat, steward, stream
 from backend.race_state import RaceState, save_json
 from backend.sources.base import DataSource
 from backend.sources.simulator import SimulatorSource
@@ -69,6 +69,8 @@ class Engine:
         self._saved_at = 0.0
         self.chat_cfg = chat.load_config()
         self.stream_cfg = stream.load_config()
+        self.steward_cfg = steward.load_config()
+        self.auto = steward.AutoSteward()
         self._stream_lock = threading.Lock()
         self._stream_log: list[str] = []
         self.banner = stream.BannerOut(self._banner_done)
@@ -127,8 +129,11 @@ class Engine:
             print(f"[engine] source poll error: {exc}", file=sys.stderr)
             frame = None
         if frame is not None:
+            self.state.steward_rules = self.steward_cfg
             self.state.ingest(frame)
             self._maybe_restore()
+            for act in self.auto.check(self.state, self.steward_cfg):
+                self._steward_action(act)
             self._maybe_autosave()
         # Surface any messages the source generated (auto cautions, etc.).
         drain = getattr(self.source, "drain_command_log", None)
@@ -136,6 +141,46 @@ class Engine:
             for line in drain():
                 self.state.note_system(line, category="flag")
         self._drain_stream_log()
+
+    # -- Auto Steward (step 3c) ------------------------------------------------
+
+    def _steward_action(self, act: dict) -> None:
+        st = self.state
+        kind = act["type"]
+        if kind == "caution":
+            who = ", ".join("#" + n for n in act["numbers"][:8])
+            why = (f"{act['cars']} cars in incidents within "
+                   f"{act['window']:.0f}s ({who})")
+            if act["mode"] == "auto":
+                ev = st._log("flag", f"AUTO STEWARD: FULL COURSE CAUTION - {why}",
+                             lap=st._leader_lap())
+                ev.kind, ev.source = "auto_caution", "auto"
+                result = self.to_iracing("pace_deploy", verify=("yellow", -1))
+                st.note_system(f"Auto caution: {result}", category="flag")
+            else:
+                ev = st._log("flag", f"AUTO STEWARD: full course caution? - "
+                             f"{why}", lap=st._leader_lap())
+                ev.kind, ev.source = "auto_caution_ask", "auto"
+        elif kind == "quali":
+            text = act["text"]
+            ev = st._log("message", f"AUTO STEWARD: RC message to all: {text}",
+                         lap=st._leader_lap())
+            ev.kind, ev.source = "auto_quali", "auto"
+            self.to_iracing("message_all", msg=text)
+            self.to_stream("message", "", text=text)
+        elif kind == "blue":
+            slow, fast = act["car"], act["fast"]
+            again = " (again)" if act["again"] else ""
+            ev = st._log("flag", f"Blue flag{again}: let #{fast.number} "
+                         f"{fast.driver} pass ({act['gap']:.1f}s behind)",
+                         car=slow, lap=slow.lap)
+            ev.kind, ev.source = "blue_flag", "auto"
+            # only when the chat is on - an "OFF, not sent" line for every
+            # blue flag would flood the log
+            if self.chat_cfg.get("enabled") and self._chat_capable():
+                self.to_iracing("notify", car=slow,
+                                msg=f"BLUE FLAG - let #{fast.number} "
+                                    f"{fast.driver} pass")
 
     # -- autosave -----------------------------------------------------------
 
@@ -236,6 +281,9 @@ class Engine:
 
     # -- decisions onto the stream (step 3) -----------------------------------
 
+    def steward_status(self) -> dict:
+        return dict(self.steward_cfg)
+
     def stream_status(self) -> dict:
         return {"enabled": bool(self.stream_cfg.get("enabled")),
                 "banner_url": self.stream_cfg.get("banner_url", ""),
@@ -286,7 +334,8 @@ class Engine:
             {"type": "events", **self.state.events_payload()},
             {"type": "snapshot", **self.state.snapshot(),
              "running": self.running, "chat": self.chat_status(),
-             "stream": self.stream_status()},
+             "stream": self.stream_status(),
+             "steward": self.steward_status()},
         ]
 
     def handle_client_message(self, msg: dict) -> dict | None:
@@ -327,6 +376,26 @@ class Engine:
                 f"({self.stream_cfg.get('banner_url')})")
             return {"type": "ack", "text": "stream banner "
                     + ("ON" if self.stream_cfg["enabled"] else "OFF")}
+
+        if action == "set_steward":
+            cfg = dict(self.steward_cfg)
+            for k in steward.DEFAULT_CONFIG:
+                if k in msg:
+                    cfg[k] = msg[k]
+            self.steward_cfg = steward.clean(cfg)
+            steward.save_config(self.steward_cfg)
+            c = self.steward_cfg
+            st.note_system(
+                f"Auto Steward {'ON' if c['enabled'] else 'OFF'}: incidents "
+                f"{steward.describe(c)}; caution "
+                + (f"{c['fcy_cars']} cars / {c['fcy_window_s']}s "
+                   f"({c['fcy_mode']})" if c["fcy_enabled"] else "off")
+                + "; quali AM/PRO "
+                + (f"{c['quali_split_min']} min" if c["quali_split"] else "off")
+                + "; blue flag "
+                + (f"{c['blue_gap_s']:.1f}s" if c["blue_enabled"] else "off"))
+            return {"type": "ack", "text": "Auto Steward "
+                    + ("ON" if c["enabled"] else "OFF")}
 
         if action == "stream_test":
             return {"type": "ack", "text": self.to_stream(
@@ -591,7 +660,8 @@ async def _race_loop() -> None:
         messages.append(json.dumps(
             {"type": "snapshot", **engine.state.snapshot(),
              "running": engine.running, "chat": engine.chat_status(),
-             "stream": engine.stream_status()}))
+             "stream": engine.stream_status(),
+             "steward": engine.steward_status()}))
 
         dead: list[WebSocket] = []
         for client in list(engine.clients):

@@ -23,7 +23,10 @@ admin):** admin chat commands into iRacing (`backend/chat.py`, see README).
 **Step 3a done (October 27):** decisions go to the Race Control banner 5019
 (`backend/stream.py`, header STREAM BANNER). **Step 3b done:** open penalties
 on the tower (5019 `/rc/penalties` → 5005: DT / SG / +5s / DSQ / INV after the
-name). Next: the Auto Steward.
+name). **Step 3c done:** the Auto Steward (`backend/steward.py`, header AUTO
+STEWARD + Rules): incident-limit message (15x, then every 6x), full course
+caution when several cars crash at once (ask / auto), GT3 WCT quali AM / PRO
+messages, blue flags at 1 s. Not yet tried in a real session.
 
 These items turn iRacing mode from "accurate timing" into a tool you can steward
 a real CAS Community race with.

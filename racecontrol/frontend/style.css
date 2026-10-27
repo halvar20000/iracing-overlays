@@ -162,6 +162,7 @@ button { font-family: var(--sans); cursor: pointer; }
 .chat-toggle.on  { background: #2a1030; border-color: #d36bff; color: #e7a8ff; }
 .chat-toggle.off { background: var(--panel-2); color: var(--mut); }
 .chat-toggle.na  { opacity: .45; }
+.chat-toggle.steward.on { background: #2a1d08; border-color: #ffb020; color: #ffd27a; }
 .chat-toggle.stream.on { background: #10222e; border-color: #4fc3ff; color: #a8e2ff; }
 .chat-sub { display: flex; gap: 3px; }
 .chat-sub select, .chat-sub button { flex: 1; font-size: 9.5px; padding: 2px 4px;
@@ -466,3 +467,20 @@ td.dsq { color: var(--red) !important; text-decoration: line-through; }
   padding: 1px 8px; }
 .metric.inc.spectator span::after { content: "*"; color: var(--yellow); }
 .ia-replay button:disabled { opacity: .35; cursor: not-allowed; }
+
+/* Auto Steward (step 3c) */
+.log-row.auto { font-weight: 700; }
+.log-row.auto_steward, .log-row.auto_caution_ask, .log-row.auto_caution {
+  background: #3a2606; box-shadow: inset 3px 0 0 #ffb020; color: #ffd27a; }
+.log-row.blue_flag .log-text { color: #8fc8ff; font-weight: 400; }
+.log-act { flex: 0 0 auto; font-size: 10px; font-weight: 800; cursor: pointer;
+  background: #ffcc00; color: #111; border: 0; border-radius: 3px; padding: 2px 7px; }
+.sdlg { width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 40px); overflow: auto; }
+.sdlg fieldset { border: 1px solid var(--border-2); border-radius: 4px; padding: 6px 10px 8px;
+  display: flex; flex-direction: column; gap: 6px; }
+.sdlg legend, .sdlg legend label { font-size: 12px; color: var(--text); font-weight: 600; }
+.sdlg input[type=number] { width: 64px; padding: 2px 4px; font-size: 13px; }
+.sdlg input.wide { width: 100%; box-sizing: border-box; font-size: 13px; }
+.sdlg select { font-size: 12px; }
+.dlg-note { font-size: 11px; color: var(--mut); }
+.log-row.auto .log-text { white-space: normal; overflow: visible; }

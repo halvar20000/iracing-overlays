@@ -837,5 +837,177 @@ check("banner not reached -> clear log line",
 check("snapshot carries the stream status",
       eng6.initial_messages()[-1]["stream"]["banner_url"] == "http://192.168.86.138:5019")
 
+print("Auto Steward (step 3c)")
+from backend import steward  # noqa: E402
+steward.CONFIG_PATH = __import__("pathlib").Path(tmp) / "steward_config.json"
+R = steward.clean({})
+check("limit levels 14/15/20/21/27 -> 0/1/1/2/3",
+      [steward.level(n, R) for n in (14, 15, 20, 21, 27)] == [0, 1, 1, 2, 3])
+check("threshold of DT #3 = 27x", steward.threshold(3, R) == 27)
+
+
+def sframe(t, cars, incidents=(), totals=None, stype="RACE", state="RACING",
+           flags=(), num=2, key="9-9", length=4.0):
+    return Frame(session=SessionFrame(session_time=t, session_num=num,
+                                      session_key=key, session_type=stype,
+                                      session_state=state, flags=list(flags),
+                                      track_length_km=length),
+                 cars=list(cars), incidents=list(incidents),
+                 incident_totals=totals, source_name="iracing", connected=True)
+
+
+def scar(idx, num, lap=3, pct=0.5, best=100.0, pit=False):
+    return CarFrame(car_idx=idx, car_number=num, driver_name=f"D{num}", lap=lap,
+                    lap_dist_pct=pct, best_lap=best, on_pit_road=pit,
+                    position=idx + 1)
+
+
+eng7 = server.Engine(force_sim=True)
+eng7.state = RaceState()
+sent7 = []
+eng7.source = type("S", (), {"name": "iracing",
+                             "send_chat": lambda self, *a: sent7.append(a[0]) or "ok",
+                             "send_command": lambda self, c, **k: "x"})()
+eng7.chat_cfg["enabled"] = True
+
+
+def step(fr):
+    eng7.state.steward_rules = eng7.steward_cfg
+    eng7.state.ingest(fr)
+    for act in eng7.auto.check(eng7.state, eng7.steward_cfg):
+        eng7._steward_action(act)
+
+
+def autos(kind):
+    return [e for e in eng7.state.events if e.kind == kind]
+
+
+five = [scar(i, str(10 + i), pct=0.1 * i) for i in range(5)]
+step(sframe(10, five, totals={0: 14}))
+check("14x: no limit message", not autos("auto_steward"))
+step(sframe(11, five, totals={0: 15}))
+a = autos("auto_steward")
+check("15x: one AUTO STEWARD line, drive through due, no chat",
+      len(a) == 1 and "reached 15x" in a[0].text and "drive through due" in a[0].text
+      and a[0].category == "penalty" and not sent7, [e.text for e in a])
+step(sframe(12, five, totals={0: 20}))
+check("20x: nothing new", len(autos("auto_steward")) == 1)
+step(sframe(13, five, totals={0: 22}))
+a = autos("auto_steward")
+check("21x passed: DT #2 due", len(a) == 2 and "reached 21x (now 22x)" in a[1].text
+      and "drive through #2" in a[1].text, a[-1].text)
+saved = eng7.state.to_saved()
+check("level is autosaved", saved["cars"]["0"]["steward_level"] == 2)
+rs7 = RaceState()
+rs7.load_saved(saved)
+rs7.steward_rules = R
+rs7.ingest(sframe(14, five, totals={0: 22}))
+check("restored: no repeat", not [e for e in rs7.events[len(saved["events"]):]
+                                  if e.kind == "auto_steward"])
+rs8 = RaceState()
+rs8.steward_rules = R
+rs8.ingest(sframe(5, five, totals={1: 28}))
+a8 = [e for e in rs8.events if e.kind == "auto_steward"]
+check("attach at 28x: ONE line naming DT #3 (27x)",
+      len(a8) == 1 and "reached 27x" in a8[0].text and "#3" in a8[0].text, a8)
+rs9 = RaceState()
+rs9.steward_rules = R
+rs9.ingest(sframe(5, five, totals={1: 16}, stype="LONE QUALIFY"))
+check("not in qualifying", not [e for e in rs9.events if e.kind == "auto_steward"])
+rs9.steward_rules = steward.clean({"enabled": False})
+rs9.ingest(sframe(6, five, totals={1: 16}))
+check("Auto Steward OFF: no line", not [e for e in rs9.events if e.kind == "auto_steward"])
+
+# full course caution
+def det(idx, kind="spin"):
+    return IncidentEvent(idx, 0, kind, 3, source="detected", text=kind)
+
+
+step(sframe(20, five, [det(1)]))
+step(sframe(25, five, [det(2, "contact")]))
+check("2 cars: no caution", not autos("auto_caution_ask"))
+step(sframe(28, five, [IncidentEvent(3, 1, "off-track", 3, total=1)], totals={0: 22, 3: 1}))
+check("a 1x off-track does not count", not autos("auto_caution_ask"))
+step(sframe(30, five, [det(3, "stopped")]))
+a = autos("auto_caution_ask")
+check("3 cars within 20 s -> caution question (ask), nothing typed",
+      len(a) == 1 and "3 cars" in a[0].text and "#11" in a[0].text
+      and not any("!yellow" in x for x in sent7), a and a[0].text)
+step(sframe(33, five, [det(4)]))
+check("not again inside the cooldown", len(autos("auto_caution_ask")) == 1)
+eng7.handle_client_message({"action": "set_steward", "fcy_mode": "auto",
+                            "fcy_cooldown_s": 0})
+check("rules saved", steward.load_config()["fcy_mode"] == "auto")
+step(sframe(40, five, flags=["caution"]))
+step(sframe(41, five, [det(0), det(1), det(2)], flags=["caution"]))
+check("under a caution: nothing", not autos("auto_caution"))
+step(sframe(80, five))
+step(sframe(81, five, [det(0)]))
+step(sframe(82, five, [det(1)]))
+step(sframe(83, five, [det(2)]))
+check("auto mode: !yellow typed", len(autos("auto_caution")) == 1
+      and any(x.startswith("!yellow") for x in sent7), sent7)
+step(sframe(90, five, [det(0)], stype="PRACTICE"))
+check("practice: no caution", len(autos("auto_caution")) == 1)
+
+# quali AM / PRO
+eng7.handle_client_message({"action": "set_steward", "quali_split": True})
+q = [scar(0, "7")]
+step(sframe(30, q, stype="OPEN QUALIFY", num=1, key="q-1"))
+a = autos("auto_quali")
+check("quali start: AM message to everybody (+ chat /all)",
+      len(a) == 1 and "AM DRIVERS" in a[0].text
+      and sent7[-1] == "/all QUALIFYING: THE FIRST 15 MINUTES ARE RESERVED FOR AM DRIVERS",
+      sent7[-1])
+step(sframe(600, q, stype="OPEN QUALIFY", num=1, key="q-1"))
+check("no repeat at 10 min", len(autos("auto_quali")) == 1)
+step(sframe(901, q, stype="OPEN QUALIFY", num=1, key="q-1"))
+a = autos("auto_quali")
+check("15 min: AM finished, PRO started",
+      len(a) == 2 and sent7[-1] == "/all AM QUALIFYING FINISHED - PRO QUALIFYING STARTED")
+step(sframe(905, q, stype="OPEN QUALIFY", num=1, key="q-1"))
+check("PRO message once", len(autos("auto_quali")) == 2)
+eng7.auto.reset()
+step(sframe(1300, q, stype="OPEN QUALIFY", num=1, key="q-1"))
+check("iCAS started mid-quali (20 min): nothing announced", len(autos("auto_quali")) == 2)
+
+# blue flags (100 s laps -> 0.01 lap = 1 s)
+def blue_frame(t, slow_pct, fast_pct, fast_lap=5, slow_lap=4):
+    return sframe(t, [scar(0, "7", lap=fast_lap, pct=fast_pct, best=100.0),
+                      scar(1, "14", lap=slow_lap, pct=slow_pct, best=103.0)],
+                  num=3, key="b-1")
+
+
+n0 = len(sent7)
+step(blue_frame(100, 0.50, 0.48))
+check("2 s behind: no blue flag", not autos("blue_flag"))
+step(blue_frame(101, 0.50, 0.492))
+a = autos("blue_flag")
+check("0.8 s behind the car he is lapping -> blue flag to #14",
+      len(a) == 1 and a[0].car_number == "14" and "let #7 D7 pass" in a[0].text
+      and sent7[-1] == "/all #14 BLUE FLAG - let #7 D7 pass", (sent7[n0:], a))
+step(blue_frame(105, 0.55, 0.542))
+check("not repeated within 20 s", len(autos("blue_flag")) == 1)
+step(blue_frame(122, 0.70, 0.692))
+check("still held up after 20 s -> again", len(autos("blue_flag")) == 2
+      and "(again)" in autos("blue_flag")[-1].text)
+step(blue_frame(124, 0.72, 0.73))
+step(blue_frame(160, 0.90, 0.892))
+check("after the pass the pair is re-armed (next lap)", len(autos("blue_flag")) == 3)
+step(sframe(170, [scar(0, "7", lap=5, pct=0.492), scar(1, "14", lap=5, pct=0.50)],
+            num=3, key="b-1"))
+check("same lap fight: no blue flag", len(autos("blue_flag")) == 3)
+step(sframe(180, [scar(0, "7", lap=6, pct=0.592),
+                  scar(1, "14", lap=5, pct=0.60, pit=True)], num=3, key="b-1"))
+check("car in the pit lane: no blue flag", len(autos("blue_flag")) == 3)
+eng7.chat_cfg["enabled"] = False
+k = len(eng7.state.events)
+step(blue_frame(200, 0.30, 0.292, fast_lap=8, slow_lap=6))
+check("chat OFF: only the log line, no 'not sent' spam",
+      len([e for e in eng7.state.events[k:] if e.category != "pit"]) == 1
+      and len(autos("blue_flag")) == 4, [e.text for e in eng7.state.events[k:]])
+check("snapshot carries the steward rules",
+      eng7.initial_messages()[-1]["steward"]["dt_first"] == 15)
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
