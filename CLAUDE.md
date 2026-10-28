@@ -181,6 +181,23 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 28, 2026 (tower intervals wrong — Björn's WCT The Bend photo):**
+blank intervals mid-tower with +58 s / +50 s next to them, and "+17 LAPS"
+for every OUT car although they stopped in lap 12. (1) The interval was the
+diff of CarIdxF2Time (refreshed only at timing lines, in iRacing's OWN
+order) while the tower sorts by live progress — after the stops the two
+disagreed: negative diff clamped to 0 = blank, the next car got both gaps.
+NEW `GapClock`: each poll records (lap + pct, SessionTime) per in-world car;
+interval = now − when the car ahead passed this car's current progress
+(interpolated; 600 s window; reset on session change / time jump back /
+progress going back). F2Time only without history, and a negative F2Time
+diff now falls to the pct × EstLapTime estimate instead of a blank. (2) OUT
+cars read lap / pct −1 → laps down from the leader's lap + 2: the tower now
+keeps each car's last in-world progress (`_last_prog`) and uses it; never
+seen running = no "+N LAPS"; OUT = no interval. NEW test_gap_clock.py 10/10
+(6 fail on the old code exactly like the photo); standings tests pass.
+CODE_VERSION "2026-10-28 gap-clock". Restart 5005.
+
 **October 27, 2026 (driver card: CLS team under the name + FULL name):** the
 card now shows the full name with first name (?short=1 = old "M. Becker"). Solo sessions
 (WCT, PCCD) send no real team (TeamName = driver → hidden), so the card

@@ -22,6 +22,7 @@ Runs in parallel with the other iracing_*.py scripts. It connects to
 iRacing independently.
 """
 
+import bisect
 import json
 import threading
 import time
@@ -172,6 +173,64 @@ def _fill_class_labels(drivers: dict) -> None:
             m["car_class"] = m.get("car_class") or label
 
 
+
+class GapClock:
+    """Time gaps from WHEN each car passed a point of the race (2026-10-28).
+
+    Björn's WCT screenshot (The Bend): blank intervals in the middle of the
+    tower and +58 s / +50 s next to them. The interval used to be the diff
+    of CarIdxF2Time, iRacing's "behind the class leader" time — but F2Time
+    is refreshed only at timing lines and runs in iRacing's OWN order, while
+    the tower sorts by live track progress. After pit stops the two disagree:
+    the diff went negative (clamped to 0 = blank cell) and the next car got
+    the sum of both gaps.
+
+    Here every car's (race progress = lap + pct, session time) is recorded
+    each poll; the gap of B behind A = now - the moment A was where B is now
+    (linear interpolation between two samples). That is the gap a timing
+    screen shows, in the tower's own order, and needs no F2Time at all.
+    """
+
+    WINDOW_S = 600.0          # history kept per car (gaps above that = F2Time)
+
+    def __init__(self):
+        self.key = None
+        self.hist: dict = {}  # cidx -> ([progress...], [time...])
+        self.last_t = None
+
+    def update(self, key, t: float, progress: dict):
+        if key != self.key or (self.last_t is not None and t < self.last_t - 1.0):
+            self.key, self.hist = key, {}       # new session / replay jump back
+        self.last_t = t
+        for cidx, p in progress.items():
+            ps, ts = self.hist.setdefault(cidx, ([], []))
+            if ps and p < ps[-1] - 0.05:        # tow / reset / scrub: start over
+                ps.clear(); ts.clear()
+            if ps and p <= ps[-1]:
+                continue                        # standing still: keep the first pass
+            ps.append(p); ts.append(t)
+            cut = 0
+            while cut < len(ts) - 2 and t - ts[cut] > self.WINDOW_S:
+                cut += 1
+            if cut:
+                del ps[:cut]; del ts[:cut]
+
+    def gap(self, ahead: int, p_behind: float, t_now: float):
+        h = self.hist.get(ahead)
+        if not h or len(h[0]) < 2:
+            return None
+        ps, ts = h
+        if p_behind < ps[0] or p_behind > ps[-1]:
+            return None
+        i = bisect.bisect_left(ps, p_behind)
+        if i == 0:
+            t_at = ts[0]
+        else:
+            p0, p1, t0, t1 = ps[i - 1], ps[i], ts[i - 1], ts[i]
+            t_at = t0 + (t1 - t0) * ((p_behind - p0) / (p1 - p0) if p1 > p0 else 0.0)
+        return max(0.0, t_now - t_at)
+
+
 class StandingsPoller(SDKPoller):
     tag = "standings"
     poll_interval = 1.0
@@ -195,6 +254,13 @@ class StandingsPoller(SDKPoller):
         # NET value vs the start that never accumulates. Rendered as a
         # permanent second column next to the interval in race sessions.
         self._grid = GridBaseline()
+
+        # Live gaps from passing times (GapClock) + every car's last progress
+        # while in the world: a car that leaves (OUT) reads lap / pct -1, which
+        # made "+17 LAPS" for drivers who had stopped in lap 12.
+        self._gapclock = GapClock()
+        self._last_prog: dict = {}
+        self._prog_key = None
 
         # Qualifying memory: every driver's best OFFICIAL time this quali
         # session, keyed by iRacing customer ID. A driver who quits the
@@ -357,6 +423,11 @@ class StandingsPoller(SDKPoller):
         on_pit     = ir["CarIdxOnPitRoad"] or []
         in_world   = ir["CarIdxTrackSurface"] or []  # -1 = NotInWorld
 
+        key = (ir["SessionUniqueID"], ir["SessionNum"])
+        if key != self._prog_key:
+            self._prog_key, self._last_prog = key, {}
+        t_now = float(ir["SessionTime"] or 0.0)
+
         rows = []
         for cidx, drv in drivers.items():
             # iRacing's CarIdxPosition is read but NOT used for ordering.
@@ -395,7 +466,19 @@ class StandingsPoller(SDKPoller):
                 "last_pit_lap":  self._last_pit_lap.get(cidx),
                 "pit_lane_time": self._last_pit_time.get(cidx),
             }
+            if row["in_world"] and row["lap"] >= 0 and row["lap_pct"] >= 0:
+                self._last_prog[cidx] = (row["lap"], row["lap_pct"])
+            elif not row["in_world"]:
+                # OUT: iRacing sends lap / pct -1. Keep where he stopped, so
+                # the lap-down count is real (or none if never seen running).
+                lp = self._last_prog.get(cidx)
+                row["lap"], row["lap_pct"] = lp if lp else (max(row["lap"], 0), 0.0)
+                row["_no_progress"] = lp is None
             rows.append(row)
+
+        self._gapclock.update(key, t_now, {
+            r["car_idx"]: r["lap"] + r["lap_pct"] for r in rows
+            if r["in_world"] and r["lap"] >= 0 and r["lap_pct"] >= 0})
 
         # ------------------------------------------------------------------
         # Live running order via track progress.
@@ -516,6 +599,8 @@ class StandingsPoller(SDKPoller):
                 continue
             my_progress = float(r.get("lap", 0) or 0) + float(r.get("lap_pct", 0.0) or 0.0)
             diff = leader_progress - my_progress
+            if r.get("_no_progress"):
+                continue
             if diff >= 1.0 and not pre_green:
                 r["laps_behind"] = int(diff)  # 1.x -> 1, 2.x -> 2, etc.
 
@@ -541,9 +626,13 @@ class StandingsPoller(SDKPoller):
                 # Class leader — no car ahead within the class. (Before the
                 # green there is no gap to show at all.)
                 r["interval"] = None
-            elif r.get("laps_behind", 0) >= 1:
-                # Lapped: the "+N LAP" label replaces the interval.
+            elif r.get("laps_behind", 0) >= 1 or not r.get("in_world"):
+                # Lapped: the "+N LAP" label replaces the interval. OUT: no gap.
                 r["interval"] = None
+            elif (g := self._gapclock.gap(
+                    prev["car_idx"], float(r["lap"]) + float(r["lap_pct"]), t_now)) is not None:
+                # When the car ahead passed this spot — see GapClock.
+                r["interval"] = g
             else:
                 prev_total = prev.get("_gap_to_leader")
                 # Prefer F2Time-based gap when either car has a populated
@@ -552,10 +641,11 @@ class StandingsPoller(SDKPoller):
                 if (my_total is not None and prev_total is not None
                         and (my_total > 0 or prev_total > 0)):
                     delta = my_total - prev_total
-                    # Negative delta can happen mid-frame during overtakes;
-                    # clamp to 0 so the display doesn't flash "−0.4".
-                    r["interval"] = max(0.0, delta)
-                else:
+                    # Negative = F2Time disagrees with the progress order
+                    # (stale after a stop) -> the estimate below, not a blank.
+                    if delta > 0:
+                        r["interval"] = delta
+                if r.get("interval") is None:
                     # Lap-1 fallback: track-position-based estimate.
                     my_pct = float(r.get("lap_pct", 0.0) or 0.0)
                     prev_pct = float(prev.get("lap_pct", 0.0) or 0.0)
@@ -2791,7 +2881,7 @@ def standings():
 # Bump on every change: http://localhost:5005/version shows which code the
 # running process actually loaded (the stream PC gets this folder through
 # Nextcloud, so a restart can still pick up the previous file).
-CODE_VERSION = "2026-10-27 tower-slim"
+CODE_VERSION = "2026-10-28 gap-clock"
 
 
 @app.route("/version")
