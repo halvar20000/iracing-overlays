@@ -181,6 +181,16 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 28, 2026 (trackmap 5007: turn numbers):** Thomas wanted the turn
+numbers on the map. The track SVG now carries a small dark numbered disc per
+corner, 36 px from the apex on the OUTSIDE of the bend (`_turn_labels`). The
+corners and numbers are the SAME as the corner-cue overlay 5012 and its /turn
+label: `iracing_drivingline.load_track_corners` (geometry, imported lazily)
++ cues/<track>.json "turn" (official number) / "hide". Geometry numbering can
+differ from the official one (Hungaroring 16 vs 14, chicane halves count), and
+cues/ is where that gets fixed per track. `?turns=0` hides them. /state carries
+`track_length_m`. Checked by rendering Hungaroring, Spa, The Bend GT. Restart 5007.
+
 **October 28, 2026 (RC banner 5019: black flag on pit road = "PIT LANE
 SPEEDING"):** WCT The Bend: Maurice Becker's black flag came 1.5 s after his
 pit entry (race log: pit entry 2175.5 s, flag 2177.0, stop 92.6 s vs ~34 s

@@ -38,7 +38,7 @@ Quelle: `?auto=1` (+ `?secs=`), `?cycle=20` (lastrace / table) oder
 | Driver Card | 5017 | `driver.html` | ✓ 1000 × 130 |
 | Driver Card ohne iRating / Safety Rating | 5017 `/simple` | `driver_simple.html` | ✓ 800 × 130 |
 | Livery (Auto der Kamera) | 5006 | `livery.html` | ≈ 800 × 350 |
-| Track Map | 5007 | `trackmap.html` | ≈ 1000 × 600 (skaliert mit) |
+| Track Map | 5007 | `trackmap.html` | ≈ 1000 × 600 (skaliert mit); Kurvennummern, `?turns=0` blendet sie aus |
 | Race Control (Gelbphase, Strafen-Flaggen, iRaceControl-Meldungen) | 5019 | `rc_banner.html` | ≈ 950 × 120 (siehe RACE_CONTROL.md) |
 | Flaggen (weiß / karierte) | 5008 | `flag.html` | ≈ 280 × 200 |
 | Neuer Führender (Banner) | 5018 | `leader.html` | ≈ 760 × 220 |

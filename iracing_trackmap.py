@@ -26,6 +26,7 @@ Background on the data:
 """
 
 from __future__ import annotations
+import html
 import json
 import math
 import re
@@ -52,6 +53,7 @@ POLL_INTERVAL = 0.25  # seconds
 SVG_VIEW_W = 1000
 SVG_VIEW_H = 600
 SVG_MARGIN = 40
+TURN_LABEL_OFFSET = 36   # turn number: apex -> label centre (road 28 wide, dots r 17)
 
 # An ontrack route whose open end is within this fraction of its own length is
 # treated as a closed circuit and gets its final segment drawn in.
@@ -470,6 +472,7 @@ class TrackmapPoller(SDKPoller):
             "cars":           cars,
             "classes":        [{"color": c, "name": n} for c, n in legend.items()],
             "location":       _track_location(weekend, track_file),
+            "track_length_m": _track_length_m(weekend),
         }
 
 
@@ -643,6 +646,47 @@ def debug():
     })
 
 
+def _track_length_m(weekend: dict) -> float | None:
+    """WeekendInfo.TrackLength ('3.70 km') in metres, or None."""
+    try:
+        v = float(str(weekend.get("TrackLength") or "").split()[0])
+    except (ValueError, IndexError):
+        return None
+    return v * 1000.0 if v > 0 else None
+
+
+def _turn_labels(track_file: str, track: dict) -> list[dict]:
+    """Turn numbers for the map (2026-10-28): the SAME corners and numbers
+    as the corner-cue overlay 5012 / its /turn label (geometry analysis +
+    cues/<track>.json "turn" / "hide"), placed next to the apex on the
+    OUTSIDE of the corner so the label never sits on the road."""
+    try:
+        from iracing_drivingline import load_track_corners
+    except Exception as e:
+        print(f"[trackmap] turn numbers unavailable: {e!r}")
+        return []
+    an = load_track_corners(track_file, (poller.get() or {}).get("track_length_m"))
+    out = []
+    for c in (an or {}).get("corners") or []:
+        if c.get("hide"):
+            continue
+        p = c["apex_pct"]
+        a, b = pct_to_xy(track, p - 0.003), pct_to_xy(track, p + 0.003)
+        xy = pct_to_xy(track, p)
+        if not (a and b and xy):
+            continue
+        tx, ty = b[0] - a[0], b[1] - a[1]
+        ln = math.hypot(tx, ty) or 1.0
+        tx, ty = tx / ln, ty / ln
+        # y grows south: right of travel = (-ty, tx); outside of a right
+        # turn is the left side, and vice versa.
+        nx, ny = (ty, -tx) if c["dir"] == "R" else (-ty, tx)
+        x = min(max(xy[0] + nx * TURN_LABEL_OFFSET, 14), track["view_w"] - 14)
+        y = min(max(xy[1] + ny * TURN_LABEL_OFFSET, 14), track["view_h"] - 14)
+        out.append({"turn": c.get("turn", c["num"]), "x": x, "y": y})
+    return out
+
+
 @app.route("/track/<track_file>.svg")
 def track_svg(track_file: str):
     """Return an SVG containing the track outline + pit lane.
@@ -661,6 +705,14 @@ def track_svg(track_file: str):
         d = " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
         return f'<polyline class="{cls}" points="{d}"/>'
 
+    # ?turns=0 = no turn numbers
+    turns = ""
+    if request.args.get("turns", "1") != "0":
+        turns = "".join(
+            f'<g class="turn"><circle cx="{t["x"]:.1f}" cy="{t["y"]:.1f}" r="13"/>'
+            f'<text x="{t["x"]:.1f}" y="{t["y"]:.1f}">{html.escape(str(t["turn"]))}</text></g>'
+            for t in _turn_labels(track_file, track))
+
     svg = (
         f'<svg xmlns="http://www.w3.org/2000/svg" '
         f'viewBox="0 0 {track["view_w"]} {track["view_h"]}" '
@@ -669,10 +721,13 @@ def track_svg(track_file: str):
         f'.pit {{ fill:none; stroke:#6a6a7a; stroke-width:5; stroke-linecap:round; stroke-linejoin:round; }}'
         f'.road {{ fill:none; stroke:#e8e8f0; stroke-width:28; stroke-linecap:round; stroke-linejoin:round; }}'
         f'.inner {{ fill:none; stroke:#4ade80; stroke-width:2; stroke-dasharray:5 8; stroke-linecap:round; }}'
+        f'.turn circle {{ fill:rgba(14,14,20,0.88); stroke:#9a9aad; stroke-width:1.5; }}'
+        f'.turn text {{ fill:#ffffff; font:800 15px "Segoe UI",sans-serif; text-anchor:middle; dominant-baseline:central; }}'
         f'</style>'
         + polyline(track["onpitroad_xy"], "pit")
         + polyline(track["ontrack_xy"], "road")
         + polyline(track["ontrack_xy"], "inner")
+        + turns
         + '</svg>'
     )
     resp = Response(svg, mimetype="image/svg+xml")
@@ -890,7 +945,8 @@ async function loadTrack(trackFile, viewW, viewH) {
         </div>`;
 
     try {
-        const r = await fetch(`/track/${trackFile}.svg?v=${Date.now()}`, { cache: 'no-store' });
+        const tq = new URLSearchParams(location.search).get('turns') === '0' ? '&turns=0' : '';
+        const r = await fetch(`/track/${trackFile}.svg?v=${Date.now()}${tq}`, { cache: 'no-store' });
         if (!r.ok) throw new Error('SVG fetch failed: ' + r.status);
         const svgText = await r.text();
         document.getElementById('track-svg-host').innerHTML = svgText;
