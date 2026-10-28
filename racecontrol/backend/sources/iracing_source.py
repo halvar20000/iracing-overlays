@@ -200,6 +200,8 @@ class IRacingSource(DataSource):
         self._chat_verify: dict[str, tuple] = {}  # text -> (kind, car_idx)
         self.detector = BehaviourDetector()
         self.official = OfficialIncidents()
+        self._di_session: Optional[int] = None
+        self._di_base: Optional[dict] = {}
         self._inc_next = 0.0
         self._totals: Optional[dict[int, int]] = None
         self._session_num = 0
@@ -589,6 +591,28 @@ class IRacingSource(DataSource):
             # Spectators get 0 / -1 there; the highest real value wins.
             di = self._g("DriverInfo", {}) or {}
             by_idx = {r["car_idx"]: r for r in raw}
+            # These DriverInfo counts are NOT reset when a new session starts
+            # (WCT The Bend 2026-10-27, not admin: at the green of quali,
+            # warmup and race every car got the PREVIOUS session's final count
+            # logged as a fresh incident). The values seen at a session change
+            # are a baseline for that session; once any car reads below its
+            # baseline, iRacing has reset them and the baseline is dropped.
+            if session_num != self._di_session:
+                first = self._di_session is None
+                self._di_session = session_num
+                self._di_base = {} if first else None   # None = take next read
+            if self._di_base:
+                for d in di.get("Drivers", []) or []:
+                    try:
+                        v = max(int(d.get("TeamIncidentCount", -1) or 0),
+                                int(d.get("CurDriverIncidentCount", -1) or 0))
+                        if 0 <= v < self._di_base.get(int(d.get("CarIdx", -1)), 0):
+                            self._di_base = {}   # iRacing reset them
+                            break
+                    except (TypeError, ValueError):
+                        continue
+            base = self._di_base
+            seen: dict[int, int] = {}
             for d in di.get("Drivers", []) or []:
                 try:
                     idx = int(d.get("CarIdx", -1))
@@ -599,6 +623,9 @@ class IRacingSource(DataSource):
                 except (TypeError, ValueError):
                     continue
                 best = max(team, cur)
+                seen[idx] = best
+                if base and best >= 0:
+                    best -= base.get(idx, 0)
                 if best >= 0 and best > totals.get(idx, -1):
                     totals[idx] = best
                 row = by_idx.get(idx)
@@ -608,6 +635,12 @@ class IRacingSource(DataSource):
                     raw.append(row)
                 row["team_inc"] = team
                 row["driver_inc"] = cur
+            if base is None:
+                # first read of a new session: its baseline, nothing counted
+                self._di_base = {i: v for i, v in seen.items() if v > 0}
+                for i in self._di_base:
+                    if totals.get(i, 0) == self._di_base[i]:
+                        totals[i] = 0   # the stale value went into totals above
             self._note_inc_debug(session_num, cur_session, raw)
             for idx, delta, total in self.official.update(session_num, totals):
                 out.append(IncidentEvent(car_idx=idx, points=delta,

@@ -345,6 +345,39 @@ check("debug: raw rows as iRacing sent them",
 src._ir = fake_ir(53, {0: 3, 1: 4}, replay=True)
 check("in_replay flagged", src._read_frame(0.1).session.in_replay)
 
+# 2026-10-27 WCT The Bend (not admin): the DriverInfo counts are NOT reset at
+# a session change - each new session logged the previous one's final counts
+# as fresh incidents at its green.
+def di_ir(t, num, results, di):
+    ir = fake_ir(t, results)
+    ir["SessionNum"] = num
+    sess = ir["SessionInfo"]["Sessions"]
+    ir["SessionInfo"]["Sessions"] = [{"SessionType": "Practice"}] * num + sess
+    for d in ir["DriverInfo"]["Drivers"]:
+        d["TeamIncidentCount"] = di.get(d["CarIdx"], 0)
+    return ir
+
+
+def di_pts(t, num, results, di):
+    s4._inc_next = 0
+    s4._ir = di_ir(t, num, results, di)
+    return [(i.car_idx, i.points) for i in s4._read_frame(0.1).incidents
+            if i.source == "points"]
+
+
+s4 = irs.IRacingSource()
+di_pts(10, 2, {0: 6, 1: 4}, {0: 6, 1: 4})            # end of warmup: baseline
+check("new session: old DriverInfo counts are NOT news",
+      di_pts(20, 3, {}, {0: 6, 1: 4}) == [])
+check("new session, still stale: nothing", di_pts(22, 3, {}, {0: 6, 1: 4}) == [])
+check("counts keep rising from the old value: only the rise",
+      di_pts(24, 3, {}, {0: 8, 1: 4}) == [(0, 2)])
+check("race result later (results 3x for car 1): taken as is",
+      di_pts(26, 3, {0: 2, 1: 3}, {0: 8, 1: 4}) == [(1, 3)])
+check("next session stale again: nothing", di_pts(30, 4, {}, {0: 8, 1: 4}) == [])
+check("iRacing resets the counts (below baseline): plain values again",
+      di_pts(32, 4, {}, {0: 1, 1: 0}) == [(0, 1)])
+
 # 2026-10-27: iCAS stayed on CAUTION after the restart - local yellow bits
 # (0x08 / 0x100) counted as a caution; iRacing keeps green 0x04 on throughout
 from backend.race_state import RaceState as _RS

@@ -181,6 +181,25 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 28, 2026 (iCASControl 0.1.16 — WCT The Bend race save reviewed):**
+Thomas's autosave 326084573-89682872.json (PC not session admin): official
+points were NOT live in any session — each session's points came in one go
+at its end (practice 4512 s, quali 2060, warmup 315, race 3943), so the
+15x / then 6x incident rule fired only after the flag (Rissler 21x, Warnow
+18x at 21:01; iRacing's own black flags had come during the race). Live
+points need the admin account on the iCAS PC. BUG fixed: DriverInfo
+TeamIncidentCount / CurDriverIncidentCount are NOT reset at a session change,
+so at the green of quali, warmup and race every car got the PREVIOUS
+session's final count logged as a new incident. Now the values read at a
+session change are that session's baseline (`_di_base`, first read = nothing
+counted, later reads minus the baseline); a value below its baseline = iRacing
+reset them → baseline dropped (checked BEFORE subtracting). test_incidents
+269/269 (+6, 4 fail on the old code). Also seen: sequencer quali messages
+(00:00:01 / 00:15:00) went to chat + banner; fast-repair (6) and PRO-behind
+(4) hints sent; the 21 "Blue flag: let … pass" lines are the OWN gap-based
+hint (Thomas's saved steward_config still has it ON — 0.1.11 made it default
+OFF); iRacing's blue-flag rule (20 s warn / 30 s DT) never fired.
+
 **October 28, 2026 (tower intervals wrong — Björn's WCT The Bend photo):**
 blank intervals mid-tower with +58 s / +50 s next to them, and "+17 LAPS"
 for every OUT car although they stopped in lap 12. (1) The interval was the
