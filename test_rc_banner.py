@@ -253,6 +253,24 @@ r = cl.get("/rc/penalties")
 check("P11 /rc/penalties", r.headers.get("Access-Control-Allow-Origin") == "*"
       and r.get_json()["penalties"]["77"]["tags"] == [{"type": "time", "label": "+10s"}], r.get_json())
 
+# ---- black flag on pit road = pit-lane speeding (WCT The Bend 27.10.) -------
+f = rc.Feed(); w = rc.FlagWatcher(f)
+w.tick(True, True, rc.F_GREEN, [0, 0], [0, 0], CARS, 0, [False, False])
+w.tick(True, True, rc.F_GREEN, [0, 0], [0, 0], CARS, 1, [True, False])     # #12 enters
+w.tick(True, True, rc.F_GREEN, [rc.F_BLACK, 0], [0, 0], CARS, 2.5, [True, False])
+check("PS1 black flag on pit road = pit lane speeding",
+      heads(f) == ["BLACK FLAG · PIT LANE SPEEDING"], str(heads(f)))
+check("PS2 still a penalty for the tower board",
+      f.list()[-1]["kind"] == "penalty" and rc.penalty_of("penalty", heads(f)[-1])[0] == "black")
+w.tick(True, True, rc.F_GREEN, [0, 0], [0, 0], CARS, 3, [False, True])     # #12 out, #44 in
+w.tick(True, True, rc.F_GREEN, [0, 0], [0, 0], CARS, 60, [False, False])   # #44 out at 60
+w.tick(True, True, rc.F_GREEN, [0, rc.F_BLACK], [0, 0], CARS, 63, [False, False])
+check("PS3 3 s after pit exit: still speeding (exit line)",
+      heads(f)[-1] == "BLACK FLAG · PIT LANE SPEEDING", str(heads(f)))
+w.tick(True, True, rc.F_GREEN, [rc.F_BLACK, 0], [0, 0], CARS, 100, [False, False])
+check("PS4 black flag on track = plain penalty",
+      heads(f)[-1] == "BLACK FLAG · PENALTY", str(heads(f)))
+
 print()
 print("ALL PASS" if not failures else f"FAILURES: {failures}")
 sys.exit(1 if failures else 0)

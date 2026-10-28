@@ -82,6 +82,11 @@ PACE_FLAGS = [
     (P_WAVED,     "pace", "WAVE AROUND"),
     (P_FREE_PASS, "pace", "FREE PASS"),
 ]
+# A black flag on pit road (or just after it) is iRacing's pit-lane speeding
+# penalty (WCT The Bend 2026-10-27: Maurice Becker's black flag came 1.5 s
+# after his pit entry, the stop took 92 s and nobody on stream knew why).
+PIT_SPEEDING_HEAD = "BLACK FLAG · PIT LANE SPEEDING"
+PIT_SPEEDING_AFTER_S = 5.0
 CAR_REPEAT_S = 30.0       # same flag for the same car: once per 30 s
 STEWARD_SOURCES = ("atvo", "icas")   # steward software: iRaceControl, our iCASControl
 STEWARD_KINDS = ("message", "warning", "penalty", "dq", "investigation", "nfa", "clear")
@@ -279,11 +284,19 @@ class FlagWatcher:
         self._prev_pace: dict = {}
         self._caution = False
         self._last_car: dict = {}
+        self._pit_until: dict = {}   # car_idx -> time it left pit road (or inf)
 
     def tick(self, is_race: bool, racing: bool, sess_flags: int,
-             car_flags: list, pace_flags: list, cars: dict, now: float):
-        """cars: car_idx -> {"num", "label", "color", "text"} (real cars)."""
+             car_flags: list, pace_flags: list, cars: dict, now: float,
+             on_pit: list | None = None):
+        """cars: car_idx -> {"num", "label", "color", "text"} (real cars).
+        on_pit: CarIdxOnPitRoad — names a black flag there pit-lane speeding."""
         sf = int(sess_flags or 0)
+        for i in cars:
+            if on_pit is not None and i < len(on_pit) and on_pit[i]:
+                self._pit_until[i] = float("inf")
+            elif self._pit_until.get(i) == float("inf"):
+                self._pit_until[i] = now
         if not self._primed:
             self._primed = True
             self._prev_sess = sf
@@ -326,6 +339,8 @@ class FlagWatcher:
                 if bit == F_FURLED and not self.warnings:
                     continue
                 if rise_c & bit:
+                    if bit == F_BLACK and now <= self._pit_until.get(i, -1e9) + PIT_SPEEDING_AFTER_S:
+                        head = PIT_SPEEDING_HEAD
                     self._car_msg(i, car, kind, head, now)
                     if bit in (F_DQ, F_BLACK):
                         break       # DQ also sets black; one line is enough
@@ -893,7 +908,8 @@ class RcPoller(SDKPoller):
         self.flags.tick(is_race, racing, ir["SessionFlags"] or 0,
                         list(ir["CarIdxSessionFlags"] or []),
                         list(ir["CarIdxPaceFlags"] or []),
-                        self._car_map(ir), time.monotonic())
+                        self._car_map(ir), time.monotonic(),
+                        list(ir["CarIdxOnPitRoad"] or []))
         return {"connected": True, "is_race": is_race, "racing": racing}
 
 

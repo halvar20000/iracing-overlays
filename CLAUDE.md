@@ -181,6 +181,18 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 28, 2026 (RC banner 5019: black flag on pit road = "PIT LANE
+SPEEDING"):** WCT The Bend: Maurice Becker's black flag came 1.5 s after his
+pit entry (race log: pit entry 2175.5 s, flag 2177.0, stop 92.6 s vs ~34 s
+normal) and the stream could not say why. FlagWatcher.tick takes
+CarIdxOnPitRoad; a black flag while the car is on pit road or within
+PIT_SPEEDING_AFTER_S 5 s after leaving it → headline "BLACK FLAG · PIT LANE
+SPEEDING" (still kind penalty → tower "PEN" tag). On track = "BLACK FLAG ·
+PENALTY" as before. Thomas did not have 5019 on air that night. Also from
+André: live incident points need the account to be entered as SESSION admin
+for the race (league admin is not enough); he then joins via Watch as a
+spectator. test_rc_banner PS1-PS4. Restart 5019.
+
 **October 28, 2026 (iCASControl 0.1.16 — WCT The Bend race save reviewed):**
 Thomas's autosave 326084573-89682872.json (PC not session admin): official
 points were NOT live in any session — each session's points came in one go
