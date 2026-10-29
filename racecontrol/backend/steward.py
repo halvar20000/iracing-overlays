@@ -125,9 +125,11 @@ CB_PASS_PCT = 0.02       # pairs this close on track are watched for passes
 
 
 def fill(text: str, car) -> str:
-    """iRaceControl placeholders: %cnr% = car number, %dname% = driver."""
+    """iRaceControl placeholders: %cnr% = car number, %dname% = driver,
+    %tname% = team (team events; else the driver)."""
     return (str(text or "").replace("%cnr%", str(car.number))
-            .replace("%dname%", str(car.driver)))
+            .replace("%dname%", str(car.driver))
+            .replace("%tname%", str(getattr(car, "team", "") or car.driver)))
 
 
 def fill_pro(text: str, am, pro) -> str:
@@ -139,7 +141,8 @@ def fill_fast(text: str, car, fast) -> str:
     """Blue flag texts: %cnr% / %dname% = the car to let past the faster
     one, %fcnr% / %fdname% = the faster car."""
     return fill(str(text or "").replace("%fcnr%", str(fast.number))
-                .replace("%fdname%", str(fast.driver)), car)
+                .replace("%fdname%", str(fast.driver))
+                .replace("%ftname%", str(getattr(fast, "team", "") or fast.driver)), car)
 
 
 def class_key(car):

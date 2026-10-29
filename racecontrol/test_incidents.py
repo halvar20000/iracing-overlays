@@ -1872,5 +1872,8 @@ check("overall mode: every car a lap behind #1 (#2, #50, #51)",
       sorted(x.split()[1] for x in w) == ["#2", "#50", "#51"], w)
 check("old saved rules: short caution OFF", steward.clean({})["fcy_short"] is False)
 
+_tc = type("C", (), {"number": "7", "driver": "A B", "team": "Team X"})()
+check("%tname% = team (IEC texts)",
+      steward.fill("#%cnr% (%tname%) - %dname%", _tc) == "#7 (Team X) - A B")
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
