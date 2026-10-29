@@ -90,6 +90,9 @@ DEFAULT_CONFIG = {
     "fcy_short": False, "fcy_short_laps": 1, "fcy_pitopen": False,
     "fcy_pit_open_s": 5,
     "fcy_wave": "class",
+    # one to green: RC message to everybody (2026-10-29 Thomas)
+    "otg_enabled": True,
+    "otg_text": "ONE LAP TO GREEN - RESTART AT THE END OF THIS LAP",
     # sequencer (like iRaceControl's): an RC message to everybody at a
     # session time; default = the GT3 WCT quali AM / PRO split
     "seq_enabled": False,
@@ -113,7 +116,7 @@ DEFAULT_CONFIG = {
 }
 _BOOL = ("enabled", "fcy_enabled", "seq_enabled", "blue_enabled",
          "meatball_enabled", "pro_enabled", "cb_enabled", "cb_dt", "fcy_short",
-         "fcy_pitopen")
+         "fcy_pitopen", "otg_enabled")
 _INT = ("dt_first", "dt_every", "fcy_incs", "fcy_window_s",
         "fcy_cooldown_s", "fcy_laps", "fcy_end_protect_min",
         "blue_repeat_s", "bf_warn_s", "bf_dt_s", "fr_used", "pro_from_lap",
@@ -121,7 +124,7 @@ _INT = ("dt_first", "dt_every", "fcy_incs", "fcy_window_s",
         "fcy_short_laps", "fcy_pit_open_s")
 _SIGNED: tuple = ()
 _FLOAT = ("blue_gap_s", "pro_gap_s", "cb_gap_s")
-_TEXT = ("bf_warn_text", "bf_dt_text",
+_TEXT = ("otg_text", "bf_warn_text", "bf_dt_text",
          "fr_text", "meatball_text", "pro_text", "cb_text", "cb_dt_text")
 PACELAPS_RETRY_S = 5.0    # short caution: !pacelaps 1 again if no one-to-green
 PACELAPS_TRIES = 3
@@ -358,6 +361,7 @@ class AutoSteward:
         self.reset()
 
     def reset(self) -> None:
+        self._otg: Optional[bool] = None  # one-to-green last seen
         self._session = None
         self._fcy_block_until = -1.0      # session time
         self._seq_sent: set[int] = set()
@@ -389,6 +393,7 @@ class AutoSteward:
             out += self._short_caution(state, rules)
         if rules.get("seq_enabled"):
             out += self._sequence(state, rules)
+        out += self._one_to_green(state, rules)
         if rules.get("cb_enabled"):
             out += self._blue_rule(state, rules)     # replaces the two below
         else:
@@ -620,6 +625,18 @@ class AutoSteward:
                     out.append({"type": "caution_wave", "cars": wave,
                                 "mode": mode})
         return out
+
+    # one to green: RC message to everybody ----------------------------------
+
+    def _one_to_green(self, state, rules: dict) -> list[dict]:
+        otg = (_is_race(state) and state.session_state == "RACING"
+               and "one_to_green" in (state.flags or []))
+        prev, self._otg = getattr(self, "_otg", None), otg
+        # first look after a (re)start only records: no old news
+        if prev is None or not otg or prev or not rules.get("otg_enabled"):
+            return []
+        text = str(rules.get("otg_text") or "").strip()
+        return [{"type": "one_to_green", "text": text}] if text else []
 
     # sequencer: timed RC messages -------------------------------------------
 

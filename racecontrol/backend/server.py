@@ -207,6 +207,12 @@ class Engine:
             for c in act["cars"]:
                 self.to_iracing("wave_around", car=c,
                                 verify=CHAT_VERIFY_KIND.get("wave_around"))
+        elif kind == "one_to_green":
+            ev = st._log("message", f"AUTO STEWARD: one to green - RC message "
+                         f"to all: {act['text']}", lap=st._leader_lap())
+            ev.kind, ev.source = "auto_one_to_green", "auto"
+            # the RC banner shows iRacing's own "SAFETY CAR IN THIS LAP"
+            self.to_iracing("message_all", msg=act["text"])
         elif kind == "sequence":
             text = act["text"]
             ev = st._log("message", f"AUTO STEWARD: sequencer "

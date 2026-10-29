@@ -296,7 +296,8 @@ const STEWARD_FIELDS = ['dt_first', 'dt_every', 'fcy_enabled', 'fcy_incs',
   'pro_enabled', 'pro_gap_s', 'pro_from_lap', 'pro_text',
   'cb_enabled', 'cb_gap_s', 'cb_every_s', 'cb_from_lap', 'cb_text', 'cb_dt',
   'cb_dt_max_s', 'cb_dt_text', 'cb_grace_s',
-  'fcy_short', 'fcy_pitopen', 'fcy_pit_open_s', 'fcy_short_laps', 'fcy_wave'];
+  'fcy_short', 'fcy_pitopen', 'fcy_pit_open_s', 'fcy_short_laps', 'fcy_wave',
+  'otg_enabled', 'otg_text'];
 function openStewardRules() {
   const s = State.steward || {};
   STEWARD_FIELDS.forEach((k) => {

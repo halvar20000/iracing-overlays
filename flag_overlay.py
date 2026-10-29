@@ -910,6 +910,18 @@ OVERLAY_HTML = r"""
   #caut-flag.yellow .car-num, #caut-flag.yellow .sub-text { color: #ffd400; }
   #caut-flag.green .flag-label { border-color: rgba(30,200,90,0.7); }
   #caut-flag.green .car-num, #caut-flag.green .sub-text { color: #2ee06e; }
+  /* one to green: the flag alternates yellow / green (lap before the restart) */
+  #caut-flag.otg #caut-cloth { animation: otg-cloth 1.2s steps(1) infinite; }
+  #caut-flag.otg .car-num, #caut-flag.otg .sub-text {
+    animation: otg-text 1.2s steps(1) infinite;
+  }
+  #caut-flag.otg .flag-label { animation: otg-border 1.2s steps(1) infinite; }
+  @keyframes otg-cloth { 0% { fill: #ffd400; } 50% { fill: #1fbf5a; } }
+  @keyframes otg-text  { 0% { color: #ffd400; } 50% { color: #2ee06e; } }
+  @keyframes otg-border {
+    0% { border-color: rgba(255,212,0,0.7); }
+    50% { border-color: rgba(30,200,90,0.7); }
+  }
 
   /* ── Entrance animations ── */
   #flag-wrap.visible .flag-svg {
@@ -1085,7 +1097,7 @@ const SHOW_CAUTION = Q.get("caution") !== "0";
 const YELLOW_HOLD = Q.get("yellow") !== "short";   // default: whole caution
 const CAUTION_VIEW = {
   yellow:       ["yellow", "FULL COURSE YELLOW", "SAFETY CAR"],
-  one_to_green: ["yellow", "SAFETY CAR IN", "RESTART NEXT LAP"],
+  one_to_green: ["yellow otg", "ONE LAP TO GREEN", "SAFETY CAR IN THIS LAP"],
   restart:      ["green",  "GREEN FLAG", "RACING RESUMES"],
   start:        ["green",  "GREEN FLAG", "RACE START"],
 };
@@ -1134,7 +1146,7 @@ async function poll() {
       const v = CAUTION_VIEW[caut] || CAUTION_VIEW.yellow;
       cautCard.className = "flag-card " + v[0];
       document.getElementById("caut-cloth").setAttribute(
-        "fill", v[0] === "green" ? "#1fbf5a" : "#ffd400");
+        "fill", v[0].startsWith("green") ? "#1fbf5a" : "#ffd400");
       document.getElementById("caut-title").textContent = v[1];
       document.getElementById("caut-sub").textContent = v[2];
       setTimeout(() => {

@@ -269,6 +269,14 @@ the line-up -1 (`fcy_lineup_adj`) is REMOVED (pace_car_prog stays in the
 frame); !pitopen only with the new `fcy_pitopen` (default OFF). Shortest
 caution = rest of lap 0 + lap 1 + lap 2 (one to green), one lap less than
 iRacing's default. test_incidents 338/338.
+0.1.30: Thomas - tell the drivers too: on the one-to-green edge (race,
+racing, not the first look after a (re)start) the Auto Steward sends
+`otg_text` "ONE LAP TO GREEN - RESTART AT THE END OF THIS LAP" as /all
+(`otg_enabled` default ON, Rules fieldset; log kind auto_one_to_green; not to
+the stream banner - 5019 shows iRacing's own "SAFETY CAR IN THIS LAP").
+Flag overlay 5008: the one-to-green view ("ONE LAP TO GREEN · SAFETY CAR IN
+THIS LAP") ALTERNATES yellow / green every 0.6 s (CSS steps animation on the
+cloth, text and border). test_incidents 341/341, flag 57/57; rendered.
 
 **October 29, 2026 (flag overlay 5008: YELLOW + GREEN flags too):** Thomas:
 not only white / checkered. NEW `CautionWatch` in flag_overlay.py (pure, race

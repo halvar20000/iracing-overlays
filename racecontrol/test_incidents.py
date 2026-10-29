@@ -2059,6 +2059,25 @@ check("green: saved short caution cleared", eng7.state.short_caution is None)
 check("old saved rules: short caution OFF", steward.clean({})["fcy_short"] is False)
 check("!pitopen OFF by default (iRacing: cannot re-open under caution)",
       steward.clean({"fcy_short": True})["fcy_pitopen"] is False)
+# one to green -> RC message to everybody, once per one-to-green
+eng7.steward_cfg = steward.clean({"fcy_short": False})
+eng7.auto.reset()
+k = len(sent7)
+og = lambda: [x for x in sent7[k:] if "ONE LAP TO GREEN" in x]
+step(sc(6990, 39, 0.20, key="sc-og", flags=("caution",)))
+step(sc(6991, 39, 0.21, key="sc-og", flags=("caution", "one_to_green")))
+step(sc(6995, 39, 0.30, key="sc-og", flags=("caution", "one_to_green")))
+check("OG1 one to green -> one RC message to all", og() == [
+    "/all ONE LAP TO GREEN - RESTART AT THE END OF THIS LAP"], sent7[k:])
+eng7.steward_cfg = steward.clean({"otg_enabled": False})
+step(sc(6997, 40, 0.10, key="sc-og", flags=()))
+step(sc(6998, 40, 0.20, key="sc-og", flags=("caution", "one_to_green")))
+check("OG2 switched off: nothing", len(og()) == 1, og())
+eng7.auto.reset()
+k = len(sent7)
+eng7.steward_cfg = steward.clean({})
+step(sc(6999, 40, 0.30, key="sc-og", flags=("caution", "one_to_green")))
+check("OG3 iCAS started during one-to-green: no old news", og() == [], og())
 # 0.1.29: iRacing "Cannot adjust caution length until after the first full
 # lap" -> !pacelaps when the leader starts lap 2; again while no one-to-green
 eng7.steward_cfg = steward.clean({"fcy_short": True, "fcy_wave": "off"})
