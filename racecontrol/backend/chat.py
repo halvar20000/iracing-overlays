@@ -182,8 +182,10 @@ class WinKeys:
     def set_foreground(self, hwnd: int) -> bool:
         return bool(self.u.SetForegroundWindow(hwnd))
 
-    def type_text(self, text: str, delay: float) -> None:
-        """SendInput: each character as a unicode key, then Enter."""
+    def type_text(self, text: str, delay: float, still_ok=None) -> None:
+        """SendInput: each character as a unicode key, then Enter.
+        ``still_ok()`` False = another window came to the front: stop at once
+        (no Enter - the half line stays in iRacing's chat box at worst)."""
         ct, wt = self.ct, self.wt
 
         class KEYBDINPUT(ct.Structure):
@@ -204,9 +206,13 @@ class WinKeys:
 
         KEYUP, UNICODE = 0x0002, 0x0004
         for ch in text:
+            if still_ok is not None and not still_ok():
+                raise RuntimeError("another window came to the front - stopped typing")
             send(0, ord(ch), UNICODE)
             send(0, ord(ch), UNICODE | KEYUP)
             time.sleep(delay)
+        if still_ok is not None and not still_ok():
+            raise RuntimeError("another window came to the front - no Enter")
         send(VK_RETURN, 0, 0)
         send(VK_RETURN, 0, KEYUP)
 
@@ -268,9 +274,17 @@ class ChatSender:
                 prev = keys.foreground()
                 keys.set_foreground(hwnd)
                 time.sleep(0.15)
+                # Windows often REFUSES to bring another program to the front
+                # (2026-10-29: the blue-flag lines were typed into Thomas's
+                # browser chat) - type only while iRacing really is in front
+                if keys.foreground() != hwnd:
+                    return False, ("iRacing could not be brought to the front - "
+                                   "NOTHING typed (use method 'post')")
                 self.open_chat()
                 time.sleep(wait)
-                keys.type_text(text, delay)
+                if keys.foreground() != hwnd:
+                    return False, "iRacing lost the focus - NOTHING typed"
+                keys.type_text(text, delay, lambda: keys.foreground() == hwnd)
                 time.sleep(0.1)
                 if prev and prev != hwnd:
                     keys.set_foreground(prev)

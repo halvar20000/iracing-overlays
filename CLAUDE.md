@@ -197,7 +197,14 @@ failed, no pattern in lap pct / pit / time since stop): a black flag not at the
 car after 6 s is typed ONCE more, slower (CHAT_RETRY_DELAY_MS 40, chat open
 wait 0.8 s; `retry` on the check, log "(second try, typed slower)"), then the
 "NO black flag … after two tries" note. Safe because no unconfirmed DT was
-ever served and a second DT while one is open was not owed twice. RC message: the log said "to car #2" for an
+ever served and a second DT while one is open was not owed twice. It did NOT
+help (#2 / #128 failed twice more); `!black #128 D` typed BY HAND a minute later
+worked (served 4813 s) - iCAS's "post" typing is the difference, cause unknown.
+0.1.21: method "focus" was tried live and Windows REFUSED SetForegroundWindow -
+SendInput typed the blue-flag lines into Thomas's browser (his chat with
+Claude). Now focus types only while GetForegroundWindow == iRacing (checked
+before opening the chat, before typing and per character; else "NOTHING
+typed"). RC message: the log said "to car #2" for an
 RC (= /all) line when a car was selected → the TARGET decides ("to all (RC)",
 "PRIVATE to car #N", PRIVATE without a car refused). test_incidents 304/304.
 

@@ -655,14 +655,19 @@ class FakeKeys:
     def post_enter(self, hwnd):
         self.out.append(("enter", hwnd))
 
+    fg = 5
+    refuse = False         # Windows refuses to bring iRacing to the front
+
     def foreground(self):
-        return 5
+        return self.fg
 
     def set_foreground(self, h):
         self.out.append(("fg", h))
-        return True
+        if not self.refuse:
+            self.fg = h
+        return not self.refuse
 
-    def type_text(self, text, delay):
+    def type_text(self, text, delay, still_ok=None):
         self.out.append(("type", text))
 
 
@@ -683,6 +688,19 @@ check("post: chat opened, every char posted, then Enter",
       and done[0] == ("!eol #3", True, "posted"), fk.out)
 check("focus: iRacing to the front, typed, focus given back",
       fk.out[-3:] == [("fg", 77), ("type", "/rc x"), ("fg", 5)], fk.out[-4:])
+# 2026-10-29: focus refused by Windows -> the lines were typed into the
+# browser Thomas was writing in. Now nothing is typed then.
+fk2 = FakeKeys(); fk2.refuse = True
+done2 = []
+cs2 = chat.ChatSender(lambda: None, lambda t, ok, i: done2.append((t, ok, i)), lambda: fk2)
+cs2.send("/23 BLUE FLAG", "focus", 0)
+for _ in range(50):
+    if done2:
+        break
+    _t.sleep(0.1)
+check("FOC1 focus refused -> NOTHING typed, reported",
+      done2 and done2[0][1] is False and "NOTHING typed" in done2[0][2]
+      and not any(o[0] == "type" for o in fk2.out), (done2, fk2.out))
 nowin = chat.ChatSender(lambda: None, lambda t, ok, i: done.append((t, ok, i)),
                         lambda: type("K", (FakeKeys,), {"find_window": lambda s: 0})())
 nowin.send("x", "post", 0)
