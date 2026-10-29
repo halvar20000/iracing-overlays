@@ -31,6 +31,9 @@ Rules dialog:
   crosses the S/F line on track (not on pit road) under the caution, a
   window opens: !pacelaps 1 up to PACELAPS_TRIES times, PACELAPS_RETRY_S
   apart, until one-to-green shows.  No pace car data = the leader rule.
+  0.1.34: iRacing takes the command for the whole lap, but at Le Mans it
+  refused the 3 quick tries after the first crossing (Thomas) -> again every
+  10 s for 2 minutes (12 tries) after each crossing.
   While on, ``fcy_laps`` is not used.
 * SEQUENCER (``seq_enabled`` + ``sequence``, like iRaceControl's) - RC
   messages to everybody at a session time, e.g. GT3 WCT quali 00:00:01
@@ -132,9 +135,9 @@ _SIGNED: tuple = ()
 _FLOAT = ("blue_gap_s", "pro_gap_s", "cb_gap_s")
 _TEXT = ("otg_text", "bf_warn_text", "bf_dt_text",
          "fr_text", "meatball_text", "pro_text", "cb_text", "cb_dt_text")
-PACELAPS_RETRY_S = 5.0    # short caution: !pacelaps 1 again if no one-to-green
-PACELAPS_TRIES = 3
-PACELAPS_WINDOW_S = 20.0  # ... only this long after the pace car's crossing
+PACELAPS_RETRY_S = 10.0   # short caution: !pacelaps 1 again if no one-to-green
+PACELAPS_TRIES = 12
+PACELAPS_WINDOW_S = 120.0  # ... this long after the pace car's crossing
 SEQ_SESSIONS = ("quali", "race", "practice", "warmup", "any")
 SEQ_MAX = 30
 SEQ_LATE_S = 120        # a step is still sent this long after its time

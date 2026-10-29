@@ -317,6 +317,13 @@ the yellow stays up for the WHOLE caution by default (/state
 the green); `?yellow=short` = only the 10 s. test_flag_overlay 56/56 (+19); yellow +
 green rendered. NOT tried live. Restart 5008.
 
+**October 29, 2026 (iCASControl 0.1.34 — !pacelaps for 2 minutes):** Le
+Mans, 0.1.32 live: the first pace-car crossing (6524 s) — the 3 tries 5 s
+apart were all refused; the second crossing (7099) was taken at once → ONE
+TO GREEN 7100.5. Thomas: there is the whole lap to give it → after each
+crossing !pacelaps 1 again every PACELAPS_RETRY_S 10 s for PACELAPS_WINDOW_S
+120 s (PACELAPS_TRIES 12) while no one_to_green shows. test_incidents 353/353.
+
 **October 29, 2026 (iCASControl 0.1.33 — chat held while a command waits):**
 Deploy Pace Car needed two presses again: the first press typed !yellow 5x
 (try 1 + slower + 3 later, 5653-5730 s), all lost, the second press's 3rd try
