@@ -240,6 +240,21 @@ steward.clean keeps the sign (`_SIGNED`). test_incidents 331/331. NOT tried
 in iRacing - watch the chat answer to "!pacelaps -1" and when ONE TO GREEN
 comes.
 
+**October 29, 2026 (flag overlay 5008: YELLOW + GREEN flags too):** Thomas:
+not only white / checkered. NEW `CautionWatch` in flag_overlay.py (pure, race
+sessions only - `_session_race` from SessionType): FULL COURSE caution =
+SessionFlags 0x4000 / 0x8000 only (0x08 / 0x100 are local yellows, iCAS 0.1.8
+lesson); one-to-green 0x200 counts only after a caution (it also flies on
+the pace lap). Events: yellow "FULL COURSE YELLOW · SAFETY CAR" 10 s,
+one_to_green "SAFETY CAR IN · RESTART NEXT LAP" 8 s, restart "GREEN FLAG ·
+RACING RESUMES" 8 s, start (SessionState parade -> racing or startGo edge)
+"GREEN FLAG · RACE START" 8 s; first update of a session only records
+(mid-race attach shows nothing old, a caution in progress still gets its
+restart). /state carries caution / caution_seq / caution_out; white /
+checkered win over them. `?caution=0` = old behaviour, `?yellow=hold` keeps
+the yellow up for the whole caution. test_flag_overlay 56/56 (+19); yellow +
+green rendered. NOT tried live. Restart 5008.
+
 **October 29, 2026 (RC banner 5019: hide other OBS sources while a message
 is on air):** Thomas: an overlay should go away whenever the banner shows
 something. rc_config.json `"hide_sources": [OBS source names]` → `ObsHider`

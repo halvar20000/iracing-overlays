@@ -336,6 +336,51 @@ check("10 practice -> race: flags come back for the race",
       rig.state(), "white_flag")
 
 # -------------------------------------------------------------------------
+# 11. Full course yellow / green (CautionWatch, 2026-10-29)
+cw = F.CautionWatch()
+check("11 first update only records", cw.update(0x4000, 4, 0.0), None)
+cw = F.CautionWatch()
+cw.update(0x10000000, 3, 0.0)                     # parade lap
+check("11 one-to-green on the pace lap is not a caution",
+      cw.update(0x0200, 3, 1.0), None)
+check("11 parade -> racing = race start", cw.update(0x04, 4, 2.0), "start")
+check("11 start shown 8 s", (cw.shown(9.0), cw.shown(10.5)), ("start", ""))
+check("11 green: nothing", cw.update(0x04, 4, 20.0), None)
+check("11 local yellow 0x08 / 0x100: no caution",
+      cw.update(0x04 | 0x08 | 0x100, 4, 21.0), None)
+check("11 caution 0x4000 -> yellow", cw.update(0x04 | 0x4000, 4, 30.0), "yellow")
+check("11 caution_out", cw.caution_out, True)
+check("11 waving too: no second yellow", cw.update(0x04 | 0xC000, 4, 31.0), None)
+check("11 yellow shown 10 s", (cw.shown(39.0), cw.shown(41.0)), ("yellow", ""))
+check("11 one-to-green", cw.update(0x04 | 0x4000 | 0x0200, 4, 300.0),
+      "one_to_green")
+check("11 one-to-green alone (caution bits off) stays caution",
+      cw.update(0x04 | 0x0200, 4, 310.0), None)
+check("11 green again -> restart", cw.update(0x04 | 0x08, 4, 400.0), "restart")
+check("11 caution over", cw.caution_out, False)
+check("11 seq counts the events", cw.seq, 4)
+cw = F.CautionWatch()
+cw.update(0x04, 4, 0.0)                            # attached mid-race
+check("11 mid-race attach: no start", cw.update(0x04, 4, 1.0), None)
+cw = F.CautionWatch()
+cw.update(0x04 | 0x4000, 4, 0.0)                   # attached under a caution
+check("11 attached under caution: no yellow, but the restart comes",
+      (cw.update(0x04 | 0x4000, 4, 1.0), cw.update(0x04, 4, 2.0)),
+      (None, "restart"))
+
+# through the watcher: race session -> /state carries the caution
+rig = typed_rig("Race", "RACE")
+rig.tick(3, SessionState=4, SessionFlags=0x04)
+rig.tick(3, SessionState=4, SessionFlags=0x04 | 0x4000)
+st = rig.w.get_state()
+check("11 watcher: caution in /state", (st["caution"], st["caution_out"]),
+      ("yellow", True))
+rig = typed_rig("Open Qualify", "QUALIFY")
+rig.tick(3, SessionState=4, SessionFlags=0x04)
+rig.tick(3, SessionState=4, SessionFlags=0x04 | 0x4000)
+check("11 watcher: no yellow in qualifying", rig.w.get_state()["caution"], "")
+
+# -------------------------------------------------------------------------
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 for f in FAIL:
     print("  FAIL:", f)

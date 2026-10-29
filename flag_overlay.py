@@ -4,6 +4,11 @@ flag_overlay.py
 A standalone Flask overlay that shows:
   - WHITE FLAG  when the race leader starts their final lap
   - CHECKERED FLAG  when the race leader crosses the finish line
+  - YELLOW FLAG  when a full course caution comes out (race only), again
+    "SAFETY CAR IN THIS LAP" at one-to-green
+  - GREEN FLAG  at the race start and when the caution ends
+  (yellow / green 2026-10-29: CautionWatch; ?caution=0 hides them,
+  ?yellow=hold keeps the yellow up for the whole caution)
 
 Designed as an OBS Browser Source:  http://localhost:5008
 Background is transparent — drop it over your iRacing capture.
@@ -39,6 +44,87 @@ try:
 except ImportError:
     print("ERROR: pyirsdk not installed.  Run:  pip install pyirsdk flask")
     raise SystemExit(1)
+
+
+# ---------------------------------------------------------------------------
+# Full course yellow / green (race sessions)
+# ---------------------------------------------------------------------------
+class CautionWatch:
+    """Edges of iRacing's FULL COURSE caution, pure logic (no SDK).
+
+    Only SessionFlags caution 0x4000 / caution waving 0x8000 are the caution
+    - yellow 0x08 / yellow waving 0x100 are LOCAL yellows at a corner and can
+    stay on after the restart (iCAS 0.1.8 lesson).  One-to-green 0x200 also
+    flies on the pace lap before the start, so it only counts after a
+    caution.  The first update of a session only records (attaching mid-race
+    shows nothing old).
+
+    update() returns None or an event kind:
+      "yellow"        caution out
+      "one_to_green"  safety car in this lap
+      "restart"       caution over, green again
+      "start"         race start (SessionState parade -> racing / startGo)
+    """
+    CAUTION_BITS = 0x4000 | 0x8000
+    ONE_TO_GREEN = 0x0200
+    START_GO = 0x40000000
+    SHOW_S = {"yellow": 10.0, "one_to_green": 8.0, "restart": 8.0,
+              "start": 8.0}
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self._seen = False
+        self._caution = False
+        self._otg = False
+        self._state = None
+        self._go = False
+        self._started = False
+        self.caution_out = False
+        self.event = ""
+        self.event_at = 0.0
+        self.seq = 0
+
+    def update(self, flags: int, sess_state, now: float):
+        flags = int(flags or 0)
+        st = int(sess_state) if sess_state is not None else None
+        caution = bool(flags & self.CAUTION_BITS)
+        otg = bool(flags & self.ONE_TO_GREEN) and (caution or self._caution
+                                                    or self._otg)
+        go = bool(flags & self.START_GO)
+        ev = None
+        if not self._seen:
+            self._seen = True
+            self._started = st is not None and st >= 4
+        else:
+            if not self._started and st is not None and st >= 4 and (
+                    (self._state is not None and 0 < self._state < 4)
+                    or (go and not self._go)):
+                ev = "start"
+            elif caution and not self._caution and not self._otg:
+                ev = "yellow"
+            elif otg and not self._otg:
+                ev = "one_to_green"
+            elif (self._caution or self._otg) and not caution and not otg:
+                ev = "restart"
+        if st is not None and st >= 4:
+            self._started = True
+        if st is not None and st >= 5:
+            caution = otg = False         # checkered: no caution any more
+        self._caution, self._otg, self._go = caution, otg, go
+        self._state = st
+        self.caution_out = caution or otg
+        if ev:
+            self.event, self.event_at = ev, now
+            self.seq += 1
+        return ev
+
+    def shown(self, now: float) -> str:
+        """The event to show right now ("" = none / too old)."""
+        if self.event and now - self.event_at < self.SHOW_S.get(self.event, 8.0):
+            return self.event
+        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +209,8 @@ class FlagWatcher:
         # practice or warmup (user rule, 2026-10-08). Cached per SessionNum
         # because parsing SessionInfo at 10 Hz is expensive.
         self._session_flaggable: bool | None = None
+        self._session_race: bool = False
+        self.caution = CautionWatch()
 
         # Internal tracking — lap-based races
         self._total_laps   = None   # race length in laps (None = timed race)
@@ -242,6 +330,13 @@ class FlagWatcher:
             with self._lock:
                 self.state = "idle"
             return
+
+        # Full course yellow / green - race sessions only
+        if self._session_race:
+            ev = self.caution.update(self.ir["SessionFlags"] or 0,
+                                     self.ir["SessionState"], time.time())
+            if ev:
+                print(f"[flag] {ev.upper().replace('_', ' ')}")
 
         # Auto-return from checkered after duration
         with self._lock:
@@ -601,7 +696,9 @@ class FlagWatcher:
             stype = (s.get("SessionType") or "").lower()
             sname = (s.get("SessionName") or "").lower()
             if "warmup" in stype or "warmup" in sname or "warm up" in sname:
+                self._session_race = False
                 return False
+            self._session_race = "race" in stype
             return "race" in stype or "qualif" in stype
         return None
 
@@ -625,6 +722,8 @@ class FlagWatcher:
         self._timed_seen      = False
         self._ticks_in_session = 0
         self._white_fired_at  = 0.0
+        self._session_race    = False
+        self.caution.reset()
         with self._lock:
             self.state       = "idle"
             self.leader_num  = ""
@@ -651,11 +750,16 @@ class FlagWatcher:
             time.sleep(0.1)   # 10 Hz is plenty for lap transitions
 
     def get_state(self):
+        now = time.time()
         with self._lock:
             return {
                 "state":       self.state,
                 "leader_num":  self.leader_num,
                 "leader_name": self.leader_name,
+                # full course yellow / green (race only)
+                "caution":     self.caution.shown(now),
+                "caution_seq": self.caution.seq,
+                "caution_out": self.caution.caution_out,
             }
 
     def stop(self):
@@ -788,6 +892,21 @@ OVERLAY_HTML = r"""
     color: rgba(255,215,0,0.85);
     margin-top: 2px;
   }
+
+  /* ── Yellow / green (full course caution, start) ── */
+  #caut-flag .flag-label { color: #fff; }
+  #caut-flag .car-num { font-size: 28px; white-space: nowrap; }
+  #caut-flag .sub-text {
+    font-size: 13px;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    margin-top: 4px;
+    font-family: 'Arial Narrow', 'Arial', sans-serif;
+  }
+  #caut-flag.yellow .flag-label { border-color: rgba(255,212,0,0.7); }
+  #caut-flag.yellow .car-num, #caut-flag.yellow .sub-text { color: #ffd400; }
+  #caut-flag.green .flag-label { border-color: rgba(30,200,90,0.7); }
+  #caut-flag.green .car-num, #caut-flag.green .sub-text { color: #2ee06e; }
 
   /* ── Entrance animations ── */
   #flag-wrap.visible .flag-svg {
@@ -923,10 +1042,50 @@ OVERLAY_HTML = r"""
     </div>
   </div>
 
+  <!-- Yellow / green flag (full course caution, race start) -->
+  <div class="flag-card" id="caut-flag">
+    <svg class="flag-svg" viewBox="0 0 240 160" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="pole-grad3" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%"   stop-color="#888"/>
+          <stop offset="50%"  stop-color="#ddd"/>
+          <stop offset="100%" stop-color="#888"/>
+        </linearGradient>
+        <filter id="caut-shadow">
+          <feDropShadow dx="4" dy="6" stdDeviation="6" flood-opacity="0.5"/>
+        </filter>
+      </defs>
+      <rect x="10" y="0" width="6" height="160" rx="3" fill="url(#pole-grad3)"/>
+      <path id="caut-cloth" d="M16,8 Q80,0 160,14 Q220,24 230,50
+               Q220,76 160,70 Q80,64 16,72 Z"
+            fill="#ffd400" filter="url(#caut-shadow)"
+            stroke="rgba(0,0,0,0.15)" stroke-width="1"/>
+      <path d="M60,10 Q60,40 62,68" stroke="rgba(0,0,0,0.12)"
+            stroke-width="1" fill="none"/>
+      <path d="M120,12 Q118,41 120,70" stroke="rgba(0,0,0,0.12)"
+            stroke-width="1" fill="none"/>
+      <path d="M180,14 Q176,42 178,70" stroke="rgba(0,0,0,0.10)"
+            stroke-width="1" fill="none"/>
+    </svg>
+    <div class="flag-label">
+      <div class="car-num" id="caut-title">FULL COURSE YELLOW</div>
+      <div class="sub-text" id="caut-sub">SAFETY CAR</div>
+    </div>
+  </div>
+
 </div>
 
 <script>
 let lastState = "idle";
+const Q = new URLSearchParams(location.search);
+const SHOW_CAUTION = Q.get("caution") !== "0";
+const YELLOW_HOLD = Q.get("yellow") === "hold";
+const CAUTION_VIEW = {
+  yellow:       ["yellow", "FULL COURSE YELLOW", "SAFETY CAR"],
+  one_to_green: ["yellow", "SAFETY CAR IN", "RESTART NEXT LAP"],
+  restart:      ["green",  "GREEN FLAG", "RACING RESUMES"],
+  start:        ["green",  "GREEN FLAG", "RACE START"],
+};
 
 // "Joseph Johnson" -> "J. Johnson"
 //   • Keeps single-word names whole ("Flako", "Madonna")
@@ -947,17 +1106,40 @@ async function poll() {
     const r = await fetch("/state");
     const d = await r.json();
 
-    if (d.state === lastState) return;
-    lastState = d.state;
+    // white / checkered win over yellow / green
+    let caut = "";
+    if (SHOW_CAUTION && d.state !== "white_flag" && d.state !== "checkered") {
+      caut = d.caution || "";
+      if (!caut && YELLOW_HOLD && d.caution_out) caut = "yellow";
+    }
+    const view = caut ? "c:" + caut + ":" + (d.caution_seq || 0) : d.state;
+    if (view === lastState) return;
+    lastState = view;
 
     const wrap       = document.getElementById("flag-wrap");
     const whiteCard  = document.getElementById("white-flag");
     const checkCard  = document.getElementById("check-flag");
+    const cautCard   = document.getElementById("caut-flag");
 
     // Reset
     wrap.classList.remove("visible");
     whiteCard.classList.remove("active");
     checkCard.classList.remove("active");
+    cautCard.classList.remove("active");
+
+    if (caut) {
+      const v = CAUTION_VIEW[caut] || CAUTION_VIEW.yellow;
+      cautCard.className = "flag-card " + v[0];
+      document.getElementById("caut-cloth").setAttribute(
+        "fill", v[0] === "green" ? "#1fbf5a" : "#ffd400");
+      document.getElementById("caut-title").textContent = v[1];
+      document.getElementById("caut-sub").textContent = v[2];
+      setTimeout(() => {
+        cautCard.classList.add("active");
+        wrap.classList.add("visible");
+      }, 50);
+      return;
+    }
 
     if (d.state === "white_flag") {
       document.getElementById("white-num").textContent  = "#" + d.leader_num;
@@ -1020,6 +1202,8 @@ if __name__ == "__main__":
     print("  Flags:")
     print("  WHITE FLAG   — leader starts their final lap")
     print("  CHECKERED    — leader crosses the finish line")
+    print("  YELLOW       — full course caution (race), one-to-green")
+    print("  GREEN        — race start / caution over  (?caution=0 = off)")
     print("  (auto-hides 60s after checkered)")
     print()
     print("  Supports lap-based AND timed races (incl. 'laps OR time').")
