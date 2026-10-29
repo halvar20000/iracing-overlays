@@ -277,6 +277,13 @@ the stream banner - 5019 shows iRacing's own "SAFETY CAR IN THIS LAP").
 Flag overlay 5008: the one-to-green view ("ONE LAP TO GREEN · SAFETY CAR IN
 THIS LAP") ALTERNATES yellow / green every 0.6 s (CSS steps animation on the
 cloth, text and border). test_incidents 341/341, flag 57/57; rendered.
+0.1.31 (same evening, 0.1.30 running - NOT the update): another hand FCY
+took 4 tries (3475-3579 s); the log shows blue-flag private lines every 1-5 s
+around every failed !yellow, the ones that worked (1254, 3579) came after a
+few quiet seconds. Suspected: iRacing drops a command among other chat lines
+(unconfirmed). ChatSender: a "!" command is queued before waiting messages
+(behind other commands) and has CMD_GAP_S 3 s of quiet chat before AND after
+it. test CG1 / CG2; test_incidents 343/343.
 
 **October 29, 2026 (flag overlay 5008: YELLOW + GREEN flags too):** Thomas:
 not only white / checkered. NEW `CautionWatch` in flag_overlay.py (pure, race

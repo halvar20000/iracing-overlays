@@ -710,6 +710,29 @@ for _ in range(30):
     _t.sleep(0.1)
 check("no iRacing window -> reported, not crashed",
       done[-1] == ("x", False, "iRacing window not found"), done)
+# 2026-10-29: commands got lost among blue-flag lines -> a ! command goes
+# first and has CMD_GAP_S of quiet chat before and after it
+_gap0, chat.CMD_GAP_S = chat.CMD_GAP_S, 0.4
+fk3, done3 = FakeKeys(), []
+cs3 = chat.ChatSender(lambda: None, lambda t, ok, i: done3.append((t, _t.monotonic())),
+                      lambda: fk3)
+with cs3._cv:                       # queue all before the thread takes one
+    pass
+cs3._q[:] = []
+for line in ("/28 blue a", "/47 blue b", "!yellow", "/35 blue c"):
+    cs3.send(line, "post", 0, open_wait=0.05)
+for _ in range(60):
+    if len(done3) == 4:
+        break
+    _t.sleep(0.1)
+order = [x[0] for x in done3]
+check("CG1 !yellow jumps the waiting blue-flag lines",
+      order.index("!yellow") <= 1 and len(order) == 4, order)
+i = order.index("!yellow")
+gaps = [done3[j + 1][1] - done3[j][1] for j in range(3)]
+check("CG2 quiet chat before and after the command",
+      (i == 0 or gaps[i - 1] >= 0.35) and gaps[i] >= 0.35, gaps)
+chat.CMD_GAP_S = _gap0
 
 # IRacingSource: send + verification by flag bits
 chat_ir = fake_ir(80, {})

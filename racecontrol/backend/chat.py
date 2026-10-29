@@ -217,6 +217,9 @@ class WinKeys:
         send(VK_RETURN, 0, KEYUP)
 
 
+CMD_GAP_S = 3.0     # no other chat line this long before / after a ! command
+
+
 class ChatSender:
     """One chat line at a time, in a background thread (typing takes ~1 s).
 
@@ -232,13 +235,24 @@ class ChatSender:
         self._keys = None
         self._q: list[tuple[str, str, float]] = []
         self._cv = threading.Condition()
+        self._last_t = 0.0          # monotonic: when the last line was sent
+        self._last_cmd = False      # ... and whether it was a ! command
         self._thread: Optional[threading.Thread] = None
 
     def send(self, text: str, method: str = "post",
              char_delay_ms: float = 6, open_wait: float = 0.25) -> None:
+        item = (text, method, max(0.0, char_delay_ms) / 1000.0,
+                max(0.05, float(open_wait)))
         with self._cv:
-            self._q.append((text, method, max(0.0, char_delay_ms) / 1000.0,
-                            max(0.05, float(open_wait))))
+            if text.startswith("!"):
+                # a command goes before the waiting messages (behind other
+                # commands): blue-flag lines must not hold up a !yellow
+                n = 0
+                while n < len(self._q) and self._q[n][0].startswith("!"):
+                    n += 1
+                self._q.insert(n, item)
+            else:
+                self._q.append(item)
             if self._thread is None or not self._thread.is_alive():
                 self._thread = threading.Thread(target=self._run, daemon=True)
                 self._thread.start()
@@ -252,7 +266,16 @@ class ChatSender:
                     if not self._q:
                         return
                 text, method, delay, wait = self._q.pop(0)
+            # quiet chat around a ! command (2026-10-29: !yellow / !black often
+            # got lost - nothing in the chat - while blue-flag lines went out
+            # every 1-5 s; they worked after a few quiet seconds)
+            cmd = text.startswith("!")
+            gap = CMD_GAP_S if (cmd or self._last_cmd) else 0.0
+            pause = self._last_t + gap - time.monotonic()
+            if pause > 0:
+                time.sleep(pause)
             ok, info = self._type(text, method, delay, wait)
+            self._last_t, self._last_cmd = time.monotonic(), cmd
             try:
                 self.done(text, ok, info)
             except Exception:
