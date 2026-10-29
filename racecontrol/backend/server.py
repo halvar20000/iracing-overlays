@@ -194,21 +194,10 @@ class Engine:
         elif kind == "caution_laps":
             self._pending_laps = None           # the plan sets the length now
             result = self.to_iracing("pace_laps", n=act["n"])
-            st.note_system(f"Short caution: leader in lap 1 - {act['n']} "
-                           f"caution lap(s) - {result}", category="flag")
-        elif kind == "caution_lineup":
-            lead = act["leader"]
-            if act["send"]:
-                n = f"{act['n']:+d}"
-                result = self.to_iracing("pace_laps", n=n)
-                st.note_system(f"Short caution: leader #{lead.number} has caught "
-                               f"the pace car ({act['gap']:.0f} m) - caution laps "
-                               f"{n} - {result}", category="flag")
-            else:
-                st.note_system(f"Short caution: leader #{lead.number} caught the "
-                               f"pace car in lap {act['lap']} - no caution laps "
-                               f"{act['n']:+d} (only in lap 1, after !pacelaps)",
-                               category="flag")
+            st.note_system(f"Short caution: leader in lap 2 (first full "
+                           f"caution lap done) - {act['n']} caution lap(s)"
+                           f"{'' if act.get('try', 1) == 1 else ' again (no one-to-green yet, try %d)' % act['try']}"
+                           f" - {result}", category="flag")
         elif kind == "caution_wave":
             nums = ", ".join("#" + c.number for c in act["cars"])
             ev = st._log("flag", f"AUTO STEWARD: short caution - wave around "

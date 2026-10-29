@@ -255,6 +255,20 @@ seconds arrived. Now !yellow gets later tries too: `CHAT_LATER` {kind: (gap,
 tries)} - black (30 s, 5), yellow (15 s, 5 = ~1 min) - then "NO caution after
 5 tries"; a caution that comes meanwhile = "came late", a new !yellow drops
 the waiting one. test_incidents 340/340.
+SAME EVENING - THE CAUSE of the long cautions: iRacing answered every early
+!pacelaps with "Cannot adjust caution length until after the first full lap"
+(and !pitopen with "Cannot re-open the pit lanes when already under caution"
+- iRacing opens them itself). Test: caution in leader lap 5, !pacelaps 1 at
+the start of lap 6 and the 0.1.26 "-1 at line-up" both refused; Thomas's
+!pacelaps 1 1 s after the leader began lap 7 (1975.4 s, leader crossed
+1974.4) → ONE TO GREEN 1976.3 at once; his tries mid-lap 6 and 4 s before
+the line did nothing. 0.1.29: short caution sends !pacelaps when the leader
+starts lap0 + 2 (pct < 0.5), with 1 lap again every PACELAPS_RETRY_S 5 s while
+no one_to_green flag shows, PACELAPS_TRIES 3; wave-arounds stay at lap 1;
+the line-up -1 (`fcy_lineup_adj`) is REMOVED (pace_car_prog stays in the
+frame); !pitopen only with the new `fcy_pitopen` (default OFF). Shortest
+caution = rest of lap 0 + lap 1 + lap 2 (one to green), one lap less than
+iRacing's default. test_incidents 338/338.
 
 **October 29, 2026 (flag overlay 5008: YELLOW + GREEN flags too):** Thomas:
 not only white / checkered. NEW `CautionWatch` in flag_overlay.py (pure, race

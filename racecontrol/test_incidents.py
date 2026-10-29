@@ -2011,13 +2011,15 @@ check("leader still in lap 0: no !pacelaps, no wave",
       not any(x.startswith("!pacelaps") or x.startswith("!waveby") for x in sent7[n0:]))
 step(sc(6060, 11, 0.02))
 w = [x for x in sent7[n0:] if x.startswith("!waveby")]
-check("leader starts lap 1: !pacelaps 1 once (not the old 3)",
-      [x for x in sent7[n0:] if x.startswith("!pacelaps")] == ["!pacelaps 1"], sent7[n0:])
+check("leader starts lap 1: waves, no !pacelaps yet (iRacing refuses it)",
+      not [x for x in sent7[n0:] if x.startswith("!pacelaps")], sent7[n0:])
 check("wave: #2 (a lap behind the LMP2 leader) and #51 (behind GT3 leader #50), "
       "not #50, not #52 in the pits",
       sorted(x.split()[1] for x in w) == ["#2", "#51"], w)
 step(sc(6100, 11, 0.30))
-check("nothing twice", len([x for x in sent7[n0:] if x.startswith("!pacelaps")]) == 1
+step(sc(6150, 12, 0.01, flags=("caution", "one_to_green")))
+step(sc(6160, 12, 0.05, flags=("caution", "one_to_green")))
+check("lap 2: !pacelaps 1 once (not the old 3), nothing twice", len([x for x in sent7[n0:] if x.startswith("!pacelaps")]) == 1
       and sent7[n0:].count("!pitopen") == 1)
 step(sc(6200, 12, 0.10, flags=()))
 step(sc(6300, 13, 0.10))
@@ -2049,59 +2051,46 @@ check("after the restart: no new short caution, no second !pitopen",
       len(autos("auto_caution_short")) == c0 + 1 and sent7[k:].count("!pitopen") == 1,
       sent7[k:])
 step(sc(6760, 31, 0.02, key="sc-3"))
-check("after the restart: !pacelaps when the leader starts lap 31 (old lap 0 kept)",
+step(sc(6900, 32, 0.02, key="sc-3"))
+check("after the restart: !pacelaps when the leader starts lap 32 (old lap 0 kept)",
       [x for x in sent7[k:] if x.startswith("!pacelaps")] == ["!pacelaps 1"], sent7[k:])
-step(sc(6800, 31, 0.30, key="sc-3", flags=()))
+step(sc(6950, 32, 0.30, key="sc-3", flags=()))
 check("green: saved short caution cleared", eng7.state.short_caution is None)
 check("old saved rules: short caution OFF", steward.clean({})["fcy_short"] is False)
 check("!pitopen OFF by default (iRacing: cannot re-open under caution)",
       steward.clean({"fcy_short": True})["fcy_pitopen"] is False)
-# 0.1.26: leader caught the pace car in lap 1 -> !pacelaps -1 (Le Mans 29.10.:
-# pace car out 2 laps after !pacelaps 1)
-check("line-up adjustment default -1", steward.clean({})["fcy_lineup_adj"] == -1)
+# 0.1.29: iRacing "Cannot adjust caution length until after the first full
+# lap" -> !pacelaps when the leader starts lap 2; again while no one-to-green
 eng7.steward_cfg = steward.clean({"fcy_short": True, "fcy_wave": "off"})
 eng7.auto.reset()
 k = len(sent7)
 pl = lambda: [x for x in sent7[k:] if x.startswith("!pacelaps")]
-step(sc(7000, 40, 0.50, key="sc-4", pace=0.70))
-step(sc(7006, 40, 0.60, key="sc-4", pace=0.75))
-check("pace car 600 m ahead in lap 0: nothing", pl() == [], pl())
-step(sc(7060, 41, 0.01, key="sc-4", pace=0.30))
-check("lap 1: !pacelaps 1 only (pace car 1.2 km ahead)", pl() == ["!pacelaps 1"], pl())
-step(sc(7100, 41, 0.05, key="sc-4", pace=0.10))
-check("caught (200 m) but not 5 s yet: no -1", pl() == ["!pacelaps 1"], pl())
-step(sc(7106, 41, 0.07, key="sc-4", pace=0.12))
-check("caught for 5 s: !pacelaps -1", pl() == ["!pacelaps 1", "!pacelaps -1"], pl())
-step(sc(7200, 41, 0.50, key="sc-4", pace=0.52))
-check("-1 only once", pl().count("!pacelaps -1") == 1, pl())
-step(sc(7300, 42, 0.50, key="sc-4", flags=()))
+step(sc(7000, 40, 0.50, key="sc-4"))
+step(sc(7060, 41, 0.01, key="sc-4"))
+check("PL1 lap 1: no !pacelaps yet", pl() == [], pl())
+step(sc(7300, 42, 0.01, key="sc-4"))
+check("PL2 leader starts lap 2: !pacelaps 1", pl() == ["!pacelaps 1"], pl())
+step(sc(7303, 42, 0.02, key="sc-4"))
+check("PL3 not again within 5 s", pl() == ["!pacelaps 1"], pl())
+step(sc(7306, 42, 0.03, key="sc-4"))
+check("PL4 no one-to-green after 5 s: again", pl() == ["!pacelaps 1"] * 2, pl())
+step(sc(7307, 42, 0.04, key="sc-4", flags=("caution", "one_to_green")))
+step(sc(7320, 42, 0.10, key="sc-4", flags=("caution", "one_to_green")))
+check("PL5 one-to-green shows: no more", pl() == ["!pacelaps 1"] * 2, pl())
+step(sc(7600, 43, 0.10, key="sc-4", flags=()))
 eng7.auto.reset()
 k = len(sent7)
-step(sc(7400, 50, 0.50, key="sc-5", pace=0.53))
-step(sc(7410, 50, 0.55, key="sc-5", pace=0.58))
-step(sc(7460, 51, 0.01, key="sc-5", pace=0.04))
-step(sc(7470, 51, 0.05, key="sc-5", pace=0.08))
-check("caught already in lap 0: no -1 (only !pacelaps 1)", pl() == ["!pacelaps 1"], pl())
-check("... said in the log", any("caught the pace car in lap 0" in str(e.text)
-                                 for e in eng7.state.events), "")
-step(sc(7500, 52, 0.50, key="sc-5", flags=()))
+step(sc(7700, 50, 0.50, key="sc-5"))
+for t in range(8000, 8040, 5):
+    step(sc(t, 52, 0.01 + (t - 8000) / 1000, key="sc-5"))
+check("PL6 at most 3 tries", pl() == ["!pacelaps 1"] * 3, pl())
+step(sc(8300, 53, 0.10, key="sc-5", flags=()))
 eng7.auto.reset()
 k = len(sent7)
-step(sc(7600, 60, 0.50, key="sc-6", pace=0.40))
-step(sc(7660, 61, 0.01, key="sc-6", pace=0.99))
-step(sc(7670, 61, 0.05, key="sc-6", pace=0.04))
-check("pace car just BEHIND the leader: not caught", pl() == ["!pacelaps 1"], pl())
-step(sc(7700, 62, 0.50, key="sc-6", flags=()))
-eng7.steward_cfg = steward.clean({"fcy_short": True, "fcy_wave": "off",
-                                  "fcy_lineup_adj": 0})
-eng7.auto.reset()
-k = len(sent7)
-step(sc(7800, 70, 0.50, key="sc-7", pace=0.80))
-step(sc(7860, 71, 0.01, key="sc-7", pace=0.30))
-step(sc(7900, 71, 0.05, key="sc-7", pace=0.07))
-step(sc(7910, 71, 0.07, key="sc-7", pace=0.09))
-check("adjustment 0 = off", pl() == ["!pacelaps 1"], pl())
-step(sc(7950, 72, 0.50, key="sc-7", flags=()))
+step(sc(8400, 60, 0.50, key="sc-6"))
+step(sc(8700, 62, 0.70, key="sc-6"))
+check("PL7 iCAS came back late in lap 2: nothing sent", pl() == [], pl())
+step(sc(8900, 63, 0.10, key="sc-6", flags=()))
 
 _tc = type("C", (), {"number": "7", "driver": "A B", "team": "Team X"})()
 check("%tname% = team (IEC texts)",
