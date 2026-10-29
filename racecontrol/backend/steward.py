@@ -18,6 +18,11 @@ Rules dialog:
   ``!pacelaps fcy_short_laps`` (1 = pace car in at the end of that lap) and
   ``!waveby`` for every car a full lap behind its class leader
   (``fcy_wave`` "class") or the overall leader ("overall"), "off" = none.
+  ``fcy_lineup_adj`` (-1, 0 = off; 0.1.26): when the leader has caught the
+  pace car (within LINEUP_M for LINEUP_HOLD_S) in that lap 1, after the
+  !pacelaps, ``!pacelaps -1`` once more - at Le Mans (29.10.) the pace car
+  stayed out 2 laps after !pacelaps 1 (iRacing seems to count from the
+  line-up).  Caught already in lap 0 / later = only a log line.
   While on, ``fcy_laps`` is not used.
 * SEQUENCER (``seq_enabled`` + ``sequence``, like iRaceControl's) - RC
   messages to everybody at a session time, e.g. GT3 WCT quali 00:00:01
@@ -79,7 +84,7 @@ DEFAULT_CONFIG = {
     "fcy_end_protect_min": 5,
     # short caution: pits open, 1 lap behind the pace car, lapped cars waved
     "fcy_short": False, "fcy_short_laps": 1, "fcy_pit_open_s": 5,
-    "fcy_wave": "class",
+    "fcy_wave": "class", "fcy_lineup_adj": -1,
     # sequencer (like iRaceControl's): an RC message to everybody at a
     # session time; default = the GT3 WCT quali AM / PRO split
     "seq_enabled": False,
@@ -107,10 +112,13 @@ _INT = ("dt_first", "dt_every", "fcy_incs", "fcy_window_s",
         "fcy_cooldown_s", "fcy_laps", "fcy_end_protect_min",
         "blue_repeat_s", "bf_warn_s", "bf_dt_s", "fr_used", "pro_from_lap",
         "cb_every_s", "cb_from_lap", "cb_dt_max_s", "cb_grace_s",
-        "fcy_short_laps", "fcy_pit_open_s")
+        "fcy_short_laps", "fcy_pit_open_s", "fcy_lineup_adj")
+_SIGNED = ("fcy_lineup_adj",)
 _FLOAT = ("blue_gap_s", "pro_gap_s", "cb_gap_s")
 _TEXT = ("bf_warn_text", "bf_dt_text",
          "fr_text", "meatball_text", "pro_text", "cb_text", "cb_dt_text")
+LINEUP_M = 250.0          # leader this close behind the pace car = caught it
+LINEUP_HOLD_S = 5.0
 SEQ_SESSIONS = ("quali", "race", "practice", "warmup", "any")
 SEQ_MAX = 30
 SEQ_LATE_S = 120        # a step is still sent this long after its time
@@ -265,7 +273,7 @@ def clean(cfg: dict) -> dict:
         out[k] = bool(out[k])
     for k, conv in [(k, int) for k in _INT] + [(k, float) for k in _FLOAT]:
         try:
-            out[k] = max(0, conv(float(out[k])))
+            out[k] = conv(float(out[k])) if k in _SIGNED else max(0, conv(float(out[k])))
         except (TypeError, ValueError):
             out[k] = DEFAULT_CONFIG[k]
     for k in _TEXT:
@@ -277,6 +285,7 @@ def clean(cfg: dict) -> dict:
     out["fcy_window_s"] = max(1, out["fcy_window_s"])
     out["fcy_laps"] = min(20, max(0, out["fcy_laps"]))
     out["fcy_short_laps"] = min(20, max(1, out["fcy_short_laps"]))
+    out["fcy_lineup_adj"] = min(5, max(-5, out["fcy_lineup_adj"]))
     if out["fcy_wave"] not in ("class", "overall", "off"):
         out["fcy_wave"] = "class"
     return out
@@ -360,6 +369,7 @@ class AutoSteward:
         self._cb_order: dict[tuple[int, int], int] = {}    # close pairs: who is ahead
         self._cb_dt_at: dict[int, float] = {}              # car -> last blue DT
         self._sc: Optional[dict] = None     # short caution in progress
+        self._near_t: Optional[float] = None  # leader near the pace car since
 
     def check(self, state, rules: dict) -> list[dict]:
         key = (state.session_key, state.session_num)
@@ -543,6 +553,8 @@ class AutoSteward:
                             if k in saved}
                 if len(self._sc) < 4:
                     self._sc = None
+                else:
+                    self._sc["lineup"] = bool(saved.get("lineup"))
         out = self._short_caution_step(state, rules)
         if self._sc is not None and hasattr(state, "short_caution"):
             state.short_caution = dict(self._sc, session_num=state.session_num,
@@ -561,7 +573,7 @@ class AutoSteward:
         if self._sc is None:
             # the lap the caution came out = lap 0
             self._sc = {"t": now, "lap0": leader.lap, "pits": False,
-                        "lap1": False}
+                        "lap1": False, "lineup": False}
             out.append({"type": "caution_short", "lap0": leader.lap,
                         "laps": int(rules.get("fcy_short_laps") or 1)})
         sc = self._sc
@@ -587,7 +599,32 @@ class AutoSteward:
                 if wave:
                     out.append({"type": "caution_wave", "cars": wave,
                                 "mode": mode})
+        out += self._lineup(state, rules, leader)
         return out
+
+    def _lineup(self, state, rules: dict, leader) -> list[dict]:
+        """The leader has caught the pace car: ``fcy_lineup_adj`` once."""
+        sc = self._sc
+        adj = int(rules.get("fcy_lineup_adj") or 0)
+        pace = float(getattr(state, "pace_car_prog", -1.0))
+        length_m = float(state.session_length_km or 0) * 1000
+        if not adj or sc.get("lineup") or pace < 0 or not length_m \
+                or leader.on_pit_road:
+            self._near_t = None
+            return []
+        gap = ((pace - leader.lap_dist_pct) % 1.0) * length_m
+        if gap > LINEUP_M:
+            self._near_t = None
+            return []
+        if self._near_t is None:
+            self._near_t = state.session_time
+        if state.session_time - self._near_t < LINEUP_HOLD_S:
+            return []
+        sc["lineup"] = True
+        send = sc["lap1"] and leader.lap == sc["lap0"] + 1
+        return [{"type": "caution_lineup", "n": adj, "send": send,
+                 "gap": gap, "leader": leader,
+                 "lap": leader.lap - sc["lap0"]}]
 
     # sequencer: timed RC messages -------------------------------------------
 

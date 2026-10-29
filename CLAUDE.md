@@ -226,6 +226,19 @@ Thomas: it showed in the chat) → 0.1.25: !yellow is typed once more, slower,
 too (no 30 s later tries - a caution 2 min late is not wanted), then "NO
 caution after 2 tries … are full course cautions on?" (was "is this PC
 admin?"). test_incidents 321/321.
+Then the pace car stayed out ~2 laps after !pacelaps 1 again (caution
+2557 s leader lap 10, !pacelaps 1 at 2666 s = start of lap 11, the field
+caught the pace car at the end of lap 11, ONE TO GREEN 3794 s = start of lap
+13) - iRacing seems to count from the line-up. Thomas: do the "−1" by
+itself → 0.1.26: `fcy_lineup_adj` (default −1, 0 = off, Rules dialog): when
+the LEADER is ≤ LINEUP_M 250 m behind the pace car for LINEUP_HOLD_S 5 s in
+lap 1 (after the !pacelaps) → `!pacelaps -1` once (log "has caught the pace
+car (… m)"); caught already in lap 0 or later = log line only. Pace car
+position = NEW SessionFrame / RaceState `pace_car_prog` (its CarIdxLapDistPct,
+−1 = not in the world; pct only, its CarIdxLap may count differently).
+steward.clean keeps the sign (`_SIGNED`). test_incidents 331/331. NOT tried
+in iRacing - watch the chat answer to "!pacelaps -1" and when ONE TO GREEN
+comes.
 
 **October 29, 2026 (RC banner 5019: hide other OBS sources while a message
 is on air):** Thomas: an overlay should go away whenever the banner shows

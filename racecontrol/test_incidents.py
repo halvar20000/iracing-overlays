@@ -1043,11 +1043,12 @@ check("threshold of DT #3 = 27x", steward.threshold(3, R) == 27)
 
 
 def sframe(t, cars, incidents=(), totals=None, stype="RACE", state="RACING",
-           flags=(), num=2, key="9-9", length=4.0):
+           flags=(), num=2, key="9-9", length=4.0, pace=-1.0):
     return Frame(session=SessionFrame(session_time=t, session_num=num,
                                       session_key=key, session_type=stype,
                                       session_state=state, flags=list(flags),
-                                      track_length_km=length),
+                                      track_length_km=length,
+                                      pace_car_prog=pace),
                  cars=list(cars), incidents=list(incidents),
                  incident_totals=totals, source_name="iracing", connected=True)
 
@@ -1945,7 +1946,7 @@ eng7.steward_cfg = steward.clean({"fcy_short": True, "fcy_laps": 3})
 eng7.auto.reset()
 
 
-def sc(t, lead_lap, lead_pct, flags=("caution",), key="sc-1"):
+def sc(t, lead_lap, lead_pct, flags=("caution",), key="sc-1", pace=-1.0):
     # #1 LMP2 leader, #2 LMP2 a lap down, #50 GT3 class leader (lapped by
     # LMP2s - not lapped in its class), #51 GT3 a lap behind #50, #52 in pits
     return sframe(t, [ccar(0, "1", lead_lap, lead_pct, 200.0, 1, 200.0),
@@ -1953,7 +1954,7 @@ def sc(t, lead_lap, lead_pct, flags=("caution",), key="sc-1"):
                       ccar(2, "50", lead_lap - 2, 0.90, 220.0, 2, 220.0),
                       ccar(3, "51", lead_lap - 3, 0.85, 222.0, 2, 220.0),
                       ccar(4, "52", lead_lap - 4, 0.60, 223.0, 2, 220.0, pit=True)],
-                  num=9, key=key, flags=flags)
+                  num=9, key=key, flags=flags, pace=pace)
 
 
 n0 = len(sent7)
@@ -2014,6 +2015,52 @@ check("after the restart: !pacelaps when the leader starts lap 31 (old lap 0 kep
 step(sc(6800, 31, 0.30, key="sc-3", flags=()))
 check("green: saved short caution cleared", eng7.state.short_caution is None)
 check("old saved rules: short caution OFF", steward.clean({})["fcy_short"] is False)
+# 0.1.26: leader caught the pace car in lap 1 -> !pacelaps -1 (Le Mans 29.10.:
+# pace car out 2 laps after !pacelaps 1)
+check("line-up adjustment default -1", steward.clean({})["fcy_lineup_adj"] == -1)
+eng7.steward_cfg = steward.clean({"fcy_short": True, "fcy_wave": "off"})
+eng7.auto.reset()
+k = len(sent7)
+pl = lambda: [x for x in sent7[k:] if x.startswith("!pacelaps")]
+step(sc(7000, 40, 0.50, key="sc-4", pace=0.70))
+step(sc(7006, 40, 0.60, key="sc-4", pace=0.75))
+check("pace car 600 m ahead in lap 0: nothing", pl() == [], pl())
+step(sc(7060, 41, 0.01, key="sc-4", pace=0.30))
+check("lap 1: !pacelaps 1 only (pace car 1.2 km ahead)", pl() == ["!pacelaps 1"], pl())
+step(sc(7100, 41, 0.05, key="sc-4", pace=0.10))
+check("caught (200 m) but not 5 s yet: no -1", pl() == ["!pacelaps 1"], pl())
+step(sc(7106, 41, 0.07, key="sc-4", pace=0.12))
+check("caught for 5 s: !pacelaps -1", pl() == ["!pacelaps 1", "!pacelaps -1"], pl())
+step(sc(7200, 41, 0.50, key="sc-4", pace=0.52))
+check("-1 only once", pl().count("!pacelaps -1") == 1, pl())
+step(sc(7300, 42, 0.50, key="sc-4", flags=()))
+eng7.auto.reset()
+k = len(sent7)
+step(sc(7400, 50, 0.50, key="sc-5", pace=0.53))
+step(sc(7410, 50, 0.55, key="sc-5", pace=0.58))
+step(sc(7460, 51, 0.01, key="sc-5", pace=0.04))
+step(sc(7470, 51, 0.05, key="sc-5", pace=0.08))
+check("caught already in lap 0: no -1 (only !pacelaps 1)", pl() == ["!pacelaps 1"], pl())
+check("... said in the log", any("caught the pace car in lap 0" in str(e.text)
+                                 for e in eng7.state.events), "")
+step(sc(7500, 52, 0.50, key="sc-5", flags=()))
+eng7.auto.reset()
+k = len(sent7)
+step(sc(7600, 60, 0.50, key="sc-6", pace=0.40))
+step(sc(7660, 61, 0.01, key="sc-6", pace=0.99))
+step(sc(7670, 61, 0.05, key="sc-6", pace=0.04))
+check("pace car just BEHIND the leader: not caught", pl() == ["!pacelaps 1"], pl())
+step(sc(7700, 62, 0.50, key="sc-6", flags=()))
+eng7.steward_cfg = steward.clean({"fcy_short": True, "fcy_wave": "off",
+                                  "fcy_lineup_adj": 0})
+eng7.auto.reset()
+k = len(sent7)
+step(sc(7800, 70, 0.50, key="sc-7", pace=0.80))
+step(sc(7860, 71, 0.01, key="sc-7", pace=0.30))
+step(sc(7900, 71, 0.05, key="sc-7", pace=0.07))
+step(sc(7910, 71, 0.07, key="sc-7", pace=0.09))
+check("adjustment 0 = off", pl() == ["!pacelaps 1"], pl())
+step(sc(7950, 72, 0.50, key="sc-7", flags=()))
 
 _tc = type("C", (), {"number": "7", "driver": "A B", "team": "Team X"})()
 check("%tname% = team (IEC texts)",

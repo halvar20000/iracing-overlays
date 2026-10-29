@@ -171,6 +171,7 @@ class RaceState:
         self.session_laps_remain = 0
         self.flags: list[str] = []
         self.flags_raw = 0
+        self.pace_car_prog = -1.0
         self.start_lights = "off"
         self.sim_date = ""
         self.weather: dict = {}
@@ -241,6 +242,7 @@ class RaceState:
         self.session_laps_remain = s.session_laps_remain
         self.flags = s.flags
         self.flags_raw = getattr(s, "flags_raw", 0)
+        self.pace_car_prog = float(getattr(s, "pace_car_prog", -1.0))
         self.start_lights = s.start_lights
         self.sim_date = s.sim_date
         self.session_num = s.session_num
