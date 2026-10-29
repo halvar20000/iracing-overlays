@@ -251,8 +251,10 @@ RACING RESUMES" 8 s, start (SessionState parade -> racing or startGo edge)
 "GREEN FLAG · RACE START" 8 s; first update of a session only records
 (mid-race attach shows nothing old, a caution in progress still gets its
 restart). /state carries caution / caution_seq / caution_out; white /
-checkered win over them. `?caution=0` = old behaviour, `?yellow=hold` keeps
-the yellow up for the whole caution. test_flag_overlay 56/56 (+19); yellow +
+checkered win over them. `?caution=0` = old behaviour. Same day, Thomas:
+the yellow stays up for the WHOLE caution by default (/state
+`caution_phase` yellow / one_to_green while it is out, "SAFETY CAR IN" until
+the green); `?yellow=short` = only the 10 s. test_flag_overlay 56/56 (+19); yellow +
 green rendered. NOT tried live. Restart 5008.
 
 **October 29, 2026 (RC banner 5019: hide other OBS sources while a message

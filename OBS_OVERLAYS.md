@@ -40,7 +40,7 @@ Quelle: `?auto=1` (+ `?secs=`), `?cycle=20` (lastrace / table) oder
 | Livery (Auto der Kamera) | 5006 | `livery.html` | ≈ 800 × 350 |
 | Track Map | 5007 | `trackmap.html` | ≈ 1000 × 600 (skaliert mit); Kurvennummern, `?turns=0` blendet sie aus |
 | Race Control (Gelbphase, Strafen-Flaggen, iRaceControl-Meldungen) | 5019 | `rc_banner.html` | ≈ 950 × 120 (siehe RACE_CONTROL.md). rc_config `hide_sources` = diese OBS-Quellen während einer Meldung ausblenden |
-| Flaggen (weiß / kariert / gelb / grün; `?caution=0` nur weiß + kariert, `?yellow=hold` gelb während der ganzen Caution) | 5008 | `flag.html` | ≈ 480 × 300 |
+| Flaggen (weiß / kariert / gelb / grün; `?caution=0` nur weiß + kariert, gelb während der ganzen Caution, `?yellow=short` nur 10 s) | 5008 | `flag.html` | ≈ 480 × 300 |
 | Neuer Führender (Banner) | 5018 | `leader.html` | ≈ 760 × 220 |
 | Catch-Up Battle | 5015 | `catch.html` | ≈ 1100 × 150 |
 | Zweikampf: aktueller Abstand (F1-Stil) | 5015 `/gap` | `battle_gap.html` | ✓ 1040 × 115 |

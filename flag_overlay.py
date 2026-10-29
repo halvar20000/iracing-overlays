@@ -7,8 +7,8 @@ A standalone Flask overlay that shows:
   - YELLOW FLAG  when a full course caution comes out (race only), again
     "SAFETY CAR IN THIS LAP" at one-to-green
   - GREEN FLAG  at the race start and when the caution ends
-  (yellow / green 2026-10-29: CautionWatch; ?caution=0 hides them,
-  ?yellow=hold keeps the yellow up for the whole caution)
+  (yellow / green 2026-10-29: CautionWatch; ?caution=0 hides them; the
+  yellow stays up for the WHOLE caution, ?yellow=short = 10 s only)
 
 Designed as an OBS Browser Source:  http://localhost:5008
 Background is transparent — drop it over your iRacing capture.
@@ -82,6 +82,7 @@ class CautionWatch:
         self._go = False
         self._started = False
         self.caution_out = False
+        self.phase = ""
         self.event = ""
         self.event_at = 0.0
         self.seq = 0
@@ -115,6 +116,7 @@ class CautionWatch:
         self._caution, self._otg, self._go = caution, otg, go
         self._state = st
         self.caution_out = caution or otg
+        self.phase = "one_to_green" if otg else ("yellow" if caution else "")
         if ev:
             self.event, self.event_at = ev, now
             self.seq += 1
@@ -760,6 +762,7 @@ class FlagWatcher:
                 "caution":     self.caution.shown(now),
                 "caution_seq": self.caution.seq,
                 "caution_out": self.caution.caution_out,
+                "caution_phase": self.caution.phase,
             }
 
     def stop(self):
@@ -1079,7 +1082,7 @@ OVERLAY_HTML = r"""
 let lastState = "idle";
 const Q = new URLSearchParams(location.search);
 const SHOW_CAUTION = Q.get("caution") !== "0";
-const YELLOW_HOLD = Q.get("yellow") === "hold";
+const YELLOW_HOLD = Q.get("yellow") !== "short";   // default: whole caution
 const CAUTION_VIEW = {
   yellow:       ["yellow", "FULL COURSE YELLOW", "SAFETY CAR"],
   one_to_green: ["yellow", "SAFETY CAR IN", "RESTART NEXT LAP"],
@@ -1110,7 +1113,7 @@ async function poll() {
     let caut = "";
     if (SHOW_CAUTION && d.state !== "white_flag" && d.state !== "checkered") {
       caut = d.caution || "";
-      if (!caut && YELLOW_HOLD && d.caution_out) caut = "yellow";
+      if (!caut && YELLOW_HOLD && d.caution_out) caut = d.caution_phase || "yellow";
     }
     const view = caut ? "c:" + caut + ":" + (d.caution_seq || 0) : d.state;
     if (view === lastState) return;

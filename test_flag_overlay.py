@@ -349,15 +349,17 @@ check("11 green: nothing", cw.update(0x04, 4, 20.0), None)
 check("11 local yellow 0x08 / 0x100: no caution",
       cw.update(0x04 | 0x08 | 0x100, 4, 21.0), None)
 check("11 caution 0x4000 -> yellow", cw.update(0x04 | 0x4000, 4, 30.0), "yellow")
-check("11 caution_out", cw.caution_out, True)
+check("11 caution_out", (cw.caution_out, cw.phase), (True, "yellow"))
 check("11 waving too: no second yellow", cw.update(0x04 | 0xC000, 4, 31.0), None)
 check("11 yellow shown 10 s", (cw.shown(39.0), cw.shown(41.0)), ("yellow", ""))
 check("11 one-to-green", cw.update(0x04 | 0x4000 | 0x0200, 4, 300.0),
       "one_to_green")
 check("11 one-to-green alone (caution bits off) stays caution",
       cw.update(0x04 | 0x0200, 4, 310.0), None)
+check("11 phase one_to_green while it is out", (cw.phase, cw.caution_out),
+      ("one_to_green", True))
 check("11 green again -> restart", cw.update(0x04 | 0x08, 4, 400.0), "restart")
-check("11 caution over", cw.caution_out, False)
+check("11 caution over", (cw.caution_out, cw.phase), (False, ""))
 check("11 seq counts the events", cw.seq, 4)
 cw = F.CautionWatch()
 cw.update(0x04, 4, 0.0)                            # attached mid-race
