@@ -1057,7 +1057,7 @@ multiclass field a class-colour bar sits in the Pro/Am slot before the
 name (Pro/Am wins in WCT; `?classbar=0` hides). Trackmap (5007): car dots in
 the class colour (inline fill, number black / white by luminance), the
 camera car KEEPS its class colour with a white ring + glow; pit = 45 %;
-`/state` `classes` → key top-left (`?legend=0` hides). Single class keeps
+`/state` `classes` → key top-left (since 2026-10-29 only with `?legend=1`). Single class keeps
 orange / yellow. Dashboard overtakes (5000, feeds /ticker + REGIE): rank is
 now the CLASS rank and a swap only counts between cars of the same class —
 a GTP lapping through GT3s was reported as an overtake, and "for P2" was

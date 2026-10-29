@@ -1002,10 +1002,10 @@ function renderCars(d) {
         parts.push(`<text class="car-label" x="${xy[0].toFixed(1)}" y="${xy[1].toFixed(1)}"${tfill}>${esc(c.num)}</text>`);
     }
     overlay.innerHTML = parts.join('');
-    // multiclass key (?legend=0 hides it)
+    // multiclass key: off by default (the tower shows the class colours); ?legend=1 shows it
     const lg = document.getElementById('legend');
     if (lg) {
-        const cl = new URLSearchParams(location.search).get('legend') === '0' ? [] : (d.classes || []);
+        const cl = new URLSearchParams(location.search).get('legend') === '1' ? (d.classes || []) : [];
         const h = cl.map(k => `<span><i style="background:${esc(k.color)}"></i>${esc(k.name || '')}</span>`).join('');
         if (lg.dataset.h !== h) { lg.innerHTML = h; lg.dataset.h = h; }
         lg.style.display = h ? '' : 'none';
