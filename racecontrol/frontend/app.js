@@ -279,7 +279,7 @@ function updateStewardToggle() {
   t.title = `Incidents: drive through at ${s.dt_first}x, then every ${s.dt_every}x`
     + ` | caution: ${s.fcy_enabled ? `${s.fcy_incs}x / ${s.fcy_window_s}s (${s.fcy_mode}`
         + `${s.fcy_laps > 0 ? `, ${s.fcy_laps} laps` : ''})` : 'off'}`
-    + (s.fcy_short ? ` | short caution: pits +${s.fcy_pit_open_s}s, ${s.fcy_short_laps} lap(s)${s.fcy_lineup_adj ? ` (${s.fcy_lineup_adj > 0 ? '+' : ''}${s.fcy_lineup_adj} when lined up)` : ''}, wave ${s.fcy_wave}` : '')
+    + (s.fcy_short ? ` | short caution: ${s.fcy_pitopen ? `pits +${s.fcy_pit_open_s}s, ` : ''}${s.fcy_short_laps} lap(s)${s.fcy_lineup_adj ? ` (${s.fcy_lineup_adj > 0 ? '+' : ''}${s.fcy_lineup_adj} when lined up)` : ''}, wave ${s.fcy_wave}` : '')
     + ` | sequencer: ${s.seq_enabled ? (s.sequence || []).length + ' msg' : 'off'}`
     + (s.cb_enabled ? ` | blue flag rule: ${s.cb_gap_s}s, every ${s.cb_every_s}s`
         + (s.cb_dt ? `, DT after a lap (max ${s.cb_dt_max_s}s)` : '')
@@ -296,7 +296,7 @@ const STEWARD_FIELDS = ['dt_first', 'dt_every', 'fcy_enabled', 'fcy_incs',
   'pro_enabled', 'pro_gap_s', 'pro_from_lap', 'pro_text',
   'cb_enabled', 'cb_gap_s', 'cb_every_s', 'cb_from_lap', 'cb_text', 'cb_dt',
   'cb_dt_max_s', 'cb_dt_text', 'cb_grace_s',
-  'fcy_short', 'fcy_pit_open_s', 'fcy_short_laps', 'fcy_wave', 'fcy_lineup_adj'];
+  'fcy_short', 'fcy_pitopen', 'fcy_pit_open_s', 'fcy_short_laps', 'fcy_wave', 'fcy_lineup_adj'];
 function openStewardRules() {
   const s = State.steward || {};
   STEWARD_FIELDS.forEach((k) => {

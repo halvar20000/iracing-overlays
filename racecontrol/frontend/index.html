@@ -394,7 +394,7 @@
       <label>not in the last <input id="s-fcy_end_protect_min" type="number" min="0" max="60"> minutes of the race (0 = always)</label>
     </fieldset>
     <fieldset><legend><label><input id="s-fcy_short" type="checkbox"> Short caution - every caution (auto, button, iRacing's own)</label></legend>
-      <label>The lap it comes out = lap 0. Pits open <input id="s-fcy_pit_open_s" type="number" min="0" max="120"> s after it (!pitopen).</label>
+      <label>The lap it comes out = lap 0. <input id="s-fcy_pitopen" type="checkbox"> Pits open <input id="s-fcy_pit_open_s" type="number" min="0" max="120"> s after it (!pitopen - iRacing answers "Cannot re-open the pit lanes when already under caution", it opens them itself)</label>
       <label>When the leader starts lap 1: <input id="s-fcy_short_laps" type="number" min="1" max="20"> caution lap(s) left (!pacelaps; 1 = pace car in at the end of that lap)</label>
       <label>and wave around (!waveby) every car a full lap down <select id="s-fcy_wave">
         <option value="class">to its class leader</option>

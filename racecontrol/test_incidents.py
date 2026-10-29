@@ -1980,7 +1980,8 @@ check("old saved rules: blue flag rule OFF",
 
 print("Short caution (Le Mans)")
 eng7.chat_cfg["enabled"] = True
-eng7.steward_cfg = steward.clean({"fcy_short": True, "fcy_laps": 3})
+eng7.steward_cfg = steward.clean({"fcy_short": True, "fcy_laps": 3,
+                                  "fcy_pitopen": True})
 eng7.auto.reset()
 
 
@@ -2031,7 +2032,7 @@ check("overall mode: every car a lap behind #1 (#2, #50, #51)",
       sorted(x.split()[1] for x in w) == ["#2", "#50", "#51"], w)
 # iCAS restart mid-caution (Le Mans 29.10.: lap 0, !pitopen and !pacelaps
 # started again after each restart) -> the saved short caution goes on
-eng7.steward_cfg = steward.clean({"fcy_short": True})
+eng7.steward_cfg = steward.clean({"fcy_short": True, "fcy_pitopen": True})
 eng7.auto.reset()
 k = len(sent7)
 c0 = len(autos("auto_caution_short"))
@@ -2053,6 +2054,8 @@ check("after the restart: !pacelaps when the leader starts lap 31 (old lap 0 kep
 step(sc(6800, 31, 0.30, key="sc-3", flags=()))
 check("green: saved short caution cleared", eng7.state.short_caution is None)
 check("old saved rules: short caution OFF", steward.clean({})["fcy_short"] is False)
+check("!pitopen OFF by default (iRacing: cannot re-open under caution)",
+      steward.clean({"fcy_short": True})["fcy_pitopen"] is False)
 # 0.1.26: leader caught the pace car in lap 1 -> !pacelaps -1 (Le Mans 29.10.:
 # pace car out 2 laps after !pacelaps 1)
 check("line-up adjustment default -1", steward.clean({})["fcy_lineup_adj"] == -1)

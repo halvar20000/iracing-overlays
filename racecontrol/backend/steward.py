@@ -83,7 +83,10 @@ DEFAULT_CONFIG = {
     "fcy_window_s": 15, "fcy_cooldown_s": 180, "fcy_laps": 0,
     "fcy_end_protect_min": 5,
     # short caution: pits open, 1 lap behind the pace car, lapped cars waved
-    "fcy_short": False, "fcy_short_laps": 1, "fcy_pit_open_s": 5,
+    # !pitopen OFF by default (2026-10-29: iRacing answered "Cannot re-open
+    # the pit lanes when already under caution" - it opens them itself)
+    "fcy_short": False, "fcy_short_laps": 1, "fcy_pitopen": False,
+    "fcy_pit_open_s": 5,
     "fcy_wave": "class", "fcy_lineup_adj": -1,
     # sequencer (like iRaceControl's): an RC message to everybody at a
     # session time; default = the GT3 WCT quali AM / PRO split
@@ -107,7 +110,8 @@ DEFAULT_CONFIG = {
     "cb_dt_text": "#%cnr% (%dname%) - DRIVE THROUGH FOR IGNORING BLUE FLAGS",
 }
 _BOOL = ("enabled", "fcy_enabled", "seq_enabled", "blue_enabled",
-         "meatball_enabled", "pro_enabled", "cb_enabled", "cb_dt", "fcy_short")
+         "meatball_enabled", "pro_enabled", "cb_enabled", "cb_dt", "fcy_short",
+         "fcy_pitopen")
 _INT = ("dt_first", "dt_every", "fcy_incs", "fcy_window_s",
         "fcy_cooldown_s", "fcy_laps", "fcy_end_protect_min",
         "blue_repeat_s", "bf_warn_s", "bf_dt_s", "fr_used", "pro_from_lap",
@@ -579,7 +583,8 @@ class AutoSteward:
         sc = self._sc
         if not sc["pits"] and now - sc["t"] >= float(rules.get("fcy_pit_open_s") or 0):
             sc["pits"] = True
-            out.append({"type": "caution_pits"})
+            if rules.get("fcy_pitopen"):
+                out.append({"type": "caution_pits"})
         if not sc["lap1"] and leader.lap > sc["lap0"]:
             sc["lap1"] = True
             out.append({"type": "caution_laps",
