@@ -876,6 +876,12 @@ check("snapshot carries the chat status",
 print("Decisions to the stream banner (step 3)")
 from backend import stream  # noqa: E402
 stream.CONFIG_PATH = __import__("pathlib").Path(tmp) / "stream_config.json"
+# NEVER post for real from a test: on 2026-10-29 this file used the stream PC's
+# own address and, once that PC was reachable from Unraid, its test messages
+# ("Hello", "Ende Qualifying AM Klasse / Start ...", "Track limits T4") went
+# onto the live RC banner
+stream.BannerOut.__init__.__defaults__ = (
+    lambda url, body: (True, "HTTP 200 (test - not sent)"),)
 eng6 = server.Engine(force_sim=True)
 eng6.state = RaceState()
 eng6.state.ingest(frame(10, [cf(0, "7"), cf(1, "14")]))
@@ -885,9 +891,9 @@ check("stream OFF by default: nothing posted",
       "stream OFF" in eng6.handle_client_message(
           {"action": "car", "car_idx": 1, "command": "dsq"})["text"] and not posted)
 eng6.handle_client_message({"action": "set_stream", "enabled": True,
-                            "banner_url": "192.168.86.138:5019/"})
+                            "banner_url": "192.0.2.10:5019/"})
 check("switch + address saved to data/stream_config.json",
-      json.load(open(stream.CONFIG_PATH)) ["banner_url"] == "http://192.168.86.138:5019"
+      json.load(open(stream.CONFIG_PATH)) ["banner_url"] == "http://192.0.2.10:5019"
       and stream.load_config()["enabled"] is True)
 eng6.banner.send = lambda url, body, wait=False: stream.BannerOut.send(
     eng6.banner, url, body, wait=True)
@@ -895,7 +901,7 @@ eng6.handle_client_message({"action": "car", "car_idx": 1, "command": "drive_thr
                             "message": "Track Limits"})
 url, body = posted[-1]
 check("car drive-through -> banner penalty for #14 with the reason",
-      url == "http://192.168.86.138:5019/rc/steward" and body["kind"] == "penalty"
+      url == "http://192.0.2.10:5019/rc/steward" and body["kind"] == "penalty"
       and body["headline"] == "DRIVE THROUGH PENALTY" and body["car"] == "14"
       and body["text"] == "Track Limits" and body["source"] == "icas", body)
 eng6.handle_client_message({"action": "car", "car_idx": 1, "command": "time_penalty",
@@ -953,7 +959,7 @@ check("banner not reached -> clear log line",
       any("Stream banner NOT reached (Connection refused)" in e.text
           for e in eng6.state.events))
 check("snapshot carries the stream status",
-      snap_of(eng6)["stream"]["banner_url"] == "http://192.168.86.138:5019")
+      snap_of(eng6)["stream"]["banner_url"] == "http://192.0.2.10:5019")
 
 print("Auto Steward (step 3c)")
 from backend import steward  # noqa: E402
