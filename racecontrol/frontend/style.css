@@ -571,3 +571,8 @@ td.dsq { color: var(--red) !important; text-decoration: line-through; }
   user-select: all; color: #8fd3ff; }
 .chat-toggle.stw.following { background: #3949ab; color: #fff; }
 .sdlg .note { display: block; font-size: 12px; opacity: 0.7; margin-top: 4px; }
+
+/* Rules dialog: the blue flag sections the multiclass rule replaces */
+fieldset.cb-replaced .cb-off-note { display: none; color: #f0b429; }
+fieldset.cb-replaced[disabled] { opacity: .45; }
+fieldset.cb-replaced[disabled] .cb-off-note { display: block; }

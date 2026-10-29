@@ -421,7 +421,8 @@
       <span class="note">%fcnr% / %fdname% = the faster car. Faster class = iRacing's estimated class lap time.
         While ON it replaces "iRacing's blue flag" and the own hint below.</span>
     </fieldset>
-    <fieldset><legend>iRacing's blue flag (race)</legend>
+    <fieldset id="fs-bf" class="cb-replaced"><legend>iRacing's blue flag (race)</legend>
+      <span class="note cb-off-note">Not used while the blue flag rule (multiclass + lapping) is ON.</span>
       <label>shown for <input id="s-bf_warn_s" type="number" min="0" max="300"> s - private message (0 = off):</label>
       <input id="s-bf_warn_text" type="text" maxlength="200" class="wide">
       <label>shown for <input id="s-bf_dt_s" type="number" min="0" max="300"> s - DRIVE THROUGH + to everybody (0 = off):</label>
@@ -440,7 +441,8 @@
       <input id="s-pro_text" type="text" maxlength="200" class="wide">
       <span class="note">%pcnr% / %pdname% = the PRO car; never repeated (the AM may be the faster one); only in a WCT field</span>
     </fieldset>
-    <fieldset><legend><label><input id="s-blue_enabled" type="checkbox"> Own blue-flag hint (gap check)</label></legend>
+    <fieldset id="fs-blue" class="cb-replaced"><legend><label><input id="s-blue_enabled" type="checkbox"> Own blue-flag hint (gap check)</label></legend>
+      <span class="note cb-off-note">Not used while the blue flag rule (multiclass + lapping) is ON.</span>
       <label>The car about to be lapped gets "BLUE FLAG - let #7 ... pass" when the faster car is
         <input id="s-blue_gap_s" type="number" min="0.2" max="5" step="0.1"> s behind,
         again after <input id="s-blue_repeat_s" type="number" min="0" max="300"> s</label>

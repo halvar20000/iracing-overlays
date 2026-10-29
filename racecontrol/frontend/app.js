@@ -306,6 +306,7 @@ function openStewardRules() {
   });
   $('#seq-rows').innerHTML = '';
   (s.sequence || []).forEach(addSeqRow);
+  syncBlueSections();
   $('#sdlg').classList.remove('hidden');
 }
 const SEQ_SESSIONS = [['quali', 'Qualifying'], ['race', 'Race'],
@@ -329,6 +330,11 @@ function addSeqRow(st) {
   row.querySelector('.seq-x').value = st.text;
   row.querySelector('.seq-del').addEventListener('click', () => row.remove());
   $('#seq-rows').appendChild(row);
+}
+// the blue flag rule (multiclass + lapping) replaces these two while ON
+function syncBlueSections() {
+  const on = $('#s-cb_enabled').checked;
+  ['#fs-bf', '#fs-blue'].forEach((id) => { $(id).disabled = on; });
 }
 function saveStewardRules(ok) {
   $('#sdlg').classList.add('hidden');
@@ -950,6 +956,7 @@ function wire() {
   $('#steward-toggle').addEventListener('click', () =>
     send({ action: 'set_steward', enabled: !(State.steward && State.steward.enabled) }));
   $('#steward-rules').addEventListener('click', openStewardRules);
+  $('#s-cb_enabled').addEventListener('change', syncBlueSections);
   $('#sdlg-ok').addEventListener('click', () => saveStewardRules(true));
   $('#seq-add').addEventListener('click', () => addSeqRow());
   $('#sdlg-cancel').addEventListener('click', () => saveStewardRules(false));
