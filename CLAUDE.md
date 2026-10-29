@@ -236,7 +236,10 @@ Log: !yellow confirmed 5533 s (leader in lap 22), !pitopen 5 s later,
 !pacelaps 1 sent at 5763 s when the leader began lap 23 (~4 min behind the pace
 car at Le Mans); all 7 !waveby NOT confirmed (pace bit never set) - probably
 the lapped cars were not lined up in the pace field yet; open whether a later
-waveby (e.g. on one-to-green) would land.
+waveby (e.g. on one-to-green) would land. THEN Thomas: "They are overtaking"
+- the wave-arounds DID work although CarIdxPaceFlags stayed 0x0 → 0.1.22: an
+unseen wave-around bit is no longer "did NOT confirm" but "no wave-around bit
+seen (iRacing often does not show it); check that the car drives past".
 
 **October 29, 2026 (iCASControl 0.1.17 — blue flag rule for multiclass +
 lapping, IEC; new logo):** Thomas's rule, `cb_*` keys in steward.py

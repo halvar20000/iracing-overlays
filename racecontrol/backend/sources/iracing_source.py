@@ -979,6 +979,15 @@ class IRacingSource(DataSource):
                                f"this PC is not admin of the session.) "
                                f"{self._flag_info(c['car'])}")
                     continue
+                if c["kind"] == "waveby":
+                    # 2026-10-29 Le Mans short caution: all 7 wave-bys showed
+                    # pace 0x0 for 6 s, yet the cars drove past the field
+                    # (Thomas: "they are overtaking") - the bit is no proof
+                    self._note(f"Sent to iRacing: {c['text']} - no wave-around "
+                               f"bit seen (iRacing often does not show it); "
+                               f"check that the car drives past the field "
+                               f"{self._flag_info(c['car'])}")
+                    continue
                 why = ("EOL needs a full course caution" if c["kind"] == "eol"
                        else "wave-by needs a full course caution and the car "
                        "lined up in the pace field (not in the pits, not "
