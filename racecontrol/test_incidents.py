@@ -837,6 +837,27 @@ check("NB1f a clear for the car drops the waiting retry", not csrc._chat_later)
 wait_log()
 csrc._chat_checks.clear()
 csrc.drain_command_log()
+# 2026-10-29: three !yellow in a row did nothing, the fourth worked
+chat_ir["SessionFlags"] = 0
+fk.out.clear()
+csrc.send_chat("!yellow", "post", 0, ("yellow", -1))
+wait_log()
+csrc._chat_checks[0]["until"] = 0
+csrc._check_chat()
+log = csrc.drain_command_log()
+check("YR1 no caution after 6 s -> typed once more",
+      len(log) == 1 and log[0].startswith("No caution yet: !yellow"), log)
+for _ in range(80):
+    if csrc._chat_checks:
+        break
+    _t.sleep(0.1)
+csrc._chat_checks[0]["until"] = 0
+csrc._check_chat()
+log = csrc.drain_command_log()
+check("YR2 second try failed -> NO caution, no later tries",
+      len(log) == 1 and log[0].startswith("NO caution after 2 tries")
+      and "full course cautions" in log[0]
+      and not csrc._chat_checks and not csrc._chat_later, log)
 rs_m = RaceState()
 rs_m.ingest(frame(10, [cf(0, "7"), cf(1, "2")]))
 r_all = rs_m.rc_message("RC", "hello", 1)

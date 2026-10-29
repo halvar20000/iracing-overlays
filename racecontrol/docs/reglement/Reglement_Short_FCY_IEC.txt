@@ -1,0 +1,51 @@
+IEC - Reglement: Full Course Yellow (kurze Caution)
+====================================================
+
+Die Regel wird im Rennen automatisch von der Rennleitung (iCASControl)
+umgesetzt. Sie gilt nur im Rennen.
+
+
+1. Auslösung
+
+1.1 Eine Full Course Yellow (FCY, Pace Car) wird von der Rennleitung
+    ausgelöst, wenn alle Fahrzeuge zusammen innerhalb von 15 Sekunden
+    40 oder mehr Incident-Punkte sammeln.
+
+1.2 In den letzten 5 Minuten des Rennens wird keine automatische FCY mehr
+    ausgelöst.
+
+1.3 Die folgenden Punkte 2 bis 4 gelten für jede FCY, egal ob sie
+    automatisch, von der Rennleitung von Hand oder von iRacing selbst
+    ausgelöst wurde.
+
+
+2. Dauer
+
+2.1 Die Runde, in der die FCY ausgelöst wird, zählt als Runde 0.
+
+2.2 Danach folgt genau 1 volle Runde hinter dem Pace Car (Runde 1). Sie
+    beginnt, wenn der Führende nach der Auslösung die Start-/Ziellinie
+    überquert.
+
+2.3 Am Ende von Runde 1 fährt das Pace Car in die Box, das Rennen wird
+    wieder freigegeben.
+
+
+3. Boxengasse
+
+3.1 Die Boxengasse wird direkt nach der Auslösung der FCY geöffnet
+    (wenige Sekunden danach).
+
+
+4. Zurückrunden (Wave Around)
+
+4.1 Zu Beginn von Runde 1 dürfen sich überrundete Fahrzeuge
+    zurückrunden: Jedes Fahrzeug, das eine volle Runde oder mehr hinter
+    dem Führenden SEINER KLASSE liegt, wird am Pace Car vorbeigewunken
+    und erhält eine Runde zurück.
+
+4.2 Fahrzeuge, die sich zu diesem Zeitpunkt in der Boxengasse befinden,
+    werden nicht vorbeigewunken.
+
+4.3 Ob ein zurückgerundetes Fahrzeug bis zur Freigabe wieder Anschluss an
+    das Feld findet, liegt beim Fahrer.

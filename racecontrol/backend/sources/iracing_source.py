@@ -92,7 +92,7 @@ _NOT_A_FLAG = {"local_yellow", "blue", "crossed", "debris", "black",
                "disqualify", "furled"}
 
 
-CHAT_RETRY_KINDS = ("black",)       # penalty flag not at the car -> typed once more
+CHAT_RETRY_KINDS = ("black", "yellow")  # flag / caution not there -> typed once more
 CHAT_RETRY_DELAY_MS = 40.0            # ... with this much time per character
 CHAT_RETRY_OPEN_S = 0.8               # ... and this long after opening the chat
 CHAT_RETRY_LATER_S = 30.0            # ... then again this much later
@@ -106,6 +106,10 @@ PACE_WAVED = 0x04
 INC_POLL_S = 2.0          # ResultsPositions = a full session-info parse
 REPLAY_PREROLL_S = 8.0    # replay starts this long before the incident
 REPLAY_BEHIND_FRAMES = 60  # > 1 s behind the live tip = watching a replay
+
+
+def _what_missing(kind: str) -> str:
+    return "caution" if kind == "yellow" else f"{kind} flag at the car"
 
 
 def replay_target(t_event: float, preroll: float) -> int:
@@ -982,22 +986,29 @@ class IRacingSource(DataSource):
                 # flagged" but never reached the car; none of them was served
                 # later and a DT given while one is open was not owed twice ->
                 # typing it once more cannot double a penalty
-                self._note(f"No {c['kind']} flag at the car yet: {c['text']} - "
+                self._note(f"No {_what_missing(c['kind'])} yet: {c['text']} - "
                            f"typing it once more, slower {self._flag_info(c['car'])}")
                 retry.append(c)
-            elif (now > c["until"] and c["kind"] in CHAT_RETRY_KINDS
+            elif (now > c["until"] and c["kind"] == "black"
                     and int(c.get("retry") or 0) + 1 < CHAT_RETRY_TRIES):
                 # 2026-10-29 (Robert Nash #96, Tyler #30): both tries failed,
                 # the same command typed by hand a minute later did work
                 # (#128 earlier) -> keep trying every 30 s for ~2 minutes
+                # (not a caution: one 2 minutes late is not wanted)
                 n = int(c.get("retry") or 0) + 1
-                self._note(f"No {c['kind']} flag at the car after {n} tries: "
+                self._note(f"No {_what_missing(c['kind'])} after {n} tries: "
                            f"{c['text']} - trying again in "
                            f"{CHAT_RETRY_LATER_S:.0f} s (try {n + 1} of "
                            f"{CHAT_RETRY_TRIES}) {self._flag_info(c['car'])}")
                 self._chat_later.append(dict(c, retry=n,
                                              due=now + CHAT_RETRY_LATER_S))
             elif now > c["until"]:
+                if c["kind"] == "yellow":
+                    self._note(f"NO caution after {int(c.get('retry') or 0) + 1} "
+                               f"tries: {c['text']} - check the iRacing chat "
+                               f"(are full course cautions on in this session?) "
+                               f"{self._flag_info(c['car'])}")
+                    continue
                 if c["kind"] in ("black", "dq"):
                     # 2026-10-29 Le Mans: iRacing answered "David LoVecchio (#2)
                     # was black flagged." 5x, the car never got the flag nor

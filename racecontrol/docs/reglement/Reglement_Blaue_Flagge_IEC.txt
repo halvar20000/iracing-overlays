@@ -1,0 +1,65 @@
+IEC - Reglement: Blaue Flagge (Mehrklassen und Überrunden)
+==========================================================
+
+Die Regel wird im Rennen automatisch von der Rennleitung (iCASControl)
+überwacht. Sie gilt nur im Rennen, ab Runde 2 und nicht unter Full Course
+Yellow (Caution).
+
+
+1. Wann gilt die blaue Flagge?
+
+1.1 Ein Fahrzeug erhält die blaue Flagge, wenn sich auf der Strecke direkt
+    hinter ihm innerhalb von 0,5 Sekunden befindet:
+    a) ein Fahrzeug einer schnelleren Klasse (z. B. LMP2 hinter GT3,
+       GT3 hinter Porsche Cup), unabhängig vom Rundenstand, oder
+    b) ein Fahrzeug, das es überrundet (gleiche oder andere Klasse), d. h.
+       ein Fahrzeug, das im Rennen mindestens eine Runde vor ihm liegt.
+
+1.2 Welche Klasse schneller ist, richtet sich nach der von iRacing
+    geschätzten Rundenzeit der Klasse.
+
+
+2. Signalisierung
+
+2.1 Die blaue Flagge wird dem betroffenen Fahrer als private Nachricht im
+    iRacing-Chat angezeigt (nur er sieht sie), z. B.:
+    "BLUE FLAG - LET #1 <Fahrer> PASS"
+
+2.2 Solange der Fahrer das schnellere Fahrzeug nicht vorbeigelassen hat,
+    wird die Nachricht alle 30 Sekunden wiederholt.
+
+
+3. Strafe
+
+3.1 Hat der Fahrer das schnellere Fahrzeug eine volle Runde (gerechnet ab
+    der ersten blauen Flagge, auf Basis seiner eigenen Rundenzeit) nicht
+    vorbeigelassen, erhält er eine DRIVE-THROUGH-Strafe.
+
+3.2 Bei Strecken, auf denen eine Runde länger als 3 Minuten dauert
+    (z. B. Le Mans), wird die Strafe spätestens nach 3 Minuten
+    ausgesprochen.
+
+3.3 Die Strafe wird allen Teilnehmern per Rennleitungs-Nachricht
+    mitgeteilt, z. B.:
+    "#50 (<Fahrer>) - DRIVE THROUGH FOR IGNORING BLUE FLAGS"
+
+3.4 Hat sich das schnellere Fahrzeug zum Zeitpunkt der Strafe wieder
+    deutlich zurückfallen lassen (mehr als 1 Sekunde Abstand), wird keine
+    Strafe ausgesprochen. Für mehrere schnellere Fahrzeuge hintereinander
+    gibt es innerhalb dieser Frist nur eine Strafe.
+
+
+4. Ausnahme: Zurückrunden
+
+4.1 Ein eigentlich schnelleres Fahrzeug, das z. B. durch einen Dreher oder
+    einen Boxenstopp eine Runde (oder mehr) verloren hat, darf sich
+    zurückrunden. Überholt es dabei ein Fahrzeug, das im Rennen eine Runde
+    oder mehr vor ihm liegt, würde es sofort selbst die blaue Flagge
+    dieses Fahrzeugs sehen.
+
+4.2 Um das zu vermeiden, hat das sich zurückrundende Fahrzeug nach dem
+    Überholmanöver 2 Minuten Zeit, sich einen Vorsprung von mindestens
+    0,5 Sekunden herauszufahren. In dieser Zeit erhält es von diesem
+    Fahrzeug keine blaue Flagge.
+
+4.3 Gelingt das nicht, gilt danach die normale Regel nach Punkt 1 bis 3.

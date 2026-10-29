@@ -219,6 +219,13 @@ test_incidents 319/319. FIRST LIVE RUN: #96 Robert Nash, all 5 tries over
 the chat each time (Thomas) = the typing ARRIVES, iRacing accepts and does
 not apply the flag for that car. Cause in iRacing, not fixable here; seen
 only in AI sessions so far (#2, #128, #30, #96).
+THEN #96 worked (10 s after a !clear #96 - maybe a hidden pending penalty;
+an earlier clear → black for #96 had failed, so unproven). Same evening
+three !yellow (2464 / 2489 / 2509 s) did nothing, the 4th worked (2557 s,
+Thomas: it showed in the chat) → 0.1.25: !yellow is typed once more, slower,
+too (no 30 s later tries - a caution 2 min late is not wanted), then "NO
+caution after 2 tries … are full course cautions on?" (was "is this PC
+admin?"). test_incidents 321/321.
 
 **October 29, 2026 (RC banner 5019: hide other OBS sources while a message
 is on air):** Thomas: an overlay should go away whenever the banner shows
