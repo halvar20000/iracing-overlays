@@ -756,13 +756,34 @@ check("no effect within the time -> warning with the raw flag bits",
 
 # 2026-10-29 Le Mans: iRacing said "was black flagged", the car never got it
 chat_ir["CarIdxSessionFlags"] = [0, 0]
+fk.out.clear()
 csrc.send_chat("!black #2 D", "post", 0, ("black", 1))
 wait_log()
 csrc._chat_checks[0]["until"] = 0
 csrc._check_chat()
 log = csrc.drain_command_log()
-check("NB1 no black flag at the car -> says check the car / give again, not 'admin?'",
-      len(log) == 1 and log[0].startswith("NO black flag at the car")
+check("RT1 black not at the car -> 'typing it once more, slower'",
+      len(log) == 1 and "once more, slower" in log[0], log)
+for _ in range(80):
+    if csrc._chat_checks:
+        break
+    _t.sleep(0.1)
+typed = "".join(o[2] for o in fk.out if o[0] == "c")
+check("RT2 typed a second time", typed == "!black #2 D!black #2 D"
+      and len(csrc._chat_checks) == 1 and csrc._chat_checks[0]["retry"], typed)
+chat_ir["CarIdxSessionFlags"] = [0, irs.FLAG_BLACK]
+csrc._check_chat()
+check("RT3 confirmed on the second try", csrc.drain_command_log()
+      == ["iRacing confirmed: !black #2 D (second try, typed slower)"])
+chat_ir["CarIdxSessionFlags"] = [0, 0]
+csrc.send_chat("!black #2 D", "post", 0, ("black", 1), retry=True)
+wait_log()
+csrc._chat_checks[0]["until"] = 0
+csrc._check_chat()
+log = csrc.drain_command_log()
+check("NB1 second try failed too -> says check the car / give again, no third try",
+      len(log) == 1 and log[0].startswith("NO black flag at the car after two tries")
+      and not csrc._chat_checks
       and "give the penalty again" in log[0] and "is this PC admin" not in log[0]
       and not csrc._chat_checks, log)
 rs_m = RaceState()

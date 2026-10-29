@@ -229,9 +229,10 @@ class ChatSender:
         self._thread: Optional[threading.Thread] = None
 
     def send(self, text: str, method: str = "post",
-             char_delay_ms: float = 6) -> None:
+             char_delay_ms: float = 6, open_wait: float = 0.25) -> None:
         with self._cv:
-            self._q.append((text, method, max(0.0, char_delay_ms) / 1000.0))
+            self._q.append((text, method, max(0.0, char_delay_ms) / 1000.0,
+                            max(0.05, float(open_wait))))
             if self._thread is None or not self._thread.is_alive():
                 self._thread = threading.Thread(target=self._run, daemon=True)
                 self._thread.start()
@@ -244,14 +245,15 @@ class ChatSender:
                     self._cv.wait(timeout=30)
                     if not self._q:
                         return
-                text, method, delay = self._q.pop(0)
-            ok, info = self._type(text, method, delay)
+                text, method, delay, wait = self._q.pop(0)
+            ok, info = self._type(text, method, delay, wait)
             try:
                 self.done(text, ok, info)
             except Exception:
                 pass
 
-    def _type(self, text: str, method: str, delay: float) -> tuple[bool, str]:
+    def _type(self, text: str, method: str, delay: float,
+              wait: float = 0.25) -> tuple[bool, str]:
         try:
             if self._keys is None:
                 self._keys = self.keys_factory()
@@ -267,14 +269,14 @@ class ChatSender:
                 keys.set_foreground(hwnd)
                 time.sleep(0.15)
                 self.open_chat()
-                time.sleep(0.25)
+                time.sleep(wait)
                 keys.type_text(text, delay)
                 time.sleep(0.1)
                 if prev and prev != hwnd:
                     keys.set_foreground(prev)
                 return True, "typed (focus)"
             self.open_chat()
-            time.sleep(0.25)
+            time.sleep(wait)
             for ch in text:
                 keys.post_char(hwnd, ch)
                 time.sleep(delay)

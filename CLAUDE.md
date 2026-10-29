@@ -192,7 +192,12 @@ Cause unknown. A second DT while one is open is not owed twice. A blind retry
 was built and DROPPED (would double a penalty iRacing did give). Now a black /
 DQ that does not show = "NO black flag at the car after 6 s … check the car, if
 it has no flag give the penalty again (no reply in the chat = not admin)"
-instead of "is this PC admin?". RC message: the log said "to car #2" for an
+instead of "is this PC admin?". 0.1.20 (same evening, Thomas: "difficult if it fails on Saturday"; 9 of 14 DTs
+failed, no pattern in lap pct / pit / time since stop): a black flag not at the
+car after 6 s is typed ONCE more, slower (CHAT_RETRY_DELAY_MS 40, chat open
+wait 0.8 s; `retry` on the check, log "(second try, typed slower)"), then the
+"NO black flag … after two tries" note. Safe because no unconfirmed DT was
+ever served and a second DT while one is open was not owed twice. RC message: the log said "to car #2" for an
 RC (= /all) line when a car was selected → the TARGET decides ("to all (RC)",
 "PRIVATE to car #N", PRIVATE without a car refused). test_incidents 304/304.
 
