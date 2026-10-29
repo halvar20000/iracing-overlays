@@ -181,6 +181,25 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 29, 2026 (iCASControl 0.1.17 — blue flag rule for multiclass +
+lapping, IEC; new logo):** Thomas's rule, `cb_*` keys in steward.py
+(`_blue_rule`, default OFF; ON replaces iRacing's-blue-flag rule and the own
+hint): a car of a FASTER CLASS (`class_pace`: CarClassEstLapTime — new on
+CarFrame / Car as `class_est_lap`, Car also `class_id` — else the class's
+median best lap; ≥ 1 % quicker) or a car LAPPING him (≥ 0.5 lap ahead in the
+race) within `cb_gap_s` 1 s behind on track → private `cb_text`, again every
+`cb_every_s` 30 s; not let past after one of HIS laps (max `cb_dt_max_s` 180 —
+Le Mans) and still ≤ 2 s → DT (`blue_dt`, one per car per window) + `cb_dt_text`
+to all. Period ends on the pass, a car leaving, or 10 s > 3 s back. UNLAP
+exception: close pairs are watched for passes; passing a car that is a lap+
+ahead in the race = unlap → that pair (unlapper as slow) is blue-free for
+`cb_grace_s` 120 s (log kind auto_blue_unlap); still ≤ 1 s afterwards = the
+normal rule. From lap `cb_from_lap` 2, no caution. Log kinds auto_blue /
+auto_blue_dt. test_incidents 290/290 (+19). NOT tried in iRacing. Also:
+new iCAS Control logo (racecontrol/iCAS_Control_Overlay-Logo*.png, by Thomas)
+in the header, login dialog, favicon (frontend/img/) and on the website's
+iCASControl pages.
+
 **October 28, 2026 (trackmap 5007: turn numbers):** Thomas wanted the turn
 numbers on the map. The track SVG now carries a small dark numbered disc per
 corner, 36 px from the apex on the OUTSIDE of the bend (`_turn_labels`). The
