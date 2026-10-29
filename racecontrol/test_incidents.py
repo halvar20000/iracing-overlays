@@ -2040,7 +2040,8 @@ check("wave: #2 (a lap behind the LMP2 leader) and #51 (behind GT3 leader #50), 
       "not #50, not #52 in the pits",
       sorted(x.split()[1] for x in w) == ["#2", "#51"], w)
 step(sc(6100, 11, 0.30))
-step(sc(6150, 12, 0.01, flags=("caution", "one_to_green")))
+step(sc(6150, 12, 0.01))
+step(sc(6152, 12, 0.02, flags=("caution", "one_to_green")))
 step(sc(6160, 12, 0.05, flags=("caution", "one_to_green")))
 check("lap 2: !pacelaps 1 once (not the old 3), nothing twice", len([x for x in sent7[n0:] if x.startswith("!pacelaps")]) == 1
       and sent7[n0:].count("!pitopen") == 1)
@@ -2133,6 +2134,28 @@ step(sc(8400, 60, 0.50, key="sc-6"))
 step(sc(8700, 62, 0.70, key="sc-6"))
 check("PL7 iCAS came back late in lap 2: nothing sent", pl() == [], pl())
 step(sc(8900, 63, 0.10, key="sc-6", flags=()))
+# 0.1.32: the pace car's S/F crossing opens the window (leader lap 2 refused)
+eng7.auto.reset()
+k = len(sent7)
+step(sc(9000, 70, 0.50, key="sc-8"))                     # pace car in the pits
+step(sc(9050, 70, 0.70, key="sc-8", pace=0.80))          # out on track
+step(sc(9100, 71, 0.05, key="sc-8", pace=0.95))
+step(sc(9300, 72, 0.01, key="sc-8", pace=0.97))
+check("PC1 leader starts lap 2, pace car not over the line: nothing", pl() == [], pl())
+step(sc(9310, 72, 0.02, key="sc-8", pace=0.03))
+check("PC2 pace car crosses the line: !pacelaps 1", pl() == ["!pacelaps 1"], pl())
+for t in range(9315, 9345, 5):
+    step(sc(t, 72, 0.03, key="sc-8", pace=0.05))
+check("PC3 refused: 3 tries in that window, then stop", pl() == ["!pacelaps 1"] * 3, pl())
+step(sc(9700, 72, 0.95, key="sc-8", pace=0.97))
+step(sc(9710, 73, 0.01, key="sc-8", pace=0.02))
+check("PC4 next crossing: a new window", pl() == ["!pacelaps 1"] * 4, pl())
+step(sc(9712, 73, 0.02, key="sc-8", pace=0.03, flags=("caution", "one_to_green")))
+step(sc(9720, 73, 0.03, key="sc-8", pace=0.05, flags=("caution", "one_to_green")))
+check("PC5 one to green: no more", pl() == ["!pacelaps 1"] * 4, pl())
+check("PC6 the log says the pace car crossed", any(
+    "pace car crossed the line" in str(e.text) for e in eng7.state.events), "")
+step(sc(9900, 74, 0.10, key="sc-8", flags=()))
 
 _tc = type("C", (), {"number": "7", "driver": "A B", "team": "Team X"})()
 check("%tname% = team (IEC texts)",

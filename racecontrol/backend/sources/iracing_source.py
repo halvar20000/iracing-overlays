@@ -381,12 +381,13 @@ class IRacingSource(DataSource):
         leader_dist = max(dist_by_idx.values()) if dist_by_idx else 0.0
         # the pace car's lap pct (short caution: has the leader caught it?);
         # its CarIdxLap need not count like the field's, so pct only
-        pace_prog = -1.0
+        pace_prog, pace_pit = -1.0, False
         for d in drivers:
             idx = int(d.get("CarIdx", -1))
             if idx >= 0 and d.get("CarIsPaceCar", 0) == 1:
                 if int(at(surface, idx, -1)) != -1 and float(at(pct, idx, -1.0)) >= 0:
                     pace_prog = float(at(pct, idx, 0.0))
+                    pace_pit = bool(at(on_pit, idx, False))
                 break
 
         # Estimate a pace lap time for gap conversion.
@@ -536,7 +537,7 @@ class IRacingSource(DataSource):
             if str(cur_session.get("SessionLaps", "")).isdigit() else 0,
             session_laps_remain=int(self._g("SessionLapsRemain", 0) or 0),
             flags=active_flags, start_lights=start_lights,
-            flags_raw=flags_val, pace_car_prog=pace_prog,
+            flags_raw=flags_val, pace_car_prog=pace_prog, pace_car_pit=pace_pit,
             weather=self._read_weather(),
             sim_date=str(weekend.get("WeekendOptions", {}).get("Date", "")),
             session_num=cur_num, session_key=session_key, in_replay=in_replay,

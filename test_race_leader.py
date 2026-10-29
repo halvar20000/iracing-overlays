@@ -106,6 +106,45 @@ def test_no_banner_in_first_two_laps():
     print("ok  no new-leader banner in laps 1-2")
 
 
+def test_no_banner_under_caution():
+    """Thomas 2026-10-29: never during a caution (pit stops reshuffle the
+    order). Runs the real poll with a fake SDK."""
+    import iracing_race_leader as RL
+
+    class FakeIR(dict):
+        def freeze_var_buffer_latest(self):
+            pass
+
+        def __getitem__(self, k):
+            return self.get(k)
+
+    p = RL.LeaderPoller.__new__(RL.LeaderPoller)
+    p.state, p.gate = LeaderState(stable_polls=1), RL.StartLapGate(0.0)
+    p._session_key, p._is_race_cache = None, {}
+    ir = FakeIR(SessionNum=1, SessionUniqueID=7, SessionState=4,
+                SessionInfo={"Sessions": [{"SessionNum": 1, "SessionType": "Race"}]},
+                DriverInfo={"Drivers": [{"CarIdx": 0, "UserName": "A"},
+                                        {"CarIdx": 1, "UserName": "B"}]},
+                CarIdxTrackSurface=[3, 3], SessionFlags=0x04,
+                CarIdxLap=[10, 10], CarIdxLapDistPct=[0.5, 0.4])
+    p.ir = ir
+    p._read_snapshot()                                   # A leads (silent)
+    ir["SessionFlags"] = 0x4000                          # caution
+    ir["CarIdxLapDistPct"] = [0.5, 0.6]                  # B ahead (A pitted)
+    snap = p._read_snapshot()
+    assert snap["caution_quiet"] and p.state.change_id == 0, snap
+    ir["SessionFlags"] = 0x0200                          # one to green
+    p._read_snapshot()
+    assert p.state.change_id == 0
+    ir["SessionFlags"] = 0x04                            # green: B is no news
+    p._read_snapshot()
+    assert p.state.change_id == 0
+    ir["CarIdxLapDistPct"] = [0.7, 0.6]                  # A passes under green
+    p._read_snapshot()
+    assert p.state.change_id == 1 and p.state.event_name == "A"
+    print("ok  no new-leader banner under a caution")
+
+
 if __name__ == "__main__":
     test_silent_init()
     test_real_lead_change_fires_once()
@@ -114,4 +153,5 @@ if __name__ == "__main__":
     test_session_reset()
     test_leader_out_of_world_then_back()
     test_no_banner_in_first_two_laps()
+    test_no_banner_under_caution()
     print("\nALL TESTS PASSED")

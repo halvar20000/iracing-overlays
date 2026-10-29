@@ -25,6 +25,12 @@ Rules dialog:
   GREEN at once).  With 1 lap it is sent again every PACELAPS_RETRY_S while
   no one-to-green shows, PACELAPS_TRIES in all, only early in that lap.
   So the shortest caution = rest of lap 0 + lap 1 + lap 2 (one to green).
+  0.1.32: the PACE CAR's crossing decides, not the leader's (same evening:
+  sent when the leader began lap 2 = refused; Thomas's by hand when the pace
+  car crossed the line a lap later = one to green).  Every time the pace car
+  crosses the S/F line on track (not on pit road) under the caution, a
+  window opens: !pacelaps 1 up to PACELAPS_TRIES times, PACELAPS_RETRY_S
+  apart, until one-to-green shows.  No pace car data = the leader rule.
   While on, ``fcy_laps`` is not used.
 * SEQUENCER (``seq_enabled`` + ``sequence``, like iRaceControl's) - RC
   messages to everybody at a session time, e.g. GT3 WCT quali 00:00:01
@@ -128,6 +134,7 @@ _TEXT = ("otg_text", "bf_warn_text", "bf_dt_text",
          "fr_text", "meatball_text", "pro_text", "cb_text", "cb_dt_text")
 PACELAPS_RETRY_S = 5.0    # short caution: !pacelaps 1 again if no one-to-green
 PACELAPS_TRIES = 3
+PACELAPS_WINDOW_S = 20.0  # ... only this long after the pace car's crossing
 SEQ_SESSIONS = ("quali", "race", "practice", "warmup", "any")
 SEQ_MAX = 30
 SEQ_LATE_S = 120        # a step is still sent this long after its time
@@ -558,14 +565,15 @@ class AutoSteward:
             saved = getattr(state, "short_caution", None)
             if (isinstance(saved, dict) and saved.get("session_num") == state.session_num
                     and saved.get("session_key") == state.session_key):
-                self._sc = {k: saved[k] for k in ("t", "lap0", "pits", "lap1")
-                            if k in saved}
-                if len(self._sc) < 4:
+                self._sc = {k: v for k, v in saved.items()
+                            if k not in ("session_num", "session_key")}
+                if not all(k in self._sc for k in ("t", "lap0", "pits", "lap1")):
                     self._sc = None
                 else:
-                    self._sc["laps"] = bool(saved.get("laps"))
-                    self._sc["laps_t"] = float(saved.get("laps_t") or 0)
-                    self._sc["laps_n"] = int(saved.get("laps_n") or 0)
+                    self._sc.setdefault("laps", False)
+                    self._sc.setdefault("laps_t", 0.0)
+                    self._sc.setdefault("laps_n", 0)
+                    self._sc["pc_prev"] = None   # pct from before the restart
         out = self._short_caution_step(state, rules)
         if self._sc is not None and hasattr(state, "short_caution"):
             state.short_caution = dict(self._sc, session_num=state.session_num,
@@ -594,20 +602,37 @@ class AutoSteward:
             if rules.get("fcy_pitopen"):
                 out.append({"type": "caution_pits"})
         n = int(rules.get("fcy_short_laps") or 1)
-        if leader.lap >= sc["lap0"] + 2 and leader.lap_dist_pct < 0.5:
-            # after the first FULL caution lap (iRacing refuses it before)
-            otg = "one_to_green" in (state.flags or [])
-            if not sc.get("laps") or (
-                    n == 1 and not otg and sc.get("laps_n", 0) < PACELAPS_TRIES
-                    and leader.lap == sc["lap0"] + 2
-                    and now - sc.get("laps_t", 0) >= PACELAPS_RETRY_S):
-                sc["laps"] = True
-                sc["laps_t"] = now
-                sc["laps_n"] = sc.get("laps_n", 0) + 1
-                out.append({"type": "caution_laps", "n": n, "leader": leader,
-                            "try": sc["laps_n"]})
-        elif leader.lap >= sc["lap0"] + 2:
-            sc["laps"] = True           # too late in that lap: leave it
+        otg = "one_to_green" in (state.flags or [])
+        # a window opens when the PACE CAR crosses the S/F line on track (no
+        # pace car data: when the leader starts lap 2 after the caution)
+        pace = float(getattr(state, "pace_car_prog", -1.0))
+        if pace >= 0 and not getattr(state, "pace_car_pit", False):
+            sc["pc_seen"] = True
+            prev = sc.get("pc_prev")
+            if prev is not None and prev > 0.9 and pace < 0.1:
+                sc["win"] = now
+                sc["laps_n"] = 0
+                sc["pc_cross"] = sc.get("pc_cross", 0) + 1
+            sc["pc_prev"] = pace
+        else:
+            sc["pc_prev"] = None
+        if not sc.get("pc_seen") and leader.lap >= sc["lap0"] + 2 \
+                and leader.lap_dist_pct < 0.5 and not sc.get("lead_win"):
+            sc["lead_win"] = True
+            sc["win"] = now
+            sc["laps_n"] = 0
+        win = sc.get("win")
+        if (win is not None and not otg and now - win < PACELAPS_WINDOW_S
+                and sc.get("laps_n", 0) < (PACELAPS_TRIES if n == 1 else 1)
+                and (n == 1 or not sc.get("laps"))
+                and now - sc.get("laps_t", 0) >= PACELAPS_RETRY_S):
+            sc["laps"] = True
+            sc["laps_t"] = now
+            sc["laps_n"] = sc.get("laps_n", 0) + 1
+            out.append({"type": "caution_laps", "n": n, "leader": leader,
+                        "try": sc["laps_n"],
+                        "by": "pace car" if sc.get("pc_seen") else "leader",
+                        "cross": sc.get("pc_cross", 0)})
         if not sc["lap1"] and leader.lap > sc["lap0"]:
             sc["lap1"] = True
             mode = rules.get("fcy_wave", "class")

@@ -284,6 +284,21 @@ few quiet seconds. Suspected: iRacing drops a command among other chat lines
 (unconfirmed). ChatSender: a "!" command is queued before waiting messages
 (behind other commands) and has CMD_GAP_S 3 s of quiet chat before AND after
 it. test CG1 / CG2; test_incidents 343/343.
+0.1.32 (same evening): caution in leader lap 12 (3579.9 s); iCAS sent
+!pacelaps 1 when the leader began lap 14 (4369 s, + 4374 / 4379) - refused;
+Thomas's by hand when the PACE CAR crossed the line a lap later (4796.8 s)
+→ ONE TO GREEN 4797.5. So the pace car's crossing decides: SessionFrame /
+RaceState `pace_car_pit` (pace car CarIdxOnPitRoad) next to pace_car_prog;
+every pace car S/F crossing ON TRACK under the caution opens a window
+(PACELAPS_WINDOW_S 20): !pacelaps 1 up to PACELAPS_TRIES 3, 5 s apart, until
+one_to_green shows; the next crossing opens a new window. No pace car data =
+the old leader-lap-2 rule. Log "pace car crossed the line (Nx under this
+caution)". A restart keeps the saved short caution (all keys). test PC1-PC6,
+test_incidents 349/349. NOT tried live yet.
+New Race Leader 5018 (same evening, Thomas): never during a caution -
+SessionFlags 0x4000 / 0x8000 / 0x0200 while racing → LeaderState
+update(quiet=True) (tracked silently, the leader after the green is no news);
+/state `caution_quiet`. test_race_leader (real poll, fake SDK). Restart 5018.
 
 **October 29, 2026 (flag overlay 5008: YELLOW + GREEN flags too):** Thomas:
 not only white / checkered. NEW `CautionWatch` in flag_overlay.py (pure, race

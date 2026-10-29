@@ -51,6 +51,8 @@ import time
 from flask import Flask, jsonify, render_template_string, request
 
 from iracing_sdk_base import SDKPoller, StartLapGate, setup_utf8_stdout
+
+CAUTION_FLAGS = 0x4000 | 0x8000 | 0x0200   # caution, waving, one to green
 setup_utf8_stdout()
 
 
@@ -276,8 +278,14 @@ class LeaderPoller(SDKPoller):
         lead_idx, lead_name, lead_prog = (self._leading_car(ir, names) if is_racing
                                           else (None, "", None))
         early = is_racing and lead_idx is not None and self.gate.early(lead_prog)
+        # never under a full course caution (2026-10-29 Thomas): the order
+        # changes in the pits are tracked silently.  Caution 0x4000 / 0x8000,
+        # one-to-green 0x0200 (only while racing - the pace lap is not)
+        caution = is_racing and bool(int(ir["SessionFlags"] or 0)
+                                     & CAUTION_FLAGS)
 
-        self.state.update(is_racing, lead_idx, lead_name, quiet=early)
+        self.state.update(is_racing, lead_idx, lead_name,
+                          quiet=early or caution)
 
         snap = {
             "connected":     True,
@@ -285,6 +293,7 @@ class LeaderPoller(SDKPoller):
             "session_state": int(sess_state) if sess_state is not None else None,
             "is_racing":     is_racing,
             "start_quiet":   early,
+            "caution_quiet": caution,
             "banner_seconds": BANNER_SECONDS,
         }
         snap.update(self.state.snapshot())

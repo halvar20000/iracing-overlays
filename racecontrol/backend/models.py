@@ -151,6 +151,7 @@ class SessionFrame:
     start_lights: str = "off"          # off / ready / set / go
     flags_raw: int = 0                 # iRacing SessionFlags as sent (debug)
     pace_car_prog: float = -1.0        # pace car CarIdxLapDistPct, -1 = not on track
+    pace_car_pit: bool = False         # pace car on pit road
     weather: Weather = field(default_factory=Weather)
     sim_date: str = ""                 # display date the race started on
     session_num: int = 0               # iRacing SessionNum (replay seeks need it)
