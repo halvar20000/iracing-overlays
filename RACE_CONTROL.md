@@ -18,7 +18,7 @@ Violettes **RACE CONTROL**-Banner im F1-Stil für OBS. Zwei Quellen:
 ## OBS
 
 Browser-Quelle → Lokale Datei → `obs_loaders/rc_banner.html` (≈ 950 × 120).
-Optionen an der URL: `?secs=8` Anzeigedauer, `?zoom=1.2`, `?flags=0` nur
+Optionen an der URL: `?secs=12` Anzeigedauer (Standard 12 s, lange Texte bis 25 s; iRaceControls DisplayTime verlängert, verkürzt aber nicht), `?zoom=1.2`, `?flags=0` nur
 iRaceControl, `?atvo=0` nur iRacing-Flaggen, `?demo=1` Vorschau.
 
 ## Operator-Seite

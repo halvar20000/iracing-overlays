@@ -1165,7 +1165,7 @@ BANNER_HTML = r"""<!DOCTYPE html>
 <div class="body"><div class="head" id="head"></div><div class="text" id="text"></div><div class="car" id="car"></div></div></div></div>
 <script>
 const qs = new URLSearchParams(location.search);
-const SECS = parseFloat(qs.get('secs') || '8');
+const SECS = parseFloat(qs.get('secs') || '12');   // 8 s was too short (Thomas, 2026-10-29)
 const REPORT = qs.get('demo') !== '1' && qs.get('hide') !== '0';   // hide other OBS sources (rc_config hide_sources)
 const SHOW_FLAGS = qs.get('flags') !== '0', SHOW_ATVO = qs.get('atvo') !== '0', SHOW_ICAS = qs.get('icas') !== '0';
 document.getElementById('wrap').style.setProperty('--z', qs.get('zoom') || '1');
@@ -1187,7 +1187,7 @@ function show(m) {
       + (c.class ? `<span class="cls" style="background:${esc(c.color)};color:${esc(c.text)}">${esc(c.class)}</span>` : '') : '';
   requestAnimationFrame(() => rc.classList.add('show'));
   const words = ((m.headline || '') + ' ' + (m.text || '')).split(/\s+/).length;
-  const secs = Math.max(m.secs || SECS, Math.min(20, words * 0.45));
+  const secs = Math.max(SECS, m.secs || 0, Math.min(25, words * 0.6));
   if (REPORT) fetch('/rc/onair', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({secs})}).catch(() => {});
   setTimeout(() => { rc.classList.remove('show'); setTimeout(() => { busy = false; next(); }, 450); }, secs * 1000);
 }
