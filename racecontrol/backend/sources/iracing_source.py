@@ -97,6 +97,11 @@ CHAT_RETRY_DELAY_MS = 40.0            # ... with this much time per character
 CHAT_RETRY_OPEN_S = 0.8               # ... and this long after opening the chat
 CHAT_RETRY_LATER_S = 30.0            # ... then again this much later
 CHAT_RETRY_TRIES = 5                  # ... until this many tries in all
+# later tries per kind: (seconds between, tries in all).  !yellow 2026-10-29
+# evening: 2 tries, nothing in the iRacing chat, no caution (Thomas: "do
+# retry it") - a caution up to ~1 min late beats none
+CHAT_LATER = {"black": (CHAT_RETRY_LATER_S, CHAT_RETRY_TRIES),
+              "yellow": (15.0, 5)}
 CHAT_CLEAR_GAP_S = 10.0             # later tries: !clear #N, this long, !black
 CHAT_VERIFY_S = 6.0
 CAUTION_BITS = 0x4000 | 0x8000          # SessionFlags caution / caution waving
@@ -895,7 +900,7 @@ class IRacingSource(DataSource):
         yellow)."""
         if self._ir is None or not self._ir.is_connected:
             return "iRacing not connected"
-        if verify and not retry and verify[0] in ("black", "dq", "clear"):
+        if verify and not retry and verify[0] in ("black", "dq", "clear", "yellow"):
             # a new penalty / clear for the car replaces a waiting retry
             self._chat_later = [c for c in self._chat_later
                                 if c["car"] != verify[1]]
@@ -979,7 +984,8 @@ class IRacingSource(DataSource):
                 if now < c["due"]:
                     later.append(c)
                 elif self._chat_effect(c["kind"], c["car"]):
-                    self._note(f"iRacing confirmed: {c['text']} (the flag "
+                    self._note(f"iRacing confirmed: {c['text']} (the "
+                               f"{'caution' if c['kind'] == 'yellow' else 'flag'} "
                                f"came late, before try {int(c['retry']) + 1})")
                 elif (c["kind"] == "black" and not c.get("cleared")
                         and _clear_for(c["text"])):
@@ -1021,19 +1027,19 @@ class IRacingSource(DataSource):
                 self._note(f"No {_what_missing(c['kind'])} yet: {c['text']} - "
                            f"typing it once more, slower {self._flag_info(c['car'])}")
                 retry.append(c)
-            elif (now > c["until"] and c["kind"] == "black"
-                    and int(c.get("retry") or 0) + 1 < CHAT_RETRY_TRIES):
+            elif (now > c["until"] and c["kind"] in CHAT_LATER
+                    and int(c.get("retry") or 0) + 1 < CHAT_LATER[c["kind"]][1]):
                 # 2026-10-29 (Robert Nash #96, Tyler #30): both tries failed,
                 # the same command typed by hand a minute later did work
                 # (#128 earlier) -> keep trying every 30 s for ~2 minutes
                 # (not a caution: one 2 minutes late is not wanted)
                 n = int(c.get("retry") or 0) + 1
+                gap, tries = CHAT_LATER[c["kind"]]
                 self._note(f"No {_what_missing(c['kind'])} after {n} tries: "
                            f"{c['text']} - trying again in "
-                           f"{CHAT_RETRY_LATER_S:.0f} s (try {n + 1} of "
-                           f"{CHAT_RETRY_TRIES}) {self._flag_info(c['car'])}")
-                self._chat_later.append(dict(c, retry=n,
-                                             due=now + CHAT_RETRY_LATER_S))
+                           f"{gap:.0f} s (try {n + 1} of "
+                           f"{tries}) {self._flag_info(c['car'])}")
+                self._chat_later.append(dict(c, retry=n, due=now + gap))
             elif now > c["until"]:
                 if c["kind"] == "yellow":
                     self._note(f"NO caution after {int(c.get('retry') or 0) + 1} "

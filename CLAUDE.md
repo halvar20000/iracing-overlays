@@ -249,6 +249,12 @@ black flag at that moment, so nothing visible is cleared). test_incidents
 335/335. RC banner 5019: Thomas - "PENALTY CLEARED" never on air: Feed.add
 keeps kind clear (or a clear text) out of the message list, the PenaltyBoard
 still drops the car's tag (test CL1). Restart 5019.
+0.1.28 (same evening): a hand FCY - both !yellow tries failed, NOTHING in
+the iRacing chat (Thomas), while the blue-flag private lines of the same
+seconds arrived. Now !yellow gets later tries too: `CHAT_LATER` {kind: (gap,
+tries)} - black (30 s, 5), yellow (15 s, 5 = ~1 min) - then "NO caution after
+5 tries"; a caution that comes meanwhile = "came late", a new !yellow drops
+the waiting one. test_incidents 340/340.
 
 **October 29, 2026 (flag overlay 5008: YELLOW + GREEN flags too):** Thomas:
 not only white / checkered. NEW `CautionWatch` in flag_overlay.py (pure, race

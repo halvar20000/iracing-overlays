@@ -870,10 +870,32 @@ for _ in range(80):
 csrc._chat_checks[0]["until"] = 0
 csrc._check_chat()
 log = csrc.drain_command_log()
-check("YR2 second try failed -> NO caution, no later tries",
-      len(log) == 1 and log[0].startswith("NO caution after 2 tries")
-      and "full course cautions" in log[0]
+check("YR2 second try failed -> again in 15 s (try 3 of 5)",
+      len(log) == 1 and log[0].startswith("No caution after 2 tries")
+      and "15 s (try 3 of 5)" in log[0]
+      and not csrc._chat_checks and len(csrc._chat_later) == 1, log)
+for n in (3, 4, 5):
+    fk.out.clear()
+    csrc._chat_later[0]["due"] = 0
+    csrc._check_chat()
+    wait_log()
+    typed = "".join(o[2] for o in fk.out if o[0] == "c")
+    check(f"YR3 try {n}: !yellow typed again (no clear)",
+          typed == "!yellow" and len(csrc._chat_checks) == 1, typed)
+    csrc._chat_checks[0]["until"] = 0
+    csrc._check_chat()
+    log = csrc.drain_command_log()
+check("YR4 after 5 tries -> NO caution, nothing waits",
+      len(log) == 1 and log[0].startswith("NO caution after 5 tries")
       and not csrc._chat_checks and not csrc._chat_later, log)
+csrc._chat_later.append({"text": "!yellow", "kind": "yellow", "car": -1,
+                         "retry": 2, "due": 0, "method": "post", "delay": 0})
+chat_ir["SessionFlags"] = 0x4000
+csrc._check_chat()
+log = csrc.drain_command_log()
+check("YR5 caution came meanwhile -> confirmed, not typed",
+      not csrc._chat_later and len(log) == 1 and "caution came late" in log[0], log)
+chat_ir["SessionFlags"] = 0
 rs_m = RaceState()
 rs_m.ingest(frame(10, [cf(0, "7"), cf(1, "2")]))
 r_all = rs_m.rc_message("RC", "hello", 1)
