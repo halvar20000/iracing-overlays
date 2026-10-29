@@ -231,6 +231,12 @@ Log kinds auto_caution_short / auto_caution_wave. test_incidents 301/301.
 NOT tried in iRacing — UNKNOWN: whether !pacelaps 1 at the start of lap 1
 means "green at the end of this lap" (assumed) and whether iRacing accepts
 !waveby for every car at that moment (it only accepts a car in the pace field).
+FIRST LIVE TEST (same day, Le Mans AI session, 0.1.20): Thomas "FCY worked".
+Log: !yellow confirmed 5533 s (leader in lap 22), !pitopen 5 s later,
+!pacelaps 1 sent at 5763 s when the leader began lap 23 (~4 min behind the pace
+car at Le Mans); all 7 !waveby NOT confirmed (pace bit never set) - probably
+the lapped cars were not lined up in the pace field yet; open whether a later
+waveby (e.g. on one-to-green) would land.
 
 **October 29, 2026 (iCASControl 0.1.17 — blue flag rule for multiclass +
 lapping, IEC; new logo):** Thomas's rule, `cb_*` keys in steward.py
