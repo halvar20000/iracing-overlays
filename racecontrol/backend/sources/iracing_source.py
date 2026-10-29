@@ -216,7 +216,8 @@ class IRacingSource(DataSource):
         self._prev_pct: dict[int, float] = {}
         self._command_log: list[str] = []
         self._log_lock = threading.Lock()
-        self._chat = ChatSender(self._open_chat, self._chat_done)
+        self._chat = ChatSender(self._open_chat, self._chat_done,
+                                busy=self._chat_busy)
         self._chat_checks: list[dict] = []      # waiting for iRacing to act
         self._chat_later: list[dict] = []       # black flag typed again later
         self._chat_verify: dict[str, tuple] = {}  # text -> (kind, car_idx)
@@ -921,6 +922,11 @@ class IRacingSource(DataSource):
         else:
             self._chat.send(text, method, char_delay_ms)
         return f"to iRacing: {text}"
+
+    def _chat_busy(self) -> bool:
+        """A ! command is typed / not yet seen in the telemetry / waiting
+        for a retry: chat messages wait."""
+        return bool(self._chat_verify or self._chat_checks or self._chat_later)
 
     def _chat_done(self, text: str, ok: bool, info: str) -> None:
         verify = self._chat_verify.pop(text, None)

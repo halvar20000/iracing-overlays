@@ -218,6 +218,7 @@ class WinKeys:
 
 
 CMD_GAP_S = 3.0     # no other chat line this long before / after a ! command
+HOLD_MAX_S = 30.0   # a message held back longer than this is dropped
 
 
 class ChatSender:
@@ -228,12 +229,17 @@ class ChatSender:
 
     def __init__(self, open_chat: Callable[[], None],
                  done: Callable[[str, bool, str], None],
-                 keys_factory: Callable[[], object] = WinKeys) -> None:
+                 keys_factory: Callable[[], object] = WinKeys,
+                 busy: Optional[Callable[[], bool]] = None) -> None:
         self.open_chat = open_chat
+        # busy() = a ! command still waits for iRacing to show it: only
+        # commands go out meanwhile, messages wait (and are dropped after
+        # HOLD_MAX_S)
+        self.busy = busy
         self.done = done
         self.keys_factory = keys_factory
         self._keys = None
-        self._q: list[tuple[str, str, float]] = []
+        self._q: list[tuple] = []   # (text, method, delay, open_wait, queued at)
         self._cv = threading.Condition()
         self._last_t = 0.0          # monotonic: when the last line was sent
         self._last_cmd = False      # ... and whether it was a ! command
@@ -242,7 +248,7 @@ class ChatSender:
     def send(self, text: str, method: str = "post",
              char_delay_ms: float = 6, open_wait: float = 0.25) -> None:
         item = (text, method, max(0.0, char_delay_ms) / 1000.0,
-                max(0.05, float(open_wait)))
+                max(0.05, float(open_wait)), time.monotonic())
         with self._cv:
             if text.startswith("!"):
                 # a command goes before the waiting messages (behind other
@@ -258,14 +264,41 @@ class ChatSender:
                 self._thread.start()
             self._cv.notify()
 
+    def _held(self) -> bool:
+        try:
+            return bool(self.busy and self.busy())
+        except Exception:
+            return False
+
     def _run(self) -> None:
         while True:
+            dropped = []
             with self._cv:
                 if not self._q:
                     self._cv.wait(timeout=30)
                     if not self._q:
                         return
-                text, method, delay, wait = self._q.pop(0)
+                if self._q[0][0].startswith("!") or not self._held():
+                    item = self._q.pop(0)
+                else:
+                    # 2026-10-29 Le Mans: 7 x !yellow typed during one blue-
+                    # flag flood (a private line every 1-2 s), only the 7th
+                    # landed - nothing else goes out while a command waits
+                    now = time.monotonic()
+                    dropped = [q for q in self._q if not q[0].startswith("!")
+                               and now - q[4] > HOLD_MAX_S]
+                    self._q = [q for q in self._q if q not in dropped]
+                    item = None
+            for q in dropped:
+                try:
+                    self.done(q[0], False, "held back while a ! command waited "
+                              "for iRacing - too old, dropped")
+                except Exception:
+                    pass
+            if item is None:
+                time.sleep(0.25)
+                continue
+            text, method, delay, wait = item[:4]
             # quiet chat around a ! command (2026-10-29: !yellow / !black often
             # got lost - nothing in the chat - while blue-flag lines went out
             # every 1-5 s; they worked after a few quiet seconds)

@@ -317,6 +317,15 @@ the yellow stays up for the WHOLE caution by default (/state
 the green); `?yellow=short` = only the 10 s. test_flag_overlay 56/56 (+19); yellow +
 green rendered. NOT tried live. Restart 5008.
 
+**October 29, 2026 (iCASControl 0.1.33 — chat held while a command waits):**
+Deploy Pace Car needed two presses again: the first press typed !yellow 5x
+(try 1 + slower + 3 later, 5653-5730 s), all lost, the second press's 3rd try
+landed (5748.8) — the whole time a blue-flag private went out every 1-2 s.
+ChatSender `busy` (= IRacingSource._chat_busy: a verified command typed, being
+checked or waiting for a retry) → only ! commands go out, other lines wait,
+dropped (reported) after HOLD_MAX_S 30 s. Cause of the lost commands still
+unproven (iRacing chat rate limit suspected). test_incidents 352/352.
+
 **October 29, 2026 (RC banner 5019: hide other OBS sources while a message
 is on air):** Thomas: an overlay should go away whenever the banner shows
 something. rc_config.json `"hide_sources": [OBS source names]` → `ObsHider`

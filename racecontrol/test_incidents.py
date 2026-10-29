@@ -733,6 +733,32 @@ gaps = [done3[j + 1][1] - done3[j][1] for j in range(3)]
 check("CG2 quiet chat before and after the command",
       (i == 0 or gaps[i - 1] >= 0.35) and gaps[i] >= 0.35, gaps)
 chat.CMD_GAP_S = _gap0
+# 2026-10-29: 7 x !yellow in a blue-flag flood, only the 7th landed -> while
+# a command waits for iRacing nothing but commands goes out
+_gap0, chat.CMD_GAP_S = chat.CMD_GAP_S, 0.0
+_hold0, chat.HOLD_MAX_S = chat.HOLD_MAX_S, 0.6
+fk4, done4, busy4 = FakeKeys(), [], [True]
+cs4 = chat.ChatSender(lambda: None, lambda t, ok, i: done4.append((t, ok, i)),
+                      lambda: fk4, busy=lambda: busy4[0])
+cs4.send("/35 blue a", "post", 0, open_wait=0.05)
+cs4.send("!black #8 D", "post", 0, open_wait=0.05)
+_t.sleep(0.4)
+check("HB1 busy: the command goes out, the message waits",
+      [d[0] for d in done4] == ["!black #8 D"], done4)
+_t.sleep(0.6)
+check("HB2 held longer than HOLD_MAX_S -> dropped, reported",
+      len(done4) == 2 and done4[1][0] == "/35 blue a" and done4[1][1] is False
+      and "dropped" in done4[1][2], done4)
+cs4.send("/8 blue b", "post", 0, open_wait=0.05)
+_t.sleep(0.3)
+busy4[0] = False
+for _ in range(30):
+    if len(done4) == 3:
+        break
+    _t.sleep(0.1)
+check("HB3 not busy any more -> the waiting message goes out",
+      len(done4) == 3 and done4[2] == ("/8 blue b", True, "posted"), done4)
+chat.CMD_GAP_S, chat.HOLD_MAX_S = _gap0, _hold0
 
 # IRacingSource: send + verification by flag bits
 chat_ir = fake_ir(80, {})
