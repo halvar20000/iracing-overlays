@@ -183,6 +183,28 @@ class Engine:
                 ev = st._log("flag", f"AUTO STEWARD: full course caution? - "
                              f"{why}", lap=st._leader_lap())
                 ev.kind, ev.source = "auto_caution_ask", "auto"
+        elif kind == "caution_short":
+            ev = st._log("flag", f"AUTO STEWARD: short caution - lap 0 = "
+                         f"leader lap {act['lap0']}, then {act['laps']} lap(s) "
+                         f"behind the pace car", lap=act["lap0"])
+            ev.kind, ev.source = "auto_caution_short", "auto"
+        elif kind == "caution_pits":
+            result = self.to_iracing("pit_open")
+            st.note_system(f"Short caution: pits open - {result}", category="flag")
+        elif kind == "caution_laps":
+            self._pending_laps = None           # the plan sets the length now
+            result = self.to_iracing("pace_laps", n=act["n"])
+            st.note_system(f"Short caution: leader in lap 1 - {act['n']} "
+                           f"caution lap(s) - {result}", category="flag")
+        elif kind == "caution_wave":
+            nums = ", ".join("#" + c.number for c in act["cars"])
+            ev = st._log("flag", f"AUTO STEWARD: short caution - wave around "
+                         f"the lapped cars ({'behind their class leader' if act['mode'] == 'class' else 'behind the leader'}): "
+                         f"{nums}", lap=st._leader_lap())
+            ev.kind, ev.source = "auto_caution_wave", "auto"
+            for c in act["cars"]:
+                self.to_iracing("wave_around", car=c,
+                                verify=CHAT_VERIFY_KIND.get("wave_around"))
         elif kind == "sequence":
             text = act["text"]
             ev = st._log("message", f"AUTO STEWARD: sequencer "
@@ -265,6 +287,8 @@ class Engine:
         """Remember the Rules' caution length for the caution just called;
         iRacing only takes !pacelaps once the caution is out."""
         laps = int(self.steward_cfg.get("fcy_laps") or 0)
+        if self.steward_cfg.get("fcy_short"):
+            laps = 0                    # the short caution sets the length
         if laps > 0 and self.chat_cfg.get("enabled") and self._chat_capable():
             self._pending_laps = (laps, time.monotonic() + CAUTION_LAPS_WAIT_S)
 

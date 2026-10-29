@@ -181,6 +181,19 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 29, 2026 (iCASControl 0.1.18 — SHORT CAUTION, Le Mans):** Thomas:
+a caution should last 1 lap. `fcy_short` (default OFF) in steward
+`_short_caution`, for EVERY caution (auto / button / iRacing's own, edge of
+_caution_out in a race): lap the caution comes out = lap 0 (leader = max
+lap + pct); `fcy_pit_open_s` 5 s later `!pitopen`; when the leader's lap >
+lap 0: `!pacelaps fcy_short_laps` (1) once + `!waveby` for every car (not on
+pit road) ≥ 1.0 lap of progress behind its class leader (`fcy_wave` "class",
+or "overall" / "off"). While on, `fcy_laps` after an auto caution is skipped.
+Log kinds auto_caution_short / auto_caution_wave. test_incidents 301/301.
+NOT tried in iRacing — UNKNOWN: whether !pacelaps 1 at the start of lap 1
+means "green at the end of this lap" (assumed) and whether iRacing accepts
+!waveby for every car at that moment (it only accepts a car in the pace field).
+
 **October 29, 2026 (iCASControl 0.1.17 — blue flag rule for multiclass +
 lapping, IEC; new logo):** Thomas's rule, `cb_*` keys in steward.py
 (`_blue_rule`, default OFF; ON replaces iRacing's-blue-flag rule and the own

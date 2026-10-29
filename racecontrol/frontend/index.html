@@ -393,6 +393,15 @@
         (!pacelaps once the caution is out; 0 = iRacing decides)</label>
       <label>not in the last <input id="s-fcy_end_protect_min" type="number" min="0" max="60"> minutes of the race (0 = always)</label>
     </fieldset>
+    <fieldset><legend><label><input id="s-fcy_short" type="checkbox"> Short caution - every caution (auto, button, iRacing's own)</label></legend>
+      <label>The lap it comes out = lap 0. Pits open <input id="s-fcy_pit_open_s" type="number" min="0" max="120"> s after it (!pitopen).</label>
+      <label>When the leader starts lap 1: <input id="s-fcy_short_laps" type="number" min="1" max="20"> caution lap(s) left (!pacelaps; 1 = pace car in at the end of that lap)</label>
+      <label>and wave around (!waveby) every car a full lap down <select id="s-fcy_wave">
+        <option value="class">to its class leader</option>
+        <option value="overall">to the overall leader</option>
+        <option value="off">- nobody</option></select></label>
+      <span class="note">While ON the "caution length" above is not used. Needs iRACING CHAT ON and an admin account.</span>
+    </fieldset>
     <fieldset><legend><label><input id="s-seq_enabled" type="checkbox"> Sequencer - RC message to everybody at a session time</label></legend>
       <div id="seq-rows"></div>
       <button type="button" id="seq-add">+ Add message</button>

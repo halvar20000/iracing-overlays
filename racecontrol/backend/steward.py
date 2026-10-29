@@ -12,6 +12,13 @@ Rules dialog:
   under green.  ``fcy_mode`` "auto" (default) = !yellow goes out at once,
   "ask" = a log line with a DEPLOY button.  ``fcy_laps`` > 0: once the
   caution is out, ``!pacelaps N`` sets its length (0 = iRacing decides).
+* SHORT CAUTION (``fcy_short``, 0.1.18 - Le Mans): for EVERY caution (auto,
+  button, iRacing's own) - the lap it comes out = lap 0; after
+  ``fcy_pit_open_s`` s ``!pitopen``; when the leader starts lap 1
+  ``!pacelaps fcy_short_laps`` (1 = pace car in at the end of that lap) and
+  ``!waveby`` for every car a full lap behind its class leader
+  (``fcy_wave`` "class") or the overall leader ("overall"), "off" = none.
+  While on, ``fcy_laps`` is not used.
 * SEQUENCER (``seq_enabled`` + ``sequence``, like iRaceControl's) - RC
   messages to everybody at a session time, e.g. GT3 WCT quali 00:00:01
   "Start Qualifying AM Klasse", 00:15:00 "Ende Qualifying AM Klasse /
@@ -70,6 +77,9 @@ DEFAULT_CONFIG = {
     "fcy_enabled": True, "fcy_mode": "auto", "fcy_incs": 40,
     "fcy_window_s": 15, "fcy_cooldown_s": 180, "fcy_laps": 0,
     "fcy_end_protect_min": 5,
+    # short caution: pits open, 1 lap behind the pace car, lapped cars waved
+    "fcy_short": False, "fcy_short_laps": 1, "fcy_pit_open_s": 5,
+    "fcy_wave": "class",
     # sequencer (like iRaceControl's): an RC message to everybody at a
     # session time; default = the GT3 WCT quali AM / PRO split
     "seq_enabled": False,
@@ -92,11 +102,12 @@ DEFAULT_CONFIG = {
     "cb_dt_text": "#%cnr% (%dname%) - DRIVE THROUGH FOR IGNORING BLUE FLAGS",
 }
 _BOOL = ("enabled", "fcy_enabled", "seq_enabled", "blue_enabled",
-         "meatball_enabled", "pro_enabled", "cb_enabled", "cb_dt")
+         "meatball_enabled", "pro_enabled", "cb_enabled", "cb_dt", "fcy_short")
 _INT = ("dt_first", "dt_every", "fcy_incs", "fcy_window_s",
         "fcy_cooldown_s", "fcy_laps", "fcy_end_protect_min",
         "blue_repeat_s", "bf_warn_s", "bf_dt_s", "fr_used", "pro_from_lap",
-        "cb_every_s", "cb_from_lap", "cb_dt_max_s", "cb_grace_s")
+        "cb_every_s", "cb_from_lap", "cb_dt_max_s", "cb_grace_s",
+        "fcy_short_laps", "fcy_pit_open_s")
 _FLOAT = ("blue_gap_s", "pro_gap_s", "cb_gap_s")
 _TEXT = ("bf_warn_text", "bf_dt_text",
          "fr_text", "meatball_text", "pro_text", "cb_text", "cb_dt_text")
@@ -262,6 +273,9 @@ def clean(cfg: dict) -> dict:
     out["fcy_incs"] = max(1, out["fcy_incs"])
     out["fcy_window_s"] = max(1, out["fcy_window_s"])
     out["fcy_laps"] = min(20, max(0, out["fcy_laps"]))
+    out["fcy_short_laps"] = min(20, max(1, out["fcy_short_laps"]))
+    if out["fcy_wave"] not in ("class", "overall", "off"):
+        out["fcy_wave"] = "class"
     return out
 
 
@@ -342,6 +356,7 @@ class AutoSteward:
         self._cb_grace: dict[tuple[int, int], float] = {}  # (unlapper, car) -> until
         self._cb_order: dict[tuple[int, int], int] = {}    # close pairs: who is ahead
         self._cb_dt_at: dict[int, float] = {}              # car -> last blue DT
+        self._sc: Optional[dict] = None     # short caution in progress
 
     def check(self, state, rules: dict) -> list[dict]:
         key = (state.session_key, state.session_num)
@@ -353,6 +368,8 @@ class AutoSteward:
         out: list[dict] = []
         if rules.get("fcy_enabled"):
             out += self._fcy(state, rules)
+        if rules.get("fcy_short"):
+            out += self._short_caution(state, rules)
         if rules.get("seq_enabled"):
             out += self._sequence(state, rules)
         if rules.get("cb_enabled"):
@@ -502,6 +519,54 @@ class AutoSteward:
         return [{"type": "caution", "points": points, "cars": len(cars),
                  "window": window, "numbers": nums,
                  "mode": rules.get("fcy_mode", "auto")}]
+
+    # short caution: pits open, one lap behind the pace car, wave the lapped --
+
+    def _short_caution(self, state, rules: dict) -> list[dict]:
+        if not _is_race(state) or state.session_state != "RACING":
+            self._sc = None
+            return []
+        if not _caution_out(state):
+            self._sc = None
+            return []
+        now = state.session_time
+        cars = [c for c in self._live_cars(state) if not c.finished
+                and c.surface != "NotInWorld"]
+        if not cars:
+            return []
+        prog = {c.car_idx: c.lap + c.lap_dist_pct for c in cars}
+        leader = max(cars, key=lambda c: prog[c.car_idx])
+        out = []
+        if self._sc is None:
+            # the lap the caution came out = lap 0
+            self._sc = {"t": now, "lap0": leader.lap, "pits": False,
+                        "lap1": False}
+            out.append({"type": "caution_short", "lap0": leader.lap,
+                        "laps": int(rules.get("fcy_short_laps") or 1)})
+        sc = self._sc
+        if not sc["pits"] and now - sc["t"] >= float(rules.get("fcy_pit_open_s") or 0):
+            sc["pits"] = True
+            out.append({"type": "caution_pits"})
+        if not sc["lap1"] and leader.lap > sc["lap0"]:
+            sc["lap1"] = True
+            out.append({"type": "caution_laps",
+                        "n": int(rules.get("fcy_short_laps") or 1),
+                        "leader": leader})
+            mode = rules.get("fcy_wave", "class")
+            if mode != "off":
+                best: dict = {}
+                for c in cars:
+                    k = class_key(c) if mode == "class" else 0
+                    if k not in best or prog[c.car_idx] > prog[best[k].car_idx]:
+                        best[k] = c
+                wave = [c for c in cars if not c.on_pit_road
+                        and prog[best[class_key(c) if mode == "class" else 0].car_idx]
+                        - prog[c.car_idx] >= 1.0]
+                wave.sort(key=lambda c: -prog[c.car_idx])
+                if wave:
+                    out.append({"type": "caution_wave", "cars": wave,
+                                "mode": mode})
+        return out
 
     # sequencer: timed RC messages -------------------------------------------
 

@@ -1818,5 +1818,59 @@ check("class pace from best laps without iRacing's estimate",
 check("old saved rules: blue flag rule OFF",
       steward.clean({"blue_enabled": True})["cb_enabled"] is False)
 
+
+print("Short caution (Le Mans)")
+eng7.chat_cfg["enabled"] = True
+eng7.steward_cfg = steward.clean({"fcy_short": True, "fcy_laps": 3})
+eng7.auto.reset()
+
+
+def sc(t, lead_lap, lead_pct, flags=("caution",), key="sc-1"):
+    # #1 LMP2 leader, #2 LMP2 a lap down, #50 GT3 class leader (lapped by
+    # LMP2s - not lapped in its class), #51 GT3 a lap behind #50, #52 in pits
+    return sframe(t, [ccar(0, "1", lead_lap, lead_pct, 200.0, 1, 200.0),
+                      ccar(1, "2", lead_lap - 1, lead_pct - 0.05, 201.0, 1, 200.0),
+                      ccar(2, "50", lead_lap - 2, 0.90, 220.0, 2, 220.0),
+                      ccar(3, "51", lead_lap - 3, 0.85, 222.0, 2, 220.0),
+                      ccar(4, "52", lead_lap - 4, 0.60, 223.0, 2, 220.0, pit=True)],
+                  num=9, key=key, flags=flags)
+
+
+n0 = len(sent7)
+step(sc(6000, 10, 0.40, flags=()))
+check("green: nothing", not autos("auto_caution_short"))
+step(sc(6001, 10, 0.41))
+a = autos("auto_caution_short")
+check("caution out -> short caution, lap 0 = leader lap 10",
+      len(a) == 1 and "leader lap 10" in a[0].text, [e.text for e in a])
+check("pits not yet (5 s)", "!pitopen" not in sent7[n0:])
+step(sc(6006, 10, 0.45))
+check("5 s later: !pitopen", sent7[n0:].count("!pitopen") == 1, sent7[n0:])
+step(sc(6050, 10, 0.95))
+check("leader still in lap 0: no !pacelaps, no wave",
+      not any(x.startswith("!pacelaps") or x.startswith("!waveby") for x in sent7[n0:]))
+step(sc(6060, 11, 0.02))
+w = [x for x in sent7[n0:] if x.startswith("!waveby")]
+check("leader starts lap 1: !pacelaps 1 once (not the old 3)",
+      [x for x in sent7[n0:] if x.startswith("!pacelaps")] == ["!pacelaps 1"], sent7[n0:])
+check("wave: #2 (a lap behind the LMP2 leader) and #51 (behind GT3 leader #50), "
+      "not #50, not #52 in the pits",
+      sorted(x.split()[1] for x in w) == ["#2", "#51"], w)
+step(sc(6100, 11, 0.30))
+check("nothing twice", len([x for x in sent7[n0:] if x.startswith("!pacelaps")]) == 1
+      and sent7[n0:].count("!pitopen") == 1)
+step(sc(6200, 12, 0.10, flags=()))
+step(sc(6300, 13, 0.10))
+check("next caution: plan again", len(autos("auto_caution_short")) == 2)
+eng7.steward_cfg = steward.clean({"fcy_short": True, "fcy_wave": "overall"})
+eng7.auto.reset()
+k = len(sent7)
+step(sc(6400, 20, 0.50, key="sc-2"))
+step(sc(6460, 21, 0.01, key="sc-2"))
+w = [x for x in sent7[k:] if x.startswith("!waveby")]
+check("overall mode: every car a lap behind #1 (#2, #50, #51)",
+      sorted(x.split()[1] for x in w) == ["#2", "#50", "#51"], w)
+check("old saved rules: short caution OFF", steward.clean({})["fcy_short"] is False)
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)
