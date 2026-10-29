@@ -271,6 +271,39 @@ w.tick(True, True, rc.F_GREEN, [rc.F_BLACK, 0], [0, 0], CARS, 100, [False, False
 check("PS4 black flag on track = plain penalty",
       heads(f)[-1] == "BLACK FLAG · PENALTY", str(heads(f)))
 
+# ---- hide other OBS sources while a banner is on air ------------------------
+class FakeObs:
+    def __init__(self):
+        self.items = {"iRacing": {"Duell": [1, True], "Tower": [2, True], "Wetter": [3, False]},
+                      "Moderator": {"Duell": [7, True]}}
+        self.calls = 0
+    def scenes(self): return list(self.items)
+    def scene_items(self, sc): return {n: (v[0], v[1]) for n, v in self.items[sc].items()}
+    def call(self, req, d):
+        self.calls += 1
+        for n, v in self.items[d["sceneName"]].items():
+            if v[0] == d["sceneItemId"]:
+                v[1] = d["sceneItemEnabled"]
+clk = [100.0]
+fo = FakeObs(); h = rc.ObsHider(["duell", "Wetter"], fo, clock=lambda: clk[0])
+h.on_air(8)
+check("H1 visible listed sources hidden in every scene, others untouched",
+      not fo.items["iRacing"]["Duell"][1] and not fo.items["Moderator"]["Duell"][1]
+      and fo.items["iRacing"]["Tower"][1] and h.status()["active"], str(fo.items))
+clk[0] = 105; h.on_air(8)                 # second message queued behind the first
+clk[0] = 110; h.tick()
+check("H2 still hidden while the next message runs", not fo.items["iRacing"]["Duell"][1])
+clk[0] = 114.3; h.tick()
+check("H3 restored after the last message (+pad)", fo.items["iRacing"]["Duell"][1] and fo.items["Moderator"]["Duell"][1]
+      and not h.status()["active"])
+check("H4 a source that was off stays off", fo.items["iRacing"]["Wetter"][1] is False)
+h2 = rc.ObsHider([], fo)
+check("H5 no hide_sources = off", not h2.enabled)
+clk[0] = 200; h.on_air(500); clk[0] = 200 + rc.HIDE_MAX_S + rc.HIDE_PAD_S + 0.1; h.tick()
+check("H6 one report never hides longer than HIDE_MAX_S", fo.items["iRacing"]["Duell"][1])
+check("H7 banner reports on air, /rc/onair answers", "/rc/onair" in cl.get("/").get_data(as_text=True)
+      and cl.post("/rc/onair", json={"secs": 5}).status_code == 200 and "hide" in cl.get("/rc/state").get_json())
+
 print()
 print("ALL PASS" if not failures else f"FAILURES: {failures}")
 sys.exit(1 if failures else 0)

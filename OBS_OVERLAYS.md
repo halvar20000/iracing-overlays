@@ -39,7 +39,7 @@ Quelle: `?auto=1` (+ `?secs=`), `?cycle=20` (lastrace / table) oder
 | Driver Card ohne iRating / Safety Rating | 5017 `/simple` | `driver_simple.html` | ✓ 800 × 130 |
 | Livery (Auto der Kamera) | 5006 | `livery.html` | ≈ 800 × 350 |
 | Track Map | 5007 | `trackmap.html` | ≈ 1000 × 600 (skaliert mit); Kurvennummern, `?turns=0` blendet sie aus |
-| Race Control (Gelbphase, Strafen-Flaggen, iRaceControl-Meldungen) | 5019 | `rc_banner.html` | ≈ 950 × 120 (siehe RACE_CONTROL.md) |
+| Race Control (Gelbphase, Strafen-Flaggen, iRaceControl-Meldungen) | 5019 | `rc_banner.html` | ≈ 950 × 120 (siehe RACE_CONTROL.md). rc_config `hide_sources` = diese OBS-Quellen während einer Meldung ausblenden |
 | Flaggen (weiß / karierte) | 5008 | `flag.html` | ≈ 280 × 200 |
 | Neuer Führender (Banner) | 5018 | `leader.html` | ≈ 760 × 220 |
 | Catch-Up Battle | 5015 | `catch.html` | ≈ 1100 × 150 |

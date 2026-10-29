@@ -181,6 +181,17 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 29, 2026 (RC banner 5019: hide other OBS sources while a message
+is on air):** Thomas: an overlay should go away whenever the banner shows
+something. rc_config.json `"hide_sources": [OBS source names]` → `ObsHider`
+(obs_ws, OBS from rc_config "obs" or show_config.json "obs"): the banner page
+POSTs `/rc/onair {secs}` when it shows a message (not with ?demo=1 / ?hide=0);
+every VISIBLE scene item of those sources in every scene is hidden, and
+restored HIDE_PAD_S 1.2 s after the last message's end (queued messages = one
+hide; one report ≤ HIDE_MAX_S 30 s). Items that were off stay off. `/rc/hide`
+status, line on /panel. test_rc_banner H1-H7; checked over a real websocket
+against fake_obs. NOT tried with real OBS. Restart 5019.
+
 **October 29, 2026 (iCASControl 0.1.18 — SHORT CAUTION, Le Mans):** Thomas:
 a caution should last 1 lap. `fcy_short` (default OFF) in steward
 `_short_caution`, for EVERY caution (auto / button / iRacing's own, edge of

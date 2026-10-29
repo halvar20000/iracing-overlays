@@ -64,6 +64,16 @@ Windows-Firewall auf dem Stream-PC: beim ersten Start fragt Windows –
 iRacings eigene Verwarnung (gefaltete schwarze Flagge, ohne Grund) wird
 nicht gezeigt; `"iracing_warnings": true` blendet sie wieder ein.
 
+**Andere Overlays ausblenden, solange eine Meldung läuft:** in `rc_config.json`
+`"hide_sources": ["Duell", "Fahrerkarte"]` (die OBS-Quellennamen, Groß/klein
+egal). Sobald das Banner eine Meldung zeigt, werden diese Quellen in allen
+Szenen ausgeblendet und gut 1 s nach der letzten Meldung wieder eingeblendet.
+Eine Quelle, die du selbst ausgeschaltet hattest, bleibt aus. Für die Verbindung
+zu OBS gilt der Block `"obs"` aus `show_config.json` (WebSocket-Server in OBS
+einschalten). Alternativ kannst du in `rc_config.json` einen eigenen Block
+`"obs": {"host": "127.0.0.1", "port": 4455, "password": ""}` eintragen.
+Ob es greift, zeigt `/panel`. Bei einer Banner-Quelle mit `?hide=0` passiert nichts.
+
 Bewährte Routing-Tabelle (CACS, je Art höchstens EIN ATVO-Ziel):
 RACE_CONTROL_MESSAGE / SEQUENCER_MESSAGE → ATVO_INFO · NOTED / INVESTIGATING
 → ATVO_INVESTIGATION · RACE_INCIDENT → ATVO_NO_FURTHER_ACTION ·

@@ -914,6 +914,110 @@ class RcPoller(SDKPoller):
 
 
 # =============================================================================
+# Hide other OBS sources while a banner is on air (rc_config.json "hide_sources")
+# =============================================================================
+HIDE_PAD_S = 1.2          # restore this long after the banner went down (queued
+                          # messages follow 0.45 s apart -> no flicker between them)
+HIDE_MAX_S = 30.0         # one report never hides longer than this
+
+
+class ObsHider:
+    """The banner page reports "on air for N s" (POST /rc/onair). Every OBS
+    scene item showing one of `sources` that is VISIBLE is hidden; when the
+    banner is down again (deadline passed) exactly those items come back.
+    A source the operator had off stays off. obs: obs_ws.ObsClient or a fake."""
+
+    def __init__(self, sources, obs=None, clock=time.monotonic):
+        self.sources = [str(s) for s in (sources or []) if str(s).strip()]
+        self.obs, self.clock = obs, clock
+        self.until = 0.0
+        self.hidden = []          # [(scene, item id, source)]
+        self.last_error = ""
+        self._lock = threading.Lock()
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.sources) and self.obs is not None
+
+    def _items(self):
+        want = {s.lower(): s for s in self.sources}
+        out = []
+        for scene in self.obs.scenes():
+            for name, (iid, on) in self.obs.scene_items(scene).items():
+                if on and str(name).lower() in want:
+                    out.append((scene, iid, name))
+        return out
+
+    def _set(self, scene, iid, on):
+        self.obs.call("SetSceneItemEnabled", {"sceneName": scene, "sceneItemId": iid,
+                                              "sceneItemEnabled": bool(on)})
+
+    def on_air(self, secs: float):
+        if not self.enabled:
+            return
+        secs = max(0.5, min(HIDE_MAX_S, float(secs or 0)))
+        with self._lock:
+            self.until = max(self.until, self.clock() + secs + HIDE_PAD_S)
+            try:
+                for scene, iid, name in self._items():
+                    if (scene, iid, name) not in self.hidden:
+                        self._set(scene, iid, False)
+                        self.hidden.append((scene, iid, name))
+                self.last_error = ""
+            except Exception as e:
+                self.last_error = str(e)
+
+    def tick(self):
+        with self._lock:
+            if not self.hidden or self.clock() < self.until:
+                return
+            left = []
+            for scene, iid, name in self.hidden:
+                try:
+                    self._set(scene, iid, True)
+                except Exception as e:
+                    self.last_error = str(e)
+                    if "nicht erreichbar" in str(e):
+                        left.append((scene, iid, name))   # OBS gone: try again later
+            self.hidden = left
+
+    def run(self):
+        while True:
+            time.sleep(0.25)
+            try:
+                self.tick()
+            except Exception as e:
+                self.last_error = str(e)
+
+    def status(self) -> dict:
+        return {"sources": self.sources, "active": bool(self.hidden),
+                "hidden": [n for _, _, n in self.hidden], "error": self.last_error}
+
+
+def make_hider(cfg: dict) -> ObsHider:
+    sources = cfg.get("hide_sources") or []
+    if not sources:
+        return ObsHider([])
+    obs_cfg = cfg.get("obs")
+    if not obs_cfg:                       # same OBS as the AI show
+        try:
+            with open(os.path.join(HERE, "show_config.json"), encoding="utf-8") as f:
+                obs_cfg = json.load(f).get("obs")
+        except (OSError, ValueError):
+            obs_cfg = None
+    obs_cfg = obs_cfg or {}
+    try:
+        from obs_ws import ObsClient
+        obs = ObsClient(obs_cfg.get("host", "127.0.0.1"), obs_cfg.get("port", 4455),
+                        obs_cfg.get("password", ""))
+    except Exception as e:
+        h = ObsHider(sources)
+        h.last_error = f"obs_ws: {e}"
+        return h
+    return ObsHider(sources, obs)
+
+
+# =============================================================================
 # Flask
 # =============================================================================
 app = Flask(__name__)
@@ -923,6 +1027,7 @@ atvo = AtvoReceiver(feed, int(_cfg.get("atvo_port") or 5020),
                      password=str(_cfg.get("atvo_password") or ""))
 poller = RcPoller(feed, bool(_cfg.get("iracing_warnings", False)))
 atvo.car_lookup = poller.find_car
+hider = make_hider(_cfg)
 
 
 @app.after_request
@@ -933,7 +1038,7 @@ def _no_cache(resp):
 
 @app.route("/rc/state")
 def rc_state():
-    return jsonify({"iracing": poller.get(), "messages": feed.list(),
+    return jsonify({"iracing": poller.get(), "messages": feed.list(), "hide": hider.status(),
                     "atvo": atvo.status() if request.args.get("raw") else
                     {k: v for k, v in atvo.status().items() if k != "raw"},
                     "now": time.time()})
@@ -973,6 +1078,24 @@ def rc_steward():
         secs = None
     feed.add("icas", kind, head, text, car, secs)
     return jsonify({"ok": True})
+
+
+@app.route("/rc/onair", methods=["POST"])
+def rc_onair():
+    """The banner page: a message is on air for `secs` -> hide hide_sources."""
+    body = request.get_json(silent=True) or {}
+    try:
+        secs = float(body.get("secs") or 8)
+    except (TypeError, ValueError):
+        secs = 8.0
+    if hider.enabled:
+        threading.Thread(target=hider.on_air, args=(secs,), daemon=True).start()
+    return jsonify({"ok": True, "hide": hider.status()})
+
+
+@app.route("/rc/hide")
+def rc_hide():
+    return jsonify(hider.status())
 
 
 @app.route("/rc/penalties")
@@ -1026,6 +1149,7 @@ BANNER_HTML = r"""<!DOCTYPE html>
 <script>
 const qs = new URLSearchParams(location.search);
 const SECS = parseFloat(qs.get('secs') || '8');
+const REPORT = qs.get('demo') !== '1' && qs.get('hide') !== '0';   // hide other OBS sources (rc_config hide_sources)
 const SHOW_FLAGS = qs.get('flags') !== '0', SHOW_ATVO = qs.get('atvo') !== '0', SHOW_ICAS = qs.get('icas') !== '0';
 document.getElementById('wrap').style.setProperty('--z', qs.get('zoom') || '1');
 if (qs.get('debug') === '1') document.body.classList.add('debug');
@@ -1047,6 +1171,7 @@ function show(m) {
   requestAnimationFrame(() => rc.classList.add('show'));
   const words = ((m.headline || '') + ' ' + (m.text || '')).split(/\s+/).length;
   const secs = Math.max(m.secs || SECS, Math.min(20, words * 0.45));
+  if (REPORT) fetch('/rc/onair', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({secs})}).catch(() => {});
   setTimeout(() => { rc.classList.remove('show'); setTimeout(() => { busy = false; next(); }, 450); }, secs * 1000);
 }
 function next() { if (!busy && queue.length) show(queue.shift()); }
@@ -1109,6 +1234,7 @@ async function poll() {
       `<b>ATVO-Empfänger (iRaceControl, SignalR):</b> ${a.listening ? `<span class="ok">bereit auf Port ${a.port}${a.password ? ' · mit Passwort' : ' · ohne Passwort'}</span>` : `<span class="bad">${esc(a.error || 'nicht aktiv')}</span>`}<br>`
       + (a.clients.length ? a.clients.map(c => `<span class="ok">verbunden: ${esc(c.addr)}</span> · ${esc(c.transport)} · ${c.bytes} Bytes`).join('<br>')
                           : '<span class="muted">keine Verbindung — in iRaceControl bei ATVO diese PC-Adresse + Port eintragen und ATVO einschalten</span>')
+      + (d.hide && d.hide.sources.length ? `<br>Ausblenden während einer Meldung: ${esc(d.hide.sources.join(', '))}${d.hide.active ? ' · <span class=ok>gerade ausgeblendet</span>' : ''}${d.hide.error ? ` · <span class=bad>${esc(d.hide.error)}</span>` : ''}` : '')
       + `<br><span class="muted">iRacing: ${d.iracing.connected ? 'verbunden' : 'nicht verbunden'}${d.iracing.is_race ? ' · Rennen' : ''}</span>`;
     document.getElementById('msgs').innerHTML = '<tr><th>Zeit</th><th>Quelle</th><th>Meldung</th></tr>' +
       (d.messages || []).slice().reverse().map(m => `<tr><td>${tm(m.t)}</td><td>${esc(m.source)}</td><td><b>${esc(m.headline)}</b> ${esc(m.text)}${m.car ? ` · #${esc(m.car.num)} ${esc(m.car.label)}` : ''}</td></tr>`).join('');
@@ -1140,6 +1266,8 @@ if __name__ == "__main__":
     if _cfg.get("atvo_enabled", True):
         atvo.start()
     threading.Thread(target=poller.run, daemon=True).start()
+    if hider.enabled:
+        threading.Thread(target=hider.run, daemon=True).start()
     print("\n" + "=" * 60)
     print("  iRacing Race Control banner")
     print(f"  Banner (OBS):   http://localhost:{PORT}")
@@ -1147,6 +1275,8 @@ if __name__ == "__main__":
     print(f"  Preview:        http://localhost:{PORT}/?demo=1")
     print(f"  iRaceControl -> ATVO server: this PC, port {atvo.port} (SignalR)")
     print("  Raw capture:    logs/atvo_capture_<date>.log")
+    if hider.sources:
+        print(f"  Hidden while a message shows: {', '.join(hider.sources)}")
     print("=" * 60 + "\n")
     try:
         app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False, threaded=True)
