@@ -214,7 +214,11 @@ still missing after the 2 quick tries is typed AGAIN every CHAT_RETRY_LATER_S
 30 s up to CHAT_RETRY_TRIES 5 (`_chat_later`; a flag that shows up meanwhile =
 "came late", nothing typed; a new black / DQ / clear for that car drops the
 waiting retry), then the "NO black flag … after 5 tries" note.
-test_incidents 319/319. NOT tried live yet.
+test_incidents 319/319. FIRST LIVE RUN: #96 Robert Nash, all 5 tries over
+2 min failed, and iRacing answered "Robert Nash (#96) was black flagged." in
+the chat each time (Thomas) = the typing ARRIVES, iRacing accepts and does
+not apply the flag for that car. Cause in iRacing, not fixable here; seen
+only in AI sessions so far (#2, #128, #30, #96).
 
 **October 29, 2026 (RC banner 5019: hide other OBS sources while a message
 is on air):** Thomas: an overlay should go away whenever the banner shows
