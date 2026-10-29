@@ -240,6 +240,13 @@ waveby (e.g. on one-to-green) would land. THEN Thomas: "They are overtaking"
 - the wave-arounds DID work although CarIdxPaceFlags stayed 0x0 → 0.1.22: an
 unseen wave-around bit is no longer "did NOT confirm" but "no wave-around bit
 seen (iRacing often does not show it); check that the car drives past".
+Pace car then stayed out ~2 laps after !pacelaps 1 (sent 5763 s, one-to-green
+6894 s) - cause OPEN (post-typed command lost like !black, or iRacing waits for
+the field to line up; no telemetry shows the caution laps left). iCAS was
+restarted twice during that caution and each restart began the short caution
+again (new lap 0, !pitopen / !pacelaps / !waveby again) → 0.1.23: RaceState
+`short_caution` (autosaved, with session key + num) is taken over by a fresh
+AutoSteward; cleared at the green. test_incidents 312/312.
 
 **October 29, 2026 (iCASControl 0.1.17 — blue flag rule for multiclass +
 lapping, IEC; new logo):** Thomas's rule, `cb_*` keys in steward.py

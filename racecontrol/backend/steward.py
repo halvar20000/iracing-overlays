@@ -526,12 +526,30 @@ class AutoSteward:
     # short caution: pits open, one lap behind the pace car, wave the lapped --
 
     def _short_caution(self, state, rules: dict) -> list[dict]:
-        if not _is_race(state) or state.session_state != "RACING":
+        if not _is_race(state) or state.session_state != "RACING" \
+                or not _caution_out(state):
             self._sc = None
+            if getattr(state, "short_caution", None) is not None:
+                state.short_caution = None
             return []
-        if not _caution_out(state):
-            self._sc = None
-            return []
+        if self._sc is None:
+            # iCAS restarted mid-caution (2026-10-29 Le Mans: twice, and each
+            # time !pitopen / !pacelaps / !waveby went out again with a new
+            # lap 0) -> go on with the saved one of this session
+            saved = getattr(state, "short_caution", None)
+            if (isinstance(saved, dict) and saved.get("session_num") == state.session_num
+                    and saved.get("session_key") == state.session_key):
+                self._sc = {k: saved[k] for k in ("t", "lap0", "pits", "lap1")
+                            if k in saved}
+                if len(self._sc) < 4:
+                    self._sc = None
+        out = self._short_caution_step(state, rules)
+        if self._sc is not None and hasattr(state, "short_caution"):
+            state.short_caution = dict(self._sc, session_num=state.session_num,
+                                       session_key=state.session_key)
+        return out
+
+    def _short_caution_step(self, state, rules: dict) -> list[dict]:
         now = state.session_time
         cars = [c for c in self._live_cars(state) if not c.finished
                 and c.surface != "NotInWorld"]

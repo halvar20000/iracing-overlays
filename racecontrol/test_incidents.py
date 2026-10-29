@@ -1936,6 +1936,29 @@ step(sc(6460, 21, 0.01, key="sc-2"))
 w = [x for x in sent7[k:] if x.startswith("!waveby")]
 check("overall mode: every car a lap behind #1 (#2, #50, #51)",
       sorted(x.split()[1] for x in w) == ["#2", "#50", "#51"], w)
+# iCAS restart mid-caution (Le Mans 29.10.: lap 0, !pitopen and !pacelaps
+# started again after each restart) -> the saved short caution goes on
+eng7.steward_cfg = steward.clean({"fcy_short": True})
+eng7.auto.reset()
+k = len(sent7)
+c0 = len(autos("auto_caution_short"))
+step(sc(6600, 30, 0.50, key="sc-3"))
+step(sc(6606, 30, 0.55, key="sc-3"))
+saved = json.loads(json.dumps(eng7.state.to_saved()))
+check("short caution is autosaved", (saved.get("short_caution") or {}).get("lap0") == 30,
+      saved.get("short_caution"))
+eng7.auto = steward.AutoSteward()          # = iCAS restarted
+eng7.state.short_caution = None
+eng7.state.load_saved(saved)
+step(sc(6700, 30, 0.90, key="sc-3"))
+check("after the restart: no new short caution, no second !pitopen",
+      len(autos("auto_caution_short")) == c0 + 1 and sent7[k:].count("!pitopen") == 1,
+      sent7[k:])
+step(sc(6760, 31, 0.02, key="sc-3"))
+check("after the restart: !pacelaps when the leader starts lap 31 (old lap 0 kept)",
+      [x for x in sent7[k:] if x.startswith("!pacelaps")] == ["!pacelaps 1"], sent7[k:])
+step(sc(6800, 31, 0.30, key="sc-3", flags=()))
+check("green: saved short caution cleared", eng7.state.short_caution is None)
 check("old saved rules: short caution OFF", steward.clean({})["fcy_short"] is False)
 
 _tc = type("C", (), {"number": "7", "driver": "A B", "team": "Team X"})()

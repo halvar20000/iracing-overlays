@@ -190,6 +190,9 @@ class RaceState:
         self.frame_cars: set[int] = set()   # the cars of the last live frame
         self.actor = ""         # steward whose message is being handled
         self.steward_chat: list[dict] = []
+        # short caution in progress (Auto Steward) - autosaved, so an iCAS
+        # restart mid-caution goes on with it instead of starting again
+        self.short_caution: Optional[dict] = None
         self.chat_revision = 0
 
     # -- logging ------------------------------------------------------------
@@ -737,6 +740,7 @@ class RaceState:
             "official_points": self.official_points,
             "events": [e.to_dict() for e in self.events],
             "steward_chat": self.steward_chat,
+            "short_caution": self.short_caution,
             "cars": {str(i): {k: getattr(c, k) for k in _SAVED_CAR_FIELDS}
                      for i, c in self.cars.items()},
         }
@@ -750,6 +754,8 @@ class RaceState:
         self.official_points = bool(data.get("official_points"))
         self.steward_chat = list(data.get("steward_chat") or [])[-STEWARD_CHAT_KEEP:]
         self.chat_revision += 1
+        sc = data.get("short_caution")
+        self.short_caution = dict(sc) if isinstance(sc, dict) else None
         for e in self.events:
             e.claimed_by = ""            # nobody is looking after a restart
         for key, saved in (data.get("cars") or {}).items():
