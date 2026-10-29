@@ -68,6 +68,9 @@ button { font-family: var(--sans); cursor: pointer; }
   border-radius: 5px;
   letter-spacing: -1px;
 }
+.brand-logo-img { height: 42px; width: auto; display: block; }
+.brand .ver { font-size: 10px; color: var(--mut); text-transform: uppercase; align-self: flex-end; }
+.login-logo { display: block; width: 260px; max-width: 100%; margin: 4px auto 12px; }
 .brand-text { display: flex; flex-direction: column; line-height: 1.2; }
 .brand-text strong { font-size: 14px; letter-spacing: .5px; }
 .brand-text .ver { font-size: 10px; color: var(--mut); text-transform: uppercase; }
