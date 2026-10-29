@@ -207,6 +207,14 @@ before opening the chat, before typing and per character; else "NOTHING
 typed"). RC message: the log said "to car #2" for an
 RC (= /all) line when a car was selected → the TARGET decides ("to all (RC)",
 "PRIVATE to car #N", PRIVATE without a car refused). test_incidents 304/304.
+0.1.24 (same session, after RUN every DT worked except #30 Tyler (auto blue
+DT) and #96 Robert Nash: both tries failed, no clear / pct / pit pattern;
+"@PRIVATE>" in the chat is just iRacing's admin reply format): a black flag
+still missing after the 2 quick tries is typed AGAIN every CHAT_RETRY_LATER_S
+30 s up to CHAT_RETRY_TRIES 5 (`_chat_later`; a flag that shows up meanwhile =
+"came late", nothing typed; a new black / DQ / clear for that car drops the
+waiting retry), then the "NO black flag … after 5 tries" note.
+test_incidents 319/319. NOT tried live yet.
 
 **October 29, 2026 (RC banner 5019: hide other OBS sources while a message
 is on air):** Thomas: an overlay should go away whenever the banner shows

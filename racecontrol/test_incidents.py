@@ -792,18 +792,51 @@ check("RT2 typed a second time", typed == "!black #2 D!black #2 D"
 chat_ir["CarIdxSessionFlags"] = [0, irs.FLAG_BLACK]
 csrc._check_chat()
 check("RT3 confirmed on the second try", csrc.drain_command_log()
-      == ["iRacing confirmed: !black #2 D (second try, typed slower)"])
+      == ["iRacing confirmed: !black #2 D (try 2, typed slower)"])
 chat_ir["CarIdxSessionFlags"] = [0, 0]
-csrc.send_chat("!black #2 D", "post", 0, ("black", 1), retry=True)
+csrc.send_chat("!black #2 D", "post", 0, ("black", 1), retry=1)
 wait_log()
 csrc._chat_checks[0]["until"] = 0
 csrc._check_chat()
 log = csrc.drain_command_log()
-check("NB1 second try failed too -> says check the car / give again, no third try",
-      len(log) == 1 and log[0].startswith("NO black flag at the car after two tries")
-      and not csrc._chat_checks
+check("NB1 second try failed -> 'trying again in 30 s (try 3 of 5)'",
+      len(log) == 1 and "after 2 tries" in log[0] and "try 3 of 5" in log[0]
+      and not csrc._chat_checks and len(csrc._chat_later) == 1, log)
+fk.out.clear()
+csrc._check_chat()
+check("NB1b not typed before the 30 s are up", not fk.out and len(csrc._chat_later) == 1)
+for n in (3, 4, 5):
+    csrc._chat_later[0]["due"] = 0
+    csrc._check_chat()
+    wait_log()
+    check(f"NB1c try {n} typed", len(csrc._chat_checks) == 1
+          and csrc._chat_checks[0]["retry"] == n - 1, csrc._chat_checks)
+    csrc._chat_checks[0]["until"] = 0
+    csrc._check_chat()
+    log = csrc.drain_command_log()
+check("NB1d after 5 tries -> says check the car / give again, nothing more waits",
+      len(log) == 1 and log[0].startswith("NO black flag at the car after 5 tries")
       and "give the penalty again" in log[0] and "is this PC admin" not in log[0]
-      and not csrc._chat_checks, log)
+      and not csrc._chat_checks and not csrc._chat_later, log)
+# the flag comes late, while the retry waits -> confirmed, nothing typed
+csrc._chat_later.append({"text": "!black #2 D", "kind": "black", "car": 1,
+                         "retry": 2, "due": 0, "method": "post", "delay": 0})
+chat_ir["CarIdxSessionFlags"] = [0, irs.FLAG_BLACK]
+fk.out.clear()
+csrc._check_chat()
+log = csrc.drain_command_log()
+check("NB1e late flag -> confirmed, not typed again",
+      not fk.out and not csrc._chat_later and len(log) == 1
+      and "came late" in log[0], log)
+# the steward clears the car while a retry waits -> the retry is dropped
+chat_ir["CarIdxSessionFlags"] = [0, 0]
+csrc._chat_later.append({"text": "!black #2 D", "kind": "black", "car": 1,
+                         "retry": 2, "due": 0, "method": "post", "delay": 0})
+csrc.send_chat("!clear #2", "post", 0, ("clear", 1))
+check("NB1f a clear for the car drops the waiting retry", not csrc._chat_later)
+wait_log()
+csrc._chat_checks.clear()
+csrc.drain_command_log()
 rs_m = RaceState()
 rs_m.ingest(frame(10, [cf(0, "7"), cf(1, "2")]))
 r_all = rs_m.rc_message("RC", "hello", 1)

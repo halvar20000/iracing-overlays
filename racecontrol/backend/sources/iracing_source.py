@@ -95,6 +95,8 @@ _NOT_A_FLAG = {"local_yellow", "blue", "crossed", "debris", "black",
 CHAT_RETRY_KINDS = ("black",)       # penalty flag not at the car -> typed once more
 CHAT_RETRY_DELAY_MS = 40.0            # ... with this much time per character
 CHAT_RETRY_OPEN_S = 0.8               # ... and this long after opening the chat
+CHAT_RETRY_LATER_S = 30.0            # ... then again this much later
+CHAT_RETRY_TRIES = 5                  # ... until this many tries in all
 CHAT_VERIFY_S = 6.0
 CAUTION_BITS = 0x4000 | 0x8000          # SessionFlags caution / caution waving
 FLAG_BLACK = 0x00010000                 # CarIdxSessionFlags
@@ -200,6 +202,7 @@ class IRacingSource(DataSource):
         self._log_lock = threading.Lock()
         self._chat = ChatSender(self._open_chat, self._chat_done)
         self._chat_checks: list[dict] = []      # waiting for iRacing to act
+        self._chat_later: list[dict] = []       # black flag typed again later
         self._chat_verify: dict[str, tuple] = {}  # text -> (kind, car_idx)
         self.detector = BehaviourDetector()
         self.official = OfficialIncidents()
@@ -865,13 +868,17 @@ class IRacingSource(DataSource):
 
     def send_chat(self, text: str, method: str = "post",
                   char_delay_ms: float = 6, verify: Optional[tuple] = None,
-                  retry: bool = False) -> str:
+                  retry: int = 0) -> str:
         """Type ``text`` into the iRacing chat (background thread).
         ``verify`` = (kind, car_idx): afterwards the flag bits tell whether
         iRacing really did it (kinds: black, dq, eol, waveby, clear,
         yellow)."""
         if self._ir is None or not self._ir.is_connected:
             return "iRacing not connected"
+        if verify and not retry and verify[0] in ("black", "dq", "clear"):
+            # a new penalty / clear for the car replaces a waiting retry
+            self._chat_later = [c for c in self._chat_later
+                                if c["car"] != verify[1]]
         if verify:
             # the state BEFORE the command: only a change counts as done
             # (2026-10-27: #11's EOL bit was already set, iRacing answered
@@ -945,16 +952,30 @@ class IRacingSource(DataSource):
             return ""
 
     def _check_chat(self) -> None:
+        now = time.monotonic()
+        if self._chat_later:
+            later = []
+            for c in self._chat_later:
+                if now < c["due"]:
+                    later.append(c)
+                elif self._chat_effect(c["kind"], c["car"]):
+                    self._note(f"iRacing confirmed: {c['text']} (the flag "
+                               f"came late, before try {int(c['retry']) + 1})")
+                else:
+                    self.send_chat(c["text"], c.get("method") or "post",
+                                   float(c.get("delay") or 6),
+                                   (c["kind"], c["car"]), retry=int(c["retry"]))
+            self._chat_later = later
         if not self._chat_checks:
             return
-        now = time.monotonic()
         keep = []
         retry = []
         for c in self._chat_checks:
             done = self._chat_effect(c["kind"], c["car"])
             if done:
                 self._note(f"iRacing confirmed: {c['text']}"
-                           + (" (second try, typed slower)" if c.get("retry") else ""))
+                           + (f" (try {int(c['retry']) + 1}, typed slower)"
+                              if c.get("retry") else ""))
             elif (now > c["until"] and not c.get("retry")
                     and c["kind"] in CHAT_RETRY_KINDS):
                 # 2026-10-29 Le Mans AI test: 9 of 14 DTs answered "was black
@@ -964,14 +985,27 @@ class IRacingSource(DataSource):
                 self._note(f"No {c['kind']} flag at the car yet: {c['text']} - "
                            f"typing it once more, slower {self._flag_info(c['car'])}")
                 retry.append(c)
+            elif (now > c["until"] and c["kind"] in CHAT_RETRY_KINDS
+                    and int(c.get("retry") or 0) + 1 < CHAT_RETRY_TRIES):
+                # 2026-10-29 (Robert Nash #96, Tyler #30): both tries failed,
+                # the same command typed by hand a minute later did work
+                # (#128 earlier) -> keep trying every 30 s for ~2 minutes
+                n = int(c.get("retry") or 0) + 1
+                self._note(f"No {c['kind']} flag at the car after {n} tries: "
+                           f"{c['text']} - trying again in "
+                           f"{CHAT_RETRY_LATER_S:.0f} s (try {n + 1} of "
+                           f"{CHAT_RETRY_TRIES}) {self._flag_info(c['car'])}")
+                self._chat_later.append(dict(c, retry=n,
+                                             due=now + CHAT_RETRY_LATER_S))
             elif now > c["until"]:
                 if c["kind"] in ("black", "dq"):
                     # 2026-10-29 Le Mans: iRacing answered "David LoVecchio (#2)
                     # was black flagged." 5x, the car never got the flag nor
                     # served it - the admin rights were fine (#14 worked)
                     what = "black flag" if c["kind"] == "black" else "DQ"
+                    n = int(c.get("retry") or 0) + 1
                     self._note(f"NO {what} at the car after "
-                               f"{'two tries' if c.get('retry') else f'{CHAT_VERIFY_S:.0f} s'}: "
+                               f"{f'{n} tries' if c.get('retry') else f'{CHAT_VERIFY_S:.0f} s'}: "
                                f"{c['text']} - iRacing may have answered in the "
                                f"chat (\"was black flagged\") without giving it. "
                                f"Check the car; if it has no flag, give the "
@@ -1003,4 +1037,4 @@ class IRacingSource(DataSource):
         for c in retry:
             self.send_chat(c["text"], c.get("method") or "post",
                            float(c.get("delay") or 6), (c["kind"], c["car"]),
-                           retry=True)
+                           retry=1)
