@@ -445,6 +445,7 @@ class IRacingSource(DataSource):
                 class_color="#%06x" % (int(d.get("CarClassColor", 0) or 0)
                                        & 0xFFFFFF),
                 class_short=labels.get(idx, ""),
+                class_est_lap=float(d.get("CarClassEstLapTime", 0) or 0),
                 car_brand=detect_brand(d.get("CarPath"), d.get("CarScreenName")),
                 car_model=str(d.get("CarScreenName") or ""),
                 car_color=design_color(d.get("CarDesignStr")),

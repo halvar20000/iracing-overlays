@@ -42,6 +42,8 @@ class Car:
     car_class: str = ""
     class_color: str = "#6c7a89"
     class_short: str = ""
+    class_id: int = 0
+    class_est_lap: float = 0.0     # CarClassEstLapTime: which class is faster
     car_brand: str = ""
     car_model: str = ""
     car_color: str = ""
@@ -399,6 +401,8 @@ class RaceState:
         car.car_class = cf.car_class
         car.class_color = cf.class_color
         car.class_short = cf.class_short or cf.car_class
+        car.class_id = int(getattr(cf, "class_id", 0) or 0)
+        car.class_est_lap = float(getattr(cf, "class_est_lap", 0) or 0)
         car.car_brand = cf.car_brand
         car.car_model = cf.car_model
         car.car_color = cf.car_color

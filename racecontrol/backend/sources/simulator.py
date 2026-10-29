@@ -450,6 +450,7 @@ class SimulatorSource(DataSource):
                 car_idx=c.idx, car_number=c.number, driver_name=c.driver,
                 team_name=c.team, car_class=c.car_class, class_id=c.class_id,
                 class_color=c.class_color, class_short=c.car_class,
+                class_est_lap=104.0 if c.class_id == 1 else 117.0,
                 car_brand=c.brand,
                 car_model=c.brand.replace("-", " ").title(),
                 car_color=_LIVERIES[c.idx % len(_LIVERIES)],

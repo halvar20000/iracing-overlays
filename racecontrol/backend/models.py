@@ -75,6 +75,7 @@ class CarFrame:
     class_id: int = 0
     class_color: str = "#6c7a89"
     class_short: str = ""
+    class_est_lap: float = 0.0     # CarClassEstLapTime (s), 0 = not sent
     car_brand: str = ""            # manufacturer slug, e.g. 'porsche'
     car_model: str = ""            # CarScreenName, e.g. 'Ferrari 296 GT3'
     car_color: str = ""            # main livery colour (CarDesignStr), '#rrggbb'

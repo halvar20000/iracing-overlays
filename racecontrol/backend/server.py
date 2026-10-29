@@ -210,9 +210,12 @@ class Engine:
                 self.to_iracing("notify", car=am, msg=act["text"])
         elif kind == "blue_dt":
             car = act["car"]
+            fast = act.get("fast")
+            behind = (f" (#{fast.number} {fast.driver} held up, {act['why']})"
+                      if fast is not None else "")
             ev = st._log("penalty", f"AUTO STEWARD: DRIVE THROUGH #{car.number} "
                          f"{car.driver} - blue flag ignored for "
-                         f"{act['held']:.0f}s", car=car, lap=car.lap)
+                         f"{act['held']:.0f}s{behind}", car=car, lap=car.lap)
             ev.kind, ev.source = "auto_blue_dt", "auto"
             result = self.to_iracing("drive_through", car=car,
                                      verify=CHAT_VERIFY_KIND["drive_through"])
@@ -230,16 +233,33 @@ class Engine:
         elif kind == "blue":
             slow, fast = act["car"], act["fast"]
             again = " (again)" if act["again"] else ""
-            ev = st._log("flag", f"Blue flag{again}: let #{fast.number} "
-                         f"{fast.driver} pass ({act['gap']:.1f}s behind)",
-                         car=slow, lap=slow.lap)
-            ev.kind, ev.source = "blue_flag", "auto"
+            if "n" in act:              # blue flag rule (multiclass + lapping)
+                due = (f", drive through after {act['deadline']:.0f}s"
+                       if act.get("deadline") and act["n"] == 1 else "")
+                ev = st._log("flag", f"AUTO STEWARD: blue flag #{act['n']} "
+                             f"to #{slow.number}: let #{fast.number} "
+                             f"{fast.driver} pass ({act['why']}, "
+                             f"{act['gap']:.1f}s behind{due})",
+                             car=slow, lap=slow.lap)
+                ev.kind, ev.source = "auto_blue", "auto"
+                msg = act["text"]
+            else:
+                ev = st._log("flag", f"Blue flag{again}: let #{fast.number} "
+                             f"{fast.driver} pass ({act['gap']:.1f}s behind)",
+                             car=slow, lap=slow.lap)
+                ev.kind, ev.source = "blue_flag", "auto"
+                msg = f"BLUE FLAG - let #{fast.number} {fast.driver} pass"
             # only when the chat is on - an "OFF, not sent" line for every
             # blue flag would flood the log
             if self.chat_cfg.get("enabled") and self._chat_capable():
-                self.to_iracing("notify", car=slow,
-                                msg=f"BLUE FLAG - let #{fast.number} "
-                                    f"{fast.driver} pass")
+                self.to_iracing("notify", car=slow, msg=msg)
+        elif kind == "blue_unlap":
+            car, other = act["car"], act["fast"]
+            ev = st._log("flag", f"AUTO STEWARD: #{car.number} {car.driver} "
+                         f"passes #{other.number} {other.driver} to unlap - "
+                         f"{act['grace']:.0f}s to pull away before blue flags",
+                         car=car, lap=car.lap)
+            ev.kind, ev.source = "auto_blue_unlap", "auto"
 
     def _want_caution_laps(self) -> None:
         """Remember the Rules' caution length for the caution just called;
@@ -664,8 +684,12 @@ class Engine:
                 + f"; blue flag warn {c['bf_warn_s'] or 'off'}s / DT "
                 f"{c['bf_dt_s'] or 'off'}s; fast repair {c['fr_used'] or 'off'}; "
                 f"meatball {'on' if c['meatball_enabled'] else 'off'}"
-                + ("; own blue hint " + f"{c['blue_gap_s']:.1f}s"
-                   if c["blue_enabled"] else ""))
+                + ("; blue flag rule " + f"{c['cb_gap_s']:.1f}s / "
+                   f"{c['cb_every_s']}s" + (f", DT after a lap (max {c['cb_dt_max_s']}s)"
+                                            if c["cb_dt"] else "")
+                   if c["cb_enabled"] else
+                   ("; own blue hint " + f"{c['blue_gap_s']:.1f}s"
+                    if c["blue_enabled"] else "")))
             return {"type": "ack", "text": "Auto Steward "
                     + ("ON" if c["enabled"] else "OFF")}
 

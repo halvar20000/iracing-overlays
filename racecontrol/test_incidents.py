@@ -1682,5 +1682,141 @@ check("not a WCT field: no classes, no hint", eng7.state.cars[1].proam == ""
 check("old saved rules get the new rule switched on",
       steward.clean({"dt_first": 15})["pro_enabled"] is True)
 
+
+print("Blue flag rule (multiclass + lapping, IEC)")
+eng7.chat_cfg["enabled"] = True
+eng7.steward_cfg = steward.clean({"cb_enabled": True})
+eng7.auto.reset()
+
+
+def ccar(idx, num, lap, pct, best, cls, est=0.0, flags=0, pit=False):
+    c = scar(idx, num, lap=lap, pct=pct, best=best, pit=pit)
+    c.class_id, c.car_class, c.class_est_lap, c.car_flags = cls, f"C{cls}", est, flags
+    return c
+
+
+def mc(t, p1, p50, l1=3, l50=3, key="cb-1", flags=(), b50=110.0):
+    # LMP2 #1 (class 1, ~100 s) and GT3 #50 (class 2, ~110 s); 0.01 lap = 1 s
+    return sframe(t, [ccar(0, "1", l1, p1, 100.0, 1, 100.0),
+                      ccar(1, "50", l50, p50, b50, 2, 110.0)],
+                  num=8, key=key, flags=flags)
+
+
+n0 = len(sent7)
+D0 = len(autos("auto_blue_dt"))
+step(mc(3000, 0.48, 0.50))
+check("faster class 2 s behind: nothing", not autos("auto_blue"))
+step(mc(3001, 0.492, 0.50))
+a = autos("auto_blue")
+check("faster class 0.8 s behind -> private blue flag to the GT3",
+      len(a) == 1 and a[0].car_number == "50" and "faster class" in a[0].text
+      and "drive through after 110s" in a[0].text
+      and "/50 BLUE FLAG - LET #1 D1 PASS" in sent7[n0:], (sent7[n0:], [e.text for e in a]))
+step(mc(3020, 0.693, 0.70))
+check("not repeated within 30 s", len(autos("auto_blue")) == 1)
+step(mc(3031, 0.80, 0.808))
+check("still not let past after 30 s -> again", len(autos("auto_blue")) == 2)
+for t in range(3040, 3111, 10):
+    step(mc(t, 0.10, 0.108))
+check("no drive through before one of his laps (110 s)",
+      len(autos("auto_blue_dt")) == D0)
+step(mc(3112, 0.20, 0.207))
+a = autos("auto_blue_dt")[D0:]
+check("not let past after a lap -> DRIVE THROUGH + to all",
+      len(a) == 1 and any(x.startswith("!black #50") for x in sent7[n0:])
+      and "/all #50 (D50) - DRIVE THROUGH FOR IGNORING BLUE FLAGS" in sent7[n0:]
+      and "faster class" in a[0].text, (sent7[n0:], [e.text for e in a]))
+nb = len(autos("auto_blue"))
+for t in range(3120, 3200, 10):
+    step(mc(t, 0.30, 0.307))
+check("after the DT: no more blue flags / DTs for that pair",
+      len(autos("auto_blue")) == nb and len(autos("auto_blue_dt")) == D0 + 1)
+
+# a pass ends the period, the next catch is a new one
+step(mc(3300, 0.492, 0.50, key="cb-2"))
+k = len(autos("auto_blue"))
+step(mc(3301, 0.505, 0.50, key="cb-2"))
+step(mc(3302, 0.52, 0.51, key="cb-2"))
+for t in range(3310, 3500, 10):
+    step(mc(t, 0.60, 0.40, key="cb-2"))
+check("let past: no repeat, no DT", len(autos("auto_blue")) == k
+      and len(autos("auto_blue_dt")) == D0 + 1)
+
+# GT3 behind the faster LMP2 / same class same lap: never
+step(mc(3600, 0.50, 0.492, key="cb-3"))
+step(sframe(3601, [ccar(0, "7", 3, 0.492, 110.0, 2, 110.0),
+                   ccar(1, "14", 3, 0.50, 110.5, 2, 110.0)], num=8, key="cb-3"))
+check("slower class behind / same class fight: no blue flag",
+      len(autos("auto_blue")) == k)
+# the first lap: not yet
+step(mc(3602, 0.092, 0.10, l1=1, l50=1, key="cb-4"))
+check("lap 1 (from lap 2): no blue flag", len(autos("auto_blue")) == k)
+
+# lapping inside the same class
+step(sframe(3700, [ccar(0, "7", 6, 0.492, 100.0, 2, 110.0),
+                   ccar(1, "14", 5, 0.50, 104.0, 2, 110.0)], num=8, key="cb-5"))
+a = autos("auto_blue")
+check("same class, lapping him -> blue flag", len(a) == k + 1
+      and "lapping" in a[-1].text and a[-1].car_number == "14", a[-1].text)
+
+# UNLAP: #7 (a lap down after a spin) passes #14, who is a lap ahead of him
+def ul(t, p7, p14, key="cb-6"):
+    return sframe(t, [ccar(0, "7", 4, p7, 100.0, 2, 110.0),
+                      ccar(1, "14", 5, p14, 104.0, 2, 110.0)], num=8, key=key)
+
+
+k = len(autos("auto_blue"))
+step(ul(4000, 0.492, 0.50))
+check("a lap down behind the car a lap up: no blue flag either way",
+      len(autos("auto_blue")) == k)
+step(ul(4001, 0.505, 0.50))
+a = autos("auto_blue_unlap")
+check("the pass is logged as an unlap with 120 s to pull away",
+      len(a) == 1 and a[0].car_number == "7" and "120s" in a[0].text, [e.text for e in a])
+for t in range(4002, 4120, 5):
+    step(ul(t, 0.60, 0.594))
+check("0.6 s ahead of the car he unlapped on: no blue flag for 120 s",
+      len(autos("auto_blue")) == k)
+step(ul(4122, 0.60, 0.594))
+a = autos("auto_blue")
+check("still within 1 s after 120 s -> the normal rule",
+      len(a) == k + 1 and a[-1].car_number == "7" and "lapping" in a[-1].text,
+      [e.text for e in a[k:]])
+
+# the slow car's lap is longer than 3 min (Le Mans) -> DT after 180 s
+def lm(t, key="cb-7"):
+    return sframe(t, [ccar(0, "1", 3, 0.296, 210.0, 1, 210.0),
+                      ccar(1, "50", 3, 0.30, 240.0, 2, 240.0)], num=8, key=key)
+
+
+d0 = len(autos("auto_blue_dt"))
+for t in range(5000, 5180, 10):
+    step(lm(t))
+check("Le Mans: no DT before 180 s", len(autos("auto_blue_dt")) == d0)
+step(lm(5181))
+check("Le Mans: DT after 180 s (lap 240 s)", len(autos("auto_blue_dt")) == d0 + 1)
+
+# caution: nothing; iRacing's own blue-flag rule is replaced while ON
+k = len(autos("auto_blue"))
+for t in range(5300, 5400, 10):
+    step(mc(t, 0.492, 0.50, key="cb-8", flags=["caution"]))
+check("under caution: no blue flags", len(autos("auto_blue")) == k)
+w0 = len(autos("auto_blue_warn"))
+for t in range(5400, 5440):
+    step(sframe(t, [ccar(0, "7", 3, 0.10, 110.0, 2, 110.0),
+                    ccar(1, "14", 3, 0.60, 110.0, 2, 110.0, flags=BL)],
+                num=8, key="cb-9"))
+check("rule ON replaces iRacing's blue flag rule (no 20 s warning)",
+      len(autos("auto_blue_warn")) == w0)
+# no CarClassEstLapTime: the classes' best laps decide
+pace = steward.class_pace([ccar(0, "1", 3, 0, 100.0, 1), ccar(1, "2", 3, 0, 101.0, 1),
+                           ccar(2, "50", 3, 0, 110.0, 2)])
+check("class pace from best laps without iRacing's estimate",
+      steward.faster_class(ccar(0, "1", 3, 0, 100.0, 1), ccar(2, "50", 3, 0, 110.0, 2), pace)
+      and not steward.faster_class(ccar(2, "50", 3, 0, 110.0, 2),
+                                   ccar(0, "1", 3, 0, 100.0, 1), pace))
+check("old saved rules: blue flag rule OFF",
+      steward.clean({"blue_enabled": True})["cb_enabled"] is False)
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

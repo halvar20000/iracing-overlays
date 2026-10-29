@@ -17,6 +17,16 @@ Rules dialog:
   "Start Qualifying AM Klasse", 00:15:00 "Ende Qualifying AM Klasse /
   Start Qualifying PRO Klasse".  A step is sent once, and only within 2 min
   of its time (iCAS started later does not announce old steps).
+* BLUE FLAG RULE (``cb_enabled``, 0.1.17, IEC - multiclass + lapping): a
+  car gets a private ``cb_text`` when a car of a FASTER CLASS (iRacing's
+  CarClassEstLapTime, else the class's best laps) or a car LAPPING him is
+  within ``cb_gap_s`` behind him on track; again every ``cb_every_s`` (30)
+  while he has not let it past.  Not let past after one of HIS laps (at most
+  ``cb_dt_max_s`` 180 s - Le Mans) -> DRIVE THROUGH + ``cb_dt_text`` to all.
+  Exception: a car that UNLAPS itself (passes a car that is a lap or more
+  ahead of it in the race) is not blue-flagged by that car for
+  ``cb_grace_s`` (120) s - its time to pull away by ``cb_gap_s``.  Replaces
+  iRacing's-blue-flag rule and the own hint below while it is on.
 * BLUE FLAG (own gap check, off by default since 0.1.11) - a car about to be
   lapped with the faster car <= ``blue_gap_s`` behind it gets a private
   ``BLUE FLAG - let #7 ... pass`` (again after ``blue_repeat_s``).
@@ -75,20 +85,32 @@ DEFAULT_CONFIG = {
     "meatball_enabled": True, "meatball_text": "#%cnr% (%dname%) - HAS A MEATBALL FLAG",
     "pro_enabled": True, "pro_gap_s": 1.0, "pro_from_lap": 3,
     "pro_text": "PRO CAR BEHIND YOU - #%pcnr% %pdname%",
+    # blue flag rule (multiclass + lapping, IEC)
+    "cb_enabled": False, "cb_gap_s": 1.0, "cb_every_s": 30, "cb_from_lap": 2,
+    "cb_dt": True, "cb_dt_max_s": 180, "cb_grace_s": 120,
+    "cb_text": "BLUE FLAG - LET #%fcnr% %fdname% PASS",
+    "cb_dt_text": "#%cnr% (%dname%) - DRIVE THROUGH FOR IGNORING BLUE FLAGS",
 }
 _BOOL = ("enabled", "fcy_enabled", "seq_enabled", "blue_enabled",
-         "meatball_enabled", "pro_enabled")
+         "meatball_enabled", "pro_enabled", "cb_enabled", "cb_dt")
 _INT = ("dt_first", "dt_every", "fcy_incs", "fcy_window_s",
         "fcy_cooldown_s", "fcy_laps", "fcy_end_protect_min",
-        "blue_repeat_s", "bf_warn_s", "bf_dt_s", "fr_used", "pro_from_lap")
-_FLOAT = ("blue_gap_s", "pro_gap_s")
+        "blue_repeat_s", "bf_warn_s", "bf_dt_s", "fr_used", "pro_from_lap",
+        "cb_every_s", "cb_from_lap", "cb_dt_max_s", "cb_grace_s")
+_FLOAT = ("blue_gap_s", "pro_gap_s", "cb_gap_s")
 _TEXT = ("bf_warn_text", "bf_dt_text",
-         "fr_text", "meatball_text", "pro_text")
+         "fr_text", "meatball_text", "pro_text", "cb_text", "cb_dt_text")
 SEQ_SESSIONS = ("quali", "race", "practice", "warmup", "any")
 SEQ_MAX = 30
 SEQ_LATE_S = 120        # a step is still sent this long after its time
 FLAG_BLUE = 0x00000020          # CarIdxSessionFlags
 FLAG_REPAIR = 0x00100000        # the meatball
+# blue flag rule
+CB_CLASS_MARGIN = 0.01   # a class >= 1 % quicker (estimated lap) is "faster"
+CB_RELEASE = 3.0         # x cb_gap_s further back = not held up (this frame)
+CB_RELEASE_S = 10.0      # ... that long, or a pass, ends the blue period
+CB_DT_GAP = 2.0          # x cb_gap_s: the DT needs him still this close
+CB_PASS_PCT = 0.02       # pairs this close on track are watched for passes
 
 
 def fill(text: str, car) -> str:
@@ -100,6 +122,43 @@ def fill(text: str, car) -> str:
 def fill_pro(text: str, am, pro) -> str:
     return (fill(text, am).replace("%pcnr%", str(pro.number))
             .replace("%pdname%", str(pro.driver)))
+
+
+def fill_fast(text: str, car, fast) -> str:
+    """Blue flag texts: %cnr% / %dname% = the car to let past the faster
+    one, %fcnr% / %fdname% = the faster car."""
+    return fill(str(text or "").replace("%fcnr%", str(fast.number))
+                .replace("%fdname%", str(fast.driver)), car)
+
+
+def class_key(car):
+    return getattr(car, "class_id", 0) or car.car_class
+
+
+def class_pace(cars) -> dict:
+    """Class -> lap time to compare classes: iRacing's CarClassEstLapTime,
+    else the median best lap of the class's cars."""
+    est: dict = {}
+    bests: dict = {}
+    for c in cars:
+        k = class_key(c)
+        e = float(getattr(c, "class_est_lap", 0) or 0)
+        if e > 20:
+            est[k] = e
+        if c.best_lap > 0:
+            bests.setdefault(k, []).append(c.best_lap)
+    out = {}
+    for k, laps in bests.items():
+        laps.sort()
+        out[k] = laps[len(laps) // 2]
+    out.update(est)
+    return out
+
+
+def faster_class(fast, slow, pace: dict) -> bool:
+    a, b = pace.get(class_key(fast)), pace.get(class_key(slow))
+    return bool(class_key(fast) != class_key(slow) and a and b
+                and a < b * (1 - CB_CLASS_MARGIN))
 
 
 def level(total: int, rules: dict) -> int:
@@ -278,6 +337,11 @@ class AutoSteward:
         self._fr_sent: set[int] = set()
         self._meatball: dict[int, bool] = {}
         self._pro_sent: set[tuple[int, int]] = set()    # (AM, PRO) told
+        # blue flag rule: (slow, fast) -> blue period
+        self._cb: dict[tuple[int, int], dict] = {}
+        self._cb_grace: dict[tuple[int, int], float] = {}  # (unlapper, car) -> until
+        self._cb_order: dict[tuple[int, int], int] = {}    # close pairs: who is ahead
+        self._cb_dt_at: dict[int, float] = {}              # car -> last blue DT
 
     def check(self, state, rules: dict) -> list[dict]:
         key = (state.session_key, state.session_num)
@@ -291,9 +355,12 @@ class AutoSteward:
             out += self._fcy(state, rules)
         if rules.get("seq_enabled"):
             out += self._sequence(state, rules)
-        if rules.get("blue_enabled"):
-            out += self._blue_flags(state, rules)
-        out += self._iracing_blue(state, rules)
+        if rules.get("cb_enabled"):
+            out += self._blue_rule(state, rules)     # replaces the two below
+        else:
+            if rules.get("blue_enabled"):
+                out += self._blue_flags(state, rules)
+            out += self._iracing_blue(state, rules)
         out += self._fast_repairs(state, rules)
         out += self._meatballs(state, rules)
         if rules.get("pro_enabled"):
@@ -453,6 +520,138 @@ class AutoSteward:
                 self._seq_sent.add(n)
                 out.append({"type": "sequence", "at": st["at"],
                             "session": kind, "text": st["text"]})
+        return out
+
+    # blue flag rule (multiclass + lapping) ----------------------------------
+
+    def _blue_rule(self, state, rules: dict) -> list[dict]:
+        if not _is_race(state) or state.session_state != "RACING":
+            return []
+        if _caution_out(state):
+            # order frozen behind the pace car: nobody is held up
+            self._cb.clear()
+            self._cb_order.clear()
+            return []
+        now = state.session_time
+        gap_max = float(rules.get("cb_gap_s") or 1.0)
+        every = float(rules.get("cb_every_s") or 0)
+        from_lap = int(rules.get("cb_from_lap") or 0)
+        grace_s = float(rules.get("cb_grace_s") or 0)
+        dt_max = float(rules.get("cb_dt_max_s") or 180)
+        length_m = float(state.session_length_km or 0) * 1000
+        cars = [c for c in self._live_cars(state) if _racing_car(c)]
+        idx = {c.car_idx for c in cars}
+        pace = class_pace(cars)
+        prog = {c.car_idx: c.lap + c.lap_dist_pct for c in cars}
+
+        def lap_time(c):
+            t = c.best_lap or c.last_lap or float(getattr(c, "class_est_lap", 0) or 0)
+            if not t and c.speed_ms > 10 and length_m:
+                t = length_m / c.speed_ms
+            return t
+
+        out: list[dict] = []
+        # 1. passes: a car passing one that is a lap (or more) ahead of it in
+        #    the race UNLAPS itself -> time to pull away before any blue flag
+        for a in cars:
+            for b in cars:
+                if a.car_idx >= b.car_idx:
+                    continue
+                pair = (a.car_idx, b.car_idx)
+                rel = ((a.lap_dist_pct - b.lap_dist_pct + 0.5) % 1.0) - 0.5
+                if abs(rel) > CB_PASS_PCT:
+                    self._cb_order.pop(pair, None)
+                    continue
+                sign = 1 if rel > 0 else -1          # +1: a ahead of b
+                before = self._cb_order.get(pair)
+                self._cb_order[pair] = sign
+                if before is None or before == sign:
+                    continue
+                passer, passed = (a, b) if sign > 0 else (b, a)
+                if prog[passed.car_idx] - prog[passer.car_idx] >= 0.5 and grace_s:
+                    key = (passer.car_idx, passed.car_idx)
+                    self._cb_grace[key] = now + grace_s
+                    self._cb.pop(key, None)
+                    out.append({"type": "blue_unlap", "car": passer,
+                                "fast": passed, "grace": grace_s})
+        for key in [k for k, until in self._cb_grace.items() if until <= now]:
+            del self._cb_grace[key]
+
+        # 2. who is held up by whom
+        active: set[tuple[int, int]] = set()
+        for slow in cars:
+            if slow.lap < from_lap:
+                continue
+            for fast in cars:
+                if fast is slow:
+                    continue
+                d = (slow.lap_dist_pct - fast.lap_dist_pct) % 1.0
+                if d >= 0.5:
+                    continue                      # fast is ahead on track
+                lapping = prog[fast.car_idx] - prog[slow.car_idx] >= 0.5
+                if lapping:
+                    why = "lapping"
+                elif faster_class(fast, slow, pace):
+                    why = "faster class"
+                else:
+                    continue
+                lt = lap_time(fast)
+                if not lt:
+                    continue
+                gap = d * lt
+                if gap > gap_max * CB_RELEASE:
+                    continue
+                pair = (slow.car_idx, fast.car_idx)
+                per = self._cb.get(pair)
+                if per is None:
+                    if gap > gap_max or now < self._cb_grace.get(pair, -1.0):
+                        continue
+                    lt_slow = lap_time(slow)
+                    per = self._cb[pair] = {
+                        "start": now, "last": None, "n": 0, "dt": False,
+                        "far": None, "why": why,
+                        "deadline": min(dt_max, lt_slow) if lt_slow else dt_max}
+                active.add(pair)
+                per["far"] = None
+                if per["dt"]:
+                    continue
+                held = now - per["start"]
+                if (rules.get("cb_dt") and held >= per["deadline"]
+                        and gap <= gap_max * CB_DT_GAP):
+                    per["dt"] = True
+                    last_dt = self._cb_dt_at.get(slow.car_idx)
+                    if last_dt is not None and now - last_dt < per["deadline"]:
+                        continue                  # one DT for one train of cars
+                    self._cb_dt_at[slow.car_idx] = now
+                    out.append({"type": "blue_dt", "car": slow, "fast": fast,
+                                "held": held, "why": per["why"],
+                                "text": fill_fast(rules.get("cb_dt_text"), slow, fast)})
+                    continue
+                if per["last"] is None or (every and now - per["last"] >= every):
+                    per["last"] = now
+                    per["n"] += 1
+                    out.append({"type": "blue", "car": slow, "fast": fast,
+                                "gap": gap, "again": per["n"] > 1,
+                                "n": per["n"], "why": per["why"],
+                                "deadline": per["deadline"] if rules.get("cb_dt") else 0,
+                                "text": fill_fast(rules.get("cb_text"), slow, fast)})
+        # a pass (fast car ahead), a car leaving the track / pits, or the
+        # fast car dropping back for CB_RELEASE_S ends the period
+        for pair, per in list(self._cb.items()):
+            if pair in active:
+                continue
+            s, f = pair
+            passed = False
+            if s in idx and f in idx:
+                sc = next(c for c in cars if c.car_idx == s)
+                fc = next(c for c in cars if c.car_idx == f)
+                passed = (fc.lap_dist_pct - sc.lap_dist_pct) % 1.0 < 0.1
+            if passed or s not in idx or f not in idx:
+                del self._cb[pair]
+                continue
+            per["far"] = per["far"] if per["far"] is not None else now
+            if now - per["far"] >= CB_RELEASE_S:
+                del self._cb[pair]
         return out
 
     # blue flags ---------------------------------------------------------------

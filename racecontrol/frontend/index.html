@@ -398,6 +398,20 @@
       <button type="button" id="seq-add">+ Add message</button>
       <span class="note">time = since the session started (HH:MM:SS); sent once, only within 2 min of its time</span>
     </fieldset>
+    <fieldset><legend><label><input id="s-cb_enabled" type="checkbox"> Blue flag rule - multiclass + lapping (IEC)</label></legend>
+      <label>A car of a FASTER CLASS or a car LAPPING him
+        <input id="s-cb_gap_s" type="number" min="0.2" max="5" step="0.1"> s behind on track: private message,
+        again every <input id="s-cb_every_s" type="number" min="0" max="300"> s until he lets it pass, from lap
+        <input id="s-cb_from_lap" type="number" min="1" max="50"> on:</label>
+      <input id="s-cb_text" type="text" maxlength="200" class="wide">
+      <label><input id="s-cb_dt" type="checkbox"> not let past after one of his laps (at most
+        <input id="s-cb_dt_max_s" type="number" min="10" max="900"> s) - DRIVE THROUGH + to everybody:</label>
+      <input id="s-cb_dt_text" type="text" maxlength="200" class="wide">
+      <label>A car that unlaps (passes a car a lap or more ahead of it) has
+        <input id="s-cb_grace_s" type="number" min="0" max="600"> s to pull away before that car's blue flags count</label>
+      <span class="note">%fcnr% / %fdname% = the faster car. Faster class = iRacing's estimated class lap time.
+        While ON it replaces "iRacing's blue flag" and the own hint below.</span>
+    </fieldset>
     <fieldset><legend>iRacing's blue flag (race)</legend>
       <label>shown for <input id="s-bf_warn_s" type="number" min="0" max="300"> s - private message (0 = off):</label>
       <input id="s-bf_warn_text" type="text" maxlength="200" class="wide">
