@@ -181,6 +181,21 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 29, 2026 (iCASControl 0.1.19 — "was black flagged" but no flag;
+Le Mans AI test, read live from the stream PC's iCAS over the LAN):** five
+DTs for #2 David LoVecchio: iRacing ANSWERED "David LoVecchio (#2) was black
+flagged." each time (Thomas's chat screenshot), but CarIdxSessionFlags never
+showed black (iCAS + race logger) and the car never served one; the same
+"!black #2 D" by hand at 2932 s and from iCAS at 3184 s DID work (served
+3012 / 3283, 32 s), #14 / #449 (first live auto blue-flag DT) worked at once.
+Cause unknown. A second DT while one is open is not owed twice. A blind retry
+was built and DROPPED (would double a penalty iRacing did give). Now a black /
+DQ that does not show = "NO black flag at the car after 6 s … check the car, if
+it has no flag give the penalty again (no reply in the chat = not admin)"
+instead of "is this PC admin?". RC message: the log said "to car #2" for an
+RC (= /all) line when a car was selected → the TARGET decides ("to all (RC)",
+"PRIVATE to car #N", PRIVATE without a car refused). test_incidents 304/304.
+
 **October 29, 2026 (RC banner 5019: hide other OBS sources while a message
 is on air):** Thomas: an overlay should go away whenever the banner shows
 something. rc_config.json `"hide_sources": [OBS source names]` → `ObsHider`

@@ -587,8 +587,18 @@ class RaceState:
     def rc_message(self, target: str, text: str,
                    car_idx: int = -1) -> str:
         car = self.cars.get(car_idx)
-        who = f"to car #{car.number}" if car else f"to {target}"
-        self._log(LOG_MESSAGE, f"RC message {who}: {text}", car=car,
+        # the TARGET decides who reads it (RC = everybody, even with a car
+        # selected - 2026-10-29 the log said "to car #2" for an /all line)
+        if target == "PRIVATE":
+            if car is None:
+                return "private message: select a car first"
+            who = f"PRIVATE to car #{car.number}"
+        elif target == "NOTES":
+            who = "to the race notes"
+        else:
+            who = "to all (RC)"
+        self._log(LOG_MESSAGE, f"RC message {who}: {text}",
+                  car=car if target != "RC" else None,
                   lap=self._leader_lap())
         return f"message sent {who}"
 

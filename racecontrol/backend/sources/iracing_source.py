@@ -943,6 +943,19 @@ class IRacingSource(DataSource):
             if done:
                 self._note(f"iRacing confirmed: {c['text']}")
             elif now > c["until"]:
+                if c["kind"] in ("black", "dq"):
+                    # 2026-10-29 Le Mans: iRacing answered "David LoVecchio (#2)
+                    # was black flagged." 5x, the car never got the flag nor
+                    # served it - the admin rights were fine (#14 worked)
+                    what = "black flag" if c["kind"] == "black" else "DQ"
+                    self._note(f"NO {what} at the car after {CHAT_VERIFY_S:.0f} s: "
+                               f"{c['text']} - iRacing may have answered in the "
+                               f"chat (\"was black flagged\") without giving it. "
+                               f"Check the car; if it has no flag, give the "
+                               f"penalty again. (No reply at all in the chat = "
+                               f"this PC is not admin of the session.) "
+                               f"{self._flag_info(c['car'])}")
+                    continue
                 why = ("EOL needs a full course caution" if c["kind"] == "eol"
                        else "wave-by needs a full course caution and the car "
                        "lined up in the pace field (not in the pits, not "

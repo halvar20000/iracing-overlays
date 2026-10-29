@@ -754,6 +754,27 @@ check("no effect within the time -> warning with the raw flag bits",
       len(log) == 1 and "did NOT confirm" in log[0] and "caution" in log[0]
       and "pace 0x0" in log[0], log)
 
+# 2026-10-29 Le Mans: iRacing said "was black flagged", the car never got it
+chat_ir["CarIdxSessionFlags"] = [0, 0]
+csrc.send_chat("!black #2 D", "post", 0, ("black", 1))
+wait_log()
+csrc._chat_checks[0]["until"] = 0
+csrc._check_chat()
+log = csrc.drain_command_log()
+check("NB1 no black flag at the car -> says check the car / give again, not 'admin?'",
+      len(log) == 1 and log[0].startswith("NO black flag at the car")
+      and "give the penalty again" in log[0] and "is this PC admin" not in log[0]
+      and not csrc._chat_checks, log)
+rs_m = RaceState()
+rs_m.ingest(frame(10, [cf(0, "7"), cf(1, "2")]))
+r_all = rs_m.rc_message("RC", "hello", 1)
+r_prv = rs_m.rc_message("PRIVATE", "psst", 1)
+r_none = rs_m.rc_message("PRIVATE", "psst", -1)
+msgs = [e.text for e in rs_m.events if e.text.startswith("RC message")]
+check("NB2 RC with a car selected = 'to all' in the log, PRIVATE = to the car",
+      msgs == ["RC message to all (RC): hello", "RC message PRIVATE to car #2: psst"]
+      and r_none == "private message: select a car first", (msgs, r_none))
+
 # Engine routing
 eng4 = server.Engine(force_sim=True)
 eng4.state = RaceState()
