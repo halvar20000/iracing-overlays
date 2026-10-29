@@ -97,6 +97,7 @@ CHAT_RETRY_DELAY_MS = 40.0            # ... with this much time per character
 CHAT_RETRY_OPEN_S = 0.8               # ... and this long after opening the chat
 CHAT_RETRY_LATER_S = 30.0            # ... then again this much later
 CHAT_RETRY_TRIES = 5                  # ... until this many tries in all
+CHAT_CLEAR_GAP_S = 10.0             # later tries: !clear #N, this long, !black
 CHAT_VERIFY_S = 6.0
 CAUTION_BITS = 0x4000 | 0x8000          # SessionFlags caution / caution waving
 FLAG_BLACK = 0x00010000                 # CarIdxSessionFlags
@@ -106,6 +107,12 @@ PACE_WAVED = 0x04
 INC_POLL_S = 2.0          # ResultsPositions = a full session-info parse
 REPLAY_PREROLL_S = 8.0    # replay starts this long before the incident
 REPLAY_BEHIND_FRAMES = 60  # > 1 s behind the live tip = watching a replay
+
+
+def _clear_for(text: str) -> str:
+    """'!black #23 D' -> '!clear #23' ('' for anything else)."""
+    m = re.match(r"\s*!black\s+(#\S+)", text or "")
+    return f"!clear {m.group(1)}" if m else ""
 
 
 def _what_missing(kind: str) -> str:
@@ -974,6 +981,22 @@ class IRacingSource(DataSource):
                 elif self._chat_effect(c["kind"], c["car"]):
                     self._note(f"iRacing confirmed: {c['text']} (the flag "
                                f"came late, before try {int(c['retry']) + 1})")
+                elif (c["kind"] == "black" and not c.get("cleared")
+                        and _clear_for(c["text"])):
+                    # 2026-10-29: #96 and #23 - every !black failed (#23: not
+                    # even a chat reply), a !clear by hand and the !black ~10 s
+                    # later worked both times.  The car shows no black flag
+                    # (checked just above), so the clear takes nothing visible
+                    clear = _clear_for(c["text"])
+                    self._note(f"Black flag still missing: {clear} first, "
+                               f"{c['text']} {CHAT_CLEAR_GAP_S:.0f} s later "
+                               f"(try {int(c['retry']) + 1})")
+                    self._chat.send(clear, c.get("method") or "post",
+                                    max(float(c.get("delay") or 6),
+                                        CHAT_RETRY_DELAY_MS),
+                                    open_wait=CHAT_RETRY_OPEN_S)
+                    later.append(dict(c, cleared=True,
+                                      due=now + CHAT_CLEAR_GAP_S))
                 else:
                     self.send_chat(c["text"], c.get("method") or "post",
                                    float(c.get("delay") or 6),

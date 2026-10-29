@@ -807,6 +807,20 @@ csrc._check_chat()
 check("NB1b not typed before the 30 s are up", not fk.out and len(csrc._chat_later) == 1)
 for n in (3, 4, 5):
     csrc._chat_later[0]["due"] = 0
+    fk.out.clear()
+    csrc._check_chat()
+    lg = csrc.drain_command_log()
+    for _ in range(50):
+        if csrc._command_log:
+            break
+        _t.sleep(0.1)
+    lg += csrc.drain_command_log()
+    typed = "".join(o[2] for o in fk.out if o[0] == "c")
+    check(f"NB1g try {n}: !clear #2 first, no !black yet (wait 10 s)",
+          typed == "!clear #2" and not csrc._chat_checks
+          and len(csrc._chat_later) == 1 and csrc._chat_later[0]["cleared"]
+          and any("!clear #2 first" in x for x in lg), (typed, lg))
+    csrc._chat_later[0]["due"] = 0
     csrc._check_chat()
     wait_log()
     check(f"NB1c try {n} typed", len(csrc._chat_checks) == 1
@@ -834,6 +848,8 @@ csrc._chat_later.append({"text": "!black #2 D", "kind": "black", "car": 1,
                          "retry": 2, "due": 0, "method": "post", "delay": 0})
 csrc.send_chat("!clear #2", "post", 0, ("clear", 1))
 check("NB1f a clear for the car drops the waiting retry", not csrc._chat_later)
+check("NB1h only !black gets a clear before it",
+      (irs._clear_for("!black #23 D"), irs._clear_for("!dq #23")) == ("!clear #23", ""))
 wait_log()
 csrc._chat_checks.clear()
 csrc.drain_command_log()

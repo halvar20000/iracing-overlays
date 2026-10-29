@@ -234,13 +234,23 @@ class Feed:
             if source == "iracing" and car and self._steward_said(car.get("num")):
                 print(f"[rc] iracing: {headline} #{car.get('num')} skipped (iRaceControl message)")
                 return None
+            if kind == "clear" or (penalty_of(kind, f"{headline} {text}") or ("",))[0] == "clear":
+                # 2026-10-29 Thomas: "PENALTY CLEARED" never on air - the
+                # tower still drops the car's open penalty
+                hidden = True
+            else:
+                hidden = False
             self._id += 1
             m = {"id": self._id, "t": time.time(), "source": source,
                  "kind": kind, "headline": headline, "text": text, "car": car,
                  "secs": secs}
-            self._msgs.append(m)
+            if not hidden:
+                self._msgs.append(m)
         if car and car.get("num"):
             self.board.apply(car["num"], kind, f"{headline} {text}")
+        if hidden:
+            print(f"[rc] {source}: {headline} {text} - not on air (clear)".rstrip())
+            return m
         print(f"[rc] {source}: {headline} {text} "
               f"{('#' + car['num'] + ' ' + car['label']) if car else ''}".rstrip())
         return m

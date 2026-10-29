@@ -239,6 +239,16 @@ position = NEW SessionFrame / RaceState `pace_car_prog` (its CarIdxLapDistPct,
 steward.clean keeps the sign (`_SIGNED`). test_incidents 331/331. NOT tried
 in iRacing - watch the chat answer to "!pacelaps -1" and when ONE TO GREEN
 comes.
+0.1.27 (same evening, #23 Brent Foster, short test session; DT given by
+"Steward 2" right at the green 247 s): all 5 !black tries failed and Thomas
+saw NOTHING in the iRacing chat; his !clear #23 (346 s) and a new DT (355 s)
+worked at once - the second time after #96. Now the later tries (3-5) send
+`!clear #N` first and the !black CHAT_CLEAR_GAP_S 10 s later (`cleared` on
+the _chat_later entry; `_clear_for` only for "!black #N …"; the car shows no
+black flag at that moment, so nothing visible is cleared). test_incidents
+335/335. RC banner 5019: Thomas - "PENALTY CLEARED" never on air: Feed.add
+keeps kind clear (or a clear text) out of the message list, the PenaltyBoard
+still drops the car's tag (test CL1). Restart 5019.
 
 **October 29, 2026 (flag overlay 5008: YELLOW + GREEN flags too):** Thomas:
 not only white / checkered. NEW `CautionWatch` in flag_overlay.py (pure, race

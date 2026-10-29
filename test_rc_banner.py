@@ -309,5 +309,13 @@ check("H7 banner reports on air, /rc/onair answers", "/rc/onair" in cl.get("/").
       and cl.post("/rc/onair", json={"secs": 5}).status_code == 200 and "hide" in cl.get("/rc/state").get_json())
 
 print()
+# 2026-10-29: a clear is never on air, but it still drops the tower penalty
+fc = rc.Feed()
+fc.add("icas", "penalty", "DRIVE THROUGH PENALTY", "", {"num": "23", "label": "X"})
+fc.add("icas", "clear", "PENALTY CLEARED", "", {"num": "23", "label": "X"})
+fc.add("atvo", "message", "CLEAR PENALTY", "#23 penalties cleared", {"num": "23", "label": "X"})
+check("CL1 clear not in the feed, penalty off the board",
+      [m["headline"] for m in fc.list()] == ["DRIVE THROUGH PENALTY"]
+      and not fc.board.get().get("23"), (fc.list(), fc.board.get()))
 print("ALL PASS" if not failures else f"FAILURES: {failures}")
 sys.exit(1 if failures else 0)
