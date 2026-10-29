@@ -933,6 +933,8 @@ class ObsHider:
         self.until = 0.0
         self.hidden = []          # [(scene, item id, source)]
         self.last_error = ""
+        self.reports = 0          # /rc/onair calls (0 = the banner page in OBS is old: refresh it)
+        self.found = None         # scene items with that name the last time (0 = name wrong)
         self._lock = threading.Lock()
 
     @property
@@ -940,12 +942,24 @@ class ObsHider:
         return bool(self.sources) and self.obs is not None
 
     def _items(self):
-        want = {s.lower(): s for s in self.sources}
-        out = []
-        for scene in self.obs.scenes():
-            for name, (iid, on) in self.obs.scene_items(scene).items():
-                if on and str(name).lower() in want:
-                    out.append((scene, iid, name))
+        """Visible items of the wanted sources in every scene AND inside groups
+        (a group's children are not in the scene's own item list)."""
+        want = {s.lower().strip() for s in self.sources}
+        out, seen = [], 0
+        todo = [(sc, "GetSceneItemList") for sc in self.obs.scenes()]
+        groups = set()
+        while todo:
+            scene, req = todo.pop()
+            for it in self.obs.call(req, {"sceneName": scene}).get("sceneItems", []):
+                name = str(it.get("sourceName") or "")
+                if it.get("isGroup") and name not in groups:
+                    groups.add(name)
+                    todo.append((name, "GetGroupSceneItemList"))
+                if name.lower().strip() in want:
+                    seen += 1
+                    if it.get("sceneItemEnabled"):
+                        out.append((scene, it.get("sceneItemId"), name))
+        self.found = seen
         return out
 
     def _set(self, scene, iid, on):
@@ -957,6 +971,7 @@ class ObsHider:
             return
         secs = max(0.5, min(HIDE_MAX_S, float(secs or 0)))
         with self._lock:
+            self.reports += 1
             self.until = max(self.until, self.clock() + secs + HIDE_PAD_S)
             try:
                 for scene, iid, name in self._items():
@@ -991,7 +1006,9 @@ class ObsHider:
 
     def status(self) -> dict:
         return {"sources": self.sources, "active": bool(self.hidden),
-                "hidden": [n for _, _, n in self.hidden], "error": self.last_error}
+                "hidden": [n for _, _, n in self.hidden], "error": self.last_error,
+                "reports": self.reports, "found": self.found,
+                "obs": f"{self.obs.host}:{self.obs.port}" if getattr(self.obs, "host", None) else None}
 
 
 def make_hider(cfg: dict) -> ObsHider:
@@ -1234,7 +1251,7 @@ async function poll() {
       `<b>ATVO-Empfänger (iRaceControl, SignalR):</b> ${a.listening ? `<span class="ok">bereit auf Port ${a.port}${a.password ? ' · mit Passwort' : ' · ohne Passwort'}</span>` : `<span class="bad">${esc(a.error || 'nicht aktiv')}</span>`}<br>`
       + (a.clients.length ? a.clients.map(c => `<span class="ok">verbunden: ${esc(c.addr)}</span> · ${esc(c.transport)} · ${c.bytes} Bytes`).join('<br>')
                           : '<span class="muted">keine Verbindung — in iRaceControl bei ATVO diese PC-Adresse + Port eintragen und ATVO einschalten</span>')
-      + (d.hide && d.hide.sources.length ? `<br>Ausblenden während einer Meldung: ${esc(d.hide.sources.join(', '))}${d.hide.active ? ' · <span class=ok>gerade ausgeblendet</span>' : ''}${d.hide.error ? ` · <span class=bad>${esc(d.hide.error)}</span>` : ''}` : '')
+      + (d.hide && d.hide.sources.length ? `<br>Ausblenden während einer Meldung: ${esc(d.hide.sources.join(', '))}${d.hide.active ? ' · <span class=ok>gerade ausgeblendet</span>' : ''}${d.hide.reports ? ` · ${d.hide.reports} Meldungen vom Banner` : ' · <span class=bad>noch keine Meldung vom Banner (Banner-Quelle in OBS aktualisieren)</span>'}${d.hide.found === 0 ? ' · <span class=bad>keine OBS-Quelle mit diesem Namen</span>' : ''}${d.hide.error ? ` · <span class=bad>${esc(d.hide.error)}</span>` : ''}` : '')
       + `<br><span class="muted">iRacing: ${d.iracing.connected ? 'verbunden' : 'nicht verbunden'}${d.iracing.is_race ? ' · Rennen' : ''}</span>`;
     document.getElementById('msgs').innerHTML = '<tr><th>Zeit</th><th>Quelle</th><th>Meldung</th></tr>' +
       (d.messages || []).slice().reverse().map(m => `<tr><td>${tm(m.t)}</td><td>${esc(m.source)}</td><td><b>${esc(m.headline)}</b> ${esc(m.text)}${m.car ? ` · #${esc(m.car.num)} ${esc(m.car.label)}` : ''}</td></tr>`).join('');

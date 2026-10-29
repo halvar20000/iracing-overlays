@@ -189,7 +189,7 @@ POSTs `/rc/onair {secs}` when it shows a message (not with ?demo=1 / ?hide=0);
 every VISIBLE scene item of those sources in every scene is hidden, and
 restored HIDE_PAD_S 1.2 s after the last message's end (queued messages = one
 hide; one report ≤ HIDE_MAX_S 30 s). Items that were off stay off. `/rc/hide`
-status, line on /panel. test_rc_banner H1-H7; checked over a real websocket
+status (reports = posts from the banner page, found = matching items; sources inside OBS GROUPS are searched too — GetGroupSceneItemList), line on /panel. FIRST TRY on the stream PC: hide_sources ["driver_simple"] loaded, nothing hidden, no error -> the OBS banner source still ran the OLD page (no /rc/onair) or the source sits in a group. test_rc_banner H1-H7; checked over a real websocket
 against fake_obs. NOT tried with real OBS. Restart 5019.
 
 **October 29, 2026 (iCASControl 0.1.18 — SHORT CAUTION, Le Mans):** Thomas:

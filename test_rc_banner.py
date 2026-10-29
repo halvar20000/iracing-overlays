@@ -274,18 +274,20 @@ check("PS4 black flag on track = plain penalty",
 # ---- hide other OBS sources while a banner is on air ------------------------
 class FakeObs:
     def __init__(self):
-        self.items = {"iRacing": {"Duell": [1, True], "Tower": [2, True], "Wetter": [3, False]},
-                      "Moderator": {"Duell": [7, True]}}
+        self.items = {"iRacing": {"Duell": [1, True], "Tower": [2, True], "Wetter": [3, False], "Grp": [4, True]},
+                      "Moderator": {"Duell": [7, True]}, "Grp": {"Karte": [1, True]}}
         self.calls = 0
-    def scenes(self): return list(self.items)
-    def scene_items(self, sc): return {n: (v[0], v[1]) for n, v in self.items[sc].items()}
+    def scenes(self): return ["iRacing", "Moderator"]
     def call(self, req, d):
         self.calls += 1
+        if req in ("GetSceneItemList", "GetGroupSceneItemList"):
+            return {"sceneItems": [{"sourceName": n, "sceneItemId": v[0], "sceneItemEnabled": v[1],
+                                    "isGroup": n == "Grp"} for n, v in self.items[d["sceneName"]].items()]}
         for n, v in self.items[d["sceneName"]].items():
             if v[0] == d["sceneItemId"]:
                 v[1] = d["sceneItemEnabled"]
 clk = [100.0]
-fo = FakeObs(); h = rc.ObsHider(["duell", "Wetter"], fo, clock=lambda: clk[0])
+fo = FakeObs(); h = rc.ObsHider(["duell", "Wetter", "karte"], fo, clock=lambda: clk[0])
 h.on_air(8)
 check("H1 visible listed sources hidden in every scene, others untouched",
       not fo.items["iRacing"]["Duell"][1] and not fo.items["Moderator"]["Duell"][1]
@@ -298,6 +300,8 @@ check("H3 restored after the last message (+pad)", fo.items["iRacing"]["Duell"][
       and not h.status()["active"])
 check("H4 a source that was off stays off", fo.items["iRacing"]["Wetter"][1] is False)
 h2 = rc.ObsHider([], fo)
+check("H4b source inside an OBS group: hidden and restored, reports counted",
+      fo.items["Grp"]["Karte"][1] is True and h.status()["reports"] == 2 and h.status()["found"] == 4, str(h.status()))
 check("H5 no hide_sources = off", not h2.enabled)
 clk[0] = 200; h.on_air(500); clk[0] = 200 + rc.HIDE_MAX_S + rc.HIDE_PAD_S + 0.1; h.tick()
 check("H6 one report never hides longer than HIDE_MAX_S", fo.items["iRacing"]["Duell"][1])
