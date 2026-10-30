@@ -181,6 +181,20 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 30, 2026 (dashboard 5000: MULTICLASS driver list):** Thomas: the
+driver list did not show who is in which class. `_add_class_info()` (after the
+gaps in `_build_driver_list`) gives every row class_color (class_colors = the
+SAME colours as tower / trackmap), class_name (CarClassShortName, else the
+models' common words like the tower), class_rank (fastest class first by
+CarClassEstLapTime), class_pos (race: inside the class in live order, else
+CarIdxClassPosition), class_gap_ahead (car ahead IN THE CLASS) and
+`multiclass`. Overall order + `position` unchanged (FOCUS LEADER / REGIE /
+auto-follow). Dashboard list and `/drivers/panel`: one block per class with a
+coloured header, colour bar per row, class P + class gap, class filter chips
+(kept in localStorage on the dashboard); single class looks as before. The
+row shows the DRIVER in the car (UserName) with the team underneath (the
+tower shows the team). Rendered with a fake 3-class team field. Restart 5000.
+
 **October 29, 2026 (iCASControl 0.1.19 — "was black flagged" but no flag;
 Le Mans AI test, read live from the stream PC's iCAS over the LAN):** five
 DTs for #2 David LoVecchio: iRacing ANSWERED "David LoVecchio (#2) was black

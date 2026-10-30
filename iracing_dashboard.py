@@ -26,6 +26,7 @@ from race_commentator import Commentator
 import race_commentator
 from race_graphics import GraphicsDirector, weather_line, dotd_line
 from cls_proam import ProAmRoster
+from class_colors import class_colors
 from race_voice import Voice
 import race_qa
 import show_runner
@@ -196,6 +197,75 @@ REPLAY_PRIORITY = {"overtake": 2, "collision": 1, "lost_control": 1}
 # -----------------------------------------------------------------------------
 REPLAY_SETTLE_S = 5.0        # REGIE keeps still this long after returning from a replay
 MIN_PLAUSIBLE_LAP_S = 20.0   # anything shorter is not a real lap estimate
+
+
+def _class_label(members: list) -> str:
+    """Readable class name when iRacing sends no CarClassShortName (hosted
+    sessions): one car model = its name, several = the words all share
+    ("GT3") — same rule as the standings tower's _fill_class_labels."""
+    models = []
+    for m in members:
+        c = (m.get("car") or "").strip()
+        if c and c not in models:
+            models.append(c)
+    if len(models) == 1:
+        return models[0]
+    if not models:
+        return ""
+    toks = [re.findall(r"[A-Za-z0-9]+", m) for m in models]
+    common = set(toks[0]).intersection(*map(set, toks[1:]))
+    return " ".join(t for t in toks[0] if t in common)
+
+
+def _add_class_info(rows: list, drivers_raw: list, is_race: bool) -> None:
+    """Multiclass (IEC, 2026-10-30): class colour (the SAME as the tower /
+    trackmap, class_colors), class label, class order (fastest class first,
+    CarClassEstLapTime — like the tower), position inside the class and the
+    gap to the car ahead IN THE CLASS. The overall order and `position` are
+    left alone (FOCUS LEADER / REGIE / auto-follow use them)."""
+    colors = class_colors(drivers_raw)
+    by_cls: dict = {}
+    for r in rows:
+        try:
+            cid = int(r.get("class_id") or 0)
+        except (TypeError, ValueError):
+            cid = 0
+        r["class_id"] = cid
+        by_cls.setdefault(cid, []).append(r)
+    est = {}
+    for cid, members in by_cls.items():
+        es = [m["est_lap"] for m in members if (m.get("est_lap") or 0) >= MIN_PLAUSIBLE_LAP_S]
+        est[cid] = min(es) if es else 0.0
+    order = sorted(by_cls, key=lambda c: (0 if est[c] else 1, est[c], c))
+    multi = len(by_cls) > 1
+    for rank, cid in enumerate(order):
+        members = by_cls[cid]            # already in overall order
+        label = (members[0].get("class_name") or "").strip() or _class_label(members)
+        prev = None
+        for i, r in enumerate(members):
+            r["class_name"] = label
+            r["class_color"] = colors.get(cid, "")
+            r["class_rank"] = rank
+            if is_race:
+                r["class_pos"] = i + 1
+            else:                        # CarIdxClassPosition, 0 = no time
+                r["class_pos"] = r["position"]
+            if prev is None or r["position"] == 0:
+                r["class_gap_ahead"] = 0.0
+            elif not multi:
+                r["class_gap_ahead"] = r["gap_ahead"]
+            else:
+                my, pv = r["gap_to_leader"], prev["gap_to_leader"]
+                if my > 0 or pv > 0:
+                    g = my - pv
+                    r["class_gap_ahead"] = g if g > 0 else 0.0
+                else:
+                    d = prev["lap_pct"] - r["lap_pct"]
+                    if d < 0:
+                        d += 1.0
+                    r["class_gap_ahead"] = d * (r.get("est_lap") or 100.0)
+            r["multiclass"] = multi
+            prev = r
 
 
 def _plausible_lap(v):
@@ -1839,6 +1909,7 @@ class TelemetryPoller:
                     if pct_diff < 0:
                         pct_diff += 1.0  # leader wrapped S/F before this car
                     r["gap_ahead"] = pct_diff * est_lap_time
+        _add_class_info(rows, drivers_raw, is_race)
         return rows
 
     # --- auto-follow --------------------------------------------------------
@@ -3580,6 +3651,22 @@ DASHBOARD_HTML = """
     }
     .driver-row:hover { background: #1a1a24; }
     .driver-row.active { background: #2a1f4a; border-color: #9146FF; }
+    /* multiclass: class colour bar (same colours as the tower) */
+    .driver-row.mc { border-left: 5px solid var(--cc, #555); padding-left: 5px; }
+    .class-head {
+        display: flex; align-items: center; gap: 8px; margin: 8px 0 3px;
+        padding: 4px 8px; border-radius: 4px; font-size: 13px; font-weight: 800;
+        letter-spacing: 1px; text-transform: uppercase;
+    }
+    .class-head .cnt { font-weight: 600; opacity: .75; margin-left: auto; }
+    .name .team { display: block; font-size: 12px; color: #8a8a99; overflow: hidden; text-overflow: ellipsis; }
+    .class-chips { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+    .class-chip {
+        font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px; cursor: pointer;
+        background: #1f1f2a; border: 1px solid #333; color: #ccc; user-select: none;
+    }
+    .class-chip .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; }
+    .class-chip.on { border-color: #fff; color: #fff; background: #2a2a38; }
     .star { font-size: 17px; text-align: center; cursor: pointer; line-height: 1; color: #444; }
     .star.on { color: #facc15; }
     .star:hover { color: #facc15; }
@@ -3874,6 +3961,7 @@ DASHBOARD_HTML = """
                 <span style="flex:1"></span>
                 <span id="starred-count" style="color:#facc15">⭐ 0</span>
             </div>
+            <div class="class-chips" id="class-chips" style="display:none"></div>
         </div>
         <div class="header-row">
             <div></div>
@@ -4309,27 +4397,91 @@ function updateStarredCount() {
 updateStarredCount();
 
 // --- render ----------------------------------------------------------------
+let classFilter = null;   // class_id or null = all (multiclass only)
+try { const v = localStorage.getItem("iracing_dashboard_class_v1"); classFilter = v === null || v === "" ? null : Number(v); } catch (e) {}
+function setClassFilter(cid) {
+    classFilter = (cid === null || classFilter === cid) ? null : cid;
+    try { localStorage.setItem("iracing_dashboard_class_v1", classFilter === null ? "" : String(classFilter)); } catch (e) {}
+    document.getElementById("driver-list").dataset.sig = "";
+    renderDrivers(currentDrivers, activeCarIdx);
+}
+function escH(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"})[c]); }
+function textOn(c) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(c || ""); if (!m) return "#fff";
+    const v = parseInt(m[1], 16), r = (v >> 16 & 255) / 255, g = (v >> 8 & 255) / 255, b = (v & 255) / 255;
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b) > 0.45 ? "#0a0a0f" : "#fff";
+}
+function classList(drivers) {
+    const m = new Map();
+    for (const d of drivers) {
+        if (!m.has(d.class_id)) m.set(d.class_id, { id: d.class_id, name: d.class_name || "Class", color: d.class_color || "#555", rank: d.class_rank || 0, n: 0 });
+        m.get(d.class_id).n++;
+    }
+    return [...m.values()].sort((a, b) => a.rank - b.rank);
+}
+function renderClassChips(classes, multi) {
+    const host = document.getElementById("class-chips");
+    const sig = multi ? classes.map(c => c.id + ":" + c.name + ":" + c.color + ":" + c.n).join("|") + "|f=" + classFilter : "";
+    if (host.dataset.sig === sig) return;
+    host.dataset.sig = sig;
+    host.style.display = multi ? "" : "none";
+    host.innerHTML = "";
+    if (!multi) return;
+    const all = document.createElement("span");
+    all.className = "class-chip" + (classFilter === null ? " on" : "");
+    all.textContent = "All";
+    all.onclick = () => setClassFilter(null);
+    host.appendChild(all);
+    for (const c of classes) {
+        const el = document.createElement("span");
+        el.className = "class-chip" + (classFilter === c.id ? " on" : "");
+        el.innerHTML = `<span class="dot" style="background:${c.color}"></span>${escH(c.name)} (${c.n})`;
+        el.onclick = () => setClassFilter(c.id);
+        host.appendChild(el);
+    }
+}
 function renderDrivers(drivers, activeIdx) {
     const list = document.getElementById("driver-list");
-    const pool = showStarredOnly ? drivers.filter(d => starredSet.has(d.car_idx)) : drivers;
+    const multi = drivers.some(d => d.multiclass);
+    const classes = classList(drivers);
+    if (classFilter !== null && !classes.some(c => c.id === classFilter)) classFilter = null;
+    renderClassChips(classes, multi);
+    let pool = showStarredOnly ? drivers.filter(d => starredSet.has(d.car_idx)) : drivers;
+    if (multi && classFilter !== null) pool = pool.filter(d => d.class_id === classFilter);
+    // multiclass: one block per class, fastest class first (like the tower)
+    if (multi) pool = pool.slice().sort((a, b) => (a.class_rank || 0) - (b.class_rank || 0));
     document.getElementById("driver-count").textContent = pool.length;
 
     const signature = pool.map(d =>
-        d.car_idx + ":" + d.position + ":" + d.on_pit_road +
-        ":" + (d.gap_ahead ? d.gap_ahead.toFixed(2) : "") +
+        d.car_idx + ":" + d.position + ":" + d.class_pos + ":" + d.on_pit_road + ":" + d.name + ":" + d.class_color +
+        ":" + ((multi ? d.class_gap_ahead : d.gap_ahead) ? (multi ? d.class_gap_ahead : d.gap_ahead).toFixed(2) : "") +
         ":" + (starredSet.has(d.car_idx) ? "1" : "0")
-    ).join("|") + "|active=" + activeIdx + "|filter=" + showStarredOnly;
+    ).join("|") + "|active=" + activeIdx + "|filter=" + showStarredOnly + "|cls=" + classFilter;
     if (list.dataset.sig === signature) return;
     list.dataset.sig = signature;
 
     list.innerHTML = "";
+    let lastCls;
     for (const d of pool) {
+        if (multi && d.class_id !== lastCls) {
+            lastCls = d.class_id;
+            const c = classes.find(x => x.id === d.class_id) || {};
+            const head = document.createElement("div");
+            head.className = "class-head";
+            head.style.background = d.class_color || "#555";
+            head.style.color = textOn(d.class_color);
+            head.innerHTML = `${escH(d.class_name || "Class")}<span class="cnt">${c.n || ""} cars</span>`;
+            list.appendChild(head);
+        }
         const row = document.createElement("div");
-        row.className = "driver-row" + (d.car_idx === activeIdx ? " active" : "");
+        row.className = "driver-row" + (d.car_idx === activeIdx ? " active" : "") + (multi ? " mc" : "");
+        if (multi) row.style.setProperty("--cc", d.class_color || "#555");
         row.onclick = () => switchToCarNumber(d.car_number);
-        const pos = d.position > 0 ? "P" + d.position : "—";
+        const p = multi ? d.class_pos : d.position;
+        const pos = p > 0 ? "P" + p : "—";
+        const gapV = multi ? d.class_gap_ahead : d.gap_ahead;
         const pit = d.on_pit_road ? '<span class="pit-pill">PIT</span>' : "";
-        const gapClass = (d.gap_ahead > 0 && d.gap_ahead < 1.0) ? "gap battle" : "gap";
+        const gapClass = (gapV > 0 && gapV < 1.0) ? "gap battle" : "gap";
         const isStar = starredSet.has(d.car_idx);
 
         const starEl = document.createElement("div");
@@ -4338,14 +4490,17 @@ function renderDrivers(drivers, activeIdx) {
         starEl.onclick = (ev) => toggleStar(d.car_idx, ev);
         row.appendChild(starEl);
 
+        // the DRIVER in the car (UserName) is what you pick; the team below
+        const team = d.team ? `<span class="team">${escH(d.team)}</span>` : "";
+        const tip = escH(d.name) + (d.team ? " · " + escH(d.team) : "") + (multi ? " · " + escH(d.class_name) + " · overall P" + d.position : "");
         const rest = document.createElement("div");
         rest.style.display = "contents";
         rest.innerHTML = `
             <div class="pos">${pos}</div>
-            <div class="num">#${d.car_number}</div>
-            <div class="name" title="${d.name}">${d.name}${pit}</div>
+            <div class="num">#${escH(d.car_number)}</div>
+            <div class="name" title="${tip}">${escH(d.name)}${pit}${team}</div>
             <div class="time-small">${fmtLap(d.best_lap)}</div>
-            <div class="${gapClass}">${fmtGap(d.gap_ahead)}</div>
+            <div class="${gapClass}">${fmtGap(gapV)}</div>
         `;
         row.appendChild(rest);
         list.appendChild(row);
@@ -5173,7 +5328,18 @@ DRIVER_PANEL_HTML = PANEL_FRAME % {
            border-radius: 3px; margin-left: 6px; }
     .best { color: var(--muted); font-size: 13px; }
     .gap { min-width: 52px; text-align: right; font-size: 14px; }
-    .gap.battle { color: var(--up); font-weight: 800; }""",
+    .gap.battle { color: var(--up); font-weight: 800; }
+    .drv.mc { border-left-color: var(--cc, transparent); }
+    .drv.mc.cur { box-shadow: inset 0 0 0 2px var(--cyan); }
+    .nm .tm { display: block; font-size: 12px; font-weight: 600; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+    .chead { display: flex; align-items: center; padding: 4px 8px; margin-top: 6px; border-radius: 4px;
+             font-size: 13px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
+    .chead .n { margin-left: auto; font-weight: 600; opacity: .75; }
+    #clsbar { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 6px; }
+    #clsbar span { font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 4px; cursor: pointer;
+                   background: var(--card); border: 1px solid #333; }
+    #clsbar span.on { border-color: #fff; }
+    #clsbar i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; }""",
     "js": r"""
 // the ★ set is the dashboard's own (same localStorage key, same server list)
 const STARRED_KEY = "iracing_dashboard_starred_v1";
@@ -5195,24 +5361,70 @@ async function toggleFollow() {
 function fmtLap(s) { if (!s || s <= 0) return '--:--.---'; const m = Math.floor(s / 60);
                      return m + ':' + (s - m * 60).toFixed(3).padStart(6, '0'); }
 function fmtGap(s) { return (!s || s <= 0) ? '—' : '+' + s.toFixed(s < 10 ? 2 : 1); }
+let clsF = null;   // class filter (multiclass)
+function textOn(c) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(c || ''); if (!m) return '#fff';
+    const v = parseInt(m[1], 16), r = (v >> 16 & 255) / 255, g = (v >> 8 & 255) / 255, b = (v & 255) / 255;
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b) > 0.45 ? '#0a0a0f' : '#fff';
+}
 function render(drivers, activeIdx) {
-    const pool = starOnly ? drivers.filter(d => starred.has(d.car_idx)) : drivers;
-    const sig = pool.map(d => [d.car_idx, d.position, d.on_pit_road, d.in_world, (d.gap_ahead || 0).toFixed(1),
-                               (d.best_lap || 0).toFixed(3), starred.has(d.car_idx)].join(':')).join('|') + '|' + activeIdx;
+    const multi = drivers.some(d => d.multiclass);
+    const cls = new Map();
+    for (const d of drivers) {
+        if (!cls.has(d.class_id)) cls.set(d.class_id, { id: d.class_id, name: d.class_name || 'Class', color: d.class_color || '#555', rank: d.class_rank || 0, n: 0 });
+        cls.get(d.class_id).n++;
+    }
+    const classes = [...cls.values()].sort((a, b) => a.rank - b.rank);
+    if (clsF !== null && !cls.has(clsF)) clsF = null;
+    let pool = starOnly ? drivers.filter(d => starred.has(d.car_idx)) : drivers;
+    if (multi && clsF !== null) pool = pool.filter(d => d.class_id === clsF);
+    if (multi) pool = pool.slice().sort((a, b) => (a.class_rank || 0) - (b.class_rank || 0));
+    const gapOf = d => multi ? d.class_gap_ahead : d.gap_ahead;
+    const sig = pool.map(d => [d.car_idx, d.position, d.class_pos, d.on_pit_road, d.in_world, (gapOf(d) || 0).toFixed(1), d.name,
+                               (d.best_lap || 0).toFixed(3), starred.has(d.car_idx)].join(':')).join('|') + '|' + activeIdx
+              + '|' + clsF + '|' + classes.map(c => c.id + c.name + c.color + c.n).join(',');
     if (host.dataset.sig === sig) return;
     host.dataset.sig = sig;
-    if (!pool.length) { host.innerHTML = '<div class="empty">' + (starOnly ? 'Kein Fahrer mit ★.' : 'Keine Fahrer.') + '</div>'; return; }
     host.innerHTML = '';
+    if (multi) {
+        const bar = document.createElement('div');
+        bar.id = 'clsbar';
+        const mk = (label, color, id) => {
+            const el = document.createElement('span');
+            el.className = clsF === id ? 'on' : '';
+            el.innerHTML = (color ? `<i style="background:${color}"></i>` : '') + esc(label);
+            el.onclick = () => { clsF = (id === null || clsF === id) ? null : id; host.dataset.sig = ''; render(drivers, activeIdx); };
+            bar.appendChild(el);
+        };
+        mk('Alle', '', null);
+        for (const c of classes) mk(c.name + ' (' + c.n + ')', c.color, c.id);
+        host.appendChild(bar);
+    }
+    if (!pool.length) { host.insertAdjacentHTML('beforeend', '<div class="empty">' + (starOnly ? 'Kein Fahrer mit ★.' : 'Keine Fahrer.') + '</div>'); return; }
+    let last;
     for (const d of pool) {
+        if (multi && d.class_id !== last) {
+            last = d.class_id;
+            const c = cls.get(d.class_id) || {};
+            const h = document.createElement('div');
+            h.className = 'chead';
+            h.style.background = d.class_color || '#555';
+            h.style.color = textOn(d.class_color);
+            h.innerHTML = esc(d.class_name || 'Class') + `<span class="n">${c.n || ''}</span>`;
+            host.appendChild(h);
+        }
         const row = document.createElement('div');
-        row.className = 'drv' + (d.car_idx === activeIdx ? ' cur' : '') + (d.in_world === false ? ' out' : '');
+        row.className = 'drv' + (d.car_idx === activeIdx ? ' cur' : '') + (d.in_world === false ? ' out' : '') + (multi ? ' mc' : '');
+        if (multi) row.style.setProperty('--cc', d.class_color || '#555');
         const on = starred.has(d.car_idx);
+        const p = multi ? d.class_pos : d.position, g = gapOf(d);
+        const tip = esc(d.name) + (d.team ? ' · ' + esc(d.team) : '') + (multi ? ' · ' + esc(d.class_name) + ' · gesamt P' + d.position : '');
         row.innerHTML = `<span class="st${on ? ' on' : ''}" title="★ merken">${on ? '★' : '☆'}</span>
-            <span class="pos">${d.position > 0 ? 'P' + d.position : '—'}</span>
+            <span class="pos">${p > 0 ? 'P' + p : '—'}</span>
             <span class="num">#${esc(d.car_number)}</span>
-            <span class="nm" title="${esc(d.name)}">${esc(d.name)}${d.on_pit_road ? '<span class="pit">PIT</span>' : ''}</span>
+            <span class="nm" title="${tip}">${esc(d.name)}${d.on_pit_road ? '<span class="pit">PIT</span>' : ''}${d.team ? '<span class="tm">' + esc(d.team) + '</span>' : ''}</span>
             <span class="best">${fmtLap(d.best_lap)}</span>
-            <span class="gap${d.gap_ahead > 0 && d.gap_ahead < 1 ? ' battle' : ''}">${fmtGap(d.gap_ahead)}</span>`;
+            <span class="gap${g > 0 && g < 1 ? ' battle' : ''}">${fmtGap(g)}</span>`;
         row.onclick = () => { post('/switch_car', { car_number: d.car_number }); host.dataset.sig = '';
                               render(drivers, d.car_idx); };
         row.querySelector('.st').onclick = ev => {
