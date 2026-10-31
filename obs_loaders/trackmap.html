@@ -8,41 +8,27 @@
     margin: 0; padding: 0; width: 100%; height: 100%;
     background: rgba(0,0,0,0); overflow: hidden;
   }
-  iframe {
-    border: 0; width: 100%; height: 100%;
-    background: transparent; display: block;
-  }
 </style>
 </head>
 <body>
-<iframe id="ov" allowtransparency="true"></iframe>
 <script>
-  // LOAD-ONCE loader. It waits until the overlay server first responds, loads
-  // the page exactly ONCE, then stops touching it. The overlay page itself now
-  // recovers from any server hiccup (it keeps polling /status and re-renders),
-  // so the loader must NOT reload the iframe — reloading on every multi-second
-  // server flicker was the visible "blinking" the overlays showed mid-stream.
+  // Loader: waits (up to GIVE_UP_MS) until the overlay server answers, then
+  // navigates THIS page straight to the overlay - a top-level page, exactly
+  // like a URL browser source. Newer OBS versions block the background ping
+  // from a local file, so after GIVE_UP_MS we go anyway.
   var URL_ = "http://localhost:5007/";
-  var frame = document.getElementById("ov");
-  var loaded = false;
+  var GIVE_UP_MS = 4000;
+  var t0 = Date.now();
 
-  function ping() {
-    // no-cors: we only care whether the server answers at all.
-    return fetch(URL_, { mode: "no-cors", cache: "no-store" })
-      .then(function () { return true; })
-      .catch(function () { return false; });
-  }
+  function go() { window.location.replace(URL_); }
 
   function tick() {
-    if (loaded) return;                 // already loaded — never touch it again
-    ping().then(function (up) {
-      if (up) {
-        frame.src = URL_ + (URL_.indexOf("?") < 0 ? "?" : "&") + "r=" + Date.now();
-        loaded = true;                  // done: the overlay page self-heals from here
-      } else {
-        setTimeout(tick, 1500);         // keep retrying ONLY until the first load
-      }
-    });
+    fetch(URL_, { mode: "no-cors", cache: "no-store" })
+      .then(go)
+      .catch(function () {
+        if (Date.now() - t0 >= GIVE_UP_MS) go();
+        else setTimeout(tick, 1000);
+      });
   }
   tick();
 </script>

@@ -12,28 +12,23 @@
 </head>
 <body>
 <script>
-  // SELF-HEALING loader (REDIRECT variant). Waits until the overlay server
-  // first answers, then navigates THIS page straight to the overlay so it runs
-  // as a normal top-level page — identical to opening the URL directly, which
-  // OBS renders reliably. The overlay page then recovers from any later server
-  // hiccup on its own (it keeps polling /status and re-renders), so we never
-  // reload it.
+  // Loader: waits (up to GIVE_UP_MS) until the overlay server answers, then
+  // navigates THIS page straight to the overlay - a top-level page, exactly
+  // like a URL browser source. Newer OBS versions block the background ping
+  // from a local file, so after GIVE_UP_MS we go anyway.
   var URL_ = "http://localhost:5007/location";
+  var GIVE_UP_MS = 4000;
+  var t0 = Date.now();
 
-  function ping() {
-    return fetch(URL_, { mode: "no-cors", cache: "no-store" })
-      .then(function () { return true; })
-      .catch(function () { return false; });
-  }
+  function go() { window.location.replace(URL_); }
 
   function tick() {
-    ping().then(function (up) {
-      if (up) {
-        window.location.replace(URL_);
-      } else {
-        setTimeout(tick, 1500);
-      }
-    });
+    fetch(URL_, { mode: "no-cors", cache: "no-store" })
+      .then(go)
+      .catch(function () {
+        if (Date.now() - t0 >= GIVE_UP_MS) go();
+        else setTimeout(tick, 1000);
+      });
   }
   tick();
 </script>

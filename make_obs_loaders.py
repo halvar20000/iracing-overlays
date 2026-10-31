@@ -103,6 +103,19 @@ OVERLAYS = [
     # it intentionally has no loader page here.
 ]
 
+# ONE loader template since 2026-10-31. Every loader navigates THIS page
+# straight to the overlay (top-level page, exactly like a URL browser source).
+# Before that, most loaders put the overlay into an IFRAME after a fetch()
+# "is the server up?" ping. After Thomas's OBS update (Oct 31) none of them
+# showed anything while the plain URL http://localhost:5005 worked: the newer
+# browser inside OBS blocks a LOCAL FILE page from reaching localhost in the
+# background (fetch / iframe), a top-level navigation is still allowed.
+# So: ping as before; if the ping keeps failing (server not up yet - or the
+# ping itself is blocked) go to the overlay anyway after GIVE_UP_MS. The
+# overlay page recovers from later server hiccups on its own (it keeps
+# polling), so it is never reloaded. A page opened while its server is DOWN
+# shows the browser's error page - refresh the source once the overlay runs.
+# The 5th field of an OVERLAYS entry ("redirect") is no longer needed.
 TEMPLATE = """<!doctype html>
 <html>
 <head>
@@ -113,91 +126,27 @@ TEMPLATE = """<!doctype html>
     margin: 0; padding: 0; width: 100%; height: 100%;
     background: rgba(0,0,0,0); overflow: hidden;
   }}
-  iframe {{
-    border: 0; width: 100%; height: 100%;
-    background: transparent; display: block;
-  }}
-</style>
-</head>
-<body>
-<iframe id="ov" allowtransparency="true"></iframe>
-<script>
-  // LOAD-ONCE loader. It waits until the overlay server first responds, loads
-  // the page exactly ONCE, then stops touching it. The overlay page itself now
-  // recovers from any server hiccup (it keeps polling /status and re-renders),
-  // so the loader must NOT reload the iframe — reloading on every multi-second
-  // server flicker was the visible "blinking" the overlays showed mid-stream.
-  var URL_ = "http://localhost:{port}{path}";
-  var frame = document.getElementById("ov");
-  var loaded = false;
-
-  function ping() {{
-    // no-cors: we only care whether the server answers at all.
-    return fetch(URL_, {{ mode: "no-cors", cache: "no-store" }})
-      .then(function () {{ return true; }})
-      .catch(function () {{ return false; }});
-  }}
-
-  function tick() {{
-    if (loaded) return;                 // already loaded — never touch it again
-    ping().then(function (up) {{
-      if (up) {{
-        frame.src = URL_ + (URL_.indexOf("?") < 0 ? "?" : "&") + "r=" + Date.now();
-        loaded = true;                  // done: the overlay page self-heals from here
-      }} else {{
-        setTimeout(tick, 1500);         // keep retrying ONLY until the first load
-      }}
-    }});
-  }}
-  tick();
-</script>
-</body>
-</html>
-"""
-
-# Some overlays (e.g. the Quali Delta "own best" view at /own) would not run
-# reliably inside OBS's iframe — the embedded page couldn't reach /status and
-# showed "Waiting for server…". For those, mark the entry with a 5th field
-# "redirect": the loader waits for the server, then navigates straight to the
-# overlay (top-level page, exactly like opening the URL directly), which OBS
-# renders reliably. Since loaders are "load-once", this is equivalent to the
-# iframe version for self-healing.
-REDIRECT_TEMPLATE = """<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>{name} — loader</title>
-<style>
-  html, body {{
-    margin: 0; padding: 0; width: 100%; height: 100%;
-    background: rgba(0,0,0,0); overflow: hidden;
-  }}
 </style>
 </head>
 <body>
 <script>
-  // SELF-HEALING loader (REDIRECT variant). Waits until the overlay server
-  // first answers, then navigates THIS page straight to the overlay so it runs
-  // as a normal top-level page — identical to opening the URL directly, which
-  // OBS renders reliably. The overlay page then recovers from any later server
-  // hiccup on its own (it keeps polling /status and re-renders), so we never
-  // reload it.
+  // Loader: waits (up to GIVE_UP_MS) until the overlay server answers, then
+  // navigates THIS page straight to the overlay - a top-level page, exactly
+  // like a URL browser source. Newer OBS versions block the background ping
+  // from a local file, so after GIVE_UP_MS we go anyway.
   var URL_ = "http://localhost:{port}{path}";
+  var GIVE_UP_MS = 4000;
+  var t0 = Date.now();
 
-  function ping() {{
-    return fetch(URL_, {{ mode: "no-cors", cache: "no-store" }})
-      .then(function () {{ return true; }})
-      .catch(function () {{ return false; }});
-  }}
+  function go() {{ window.location.replace(URL_); }}
 
   function tick() {{
-    ping().then(function (up) {{
-      if (up) {{
-        window.location.replace(URL_);
-      }} else {{
-        setTimeout(tick, 1500);
-      }}
-    }});
+    fetch(URL_, {{ mode: "no-cors", cache: "no-store" }})
+      .then(go)
+      .catch(function () {{
+        if (Date.now() - t0 >= GIVE_UP_MS) go();
+        else setTimeout(tick, 1000);
+      }});
   }}
   tick();
 </script>
@@ -211,12 +160,11 @@ def main():
     for entry in OVERLAYS:
         stem, name, port = entry[0], entry[1], entry[2]
         path = entry[3] if len(entry) > 3 else "/"
-        mode = entry[4] if len(entry) > 4 else "iframe"
-        tmpl = REDIRECT_TEMPLATE if mode == "redirect" else TEMPLATE
+        tmpl = TEMPLATE
         out = os.path.join(outdir, stem + ".html")
         with open(out, "w", encoding="utf-8") as f:
             f.write(tmpl.format(name=name, port=port, path=path))
-        print(f"  written  {out}  ->  http://localhost:{port}{path}  ({mode})")
+        print(f"  written  {out}  ->  http://localhost:{port}{path}")
     print(f"\n{len(OVERLAYS)} loader pages in {outdir}")
     print("In OBS: Browser source -> check 'Local file' -> pick the .html")
     # keep OVERLAY_TABLE.md (ports / loaders / Stream Deck icons) in step

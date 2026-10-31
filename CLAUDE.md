@@ -181,6 +181,19 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 31, 2026 (OBS update: NO loader showed anything):** after Thomas
+updated OBS, every obs_loaders/*.html stayed empty, while a URL source
+(http://localhost:5005) and google.com worked - the newer browser in OBS
+blocks a LOCAL FILE page from reaching localhost in the background (the
+iframe loaders' fetch ping / iframe). make_obs_loaders.py now has ONE
+template for all 63 loaders: ping, then `location.replace()` to the overlay
+(top-level, like a URL source); a ping that keeps failing (blocked or server
+not up) goes anyway after GIVE_UP_MS 4 s - a server that is really down then
+shows the browser error page (refresh the source later). The "redirect" 5th
+field is no longer needed. Bonus: obsSourceVisibleChanged now reaches every
+overlay (it never reached pages inside the iframe). Rendered from file:// in
+Chromium 155. Update & restart, then refresh the OBS sources.
+
 **October 31, 2026 (TELEPROMPTER `5000/prompter`, Le Mans IEC):** Thomas
 wanted the stream notes as a prompter with a "next info" key. NEW `prompter.py`
 (registered in the dashboard right after `poller`): show_notes/*.md (not
