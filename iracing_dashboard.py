@@ -763,7 +763,10 @@ class TelemetryPoller:
         # second simultaneous crash.
         if self.focus_crashes and inc_type in self._auto_replay_types:
             now = time.time()
-            if now >= self._focus_crash_until:
+            # never during a replay (ours / a click): the camera stays on
+            # the replayed car for the whole replay
+            if (now >= self._focus_crash_until and now >= self._manual_override_until
+                    and now >= self._own_replay_until):
                 try:
                     self.ir.cam_switch_num(
                         str(info["car_number"]), self._safe_cam_group(), 0
@@ -1965,9 +1968,14 @@ class TelemetryPoller:
         hammer cam_switch_num at the poll rate."""
         if not self.focus_leader:
             return
-        # Don't override a crash-focus hold window.
+        # Don't override a crash-focus hold window, nor a replay / click
+        # (it used to pull the camera back to P1 a tick after a replay
+        # switched to the replayed car).
         t_now = time.time()
         if t_now < self._focus_crash_until:
+            return
+        if t_now < self._manual_override_until or t_now < self._own_replay_until:
+            self._last_leader_car_idx = None   # re-pick P1 once it is over
             return
         # Find the overall P1 (position == 1). We pick the first driver
         # reported at position 1; in multi-class it's the overall leader.
