@@ -3388,6 +3388,12 @@ def _no_cache(resp):
     return resp
 poller = TelemetryPoller(poll_hz=10)
 
+# Teleprompter for the stream notes (show_notes/*.md): /prompter, Stream Deck
+# /prompter/next | prev | first | section_next | section_prev.
+import prompter
+prompter.register(app, Path(__file__).resolve().parent / "show_notes",
+                  lambda: (poller.get() or {}).get("track") or "")
+
 
 DASHBOARD_HTML = """
 <!DOCTYPE html>

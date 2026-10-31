@@ -181,6 +181,22 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**October 31, 2026 (TELEPROMPTER `5000/prompter`, Le Mans IEC):** Thomas
+wanted the stream notes as a prompter with a "next info" key. NEW `prompter.py`
+(registered in the dashboard right after `poller`): show_notes/*.md (not
+README / schedule-) cut into cards - one list item / table row (header cells
+as "Header: value", header-less table = key + value) / paragraph / quote each;
+a short label before a list of short items = ONE card (team top 5), before
+long items = added to the section line ("... > Für den Kommentar"), before a
+paragraph / quote = its title; headings = section labels; Inhalt / Quellen
+skipped. Position on the SERVER (all pages + Stream Deck share it): GET|POST
+/prompter/next | prev | first | section_next | section_prev | goto/<n> |
+file/<name>; page polls /prompter/state 300 ms, reloads cards when the file /
+its mtime changes. File default = longest word match with the iRacing track,
+else first; dropdowns for file + chapter; keys right / Space / PgDn next, left /
+PgUp prev, Home, N / P chapter, + / - font (localStorage), ?size= ?zoom=
+?clean=1. Le Mans notes = 141 cards. Flask test client + rendered. Restart 5000.
+
 **October 30, 2026 (dashboard 5000: MULTICLASS driver list):** Thomas: the
 driver list did not show who is in which class. `_add_class_info()` (after the
 gaps in `_build_driver_list`) gives every row class_color (class_colors = the
