@@ -286,8 +286,19 @@ class IRacingSource(DataSource):
     def poll(self) -> Optional[Frame]:
         if self._ir is None:
             return None
-        # Reconnect transparently if iRacing was restarted.
-        if not self._ir.is_connected:
+        # Reconnect transparently if iRacing was restarted.  shutdown() first:
+        # pyirsdk only re-reads the session info when its update counter goes
+        # UP, and a new sim run starts it at 1 again - without the reset the
+        # old session's DriverInfo stayed (Johann: AI drivers in the league
+        # race).  Same when the counter drops without a disconnect.
+        stale = False
+        with contextlib.suppress(Exception):
+            hdr = getattr(self._ir, "_header", None)
+            stale = hdr is not None and \
+                hdr.session_info_update < self._ir.last_session_info_update
+        if stale or not self._ir.is_connected:
+            with contextlib.suppress(Exception):
+                self._ir.shutdown()
             self._quiet_startup(self._ir)
             if not self._ir.is_connected:
                 self._connected = False

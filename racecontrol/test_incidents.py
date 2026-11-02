@@ -2185,6 +2185,77 @@ check("PC6 the log says the pace car crossed", any(
     "pace car crossed the line" in str(e.text) for e in eng7.state.events), "")
 step(sc(9900, 74, 0.10, key="sc-8", flags=()))
 
+print("New session / demo -> iRacing (Johann, 2026-11-02)")
+eng12 = server.Engine(force_sim=True)
+eng12.tick()                                   # the Silverstone demo
+check("NS0 demo map loaded", eng12.state.track_revision == 1 and eng12.state.track_path)
+eng12._last_track_rev = eng12.state.track_revision   # the browsers have it
+
+
+def ns_ir(t, sid, names, track="okayama full"):
+    ir = fake_ir(t, {i: 0 for i in range(len(names))}, n=len(names))
+    ir["WeekendInfo"] = dict(ir["WeekendInfo"], TrackName=track,
+                             SessionID=sid, SubSessionID=sid + 1)
+    for d, nm in zip(ir["DriverInfo"]["Drivers"], names):
+        d["UserName"] = nm
+    return ir
+
+
+src12 = irs.IRacingSource()
+src12._ir = ns_ir(10, 0, ["AI One", "AI Two"])
+_orig_irs = server.IRacingSource
+server.IRacingSource = lambda: src12
+server.IRacingSource.available = lambda: True
+src12.connect = lambda: True
+eng12.force_sim = False
+eng12._last_iracing_check = -1e9
+eng12.tick()
+server.IRacingSource = _orig_irs
+check("NS1 switched to iRacing", eng12.source is src12, eng12.source)
+check("NS2 the real map is sent (rev differs from what the browsers have)",
+      eng12.state.track_path is not None
+      and eng12.state.track_revision != eng12._last_track_rev,
+      (eng12.state.track_revision, eng12._last_track_rev))
+check("NS3 AI drivers in the table",
+      sorted(c.driver for c in eng12.state.cars.values()) == ["AI One", "AI Two"])
+src12._ir = ns_ir(20, 555, ["League A"])
+eng12.tick()
+check("NS4 new hosted session: only the league driver",
+      [c.driver for c in eng12.state.cars.values()] == ["League A"],
+      [c.driver for c in eng12.state.cars.values()])
+check("NS5 the log says so", any("New iRacing session" in e.text
+                                  for e in eng12.state.events))
+k12 = eng12.state.session_key
+src12._ir = ns_ir(21, 0, ["League A"])          # "0-0" while loading
+eng12.tick()
+check("NS6 a 0-0 key never wipes a league race",
+      not any("New iRacing session (0-1)" in e.text for e in eng12.state.events)
+      and eng12.state.cars, eng12.state.session_key)
+
+
+class StaleIR(FakeIR):
+    last_session_info_update = 40
+
+    def shutdown(self):
+        self.calls.append("shutdown")
+        self.last_session_info_update = 0
+
+    def startup(self):
+        self.calls.append("startup")
+        return True
+
+
+st = StaleIR(ns_ir(30, 555, ["League A"]))
+st._header = type("H", (), {"session_info_update": 3})()
+src12._ir = st
+src12.poll()
+check("NS7 session-info counter went DOWN (new sim run): pyirsdk reset",
+      st.calls[:2] == ["shutdown", "startup"], st.calls)
+st.calls.clear()
+st._header.session_info_update = 5
+src12.poll()
+check("NS8 counter going up: no reset", "shutdown" not in st.calls, st.calls)
+
 _tc = type("C", (), {"number": "7", "driver": "A B", "team": "Team X"})()
 check("%tname% = team (IEC texts)",
       steward.fill("#%cnr% (%tname%) - %dname%", _tc) == "#7 (Team X) - A B")

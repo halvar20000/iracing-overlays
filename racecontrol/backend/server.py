@@ -123,9 +123,18 @@ class Engine:
             with contextlib.suppress(Exception):
                 self.source.disconnect()
             self.source = ir
-            self.state = RaceState()           # fresh state for the real race
-            self._restored_key = None
-            self.state.note_system("Switched to live iRacing data")
+            self._fresh_state("Switched to live iRacing data")
+
+    def _fresh_state(self, note: str) -> None:
+        """A new RaceState (real race after the demo, another hosted session).
+        Its revisions start at 0 again - the old state's could be the SAME
+        numbers (demo map = track rev 1, the real track = rev 1 too), and the
+        browsers were never sent the new map (Johann: Silverstone stayed)."""
+        self.state = RaceState()
+        self._restored_key = None
+        self._last_event_rev = self._last_track_rev = -1
+        self._saved_rev = -1
+        self.state.note_system(note)
 
     # -- the race loop ------------------------------------------------------
 
@@ -139,6 +148,7 @@ class Engine:
             print(f"[engine] source poll error: {exc}", file=sys.stderr)
             frame = None
         if frame is not None:
+            self._check_new_session(frame)
             self.state.steward_rules = self.steward_cfg
             self.state.ingest(frame)
         if frame is not None and not self.follower.active:
@@ -328,6 +338,21 @@ class Engine:
             slug = re.sub(r"[^a-z0-9]+", "_", self.state.session_track.lower())
             key = f"local_{slug.strip('_')}"
         return DATA_DIR / f"{re.sub(r'[^A-Za-z0-9_-]', '_', key)}.json"
+
+    def _check_new_session(self, frame) -> None:
+        """Another hosted session (AI race left, league server joined): the
+        old cars / log must go, else the old drivers stay in the table.  The
+        old race is saved first; coming back to it restores it.  "0-0"
+        (offline / still loading) never wipes a running league race."""
+        new = str(getattr(frame.session, "session_key", "") or "")
+        old = self.state.session_key
+        if not old or not new or new == old or new == "0-0" \
+                or self.source.name != "iracing":
+            return
+        with contextlib.suppress(Exception):
+            self._maybe_autosave(force=True)
+        print(f"[engine] new iRacing session {old} -> {new}: fresh state")
+        self._fresh_state(f"New iRacing session ({new}) - log and cars reset")
 
     def _maybe_restore(self) -> None:
         key = self.state.session_key

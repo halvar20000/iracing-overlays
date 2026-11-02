@@ -181,6 +181,25 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 2, 2026 (iCASControl 0.1.35 — Johann: map stayed Silverstone,
+AI drivers in the league race):** three bugs. (1) iCAS started before
+iRacing = the Silverstone demo (track_revision 1); the switch to iRacing made
+a fresh RaceState whose real map was ALSO rev 1, so the WS loop never sent it
+(a browser reload would have). `Engine._fresh_state()` resets
+_last_event_rev / _last_track_rev / _saved_rev with every new state. (2) a NEW
+hosted session (AI race left, league joined) kept the old cars in
+state.cars → `_check_new_session()`: SessionID-SubSessionID changes (not to
+"0-0" = offline / loading, iracing source only) → autosave the old race, fresh
+state, log line "New iRacing session". (3) pyirsdk re-reads the session info
+only when its update counter goes UP; iCAS reconnected with startup() without
+shutdown(), and a new sim run starts the counter at 1 → the old DriverInfo
+stayed. poll() now shutdown() + startup() on a disconnect and whenever the
+header counter is below last_session_info_update. test NS0-NS8 (4 fail on the
+old code), test_incidents 362/362. Race logger "3 files in one race"
+(Johann): no size split exists; a new file = new session key (practice and
+race are both logged) or a tick with no session key (closes + reopens) —
+asked for the file names.
+
 **October 31, 2026 (OBS update: NO loader showed anything):** after Thomas
 updated OBS, every obs_loaders/*.html stayed empty, while a URL source
 (http://localhost:5005) and google.com worked - the newer browser in OBS
