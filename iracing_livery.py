@@ -57,6 +57,8 @@ except ImportError:
     raise SystemExit(1)
 
 from car_brands import detect_brand, resolve_logo
+import country_flags
+from cls_proam import ProAmRoster
 
 
 # ---------------------------------------------------------------------------
@@ -354,6 +356,9 @@ class LiveryPoller(SDKPoller):
             "cust_id":      cust_id,
             "car_id":       car_id,
             "name":         d.get("UserName", "") or "",
+            # flag like the tower: iRacing flair first, CLS registration
+            # country as the fallback (Andreas's mock-up, 2026-11-02)
+            "country":      _country_of(d),
             "abbrev":       d.get("AbbrevName", "") or "",
             "team_name":    d.get("TeamName", "") or "",
             "car_number":   d.get("CarNumber", "") or "",
@@ -445,6 +450,12 @@ class LiveryPoller(SDKPoller):
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
 poller = LiveryPoller()
+proam = ProAmRoster()
+
+
+def _country_of(d: dict) -> "str | None":
+    code = country_flags.code_from_name((d.get("FlairName") or "").strip())
+    return code or country_flags.code_from_iso(proam.country(d.get("UserID")))
 
 
 @app.after_request
@@ -763,6 +774,14 @@ def livery_png(car_path: str, cust_id: int):
     return resp
 
 
+@app.route("/flag/<code>.svg")
+def flag(code: str):
+    path = country_flags.flag_path(code)
+    if not path:
+        abort(404)
+    return send_file(str(path), mimetype="image/svg+xml", max_age=86400)
+
+
 @app.route("/brand/<slug>")
 def brand_logo(slug: str):
     path = resolve_logo(slug)
@@ -930,6 +949,11 @@ LIVERY_HTML = """
         line-height: 1.2;
         white-space: nowrap;
     }
+    .name-row { display: flex; align-items: center; gap: 6px; }
+    .name-row .flag {
+        height: 40px; width: 54px; object-fit: cover;
+        box-shadow: 0 0 0 1px rgba(0,0,0,0.45);
+    }
     .meta {
         font-size: 12px; color: #8a8aa0;
         margin-top: 4px;
@@ -1006,6 +1030,8 @@ LIVERY_HTML = """
 </div>
 
 <script>
+// ?flag=0 hides the country flag next to the name
+const SHOW_FLAG = new URLSearchParams(location.search).get("flag") !== "0";
 // The overlay is transparent by default (ready for OBS). Pressing H adds a
 // dark card background + divider so you can see the layout while editing.
 function toggleDebugBg() { document.body.classList.toggle('debug-mode'); }
@@ -1164,7 +1190,10 @@ function render(d) {
                     ${liveryHtml}
                 </div>
                 <div class="info-col">
-                    <div class="name">${esc(d.name || 'Unknown')}</div>
+                    <div class="name-row">
+                        <div class="name">${esc(d.name || 'Unknown')}</div>
+                        ${(d.country && SHOW_FLAG) ? `<img class="flag" src="/flag/${encodeURIComponent(d.country)}.svg" alt="" onerror="this.remove()">` : ''}
+                    </div>
                 </div>
             </div>
         </div>
@@ -1200,6 +1229,7 @@ def main():
     print("Press Ctrl+C to stop")
     print("=" * 60)
 
+    proam.start()                      # CLS countries for the flag fallback
     global poller_thread
     poller_thread = threading.Thread(target=poller.run, daemon=True)
     poller_thread.start()

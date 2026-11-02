@@ -181,6 +181,14 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 2, 2026 (livery 5006: country flag next to the name):** Andreas's
+mock-up (COTA, "Mike Zocher" + small flag right of the name pill). Snapshot
+`country` = iRacing FlairName → country_flags, else the CLS registration
+country (cls_proam.ProAmRoster, started in main(), same as the tower);
+`/flag/<code>.svg` route on 5006; `.name-row` = pill + 54 × 40 flag, a missing
+file removes the img; `?flag=0` hides it. Rendered with a fake state. Restart
+5006.
+
 **November 2, 2026 (iCASControl 0.1.35 — Johann: map stayed Silverstone,
 AI drivers in the league race):** three bugs. (1) iCAS started before
 iRacing = the Silverstone demo (track_revision 1); the switch to iRacing made
