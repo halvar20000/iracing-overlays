@@ -181,6 +181,22 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 4, 2026 (tower 5005: yellow position = off track / lap spoiled,
+helmet tab):** from a screenshot of the commercial tower. iRacing publishes no
+lap validity for other cars, so `LapMarks` derives it: CarIdxTrackSurface 0 for
+2 samples in a row → `lap_invalid` until the car's next lap + HOLD_S 4 s
+(so a short excursion / the finished lap can be seen on the 1 s page); dropped in the
+stall / out of the world; not on grid, pace lap or race cool-down. A lap iRacing
+deletes without an off-track reading stays unmarked; the 2-sample filter is
+UNCHECKED against real kerb hops. Poller now 5 Hz (samples only), full snapshot
+still 1 s (`_read_full`, SNAPSHOT_EVERY_S). `.row.lapbad .pos` beats the camera
+blue; `?offtrack=0` hides. Helmet count tab: grey + white helmet like the screenshot
+(it existed as a light tab). Warning flag: iRacing's furled black (CarIdxSessionFlags
+0x80000, per car, `warn_flag`) = diagonal black / white flag at the END OF THE NAME
+column (the screenshot has it outside the table, an OBS source would cut it off),
+shown while the bit is set, `?wflag=0` hides. test_lap_marks.py 26; rendered with a fake field.
+NOT tried live. Restart 5005.
+
 **November 2, 2026 (livery 5006: country flag next to the name):** Andreas's
 mock-up (COTA, "Mike Zocher" + small flag right of the name pill). Snapshot
 `country` = iRacing FlairName → country_flags, else the CLS registration

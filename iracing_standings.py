@@ -231,12 +231,72 @@ class GapClock:
         return max(0.0, t_now - t_at)
 
 
+# CarIdxSessionFlags: iRacing's furled black flag = warning (track limits,
+# driving), the diagonal black / white flag.
+FLAG_FURLED = 0x80000
+
+
+class LapMarks:
+    """Which cars have spoiled their current lap (yellow position, 2026-11-04).
+
+    iRacing publishes no lap validity for other cars, so this is derived:
+    CarIdxTrackSurface 0 (off track) for two samples in a row marks the car
+    until it starts its next lap, plus HOLD_S so a short excursion or the
+    finished invalid lap can still be seen on the 1 s tower page. In the pit
+    stall / garage / out of the world (no timed lap) the mark is dropped.
+    """
+
+    HOLD_S = 4.0
+    OFF_SAMPLES = 2           # one reading alone can be a flicker
+
+    def __init__(self):
+        self.key = None
+        self.last_t = None
+        self.off_lap: dict = {}   # cidx -> the lap that went off
+        self.until: dict = {}     # cidx -> keep showing until this session time
+        self.run: dict = {}       # cidx -> consecutive off-track samples
+
+    def update(self, key, t: float, laps, surface, count: bool = True):
+        if key != self.key or (self.last_t is not None and t < self.last_t - 1.0):
+            self.key = key                      # new session / replay jump back
+            self.off_lap, self.until, self.run = {}, {}, {}
+        self.last_t = t
+        for cidx, surf in enumerate(surface):
+            if surf in (-1, 1):                 # out of the world / pit stall
+                self.off_lap.pop(cidx, None)
+                self.until.pop(cidx, None)
+                self.run.pop(cidx, None)
+                continue
+            lap = laps[cidx] if cidx < len(laps) else None
+            if cidx in self.off_lap and lap != self.off_lap[cidx]:
+                del self.off_lap[cidx]          # new lap: the invalid one is over
+                self.until[cidx] = t + self.HOLD_S
+            if surf != 0 or not count:
+                self.run.pop(cidx, None)
+                continue
+            self.run[cidx] = self.run.get(cidx, 0) + 1
+            if self.run[cidx] >= self.OFF_SAMPLES:
+                self.off_lap[cidx] = lap
+                self.until[cidx] = t + self.HOLD_S
+
+    def marked(self, cidx, t: float) -> bool:
+        return cidx in self.off_lap or t < self.until.get(cidx, -1.0)
+
+
 class StandingsPoller(SDKPoller):
     tag = "standings"
-    poll_interval = 1.0
+    # 5 Hz only samples the off-track marks (a short excursion falls between
+    # 1 Hz polls); the full snapshot is still rebuilt once a second.
+    poll_interval = 0.2
+    SNAPSHOT_EVERY_S = 1.0
 
     def __init__(self):
         super().__init__()
+        self._lap_marks = LapMarks()
+        self._in_race = False
+        self._snap = None
+        self._snap_at = 0.0
+
         # Per-car pit-stop tracking. iRacing doesn't expose "last pit lap"
         # or "pit-lane time" directly, so we derive them from
         # CarIdxOnPitRoad transitions. Dicts are keyed by CarIdx.
@@ -855,7 +915,25 @@ class StandingsPoller(SDKPoller):
 
         return rows
 
+    def _sample_lap_marks(self, ir) -> None:
+        state = int(ir["SessionState"] or 0)
+        # Racing, and in timed sessions the laps being finished after the flag
+        # (not the race's cool-down lap, not the grid / pace lap).
+        count = state == SESSION_STATE_RACING or (state == 5 and not self._in_race)
+        self._lap_marks.update((ir["SessionUniqueID"], ir["SessionNum"]),
+                               float(ir["SessionTime"] or 0.0),
+                               ir["CarIdxLap"] or [], ir["CarIdxTrackSurface"] or [],
+                               count)
+
     def _read_snapshot(self) -> dict:
+        self._sample_lap_marks(self.ir)
+        now = time.monotonic()
+        if self._snap is None or now - self._snap_at >= self.SNAPSHOT_EVERY_S - 0.05:
+            self._snap = self._read_full()
+            self._snap_at = now
+        return self._snap
+
+    def _read_full(self) -> dict:
         ir = self.ir
         self._update_pit_tracking(ir)
         info     = ir["SessionInfo"] or {}
@@ -877,6 +955,7 @@ class StandingsPoller(SDKPoller):
             session_type = "Practice"
         else:
             session_type = stype_raw or sname or "Session"
+        self._in_race = session_type == "Race"
 
         drivers = self._driver_map()
         if session_type == "Race":
@@ -906,6 +985,7 @@ class StandingsPoller(SDKPoller):
         # Flag, camera focus, session-best / personal-best marks and the
         # per-class driver count — all for the tower design.
         focus = ir["CamCarIdx"]
+        car_flags = ir["CarIdxSessionFlags"] or []
         class_count: dict = {}
         best_by_class: dict = {}
         for r in rows:
@@ -923,6 +1003,9 @@ class StandingsPoller(SDKPoller):
                 src = "cls" if code else None
             r["country"], r["country_src"] = code, src
             r["focus"] = (focus is not None and r.get("car_idx") == focus)
+            r["lap_invalid"] = self._lap_marks.marked(r.get("car_idx"), float(ir["SessionTime"] or 0.0))
+            ci = r.get("car_idx", -1)
+            r["warn_flag"] = 0 <= ci < len(car_flags) and bool(int(car_flags[ci] or 0) & FLAG_FURLED)
             r["class_count"] = class_count.get(cid, 0)
             bl, ll = r.get("best_lap") or 0, r.get("last_lap") or 0
             r["session_best"] = bl > 0 and abs(bl - best_by_class.get(cid, -1)) < 1e-4
@@ -1714,8 +1797,8 @@ TOWER_HTML = r"""<!DOCTYPE html>
         border-radius: 3px 3px 0 0;
     }
     .tab.cls { background: var(--tabc, var(--accent)); color: var(--tabt, #fff); }
-    .tab.cnt { background: #e9e9ec; color: #1d1d22; margin-left: 2px; }
-    .tab.cnt svg { width: 15px; height: 15px; }
+    .tab.cnt { background: var(--head); color: #fff; margin-left: 2px; gap: 6px; padding: 0 10px 0 8px; }
+    .tab.cnt svg { width: 21px; height: 17px; }
     .class-gap { height: 10px; }
 
     /* --- table ------------------------------------------------------------ */
@@ -1756,6 +1839,8 @@ TOWER_HTML = r"""<!DOCTYPE html>
         background: var(--posbox); font-size: 14px; font-weight: 700;
     }
     .row.focus .pos { background: var(--accent); }
+    /* off track now / this lap spoiled (wins over the camera blue) */
+    .row.lapbad .pos { background: #ffd400; color: #111; font-weight: 800; }
     .row.gapb { margin-top: 6px; border-top: 0; }
     .pa { width: 5px; height: 15px; border-radius: 2px; justify-self: center; }
     .pa.pro { background: var(--pro); }
@@ -1763,8 +1848,12 @@ TOWER_HTML = r"""<!DOCTYPE html>
     .pa.nr  { background: #000; box-shadow: 0 0 0 1px rgba(255,255,255,0.85); }
     .name {
         padding-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        position: relative;
     }
     .row.focus .name, .row.focus .best { color: var(--focus); }
+    /* warning flag at the end of the name column, over a long name's last letters */
+    .wflag { position: absolute; right: 3px; top: 50%; transform: translateY(-50%);
+             width: 22px; height: 15px; display: block; }
     .tag {
         font-size: 10px; font-weight: 800; letter-spacing: .4px;
         padding: 0 4px; border-radius: 2px; margin-left: 5px;
@@ -1815,7 +1904,8 @@ const ICON = {
     timer: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 2h6M12 2v3"/><circle cx="12" cy="14" r="8"/><path d="M12 14l3.5-3.5"/></svg>',
     temp:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M10 4a2 2 0 0 1 4 0v10.5a4 4 0 1 1-4 0z"/><path d="M12 9v7"/><path d="M17 6h3M17 10h3"/></svg>',
     track: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M7 21L10 3M17 21L14 3M12 6v2M12 11v2M12 16v2"/></svg>',
-    helmet:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3C6.5 3 2.5 7.2 2.5 12.4V17a2 2 0 0 0 2 2h9.2l1.6-3H21a.5.5 0 0 0 .5-.5v-2.4C21.5 7.5 17.3 3 12 3zm-1 6h9.3a8.6 8.6 0 0 1 .7 3H11z"/></svg>',
+    wflag: '<svg class="wflag" viewBox="0 0 22 15"><path fill="#fff" d="M0 0h22v15H0z"/><path fill="#000" d="M0 0h22L0 15z"/><path fill="none" stroke="#fff" d="M.5.5h21v14H.5z"/></svg>',
+    helmet:'<svg viewBox="0 0 30 24"><path fill="currentColor" d="M14 2.5C7.2 2.5 2 7.6 2 14c0 2.3.8 4.2 2 5.6.9 1 2.2 1.9 3.8 1.9H20c1 0 1.8-.5 2.3-1.3l1.2-2.2h3.3c.9 0 1.5-.7 1.5-1.5 0-1.2-.2-2.4-.6-3.5C25.900 7 20.600 2.500 14 2.500z"/><path fill="#3a3a40" d="M13 8.200h12.300c.8 1.100 1.400 2.300 1.800 3.600.1.500-.2.900-.7.900H13.500c-1.300 0-2.300-1-2.300-2.300 0-1.200.8-2.200 1.800-2.200z"/></svg>',
 };
 
 function esc(s) {
@@ -1895,6 +1985,8 @@ function carImg(r) {
 }
 // Steward penalties (Race Control overlay 5019): DT / SG / +5s / DSQ / INV
 // after the name. ?pen=0 hides them, ?warn=1 also shows warnings (W2).
+const SHOW_LAPBAD = qs.get('offtrack') !== '0';   // yellow position, see LapMarks
+const SHOW_WFLAG = qs.get('wflag') !== '0';       // black / white warning flag
 const SHOW_PEN = qs.get('pen') !== '0', SHOW_WARN = qs.get('warn') === '1';
 let PENALTIES = {};
 function penTags(r) {
@@ -1969,9 +2061,9 @@ function rowHtml(r, isRace) {
             : '<div class="t muted">no time</div>';
         cells = best + last;
     }
-    return `<div class="grid row${r.focus ? ' focus' : ''}${r._gapBefore ? ' gapb' : ''}">
+    return `<div class="grid row${r.focus ? ' focus' : ''}${r.lap_invalid && SHOW_LAPBAD ? ' lapbad' : ''}${r._gapBefore ? ' gapb' : ''}">
         <div class="pos">${pos}</div>${pa}
-        <div class="name">${esc(label(r))}${tags}</div>
+        <div class="name">${esc(label(r))}${tags}${r.warn_flag && SHOW_WFLAG ? ICON.wflag : ''}</div>
         ${flag}${brand}${cells}
     </div>`;
 }
@@ -2881,7 +2973,7 @@ def standings():
 # Bump on every change: http://localhost:5005/version shows which code the
 # running process actually loaded (the stream PC gets this folder through
 # Nextcloud, so a restart can still pick up the previous file).
-CODE_VERSION = "2026-10-28 gap-clock"
+CODE_VERSION = "2026-11-04 lap-marks warn-flag"
 
 
 @app.route("/version")
