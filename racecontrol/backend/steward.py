@@ -40,6 +40,10 @@ Rules dialog:
   "Start Qualifying AM Klasse", 00:15:00 "Ende Qualifying AM Klasse /
   Start Qualifying PRO Klasse".  A step is sent once, and only within 2 min
   of its time (iCAS started later does not announce old steps).
+* START ZONE (``sz_enabled``, 0.1.36, IEC; default OFF, it is a rule of that
+  event) - ``sz_text`` to everybody on the pace lap of a race: when it begins
+  and again when the field reaches the last quarter of the lap (each pace
+  lap), drivers forgot the zone at the start with only the briefing.
 * BLUE FLAG RULE (``cb_enabled``, 0.1.17, IEC - multiclass + lapping): a
   car gets a private ``cb_text`` when a car of a FASTER CLASS (iRacing's
   CarClassEstLapTime, else the class's best laps) or a car LAPPING him is
@@ -102,6 +106,11 @@ DEFAULT_CONFIG = {
     # one to green: RC message to everybody (2026-10-29 Thomas)
     "otg_enabled": True,
     "otg_text": "ONE LAP TO GREEN - RESTART AT THE END OF THIS LAP",
+    # start zone reminder on the pace lap (IEC, 2026-11-05 Thomas)
+    "sz_enabled": False,
+    # the point of the rule: the green flag does NOT mean go at these starts
+    "sz_text": "IGNORE THE GREEN FLAG! ALL CLASSES INCL. LMP2: ACCELERATE ONLY "
+               "IN THE STARTING ZONE - CLASS LEADER DECIDES WHERE",
     # sequencer (like iRaceControl's): an RC message to everybody at a
     # session time; default = the GT3 WCT quali AM / PRO split
     "seq_enabled": False,
@@ -125,7 +134,7 @@ DEFAULT_CONFIG = {
 }
 _BOOL = ("enabled", "fcy_enabled", "seq_enabled", "blue_enabled",
          "meatball_enabled", "pro_enabled", "cb_enabled", "cb_dt", "fcy_short",
-         "fcy_pitopen", "otg_enabled")
+         "fcy_pitopen", "otg_enabled", "sz_enabled")
 _INT = ("dt_first", "dt_every", "fcy_incs", "fcy_window_s",
         "fcy_cooldown_s", "fcy_laps", "fcy_end_protect_min",
         "blue_repeat_s", "bf_warn_s", "bf_dt_s", "fr_used", "pro_from_lap",
@@ -133,11 +142,13 @@ _INT = ("dt_first", "dt_every", "fcy_incs", "fcy_window_s",
         "fcy_short_laps", "fcy_pit_open_s")
 _SIGNED: tuple = ()
 _FLOAT = ("blue_gap_s", "pro_gap_s", "cb_gap_s")
-_TEXT = ("otg_text", "bf_warn_text", "bf_dt_text",
+_TEXT = ("otg_text", "sz_text", "bf_warn_text", "bf_dt_text",
          "fr_text", "meatball_text", "pro_text", "cb_text", "cb_dt_text")
 PACELAPS_RETRY_S = 10.0   # short caution: !pacelaps 1 again if no one-to-green
 PACELAPS_TRIES = 12
 PACELAPS_WINDOW_S = 120.0  # ... this long after the pace car's crossing
+SZ_LAST_PCT = 0.75      # start zone: again from here on the pace lap
+SZ_ARM_PCT = (0.1, 0.5) # field really under way (the grid straddles the line)
 SEQ_SESSIONS = ("quali", "race", "practice", "warmup", "any")
 SEQ_MAX = 30
 SEQ_LATE_S = 120        # a step is still sent this long after its time
@@ -372,6 +383,8 @@ class AutoSteward:
 
     def reset(self) -> None:
         self._otg: Optional[bool] = None  # one-to-green last seen
+        self._sz_begun = False            # start zone: first message sent
+        self._sz_armed = False            # ... field in the first part of a lap
         self._session = None
         self._fcy_block_until = -1.0      # session time
         self._seq_sent: set[int] = set()
@@ -404,6 +417,8 @@ class AutoSteward:
         if rules.get("seq_enabled"):
             out += self._sequence(state, rules)
         out += self._one_to_green(state, rules)
+        if rules.get("sz_enabled"):
+            out += self._start_zone(state, rules)
         if rules.get("cb_enabled"):
             out += self._blue_rule(state, rules)     # replaces the two below
         else:
@@ -665,6 +680,33 @@ class AutoSteward:
             return []
         text = str(rules.get("otg_text") or "").strip()
         return [{"type": "one_to_green", "text": text}] if text else []
+
+    # start zone: reminder to everybody on the pace lap ----------------------
+
+    def _start_zone(self, state, rules: dict) -> list[dict]:
+        text = str(rules.get("sz_text") or "").strip()
+        if not text or not _is_race(state) \
+                or state.session_state != "PARADE LAPS":
+            return []
+        out = []
+        if not self._sz_begun:
+            self._sz_begun = True
+            out.append({"type": "start_zone", "when": "pace lap begins",
+                        "text": text})
+        # the MIDDLE car stands for the field: positions are not reliable
+        # before the green, and one car at the line must not trigger it
+        pcts = sorted(c.lap_dist_pct for c in self._live_cars(state)
+                      if _racing_car(c) and c.lap_dist_pct >= 0)
+        if not pcts:
+            return out
+        mid = pcts[len(pcts) // 2]
+        if SZ_ARM_PCT[0] <= mid < SZ_ARM_PCT[1]:
+            self._sz_armed = True
+        elif self._sz_armed and mid >= SZ_LAST_PCT:
+            self._sz_armed = False
+            out.append({"type": "start_zone", "when": "last part of the pace lap",
+                        "text": text})
+        return out
 
     # sequencer: timed RC messages -------------------------------------------
 

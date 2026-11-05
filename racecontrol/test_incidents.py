@@ -2027,6 +2027,62 @@ check("old saved rules: blue flag rule OFF",
       steward.clean({"blue_enabled": True})["cb_enabled"] is False)
 
 
+# 0.1.36: start zone reminder on the pace lap (IEC)
+print("Start zone reminder")
+eng7.chat_cfg["enabled"] = True
+eng7.state = RaceState()
+eng7.auto.reset()
+
+
+def pl(t, pcts, key="sz-1", state="PARADE LAPS", stype="RACE", pit=()):
+    return sframe(t, [scar(i, str(i + 1), lap=-1, pct=p, pit=i in pit)
+                      for i, p in enumerate(pcts)],
+                  num=3, key=key, state=state, stype=stype)
+
+
+k = len(sent7)
+sz = lambda: [x for x in sent7[k:] if "STARTING ZONE" in x]
+step(pl(100, [0.99, 0.995, 0.01, 0.02, 0.98]))
+check("SZ1 rule OFF by default: nothing on the pace lap", sz() == [], sz())
+check("SZ1b old saved rules: OFF", steward.clean({"enabled": True})["sz_enabled"] is False)
+eng7.steward_cfg = steward.clean({"sz_enabled": True})
+eng7.auto.reset()
+k = len(sent7)
+step(pl(200, [0.99, 0.995, 0.01, 0.02, 0.98], state="WARMUP"))
+check("SZ2 before the pace lap: nothing", sz() == [], sz())
+step(pl(210, [0.99, 0.995, 0.01, 0.02, 0.98]))
+check("SZ3 pace lap begins: one RC message to all",
+      len(sz()) == 1 and sz()[0].startswith("/all IGNORE THE GREEN FLAG"), sent7[k:])
+# the grid straddles the line: the middle car flips 0.99 <-> 0.01
+step(pl(211, [0.99, 0.01, 0.99, 0.02, 0.98]))
+step(pl(212, [0.01, 0.01, 0.99, 0.02, 0.98]))
+step(pl(213, [0.02, 0.02, 0.03, 0.02, 0.98]))
+step(pl(214, [0.99, 0.99, 0.99, 0.02, 0.98]))
+check("SZ4 still around the grid: no second message", len(sz()) == 1, sz())
+step(pl(230, [0.30, 0.29, 0.28, 0.27, 0.26]))
+step(pl(250, [0.70, 0.69, 0.68, 0.67, 0.66]))
+check("SZ5 mid lap: no second message", len(sz()) == 1, sz())
+step(pl(260, [0.80, 0.79, 0.78, 0.77, 0.76]))
+step(pl(261, [0.81, 0.80, 0.79, 0.78, 0.77]))
+check("SZ6 last quarter: again, once", len(sz()) == 2, sz())
+step(pl(280, [0.20, 0.19, 0.18, 0.17, 0.16]))
+step(pl(300, [0.80, 0.79, 0.78, 0.77, 0.76]))
+check("SZ7 second pace lap: again in its last quarter", len(sz()) == 3, sz())
+step(pl(320, [0.20, 0.19, 0.18, 0.17, 0.16], state="RACING"))
+step(pl(340, [0.80, 0.79, 0.78, 0.77, 0.76], state="RACING"))
+check("SZ8 after the green: nothing", len(sz()) == 3, sz())
+check("SZ9 logged as auto_start_zone", len(autos("auto_start_zone")) == 3)
+step(pl(400, [0.2, 0.2], key="sz-2", stype="LONE QUALIFY"))
+check("SZ10 not a race: nothing", len(sz()) == 3, sz())
+step(pl(500, [0.2, 0.2], key="sz-3"))
+check("SZ11 next race: told again", len(sz()) == 4, sz())
+step(pl(520, [0.9, 0.9, 0.2, 0.2, 0.2], key="sz-3", pit=(2, 3, 4)))
+check("SZ12 cars on pit road do not count", len(sz()) == 5, sz())
+eng7.steward_cfg = steward.clean({"sz_enabled": True, "sz_text": "  "})
+step(pl(600, [0.2, 0.2], key="sz-4"))
+check("SZ13 empty text: nothing", len(sent7[k:]) == 5, sent7[k:])
+
+
 print("Short caution (Le Mans)")
 eng7.chat_cfg["enabled"] = True
 eng7.steward_cfg = steward.clean({"fcy_short": True, "fcy_laps": 3,

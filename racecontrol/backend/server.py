@@ -225,6 +225,12 @@ class Engine:
             ev.kind, ev.source = "auto_one_to_green", "auto"
             # the RC banner shows iRacing's own "SAFETY CAR IN THIS LAP"
             self.to_iracing("message_all", msg=act["text"])
+        elif kind == "start_zone":
+            ev = st._log("message", f"AUTO STEWARD: start zone ({act['when']}) "
+                         f"- RC message to all: {act['text']}",
+                         lap=st._leader_lap())
+            ev.kind, ev.source = "auto_start_zone", "auto"
+            self.to_iracing("message_all", msg=act["text"])
         elif kind == "sequence":
             text = act["text"]
             ev = st._log("message", f"AUTO STEWARD: sequencer "

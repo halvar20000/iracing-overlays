@@ -296,6 +296,15 @@ in iRaceControl; beim PRO-Hinweis zusätzlich `%pcnr%` / `%pdname%` (das PRO-Aut
 gespeichert (z. B. 10x / 10 s). Einmal **Rules** öffnen, die WCT-Werte eintragen und
 **Save**.
 
+### Startzone (IEC)
+
+Hinweis an alle Fahrer (`/all`) im Pace Lap eines Rennens: einmal zu Beginn und
+noch einmal, wenn das Feld im letzten Viertel der Runde ist.
+
+- Häkchen **Start zone** in den Rules setzen und den Text prüfen. Es ist anfangs
+  aus, weil die Regel nur für bestimmte Events gilt; danach wieder ausschalten.
+- Braucht **iRACING CHAT** an und einen Admin-Account, wie alle Chat-Befehle.
+
 ### Sequencer
 
 Zeitgesteuerte Nachrichten an alle (`/all`), pro Session-Typ (Qualifying, Race,

@@ -181,6 +181,17 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 5, 2026 (iCASControl 0.1.36 - start zone reminder, IEC):** drivers
+forgot the event's start zone (all classes incl. LMP2, the GREEN FLAG IS TO BE
+IGNORED - no accelerating before the zone - each class leader picks the point;
+Thomas's Le Mans picture). New Auto Steward rule
+`sz_enabled` (default OFF, per event) + `sz_text`: /all when SessionState reaches
+PARADE LAPS and again when the field's MIDDLE car (positions are unreliable
+before the green, the grid straddles the line) passes SZ_LAST_PCT 0.75 after being in
+0.1-0.5, each pace lap; never after the green. Log kind auto_start_zone, not on the
+stream banner. Rules fieldset. test_incidents SZ1-SZ13, 376/376. NOT tried in iRacing:
+whether the 112-char line fits iRacing's chat in one piece.
+
 **November 4, 2026 (tower 5005: yellow position = off track / lap spoiled,
 helmet tab):** from a screenshot of the commercial tower. iRacing publishes no
 lap validity for other cars, so `LapMarks` derives it: CarIdxTrackSurface 0 for
