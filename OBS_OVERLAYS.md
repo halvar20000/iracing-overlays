@@ -37,6 +37,7 @@ Quelle: `?auto=1` (+ `?secs=`), `?cycle=20` (lastrace / table) oder
 | Kommentar-Stimme (REGIE) | 5000 `/commentary/voice` | `commentary_voice.html` | unsichtbar, nur Ton — in OBS **„Audio über OBS steuern“** anhaken (beliebige Größe, z. B. 400 × 100) |
 | Driver Card | 5017 | `driver.html` | ✓ 1000 × 130 |
 | Driver Card ohne iRating / Safety Rating | 5017 `/simple` | `driver_simple.html` | ✓ 800 × 130 |
+| Fahrer + Auto (Teamrennen: Teamname + alle Fahrer, sonst Fahrer + Team + Zeiten) | 5017 `/combo` | `driver_combo.html` | ✓ 700 × 200 (`?team=1\|0` erzwingt die Ansicht, `?max=4` Fahrerzahl, Feld = Klassenfarbe im Mehrklassenfeld, sonst grün; `?color=1f9e3a` feste Feldfarbe, `?demo=1\|2`) |
 | Livery (Auto der Kamera) | 5006 | `livery.html` | ≈ 800 × 350 |
 | Track Map | 5007 | `trackmap.html` | ≈ 1000 × 600 (skaliert mit); Kurvennummern, `?turns=0` blendet sie aus |
 | Race Control (Gelbphase, Strafen-Flaggen, iRaceControl-Meldungen) | 5019 | `rc_banner.html` | ≈ 950 × 120 (siehe RACE_CONTROL.md). rc_config `hide_sources` = diese OBS-Quellen während einer Meldung ausblenden |

@@ -51,6 +51,7 @@ OVERLAYS = [
     ("weather",       "Weather",          5016),
     ("driver",        "Driver Card",      5017),
     ("driver_simple", "Driver Card (no iRating / SR)", 5017, "/simple"),
+    ("driver_combo",  "Driver + Car (team line-up)", 5017, "/combo"),
     ("leader",        "New Race Leader",  5018),
     ("rc_banner",     "Race Control",     5019),
     # Extra pages on existing servers (2026-10-08) — no new ports.

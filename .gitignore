@@ -49,6 +49,7 @@ proam_config.json
 championship_round_cache.json
 proam_countries.json
 proam_teams.json
+proam_team_rosters.json
 youtube_config.json
 .install_info.json
 # KOMMENTAR: Anthropic API key + model (machine-specific, secret)

@@ -181,6 +181,22 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 7, 2026 (driver + car `5017/combo`):** from Thomas's WEC-style
+screenshot, a mix of livery + driver card. Dark bar + panel: class colour in a multiclass field (class_colors, as tower / map; text_on = black or white text), else green; `?color=` fixed,
+680 x 184. Team event (WeekendInfo.TeamRacing, `?team=1|0` forces): bar = # +
+iRacing team name, panel = logo, car, line-up with the driver in the car first,
+big + bold, flags (cap `?max=4`). iRacing lists only the current driver, so the
+line-up = CLS registrations of his team (NEW cls_proam `_rosters` /
+`team_members()`, cache proam_team_rosters.json, gitignored + PROTECTED; retired
+left out; same "league with the most of this field" rule as team()) + anyone
+seen in the car this session (`_seen` per TeamID). Other series: bar = # + Pro/Am
+bar + name + class + flag, panel = logo, car, team, POS / BEST / LAST. Logo on a
+white chip (multicolour logos cannot go white as in the picture). A digit iRacing
+adds to a name is dropped here only. Routes /car, /flag, /brand on 5017. Loader
+driver_combo.html, icon "Fahrer + Auto". test_drivercard 36/36; both views
+rendered with a fake field and a DRAWN car. NOT tried live: real render
+(size / angle in the slot), a real driver swap. Restart 5017.
+
 **November 5, 2026 (iCASControl 0.1.36 - start zone reminder, IEC):** drivers
 forgot the event's start zone (all classes incl. LMP2, the GREEN FLAG IS TO BE
 IGNORED - no accelerating before the zone - each class leader picks the point;

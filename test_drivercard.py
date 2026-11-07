@@ -25,6 +25,8 @@ class _FakeApp:
 flask_stub.Flask = _FakeApp
 flask_stub.Response = lambda *a, **k: None
 flask_stub.jsonify = lambda *a, **k: None
+flask_stub.abort = lambda *a, **k: None
+flask_stub.send_file = lambda *a, **k: None
 flask_stub.render_template_string = lambda s: s
 sys.modules["flask"] = flask_stub
 
@@ -156,6 +158,66 @@ check("iRacing team wins", s["team"] == "Real Team", repr(s["team"]))
 s = make_poller([drv(0, "Driver 0", uid=101), drv(1, "Other", uid=999)], 0)._read_snapshot()
 check("field matches no league -> no team", s["team"] == "", repr(s["team"]))
 dc.proam._teams = {}
+
+print("\n[10] team event: line-up from CLS + whoever was seen in the car")
+dc.proam._get_json = lambda path, params=None: (
+    {"leagues": [{"slug": "cas-iec", "seasons": [{"id": "s4"}]}]} if "leagues" in path else
+    {"standings": [
+        {"iracingMemberId": "101", "name": "Anna Eins", "countryCode": "DE", "teamName": "Team A"},
+        {"iracingMemberId": "201", "name": "Bert Zwei", "countryCode": "FR", "teamName": "Team A"},
+        {"iracingMemberId": "301", "name": "Weg Gegangen", "countryCode": "DE", "teamName": "Team A", "retiredAt": "2026-01-01"},
+        {"iracingMemberId": "102", "name": "B", "teamName": "Team B"},
+        {"iracingMemberId": "103", "name": "C", "teamName": "Team C"},
+    ]})
+dc.proam._fetch_countries = dc.ProAmRoster._fetch_countries.__get__(dc.proam)
+import cls_proam, tempfile, pathlib   # noqa: E402
+_tmp = pathlib.Path(tempfile.mkdtemp())
+cls_proam.ROSTER_CACHE_PATH = _tmp / "r.json"
+cls_proam.TEAM_CACHE_PATH = _tmp / "t.json"
+cls_proam.COUNTRY_CACHE_PATH = _tmp / "c.json"
+dc.proam._fetch_countries()
+field = [dict(drv(i, f"Driver {i}", uid=101 + i, team=f"Team {i}"), TeamID=500 + i) for i in range(3)]
+field[0]["UserName"] = "Anna Eins"
+field[0]["FlairName"] = "Germany"
+p = make_poller(field, 0, WeekendInfo={"TeamRacing": 1, "SessionID": 1, "SubSessionID": 1})
+s = p._read_snapshot()
+check("team event flagged", s["team_event"] is True)
+check("iRacing team name", s["team_name"] == "Team 0", s["team_name"])
+names = [x["name"] for x in s["lineup"]]
+check("driver in the car first", s["lineup"][0]["current"] and names[0] == "Anna Eins", str(names))
+check("team mate from CLS, retired left out", names == ["Anna Eins", "Bert Zwei"], str(names))
+check("team mate's flag", s["lineup"][1]["country"] == "fr" and not s["lineup"][1]["current"], str(s["lineup"][1]))
+check("flag of the driver in the car", s["lineup"][0]["country"] == "de")
+# driver swap to the team mate, then to a substitute CLS does not list
+field[0].update(UserName="Bert Zwei", UserID=201)
+p._drivers_t = -99
+s = p._read_snapshot()
+check("swap: highlight moves", [x["name"] for x in s["lineup"]] == ["Bert Zwei", "Anna Eins"], str(s["lineup"]))
+field[0].update(UserName="Ersatz Fahrer", UserID=777)
+p._drivers_t = -99
+s = p._read_snapshot()
+names = [x["name"] for x in s["lineup"]]
+check("substitute: still the whole team", names == ["Ersatz Fahrer", "Anna Eins", "Bert Zwei"], str(names))
+p.ir.d["WeekendInfo"] = {"TeamRacing": 1, "SessionID": 2, "SubSessionID": 2}
+p._drivers_t = -99
+s = p._read_snapshot()
+check("new session forgets substitutes' history", [x["name"] for x in s["lineup"]] == ["Ersatz Fahrer"], str(s["lineup"]))
+p = make_poller([drv(0, "Solo Fahrer")], 0)
+s = p._read_snapshot()
+check("not a team event: no line-up", s["team_event"] is False and s["lineup"] == [])
+dc.proam._teams = {}
+dc.proam._rosters = {}
+
+print("\n[11] /combo panel: class colour only in a multiclass field")
+one = [dict(drv(i, f"D{i}"), CarClassID=1) for i in range(2)]
+s = make_poller(one, 0)._read_snapshot()
+check("single class: default green", s["panel_color"] is None)
+two = [dict(drv(0, "A", cls_color=0x33CEFF), CarClassID=1), dict(drv(1, "B", cls_color=0x1040A0), CarClassID=2)]
+s = make_poller(two, 0)._read_snapshot()
+check("class colour", s["panel_color"] == "#33ceff", str(s["panel_color"]))
+check("dark text on a light colour", s["panel_text"] == "#0a0a0f", str(s["panel_text"]))
+s = make_poller(two, 1)._read_snapshot()
+check("white text on a dark colour", s["panel_color"] == "#1040a0" and s["panel_text"] == "#ffffff", str(s["panel_text"]))
 
 print(f"\n{'='*50}\n{len(PASS)} passed, {len(FAIL)} failed")
 if FAIL:

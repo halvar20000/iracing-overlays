@@ -151,6 +151,7 @@ OVERLAY_ICONS = [
     ("commentary_voice", "live", "speaker",  "Stimme"),
     ("driver",        "live",   "card",      "Driver Card"),
     ("driver_simple", "live",   "card",      "Driver Card simpel"),
+    ("driver_combo",  "live",   "card",      "Fahrer + Auto"),
     ("livery",        "live",   "car",       "Livery"),
     ("trackmap",      "live",   "map",       "Track Map"),
     ("location",      "pre",    "map",       "Streckenort"),

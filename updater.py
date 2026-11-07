@@ -58,6 +58,7 @@ PROTECTED = {
     "proam_cache.json",
     "proam_countries.json",
     "proam_teams.json",
+    "proam_team_rosters.json",
     "cls_league_cache.json",
     "youtube_config.json",
     "commentary_config.json",

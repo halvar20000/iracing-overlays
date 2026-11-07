@@ -44,6 +44,7 @@ CONFIG_PATH = SCRIPT_DIR / "proam_config.json"
 CACHE_PATH  = SCRIPT_DIR / "proam_cache.json"
 COUNTRY_CACHE_PATH = SCRIPT_DIR / "proam_countries.json"
 TEAM_CACHE_PATH = SCRIPT_DIR / "proam_teams.json"
+ROSTER_CACHE_PATH = SCRIPT_DIR / "proam_team_rosters.json"
 
 DEFAULT_CONFIG = {
     "api_base":        "https://league.simracing-hub.com",
@@ -95,6 +96,13 @@ class ProAmRoster:
                 self._teams = {lg: {int(k): v for k, v in m.items()} for lg, m in raw.items()}
         except Exception as e:
             print(f"[proam] Could not read {TEAM_CACHE_PATH.name}: {e}")
+        # Registered drivers per team: {league slug: {team: [{id, name, country}]}}
+        self._rosters: dict[str, dict[str, list]] = {}
+        try:
+            if ROSTER_CACHE_PATH.exists():
+                self._rosters = json.loads(ROSTER_CACHE_PATH.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"[proam] Could not read {ROSTER_CACHE_PATH.name}: {e}")
 
     # -- public -----------------------------------------------------------
     def start(self) -> None:
@@ -113,6 +121,22 @@ class ProAmRoster:
         with self._lock:
             return self._countries.get(uid)
 
+    def _field_league(self, field_ids) -> "str | None":
+        """The league whose team list holds the most drivers of this field
+        (at least 3). Call with the lock held."""
+        ids = set()
+        for u in field_ids:
+            try:
+                ids.add(int(u))
+            except (TypeError, ValueError):
+                pass
+        best, hits = None, 2
+        for slug, m in self._teams.items():
+            n = sum(1 for u in ids if u in m)
+            if n > hits:
+                best, hits = slug, n
+        return best
+
     def team(self, user_id, field_ids) -> "str | None":
         """CLS team of a driver (2026-10-27, driver card): taken from the
         league whose roster holds the most drivers of this field (needs at
@@ -121,19 +145,23 @@ class ProAmRoster:
             uid = int(user_id)
         except (TypeError, ValueError):
             return None
-        ids = set()
-        for u in field_ids:
-            try:
-                ids.add(int(u))
-            except (TypeError, ValueError):
-                pass
         with self._lock:
-            best, hits = None, 2
-            for m in self._teams.values():
-                n = sum(1 for u in ids if u in m)
-                if n > hits:
-                    best, hits = m, n
-            return best.get(uid) if best else None
+            slug = self._field_league(field_ids)
+            return self._teams[slug].get(uid) if slug else None
+
+    def team_members(self, user_id, field_ids) -> list:
+        """Everyone registered in CLS for this driver's team, the driver
+        included: [{id, name, country}]. [] = no field league / no team."""
+        try:
+            uid = int(user_id)
+        except (TypeError, ValueError):
+            return []
+        with self._lock:
+            slug = self._field_league(field_ids)
+            team = self._teams[slug].get(uid) if slug else None
+            if not team:
+                return []
+            return [dict(m) for m in self._rosters.get(slug, {}).get(team, [])]
 
     def lookup(self, user_id) -> "str | None":
         try:
@@ -219,6 +247,7 @@ class ProAmRoster:
         leagues = self._get_json("/api/overlay/leagues").get("leagues") or []
         found: dict[int, str] = {}
         teams: dict[str, dict[int, str]] = {}
+        rosters: dict[str, dict[str, list]] = {}
         for lg in leagues:
             for season in lg.get("seasons") or []:
                 body = self._get_json("/api/overlay/standings",
@@ -233,7 +262,13 @@ class ProAmRoster:
                         found[uid] = cc
                     tn = (row.get("teamName") or "").strip()
                     if tn:
-                        teams.setdefault(lg.get("slug") or "", {}).setdefault(uid, tn)
+                        slug = lg.get("slug") or ""
+                        league_teams = teams.setdefault(slug, {})
+                        if uid not in league_teams:
+                            league_teams[uid] = tn
+                            if not row.get("retiredAt") and not row.get("excludedAt"):
+                                rosters.setdefault(slug, {}).setdefault(tn, []).append(
+                                    {"id": uid, "name": (row.get("name") or "").strip(), "country": cc})
         if teams:
             with self._lock:
                 tchanged = teams != self._teams
@@ -243,6 +278,14 @@ class ProAmRoster:
                     TEAM_CACHE_PATH.write_text(json.dumps(teams), encoding="utf-8")
                 except Exception as e:
                     print(f"[proam] Could not write {TEAM_CACHE_PATH.name}: {e}")
+            with self._lock:
+                rchanged = rosters != self._rosters
+                self._rosters = rosters
+            if rchanged:
+                try:
+                    ROSTER_CACHE_PATH.write_text(json.dumps(rosters), encoding="utf-8")
+                except Exception as e:
+                    print(f"[proam] Could not write {ROSTER_CACHE_PATH.name}: {e}")
         if not found:
             return
         with self._lock:
