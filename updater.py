@@ -66,6 +66,7 @@ PROTECTED = {
     "vts_token.json",
     "show_script.json",
     "rc_config.json",
+    "replay_pc_config.json",
 }
 PROTECTED_DIRS = ("logs/", ".git/", "racecontrol/data/")
 

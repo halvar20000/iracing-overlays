@@ -73,3 +73,5 @@ avatar/out/
 
 # iCASControl autosaves (race log + steward decisions per hosted session)
 racecontrol/data/
+# replay on a second PC (sim rig): its address + OBS scene
+replay_pc_config.json

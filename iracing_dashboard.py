@@ -33,6 +33,7 @@ import show_runner
 import highlights
 import highlight_runner
 from obs_ws import ObsClient
+from remote_replay import RemoteReplay, RemoteState
 from pathlib import Path
 
 
@@ -334,6 +335,11 @@ class TelemetryPoller:
         scfg = show_runner.load_config()
         self.show_obs = ObsClient(scfg["obs"].get("host", "127.0.0.1"), scfg["obs"].get("port", 4455),
                                   scfg["obs"].get("password", ""))
+        # replay on a SECOND PC (sim rig over NDI) - replay_pc_config.json, remote_replay.py
+        _ocfg = scfg["obs"]
+        self.replay_pc = RemoteReplay(obs_factory=lambda: ObsClient(
+            _ocfg.get("host", "127.0.0.1"), _ocfg.get("port", 4455), _ocfg.get("password", "")))
+        self.remote_state = RemoteState()   # when THIS PC is the replay PC
         import avatar_sync
         self.avatar_renderer = avatar_sync.AvatarRenderer(self.voice)   # Gabi's talking videos (sync.so)
         self.show = show_runner.ShowRunner(
@@ -867,7 +873,7 @@ class TelemetryPoller:
         # Overtakes: rewind to the start of the MOVE and show the battle
         # into the corner — a slightly longer buildup than incidents.
         buildup = 8.0 if inc_type == "overtake" else 5.0
-        ok, msg = self.replay_5s_of_car(
+        ok, msg = self.replay_event(
             car_number,
             t_session=t_session,
             session_num=sess_num,
@@ -3048,6 +3054,26 @@ class TelemetryPoller:
         if not self.iracing_ui_hidden or not self.connected:
             return
         self._write_cam_bit(self.CAM_UI_HIDDEN, True)
+
+    def replay_event(self, car_number: str, t_session: float | None = None,
+                     session_num: int | None = None, rewind_seconds: float = 10.0,
+                     buildup_seconds: float = 5.0):
+        """A replay for the stream: on the second PC when replay_pc_config.json
+        names one (this PC stays live, OBS switches to the replay scene and
+        back), else - or when that PC is not reachable - here as before."""
+        if self.replay_pc.enabled:
+            ok, msg = self.replay_pc.replay(car_number, t_session=t_session,
+                                            session_num=session_num,
+                                            buildup_seconds=buildup_seconds,
+                                            replay_seconds=rewind_seconds)
+            if ok or not msg.startswith("unreachable") \
+                    or not self.replay_pc.config().get("fallback_local", True):
+                return ok, msg
+            print("[replay-pc] second PC not reachable - replay here instead")
+        return self.replay_5s_of_car(car_number, t_session=t_session,
+                                     session_num=session_num,
+                                     rewind_seconds=rewind_seconds,
+                                     buildup_seconds=buildup_seconds)
 
     def replay_5s_of_car(self, car_number: str,
                          t_session: float | None = None,
@@ -6988,7 +7014,7 @@ def replay_5s():
     except (TypeError, ValueError):
         replay_seconds = 10.0
 
-    ok, msg = poller.replay_5s_of_car(
+    ok, msg = poller.replay_event(
         str(car_number),
         t_session=t_session,
         session_num=session_num,
@@ -6998,6 +7024,45 @@ def replay_5s():
     if ok and incident_id is not None:
         poller.mark_incident_replayed(incident_id)
     return jsonify({"ok": ok, "message": msg})
+
+
+@app.route("/replay/remote", methods=["POST"])
+def replay_remote():
+    """THIS PC is the replay PC: the stream PC's dashboard sends the moment
+    (car, session number, SessionTime - the same on every PC of a hosted
+    session), it is played here with the normal replay and back to live."""
+    p = request.get_json(silent=True) or {}
+    car = p.get("car_number")
+    if car is None:
+        return jsonify({"ok": False, "error": "car_number required"}), 400
+    def num(k, default=None):
+        try:
+            return float(p[k]) if p.get(k) is not None else default
+        except (TypeError, ValueError):
+            return default
+    seq = poller.remote_state.begin()
+    sess = num("session_num")
+    ok, msg = poller.replay_5s_of_car(
+        str(car), t_session=num("t_session"),
+        session_num=int(sess) if sess is not None else None,
+        rewind_seconds=num("replay_seconds", 10.0),
+        buildup_seconds=num("buildup_seconds", 5.0),
+        on_return=lambda: poller.remote_state.done(seq))
+    if not ok:
+        poller.remote_state.done(seq)
+    print(f"[replay-pc] request from {request.remote_addr}: #{car} -> {msg}")
+    return jsonify({"ok": ok, "message": msg, "seq": seq})
+
+
+@app.route("/replay/remote/status")
+def replay_remote_status():
+    return jsonify(poller.remote_state.get())
+
+
+@app.route("/replay_pc")
+def replay_pc_status():
+    """Stream PC: is a second replay PC set, what happened last."""
+    return jsonify(poller.replay_pc.status())
 
 
 @app.route("/go_live", methods=["POST"])
@@ -7213,7 +7278,7 @@ def streamdeck(action, param=None):
     elif action == "replay_last":
         incidents = snap.get("incidents", [])
         if incidents:
-            ok, msg = poller.replay_5s_of_car(incidents[0]["car_number"])
+            ok, msg = poller.replay_event(incidents[0]["car_number"])
             if ok:
                 poller.mark_incident_replayed(incidents[0].get("id"))
             msg = f"replaying #{incidents[0]['car_number']} ({incidents[0]['type']})"
@@ -7227,7 +7292,7 @@ def streamdeck(action, param=None):
         incidents = snap.get("incidents", [])
         match = next((i for i in incidents if i["type"] == wanted_type), None)
         if match:
-            ok, msg = poller.replay_5s_of_car(match["car_number"])
+            ok, msg = poller.replay_event(match["car_number"])
             if ok:
                 poller.mark_incident_replayed(match.get("id"))
             msg = f"replaying #{match['car_number']} ({wanted_type})"

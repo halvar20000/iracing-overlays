@@ -181,6 +181,22 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 8, 2026 (replay on a SECOND PC — sim rig over NDI):** Thomas:
+replay on stream while the live race stays in a window. One iRacing = one
+picture, so the sim rig spectates with a second account and its OBS sends
+the picture over NDI (DistroAV). NEW `remote_replay.py`: stream PC
+`replay_pc_config.json` {url, scene "Replay", back_scene, fallback_local,
+extra_s} (gitignored + PROTECTED, re-read on mtime) → `poller.replay_event()`
+(feed /replay_5s, Stream Deck replay_last*, auto-replay; REGIE stays local)
+POSTs {car, t_session, session_num, buildup, seconds} to the rig's
+`/replay/remote` (normal replay_5s_of_car, `RemoteState` seq → live via
+on_return; `/replay/remote/status`), OBS (show_config "obs") → `scene`, back to
+the scene before the FIRST replay when the rig reports live (else replay +
+extra_s); a scene changed by hand is left alone; a newer replay takes over the
+return. Rig unreachable → local replay. `/replay_pc` status. Guide
+REPLAY_PC.md (German). test_remote_replay.py 22 + `--dash` 7 (real dashboard
+Flask app as both PCs). NOT tried with two real PCs. Restart 5000.
+
 **November 7, 2026 (driver + car `5017/combo`):** from Thomas's WEC-style
 screenshot, a mix of livery + driver card. Dark bar + panel: class colour in a multiclass field (class_colors, as tower / map; text_on = black or white text), else green; `?color=` fixed,
 680 x 184. Team event (WeekendInfo.TeamRacing, `?team=1|0` forces): bar = # +
