@@ -207,8 +207,13 @@ on_return; `/replay/remote/status`), OBS (show_config "obs") → `scene`, back t
 the scene before the FIRST replay when the rig reports live (else replay +
 extra_s); a scene changed by hand is left alone; a newer replay takes over the
 return. Rig unreachable → local replay. `/replay_pc` status. Guide
-REPLAY_PC.md (German). test_remote_replay.py 22 + `--dash` 7 (real dashboard
-Flask app as both PCs). NOT tried with two real PCs. Restart 5000.
+REPLAY_PC.md (German). test_remote_replay.py 26 + `--dash` 7 (real dashboard
+Flask app as both PCs). 2026-11-09 FIRST REAL SETUP: replay PC 192.168.86.73
+("REMOTESTREAMING", RX 6800) with NDI Screen Capture (no OBS there; Windows
+must be 1080p or the 4K desktop smears around iRacing's 1080p picture), Thomas:
+"funktioniert wunderbar". NEW `source` key: show / hide that OBS source in the
+scene on air instead of switching scenes (NDI picture in the iRacing scene under
+the overlays). Restart 5000.
 
 **November 7, 2026 (driver + car `5017/combo`):** from Thomas's WEC-style
 screenshot, a mix of livery + driver card. Dark bar + panel: class colour in a multiclass field (class_colors, as tower / map; text_on = black or white text), else green; `?color=` fixed,

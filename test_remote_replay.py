@@ -36,6 +36,14 @@ class FakeObs:
         self.calls.append(name)
         self.scene = name
 
+    items = {"iRacing": {"Replay NDI": False}}
+
+    def set_visible(self, scene, source, visible):
+        if source not in self.items.get(scene, {}):
+            raise KeyError(f"{source} not in {scene}")
+        self.calls.append(f"{scene}/{source}={visible}")
+        self.items[scene][source] = visible
+
 
 class FakeRig:
     """The sim rig's dashboard: POST /replay/remote, GET /replay/remote/status."""
@@ -153,6 +161,26 @@ def unit():
         import os
         os.utime(f, (time.time() + 5, time.time() + 5))
         check("R16 file change re-read", not r.enabled)
+
+    # source mode: the NDI source shown in the scene on air, no scene switch
+    with tempfile.TemporaryDirectory() as tmp:
+        obs, rig = FakeObs("iRacing"), FakeRig(replay_s=0.3)
+        obs.items = {"iRacing": {"Replay NDI": False}}
+        r = make(tmp, {"url": "x", "source": "Replay NDI", "poll_s": 0.05}, rig, obs)
+        r.replay("1")
+        check("V1 source shown", wait(lambda: obs.items["iRacing"]["Replay NDI"]), obs.calls)
+        time.sleep(0.1)
+        r.replay("2")
+        check("V2 hidden after the rig is live",
+              wait(lambda: not obs.items["iRacing"]["Replay NDI"]), obs.calls)
+        time.sleep(0.3)
+        check("V3 scene never switched", obs.scene == "iRacing"
+              and obs.calls[-1] == "iRacing/Replay NDI=False"
+              and obs.calls.count("iRacing/Replay NDI=False") == 1, obs.calls)
+        obs.scene, obs.calls = "Moderator", []
+        r.replay("3")
+        time.sleep(0.6)
+        check("V4 source missing in the scene -> nothing", obs.calls == [], obs.calls)
 
     st = rr.RemoteState()
     a = st.begin()

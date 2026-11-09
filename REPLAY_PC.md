@@ -45,6 +45,7 @@ Alles wie bisher am Dashboard des **Stream-PCs**: ▶ 10s / 20s in der Incident-
 |---|---|---|
 | `url` | – | Adresse des Sim-Rigs (IP reicht, Port 5000 wird ergänzt). Leer = aus |
 | `scene` | `Replay` | OBS-Szene während des Replays. `""` = OBS nicht anfassen |
+| `source` | – | statt Szenenwechsel: diese Quelle (z. B. `Replay NDI`) in der laufenden Szene ein- und danach wieder ausblenden. Die NDI-Quelle dafür in die iRacing-Szene legen, **unter** die Overlays |
 | `back_scene` | – | feste Szene danach (sonst die Szene vor dem Replay) |
 | `fallback_local` | `true` | Sim-Rig weg → Replay auf dem Stream-PC |
 | `extra_s` | `20` | so lange nach der Replay-Länge auf das Sim-Rig warten |
