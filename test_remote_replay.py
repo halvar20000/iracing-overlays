@@ -63,7 +63,12 @@ class FakeRig:
             seq = self.state.begin()
             threading.Timer(self.replay_s, self.state.done, args=(seq,)).start()
             return {"ok": True, "seq": seq}
-        return self.state.get()
+        st = self.state.get()
+        if self.mode is not None:
+            st["mode"] = self.mode
+        return st
+
+    mode = "live"
 
 
 def make(tmp, cfg, rig, obs):
@@ -182,6 +187,63 @@ def unit():
         time.sleep(0.6)
         check("V4 source missing in the scene -> nothing", obs.calls == [], obs.calls)
 
+    # follow: the rig's OWN replays (its dashboard) show the source too
+    with tempfile.TemporaryDirectory() as tmp:
+        obs, rig = FakeObs("iRacing"), FakeRig(replay_s=0.3)
+        obs.items = {"iRacing": {"Replay NDI": False}}
+        r = make(tmp, {"url": "x", "source": "Replay NDI", "poll_s": 0.05}, rig, obs)
+        r.follow_tick()
+        check("F1 rig live = nothing", obs.calls == [], obs.calls)
+        rig.mode = "paused"
+        r.follow_tick()
+        check("F2 rig replaying = source shown", obs.items["iRacing"]["Replay NDI"]
+              and r.status()["following"], obs.calls)
+        rig.mode = "replay"
+        r.follow_tick()
+        check("F3 shown once", obs.calls == ["iRacing/Replay NDI=True"], obs.calls)
+        rig.mode = "live"
+        r.follow_tick()
+        check("F4 one live poll = still shown", obs.items["iRacing"]["Replay NDI"])
+        r.follow_tick()
+        check("F5 two live polls = hidden", not obs.items["iRacing"]["Replay NDI"]
+              and not r.status()["following"], obs.calls)
+        # a replay sent from the stream PC: the follower keeps out of it
+        obs.calls = []
+        rig.mode = "replay"
+        r.replay("1")
+        wait(lambda: obs.items["iRacing"]["Replay NDI"])
+        r.follow_tick()
+        check("F6 follower quiet during own replay", obs.calls == ["iRacing/Replay NDI=True"], obs.calls)
+        rig.mode = "live"
+        check("F7 own replay hides it", wait(lambda: not obs.items["iRacing"]["Replay NDI"]), obs.calls)
+        rig.mode = "replay"                  # rig still settling right after the return
+        r.follow_tick()
+        check("F8 quiet right after own replay", obs.calls.count("iRacing/Replay NDI=True") == 1, obs.calls)
+        # unreachable while shown -> hidden after a few polls
+        r._quiet_until = 0
+        r.follow_tick()
+        check("F9 shown again", obs.items["iRacing"]["Replay NDI"])
+        rig.down = True
+        for _ in range(rr.FOLLOW_LOST_POLLS):
+            r.follow_tick()
+        check("F10 rig gone = hidden", not obs.items["iRacing"]["Replay NDI"], obs.calls)
+        # old rig (no mode), follow off
+        rig.down, rig.mode, obs.calls = False, None, []
+        r.follow_tick()
+        check("F11 older rig without mode = nothing", obs.calls == [], obs.calls)
+    with tempfile.TemporaryDirectory() as tmp:
+        obs, rig = FakeObs("Main"), FakeRig()
+        rig.mode = "replay"
+        r = make(tmp, {"url": "x", "follow": False}, rig, obs)
+        r.follow_tick()
+        check("F12 follow false = nothing", obs.calls == [], obs.calls)
+        r2 = make(tmp, {"url": "x", "poll_s": 0.05}, rig, obs)
+        r2.follow_tick()
+        check("F13 scene mode: Replay scene", obs.scene == "Replay", obs.calls)
+        rig.mode = "live"
+        r2.follow_tick(); r2.follow_tick()
+        check("F14 scene mode: back to Main", obs.scene == "Main", obs.calls)
+
     st = rr.RemoteState()
     a = st.begin()
     b = st.begin()
@@ -228,6 +290,7 @@ def dash():
         check("D4 marked replayed", next(i for i in d.poller._incidents if i["id"] == 9001)["replayed"])
         st = client.get("/replay/remote/status").get_json()
         check("D5 rig status live", st["state"] == "live" and st["seq"] >= 1, st)
+        check("D5b status carries the playback mode", "mode" in st and "connected" in st, st)
         check("D6 /replay_pc", client.get("/replay_pc").get_json()["enabled"])
 
         # rig down -> local fallback

@@ -339,6 +339,7 @@ class TelemetryPoller:
         _ocfg = scfg["obs"]
         self.replay_pc = RemoteReplay(obs_factory=lambda: ObsClient(
             _ocfg.get("host", "127.0.0.1"), _ocfg.get("port", 4455), _ocfg.get("password", "")))
+        self.replay_pc.start_follow()       # the rig's own replays show up too (idle without a url)
         self.remote_state = RemoteState()   # when THIS PC is the replay PC
         import avatar_sync
         self.avatar_renderer = avatar_sync.AvatarRenderer(self.voice)   # Gabi's talking videos (sync.so)
@@ -7056,7 +7057,14 @@ def replay_remote():
 
 @app.route("/replay/remote/status")
 def replay_remote_status():
-    return jsonify(poller.remote_state.get())
+    """seq / state of the replays sent from the stream PC, plus this PC's own
+    playback mode (live / paused / replay ...) so the stream PC also shows
+    replays started here (RemoteReplay.follow_tick)."""
+    snap = poller.get()
+    st = poller.remote_state.get()
+    st["mode"] = (snap.get("playback") or {}).get("mode") or ""
+    st["connected"] = bool(snap.get("connected"))
+    return jsonify(st)
 
 
 @app.route("/replay_pc")

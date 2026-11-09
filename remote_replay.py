@@ -18,6 +18,11 @@ restart). OBS connection = show_config.json "obs".
 `source` set (e.g. "Replay NDI") = no scene switch: that source is shown in
 the scene on air (the NDI picture placed in the iRacing scene, below the
 overlays) and hidden again at the same moment the scene would switch back.
+`follow` (default on): the sim rig's OWN replays (started on its dashboard or
+in iRacing there) bring the source / scene up too - a background thread polls
+the rig's /replay/remote/status, which carries its playback mode; not live =
+show, live again (2 polls in a row) = hide. A replay sent from here is left to
+its own watcher. The rig needs the same version (older ones send no mode).
 
 Sim rig side: the same dashboard; /replay/remote plays it with the normal
 replay_5s_of_car (pause, seek, camera, 1x, back to live) — see the routes in
@@ -36,7 +41,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 CONFIG_FILE = HERE / "replay_pc_config.json"
 DEFAULTS = {"url": "", "scene": "Replay", "source": "", "back_scene": "", "fallback_local": True,
-            "timeout_s": 3.0, "extra_s": 20.0, "poll_s": 0.5}
+            "timeout_s": 3.0, "extra_s": 20.0, "poll_s": 0.5, "follow": True}
+FOLLOW_LIVE_POLLS = 2       # rig reported live this many polls in a row = hide
+FOLLOW_LOST_POLLS = 6       # rig unreachable this many polls while shown = hide
+FOLLOW_QUIET_S = 3.0        # after a replay sent from here, its return to live is not a new replay
 
 
 def normalize_url(url: str) -> str:
@@ -74,6 +82,12 @@ class RemoteReplay:
         self._back_to = None                 # scene to return to (the one before the FIRST replay)
         self._shown = None                   # (scene, source) shown in source mode
         self.last = {}                       # status for /replay_pc
+        self._watching = 0                   # replays sent from here still being watched
+        self._following = False              # source / scene up because of the rig's own replay
+        self.follow_state = ""               # rig's playback mode as last seen by the follower
+        self._follower = None
+        self._live_n = self._lost_n = 0
+        self._quiet_until = 0.0              # just after a replay sent from here: the rig settles
 
     # -- config ---------------------------------------------------------------
     def config(self) -> dict:
@@ -141,7 +155,7 @@ class RemoteReplay:
                          daemon=True).start()
         return True, f"replay on the second PC (#{car_number})"
 
-    def _watch(self, gen, seq, seconds, cfg):
+    def _show(self, cfg):
         source = cfg.get("source") or ""
         scene = "" if source else (cfg.get("scene") or "")
         if source:
@@ -155,10 +169,43 @@ class RemoteReplay:
         if scene:
             cur = self._obs_call(lambda o: o.current_scene())
             with self._lock:
-                if cur is not None and cur != scene:
+                if cur is not None and cur != scene and self._back_to is None:
                     self._back_to = cfg.get("back_scene") or cur
             if cur is not None and cur != scene:
                 self._obs_call(lambda o: o.set_scene(scene))
+
+    def _hide(self, cfg, why):
+        source = cfg.get("source") or ""
+        scene = "" if source else (cfg.get("scene") or "")
+        with self._lock:
+            shown, self._shown = self._shown, None
+        if shown:
+            self._obs_call(lambda o: o.set_visible(shown[0], shown[1], False))
+            print(f"[replay-pc] '{shown[1]}' hidden in '{shown[0]}' ({why})")
+        if scene:
+            with self._lock:
+                back = self._back_to
+                self._back_to = None
+            cur = self._obs_call(lambda o: o.current_scene())
+            if back and cur == scene:
+                self._obs_call(lambda o: o.set_scene(back))
+                print(f"[replay-pc] back to scene '{back}' ({why})")
+            elif back:
+                print(f"[replay-pc] scene changed by hand ('{cur}') - left alone ({why})")
+
+    def _watch(self, gen, seq, seconds, cfg):
+        with self._lock:
+            self._watching += 1
+            self._following = False          # this replay owns the picture now
+        try:
+            self._watch_one(gen, seq, seconds, cfg)
+        finally:
+            with self._lock:
+                self._watching -= 1
+                self._quiet_until = self._clock() + FOLLOW_QUIET_S
+
+    def _watch_one(self, gen, seq, seconds, cfg):
+        self._show(cfg)
         deadline = self._clock() + seconds + float(cfg["extra_s"])
         why = "timeout"
         while self._clock() < deadline:
@@ -176,27 +223,68 @@ class RemoteReplay:
         if gen != self._gen:
             return
         self.last["state"] = "live"
-        with self._lock:
-            shown, self._shown = self._shown, None
-        if shown:
-            self._obs_call(lambda o: o.set_visible(shown[0], shown[1], False))
-            print(f"[replay-pc] '{shown[1]}' hidden in '{shown[0]}' ({why})")
-        if scene:
-            with self._lock:
-                back = self._back_to
-                self._back_to = None
-            cur = self._obs_call(lambda o: o.current_scene())
-            if back and cur == scene:
-                self._obs_call(lambda o: o.set_scene(back))
-                print(f"[replay-pc] back to scene '{back}' ({why})")
-            elif back:
-                print(f"[replay-pc] scene changed by hand ('{cur}') - left alone ({why})")
+        self._hide(cfg, why)
+
+    # -- follow the rig's own replays -----------------------------------------
+    def start_follow(self):
+        if self._follower is None:
+            self._follower = threading.Thread(target=self._follow_loop, daemon=True)
+            self._follower.start()
+
+    def _follow_loop(self):
+        while True:
+            try:
+                self.follow_tick()
+            except Exception as e:
+                print(f"[replay-pc] follow: {e}")
+            self._sleep(float(self.cfg.get("poll_s", 0.5)))
+
+    def follow_tick(self):
+        """One poll of the rig's playback mode (called every poll_s by the
+        follower thread). Shows / hides only what it showed itself."""
+        cfg = self.config()
+        if not cfg["url"] or not cfg.get("follow", True):
+            if self._following:
+                self._following = False
+                self._hide(cfg, "follow off")
+            return
+        if self._watching or self._clock() < self._quiet_until:
+            self._live_n = self._lost_n = 0
+            return                           # a replay sent from here is on
+        try:
+            st = self._http("GET", cfg["url"] + "/replay/remote/status", None,
+                            float(cfg["timeout_s"]))
+        except Exception:
+            self._lost_n += 1
+            if self._following and self._lost_n >= FOLLOW_LOST_POLLS:
+                self._following = False
+                self._hide(cfg, "sim rig not reachable")
+            return
+        self._lost_n = 0
+        mode = st.get("mode")
+        self.follow_state = mode or ""
+        if mode is None:
+            return                           # older rig version: no playback mode
+        replaying = bool(st.get("connected", True)) and mode not in ("live", "")
+        if replaying:
+            self._live_n = 0
+            if not self._following:
+                self._following = True
+                print(f"[replay-pc] sim rig plays its own replay ({mode}) - showing it")
+                self._show(cfg)
+        elif self._following:
+            self._live_n += 1
+            if self._live_n >= FOLLOW_LIVE_POLLS:
+                self._following = False
+                self._live_n = 0
+                self._hide(cfg, "sim rig live again")
 
     def status(self) -> dict:
         cfg = self.config()
         return {"enabled": bool(cfg["url"]), "url": cfg["url"], "scene": cfg.get("scene"),
                 "source": cfg.get("source"),
-                "back_scene": cfg.get("back_scene"),
+                "back_scene": cfg.get("back_scene"), "follow": bool(cfg.get("follow", True)),
+                "following": self._following, "rig_mode": self.follow_state,
                 "fallback_local": bool(cfg.get("fallback_local", True)), "last": self.last}
 
 

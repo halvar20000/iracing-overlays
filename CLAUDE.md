@@ -213,7 +213,13 @@ Flask app as both PCs). 2026-11-09 FIRST REAL SETUP: replay PC 192.168.86.73
 must be 1080p or the 4K desktop smears around iRacing's 1080p picture), Thomas:
 "funktioniert wunderbar". NEW `source` key: show / hide that OBS source in the
 scene on air instead of switching scenes (NDI picture in the iRacing scene under
-the overlays). Restart 5000.
+the overlays). Same day, `follow` (default on): replays started on the RIG ITSELF
+(its dashboard / iRacing) show the source / scene too - RemoteReplay follower
+thread (start_follow, idle without a url) polls the rig's /replay/remote/status,
+which now carries its playback `mode` + `connected`; not live = show, 2 live polls
+= hide, unreachable 6 polls = hide; quiet while / FOLLOW_QUIET_S 3 s after a replay
+sent from here; an older rig (no mode) = nothing. BOTH PCs need the update.
+test_remote_replay 40 + --dash 8. Restart 5000.
 
 **November 7, 2026 (driver + car `5017/combo`):** from Thomas's WEC-style
 screenshot, a mix of livery + driver card. Dark bar + panel: class colour in a multiclass field (class_colors, as tower / map; text_on = black or white text), else green; `?color=` fixed,

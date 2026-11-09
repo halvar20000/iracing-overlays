@@ -38,6 +38,12 @@ Alles wie bisher am Dashboard des **Stream-PCs**: ▶ 10s / 20s in der Incident-
 - Hast du die Szene inzwischen selbst gewechselt, bleibt sie, wie sie ist.
 - Die Listen auf dem Stream-PC bleiben erhalten (der Stream-PC springt ja nicht zurück).
 - Ist das Sim-Rig nicht erreichbar, läuft das Replay wie früher auf dem Stream-PC.
+- **Replays direkt am Sim-Rig** (in seinem Dashboard oder in iRacing dort gestartet)
+  blendet der Stream-PC ebenfalls ein: Er fragt das Sim-Rig alle 0,5 s, ob es live ist.
+  Ist es nicht live (Replay, Pause, Zurückspulen), wird die Quelle bzw. Szene eingeblendet.
+  Ist es wieder live, wird sie ausgeblendet. Beide PCs brauchen dafür denselben Stand
+  (Update auf beiden). Achtung: Steht das Sim-Rig auf Pause oder bleibt es im Replay
+  hängen, bleibt die Quelle sichtbar.
 
 ## Optionen in `replay_pc_config.json`
 
@@ -46,6 +52,7 @@ Alles wie bisher am Dashboard des **Stream-PCs**: ▶ 10s / 20s in der Incident-
 | `url` | – | Adresse des Sim-Rigs (IP reicht, Port 5000 wird ergänzt). Leer = aus |
 | `scene` | `Replay` | OBS-Szene während des Replays. `""` = OBS nicht anfassen |
 | `source` | – | statt Szenenwechsel: diese Quelle (z. B. `Replay NDI`) in der laufenden Szene ein- und danach wieder ausblenden. Die NDI-Quelle dafür in die iRacing-Szene legen, **unter** die Overlays |
+| `follow` | `true` | auch Replays einblenden, die direkt am Sim-Rig gestartet wurden. `false` = nur die vom Stream-PC |
 | `back_scene` | – | feste Szene danach (sonst die Szene vor dem Replay) |
 | `fallback_local` | `true` | Sim-Rig weg → Replay auf dem Stream-PC |
 | `extra_s` | `20` | so lange nach der Replay-Länge auf das Sim-Rig warten |
