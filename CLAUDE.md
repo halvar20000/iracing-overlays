@@ -181,6 +181,19 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 9, 2026 (WCT Pro/Am intro races):** Andreas: Jim Gallo, not yet
+PRO/AM, vanished from the result + championship overlays. Rule (CLS v2.51.0):
+an unclassified WCT driver races as a guest, keeps his overall position,
+scores NO points, takes no class position; after classification the class
+counts from the NEXT race (CLS sends proAmClass null + 0 points for the intro
+round too). Overlays: third grey group after PRO / AM — boards
+`INTRO_LABEL` "NICHT EINGESTUFT" (`INTRO_GROUPS`, `wct_board.INTRO_COLOR`) in
+_lastrace_wct (per race + WERTUNG), _table_wct and _live_wct (unclassified
+rows with rounds>0 / in the race; champ_rows got `rounds`), points blank; JS
+/lastround + /table an "INTRO" tab (`paOf`, `.pa.INTRO`), points 0 / "–". The
+live projection already gave them 0 class points. test_wct_board.py C5, L10,
+L11. Restart 5010.
+
 **November 8, 2026 (replay on a SECOND PC — sim rig over NDI):** Thomas:
 replay on stream while the live race stays in a window. One iRacing = one
 picture, so the sim rig spectates with a second account and its OBS sends

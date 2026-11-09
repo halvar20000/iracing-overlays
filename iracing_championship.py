@@ -693,6 +693,7 @@ def build_projection(race_state: dict, champ_payload: dict | None,
             "team_name":       s.get("teamName"),
             "car_class_name":  s.get("carClassName"),
             "pro_am":          s.get("proAmClass"),
+            "rounds":          int(s.get("roundsCompleted") or 0),
             "iracing_member":  mid_int,
             "pre_points":      base_points,
             "earlier":         [{"pos": e["pos"], "pts": e[key]} if e else None
@@ -1842,7 +1843,7 @@ PRERACE_HTML = r"""<!DOCTYPE html>
     .num { color: var(--muted); font-size: 13px; font-weight: 700; text-align: center; }
     .flag { width: 19px; height: 13px; object-fit: cover; justify-self: center; box-shadow: 0 0 0 1px rgba(0,0,0,0.35); }
     .pa { width: 5px; height: 15px; border-radius: 2px; justify-self: center; }
-    .pa.PRO { background: #e63946; } .pa.AM { background: #2ecc71; }
+    .pa.PRO { background: #e63946; } .pa.AM { background: #2ecc71; } .pa.INTRO { background: #8a8f98; }
     .sb { color: var(--sb); }
     .tag { font-size: 10px; font-weight: 800; padding: 0 5px; border-radius: 2px; background: rgba(255,255,255,0.14); color: var(--muted); }
     .tabs { display: flex; gap: 2px; padding: 4px 0 0; }
@@ -1947,8 +1948,10 @@ function renderLastRace(d) {
     // ?class=all = the old mixed list.
     const st = d.standings;
     const all = lr.races.flatMap(r => r.results);
-    const present = ['PRO', 'AM'].filter(c => all.some(x => x.proAmClass === c));
-    const proAm = !!(st && st.season && st.season.proAmEnabled) && present.length > 0 && classP() !== 'all';
+    // INTRO = not classified yet (CLS intro race: no points, no class position)
+    const rated = ['PRO', 'AM'].filter(c => all.some(x => x.proAmClass === c));
+    const present = rated.concat(all.some(x => !x.proAmClass) ? ['INTRO'] : []);
+    const proAm = !!(st && st.season && st.season.proAmEnabled) && rated.length > 0 && classP() !== 'all';
     const classes = !proAm ? [null] : (classP() === 'pro' || classP() === 'am')
         ? [present.find(c => c === classP().toUpperCase()) || present[0]] : present;
     let base = lr.races.map(r => ({ kind: 'race', race: r, label: `RACE ${r.raceNumber}` }));
@@ -2001,7 +2004,7 @@ function renderLastRace(d) {
 // OVERALL points; the class points come from CLS's round classification
 // (combined[].raceN.points), fallback the season's classPointsTable.
 function classRace(race, cls, lr, st) {
-    const res = race.results.filter(x => x.proAmClass === cls);
+    const res = race.results.filter(x => paOf(x) === cls);
     const lead = res.find(x => x.status === 'CLASSIFIED');
     const grid = res.filter(x => x.startPosition).map(x => x.startPosition).sort((a, b) => a - b);
     const best = Math.min(...res.filter(x => x.bestLapMs > 0).map(x => x.bestLapMs));
@@ -2012,7 +2015,9 @@ function classRace(race, cls, lr, st) {
         fastestLap: x.bestLapMs > 0 && x.bestLapMs === best,
         points: classPts(x, i + 1, race.raceNumber, lr, st) })) };
 }
+function paOf(x) { return x.proAmClass || 'INTRO'; }
 function classPts(x, pos, n, lr, st) {
+    if (!x.proAmClass) return 0;     // intro race: no points
     const c = ((lr && lr.combined) || []).find(y => (y.iracingMemberId && y.iracingMemberId === x.iracingMemberId) || y.name === x.name);
     const r = c && c['race' + n];
     if (r && r.points != null) return r.points;
@@ -2028,7 +2033,7 @@ function renderCombined(lr, tabs, cls, title) {
         // race columns show the CLASS finishing position
         const pos = {};
         lr.races.forEach(r => classRace(r, cls, lr, null).results.forEach(x => { pos[r.raceNumber + ':' + (x.iracingMemberId || x.name)] = x.position; }));
-        list = list.filter(x => x.proAmClass === cls).map((x, i) => {
+        list = list.filter(x => paOf(x) === cls).map((x, i) => {
             const k = n => pos[n + ':' + (x.iracingMemberId || x.name)];
             const fix = (r, n) => r && r.status === 'CLASSIFIED' && k(n) ? { ...r, position: k(n) } : r;
             return { ...x, position: i + 1, race1: fix(x.race1, 1), race2: fix(x.race2, 2) };
@@ -2086,8 +2091,10 @@ function renderTable(d) {
     // ?cycle= s each (default 20), restarting at PRO whenever the source is
     // shown. Ranks renumbered inside the class; CLS order (its tie-breaks)
     // kept. ?class=pro|am pins one, ?class=all = the old mixed list.
-    const classes = ['PRO', 'AM'].filter(c => st.standings.some(x => x.proAmClass === c));
-    const proAm = !!(st.season && st.season.proAmEnabled) && classes.length > 0 && classP() !== 'all';
+    const ratedCls = ['PRO', 'AM'].filter(c => st.standings.some(x => x.proAmClass === c));
+    const introRow = x => !x.proAmClass && (x.roundsCompleted || 0) > 0;
+    const classes = ratedCls.concat(st.standings.some(introRow) ? ['INTRO'] : []);
+    const proAm = !!(st.season && st.season.proAmEnabled) && ratedCls.length > 0 && classP() !== 'all';
     let list = st.standings, label = '', tabs = '';
     if (proAm) {
         let cls;
@@ -2097,7 +2104,8 @@ function renderTable(d) {
             raceIdx = wrap(raceIdx, classes.length);
             cls = classes[raceIdx];
         }
-        list = st.standings.filter(x => x.proAmClass === cls).map((x, i) => ({ ...x, rank: i + 1 }));
+        list = st.standings.filter(x => cls === 'INTRO' ? introRow(x) : x.proAmClass === cls)
+            .map((x, i) => ({ ...x, rank: i + 1, points: cls === 'INTRO' ? '–' : x.points }));
         label = ' · ' + cls;
         if (classes.length > 1) tabs = `<div class="tabs">${classes.map(c => `<span class="${c === cls ? 'on' : ''}">${c}</span>`).join('')}</div>`;
     }
@@ -2204,6 +2212,15 @@ setInterval(pollNav, 300); pollNav();
 # championship, paged GESAMT / PRO / AM (or per class), same Stream Deck keys
 # as the grid (5001/nav/...).
 # -----------------------------------------------------------------------------
+# Pro/Am intro race (CLS v2.51.0, 2026-11-09): a WCT driver without PRO / AM
+# races as a guest, keeps his overall position, scores NO points and takes no
+# class position. CLS sends proAmClass null for him (also for the intro round
+# of a driver classified later) and 0 points. Shown as a grey third group so
+# he does not vanish from the Pro/Am pages.
+INTRO_LABEL = "NICHT EINGESTUFT"
+INTRO_GROUPS = (("PRO", wct_board.PRO_COLOR), ("AM", wct_board.AM_COLOR), (None, wct_board.INTRO_COLOR))
+
+
 def _class_of(st: dict, races: list):
     """CLS round results carry no car class: take it from the driver's
     standings row (carClassName), else from the class most drivers of the
@@ -2303,8 +2320,8 @@ def _lastrace_wct(info: dict, st: dict = None) -> dict:
         out["sections"].append({"label": tag, "rows": rows})
         if not proam:
             continue
-        for cls, col in (("PRO", wct_board.PRO_COLOR), ("AM", wct_board.AM_COLOR)):
-            grp = [r for r in res if r.get("proAmClass") == cls]
+        for cls, col in INTRO_GROUPS:
+            grp = [r for r in res if (r.get("proAmClass") or None) == cls]
             if not grp:
                 continue
             lead_laps = grp[0].get("lapsBehind") or 0
@@ -2316,7 +2333,11 @@ def _lastrace_wct(info: dict, st: dict = None) -> dict:
                 rows.append({"pos": i, "num": r.get("startNumber") or "", "name": r.get("name") or "",
                              "sub": r.get("car") or "", "value": value(r, lead_laps), "fl": r is cbest,
                              "pts": cr.get("points")})
-            out["sections"].append({"label": f"{tag} {cls}" if multi else cls, "color": col, "rows": rows})
+            name = cls or INTRO_LABEL
+            if cls is None:              # intro race: no points (CLS sends 0)
+                for row in rows:
+                    row["pts"] = None
+            out["sections"].append({"label": f"{tag} {name}" if multi else name, "color": col, "rows": rows})
 
     if multi and combined:                      # the round's total over both races
         def crow(c, pos):
@@ -2325,11 +2346,15 @@ def _lastrace_wct(info: dict, st: dict = None) -> dict:
             return {"pos": pos, "num": c.get("startNumber") or "", "name": c.get("name") or "",
                     "sub": " · ".join(bits), "pts": c.get("total")}
         if proam:
-            for cls, col in (("PRO", wct_board.PRO_COLOR), ("AM", wct_board.AM_COLOR)):
-                grp = [c for c in combined if c.get("proAmClass") == cls]
+            for cls, col in INTRO_GROUPS:
+                grp = [c for c in combined if (c.get("proAmClass") or None) == cls]
                 if grp:
-                    out["sections"].append({"label": f"WERTUNG {cls}", "color": col,
-                                            "rows": [crow(c, i) for i, c in enumerate(grp, 1)]})
+                    rows = [crow(c, i) for i, c in enumerate(grp, 1)]
+                    if cls is None:
+                        for row in rows:
+                            row["pts"] = None
+                    out["sections"].append({"label": f"WERTUNG {cls or INTRO_LABEL}", "color": col,
+                                            "rows": rows})
         else:
             out["sections"].append({"label": "WERTUNG", "rows": [crow(c, c.get("position") or i)
                                                                 for i, c in enumerate(combined, 1)]})
@@ -2407,6 +2432,12 @@ def _table_wct(st: dict) -> dict:
                          key=lambda r: (-(r.get("points") or 0), r.get("rank") or 999))
             if grp:
                 out["sections"].append({"label": cls, "color": col, "rows": board(grp)})
+        intro = [r for r in rows if not r.get("proAmClass") and (r.get("roundsCompleted") or 0) > 0]
+        if intro:
+            lines = board(intro)
+            for line in lines:
+                line["pts"] = None
+            out["sections"].append({"label": INTRO_LABEL, "color": wct_board.INTRO_COLOR, "rows": lines})
         return out
     classes = []
     for r in rows:
@@ -2467,6 +2498,13 @@ def _live_wct(ps: dict) -> dict:
             grp = [c for c in rows if c.get("pro_am") == cls]
             if grp:
                 out["sections"].append({"label": cls, "color": col, "rows": board(grp)})
+        intro = [c for c in rows if not c.get("pro_am")
+                 and (c.get("in_race") or c.get("rounds") or any(c.get("earlier") or []))]
+        if intro:
+            lines = board(intro)
+            for line in lines:
+                line["pts"], line["value"] = None, ""
+            out["sections"].append({"label": INTRO_LABEL, "color": wct_board.INTRO_COLOR, "rows": lines})
         return out
     classes = []
     for c in sorted(rows, key=lambda c: c.get("rank") or 999):

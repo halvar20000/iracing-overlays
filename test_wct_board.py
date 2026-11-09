@@ -151,6 +151,29 @@ d = ch._table_wct({"league": {}, "season": {"proAmEnabled": True}, "standings": 
     srow(1, "P", 90, proAmClass="PRO"), srow(2, "A", 182, proAmClass="AM"), srow(3, "A2", 100, proAmClass="AM")]})
 check("C2 Pro/Am: PRO then AM, class positions", [(s["label"], [r["pos"] for r in s["rows"]]) for s in d["sections"]]
       == [("PRO", [1]), ("AM", [1, 2])], str(d))
+# Pro/Am intro race (CLS 2.51.0): unclassified driver = grey group, no points;
+# an unclassified driver who never raced is not listed
+d = ch._table_wct({"league": {}, "season": {"proAmEnabled": True}, "standings": [
+    srow(1, "P", 90, proAmClass="PRO", roundsCompleted=3), srow(2, "A", 80, proAmClass="AM", roundsCompleted=3),
+    srow(3, "Jim", 0, proAmClass=None, roundsCompleted=1), srow(4, "Nobody", 0, proAmClass=None, roundsCompleted=0)]})
+check("C5 intro: grey NICHT EINGESTUFT after PRO / AM, no points",
+      [(s["label"], [(r["name"], r["pts"]) for r in s["rows"]]) for s in d["sections"]]
+      == [("PRO", [("P", 90)]), ("AM", [("A", 80)]), ("NICHT EINGESTUFT", [("Jim", None)])]
+      and d["sections"][2]["color"] == wct_board.INTRO_COLOR, str(d))
+def ires(pos, name, pa, pts):
+    return {"position": pos, "name": name, "iracingMemberId": name, "startNumber": str(pos), "proAmClass": pa,
+            "car": "Car", "status": "CLASSIFIED", "lapsBehind": 0, "gapMs": None, "bestLapMs": 90000, "fastestLap": False, "points": pts}
+info3 = {"league": {"slug": "cas-gt3-wct", "name": "CAS GT3 WCT"},
+         "lastRound": {"number": 5, "track": "Spa", "races": [{"raceNumber": 1, "results": [
+             ires(1, "P1", "PRO", 35), ires(2, "Jim", None, 0), ires(3, "A1", "AM", 31)]}],
+             "combined": [{"name": "P1", "iracingMemberId": "P1", "proAmClass": "PRO", "race1": {"position": 1, "points": 35}, "total": 35},
+                          {"name": "Jim", "iracingMemberId": "Jim", "proAmClass": None, "race1": {"position": 2, "points": 0}, "total": 0},
+                          {"name": "A1", "iracingMemberId": "A1", "proAmClass": "AM", "race1": {"position": 3, "points": 35}, "total": 35}]}}
+d = ch._lastrace_wct(info3)
+check("L10 intro: ERGEBNIS / PRO / AM / NICHT EINGESTUFT", [s["label"] for s in d["sections"]] == ["ERGEBNIS", "PRO", "AM", "NICHT EINGESTUFT"], str([s["label"] for s in d["sections"]]))
+check("L11 intro in the overall result, AM winner keeps P1", [r["name"] for r in sec(d, "ERGEBNIS")["rows"]] == ["P1", "Jim", "A1"]
+      and [(r["pos"], r["pts"]) for r in sec(d, "AM")["rows"]] == [(1, 35)]
+      and [(r["name"], r["pts"]) for r in sec(d, "NICHT EINGESTUFT")["rows"]] == [("Jim", None)], str(d))
 d = ch._table_wct({"league": {}, "season": {}, "standings": [
     srow(1, "L", 203, carClassName="LMP2"), srow(5, "G", 124, carClassName="GT3"), srow(2, "L2", 191, carClassName="LMP2")]})
 check("C3 multiclass: one table per class", [(s["label"], [r["name"] for r in s["rows"]]) for s in d["sections"]]

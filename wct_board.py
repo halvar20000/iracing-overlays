@@ -30,6 +30,7 @@ import urllib.request
 
 PRO_COLOR, AM_COLOR = "#e5484d", "#30c45a"     # the tower's Pro/Am bars
 UNRATED_COLOR = "#000000"                        # WCT driver without PRO / AM in CLS
+INTRO_COLOR = "#8a8f98"                          # board section: not classified yet (intro race, no points)
 
 
 class EventInfo:
