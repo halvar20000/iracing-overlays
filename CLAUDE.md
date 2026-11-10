@@ -187,6 +187,14 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 10, 2026 (no "lost control" at the pit exit):** Thomas: misleading.
+Where the pit lane joins the track its lap pct does not match the racing line
+(jump back / reads stopped) = speed collapse or "moved backwards". Dashboard
+`PIT_EXIT_GRACE_S` 15: a car last seen on pit road / stall / pit approach
+(`_pit_seen_t`) counts as `unstable` for the heuristics (spin, stop, off
+track, backwards). A spin right after the exit is not reported. test_pit_exit
+P3 (fails on the old code) + P4 (spin 22 s later still reported). Restart 5000.
+
 **November 10, 2026 (replay PC: several sources instead of the scene switch):**
 Thomas: a replay started on .73's dashboard should play in the iRacing scene,
 like his Stream Deck multi-action ".73Remote" (a key cannot be pressed from

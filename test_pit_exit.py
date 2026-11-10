@@ -93,6 +93,34 @@ inc = run(p2, 15.0)
 check("real backwards roll on track: still reported",
       any(c == 0 and "backwards" in d for c, _, d in inc), str(inc))
 
+# P3 (2026-11-10, Thomas: "lost control at the pit exit"): where the pit lane
+# joins the track its pct is AHEAD of the racing line's - after leaving pit
+# road the car jumps back 25 m, then reads standing still for a moment.
+def p3(t, i, pct):
+    if i != 0:
+        return pct + 45.0 * DT / L, 3, False
+    if t < 5.0:
+        return pct + 30.0 * DT / L, 3, True     # pit lane, 108 km/h reading
+    if 5.0 <= t < 5.1:
+        return pct - 25.0 / L, 3, False         # merge: pct back onto the racing line
+    if t < 6.0:
+        return pct, 3, False                    # "stopped"
+    return pct + 40.0 * DT / L, 3, False
+inc = run(p3, 20.0)
+check("pit exit merge jump: no incident", not inc, str(inc))
+
+# P4: a real spin well after the pit exit is still reported.
+def p4(t, i, pct):
+    if i != 0:
+        return pct + 45.0 * DT / L, 3, False
+    if t < 3.0:
+        return pct + 22.0 * DT / L, 2, True
+    if 25.0 <= t < 27.0:
+        return pct + 2.0 * DT / L, 3, False     # 162 -> 7 km/h
+    return pct + 45.0 * DT / L, 3, False
+inc = run(p4, 35.0)
+check("spin 22 s after the pit exit: reported", any(c == 0 for c, _, _ in inc), str(inc))
+
 print()
 print("ALL PASS" if not failures else f"FAILURES: {failures}")
 sys.exit(1 if failures else 0)

@@ -174,6 +174,11 @@ STOP_MIN_TICKS    = 30     # 3.0 s at 10 Hz
 # while (the window refreshes on every new blink).
 UNSTABLE_WINDOW_S = 90.0   # heuristics ignore a car this long after a return
 VANISH_CONFIRM_S  = 10.0   # report a vanish only if the car stays gone
+# Leaving the pits (2026-11-10, Thomas: "lost control at the pit exit is
+# misleading"): where the pit lane joins the track its lap pct does not match
+# the racing line's, so the car seems to jump back / stop - read as a spin.
+# The heuristics ignore a car this long after it was last on pit road.
+PIT_EXIT_GRACE_S  = 15.0
 # Overtake detection (broadcast highlight feed, separate from incidents).
 # Live progress rank (lap + lap pct) swaps the instant a pass happens, and
 # lapping never changes it (the leader is already a full lap ahead), so
@@ -453,6 +458,7 @@ class TelemetryPoller:
         self._off_cooldown = {}          # car_idx -> last t an off_track was emitted
         # Connection-blink filter (see UNSTABLE_WINDOW_S / VANISH_CONFIRM_S)
         self._world_returns = {}         # car_idx -> t_session of last -1 -> in-world return
+        self._pit_seen_t = {}            # car_idx -> t_session last seen on pit road / in the stall
         self._seen_in_world = set()      # car_idxs ever seen in-world this session
         self._pending_vanish = {}        # car_idx -> {vanish_t, crash_t, details}
 
@@ -547,6 +553,7 @@ class TelemetryPoller:
         self._off_ticks.clear()
         self._off_cooldown.clear()
         self._world_returns.clear()
+        self._pit_seen_t.clear()
         self._seen_in_world.clear()
         self._pending_vanish.clear()
         self._overtakes.clear()
@@ -1301,6 +1308,7 @@ class TelemetryPoller:
         self._off_ticks.clear()
         self._off_cooldown.clear()
         self._world_returns.clear()
+        self._pit_seen_t.clear()
         self._seen_in_world.clear()
         self._pending_vanish.clear()
         self._overtakes.clear()
@@ -1445,6 +1453,10 @@ class TelemetryPoller:
                 self._seen_in_world.add(idx)
             unstable = (t_now - self._world_returns.get(idx, -1e9)
                         < UNSTABLE_WINDOW_S)
+            if is_pit or surf in (SURFACE_IN_PIT_STALL, SURFACE_APPROACHING_PITS):
+                self._pit_seen_t[idx] = t_now
+            if t_now - self._pit_seen_t.get(idx, -1e9) < PIT_EXIT_GRACE_S:
+                unstable = True              # just out of the pits: no spin / stop reports
 
             # --- stopped / crashed: surface became NotInWorld from in-world ---
             # Intentionally NOT emitted: too many causes (garage, finished,
