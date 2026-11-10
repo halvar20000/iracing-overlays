@@ -117,6 +117,12 @@ class ObsClient:
     def set_scene(self, name: str):
         self.call("SetCurrentProgramScene", {"sceneName": name})
 
+    def current_transition(self) -> str:
+        return self.call("GetCurrentSceneTransition").get("transitionName") or ""
+
+    def set_transition(self, name: str):
+        self.call("SetCurrentSceneTransition", {"transitionName": name})
+
     def scene_items(self, scene: str) -> dict:
         """{source name: (item id, enabled)}"""
         items = self.call("GetSceneItemList", {"sceneName": scene}).get("sceneItems", [])

@@ -191,7 +191,13 @@ that isn't already prefix-matched.
 transition - Thomas's OBS had a per-scene override "Cut" on Replay and iRacing.
 NEW `make_replay_stinger.py` → `stingers/replay_stinger.webm` (1.1 s, 1920x1080,
 VP9 alpha, covered ~280-750 ms, OBS transition point 500 ms); setup in
-REPLAY_PC.md. CONFIRMED working by Thomas the same day.
+REPLAY_PC.md. CONFIRMED working by Thomas the same day. THEN: with the stinger as
+the iRacing scene's override it played on every switch (Moderator → iRacing too)
+→ replay_pc_config `transition`: RemoteReplay._switch sets it as the current OBS
+transition just before its own scene switches, the previous one back
+TRANSITION_RESTORE_S 2.5 later (scene overrides must be removed - they win).
+obs_ws current_transition / set_transition, settings page field. test_remote_replay
+TR1-TR6. Restart 5000.
 
 **November 10, 2026 (WCT championship tables: PRO / AM only):** Thomas: no
 "NICHT EINGESTUFT" group in the standings. /table/wct, /live/wct and the /table

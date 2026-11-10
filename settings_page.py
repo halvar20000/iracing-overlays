@@ -228,6 +228,9 @@ FILES = [
             F("scene", "text", "Replay", "OBS-Szene während des Replays", "Leer = Szene nicht wechseln."),
             F("source", "text", "", "Stattdessen diese Quelle einblenden", "z. B. Replay NDI. Leer = Szene wechseln."),
             F("back_scene", "text", "", "Feste Szene danach", "Leer = die Szene vor dem Replay."),
+            F("transition", "text", "", "OBS-Übergang nur für diese Wechsel",
+              "z. B. Replay Stinger (Name wie im Dock Szenenübergänge). Die Szenen dann OHNE "
+              "„Übergang überschreiben“. Leer = der normale Übergang."),
             F("follow", "bool", True, "Replays am Replay-PC selbst auch einblenden"),
             F("fallback_local", "bool", True, "Replay-PC nicht erreichbar → Replay hier"),
             F("extra_s", "float", 20.0, "Höchstens so lange nach der Replay-Länge warten"),

@@ -54,6 +54,7 @@ Alles wie bisher am Dashboard des **Stream-PCs**: ▶ 10s / 20s in der Incident-
 | `source` | – | statt Szenenwechsel: diese Quelle (z. B. `Replay NDI`) in der laufenden Szene ein- und danach wieder ausblenden. Die NDI-Quelle dafür in die iRacing-Szene legen, **unter** die Overlays |
 | `follow` | `true` | auch Replays einblenden, die direkt am Sim-Rig gestartet wurden. `false` = nur die vom Stream-PC |
 | `back_scene` | – | feste Szene danach (sonst die Szene vor dem Replay) |
+| `transition` | – | OBS-Übergang (z. B. `Replay Stinger`) nur für die Replay-Wechsel, danach wieder der vorige |
 | `fallback_local` | `true` | Sim-Rig weg → Replay auf dem Stream-PC |
 | `extra_s` | `20` | so lange nach der Replay-Länge auf das Sim-Rig warten |
 
@@ -70,7 +71,14 @@ oranger Kante wischt mit „REPLAY“ übers Bild, dahinter wird geschnitten.
 1. OBS › Dock **Szenenübergänge** › **+** › **Stinger**, Name z. B. `Replay Stinger`.
 2. Videodatei: `stingers\replay_stinger.webm` im Overlay-Ordner.
 3. Übergangspunkt-Typ **Zeit (ms)**, Übergangspunkt **500**.
-4. Rechtsklick auf die Szenen **Replay** und **iRacing** › **Übergang überschreiben** › `Replay Stinger`.
+4. In **⚙ Einstellungen** › Replay-PC › **OBS-Übergang nur für diese Wechsel**:
+   `Replay Stinger` eintragen (oder `"transition": "Replay Stinger"` in
+   `replay_pc_config.json`). Dann kommt der Stinger NUR beim Wechsel zum Replay
+   und zurück, ein Wechsel von Hand (z. B. Moderator → iRacing) bleibt beim
+   normalen Übergang.
+5. Bei den Szenen **Replay** und **iRacing** darf KEIN „Übergang überschreiben“
+   gesetzt sein (Rechtsklick › Übergang überschreiben › Nicht überschreiben) –
+   der hätte Vorrang und käme bei jedem Wechsel.
 
 Im `source`-Modus (Quelle ein-/ausblenden) stattdessen bei der NDI-Quelle
 Rechtsklick › **Einblendübergang** / **Ausblendübergang** › Stinger.

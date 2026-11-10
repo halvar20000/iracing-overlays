@@ -23,6 +23,12 @@ in iRacing there) bring the source / scene up too - a background thread polls
 the rig's /replay/remote/status, which carries its playback mode; not live =
 show, live again (2 polls in a row) = hide. A replay sent from here is left to
 its own watcher. The rig needs the same version (older ones send no mode).
+`transition` (e.g. "Replay Stinger"; 2026-11-10, Thomas: a stinger as the
+iRacing scene's override played on EVERY switch to iRacing, Moderator too) =
+the OBS transition used for THESE scene switches only: set as the current
+transition just before the switch, the previous one put back
+TRANSITION_RESTORE_S later. The scenes must have no transition override
+(an override wins over the current transition).
 
 Sim rig side: the same dashboard; /replay/remote plays it with the normal
 replay_5s_of_car (pause, seek, camera, 1x, back to live) — see the routes in
@@ -41,7 +47,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 CONFIG_FILE = HERE / "replay_pc_config.json"
 DEFAULTS = {"url": "", "scene": "Replay", "source": "", "back_scene": "", "fallback_local": True,
-            "timeout_s": 3.0, "extra_s": 20.0, "poll_s": 0.5, "follow": True}
+            "timeout_s": 3.0, "extra_s": 20.0, "poll_s": 0.5, "follow": True,
+            "transition": ""}
+TRANSITION_RESTORE_S = 2.5  # previous OBS transition back after this (stinger ~1.1 s)
 FOLLOW_LIVE_POLLS = 2       # rig reported live this many polls in a row = hide
 FOLLOW_LOST_POLLS = 6       # rig unreachable this many polls while shown = hide
 FOLLOW_QUIET_S = 3.0        # after a replay sent from here, its return to live is not a new replay
@@ -88,6 +96,8 @@ class RemoteReplay:
         self._follower = None
         self._live_n = self._lost_n = 0
         self._quiet_until = 0.0              # just after a replay sent from here: the rig settles
+        self._trans_prev = None              # OBS transition to put back after a replay switch
+        self._trans_token = 0
 
     # -- config ---------------------------------------------------------------
     def config(self) -> dict:
@@ -172,7 +182,31 @@ class RemoteReplay:
                 if cur is not None and cur != scene and self._back_to is None:
                     self._back_to = cfg.get("back_scene") or cur
             if cur is not None and cur != scene:
-                self._obs_call(lambda o: o.set_scene(scene))
+                self._switch(scene, cfg)
+
+    def _switch(self, scene, cfg):
+        """Scene switch, with cfg "transition" for this switch only."""
+        trans = cfg.get("transition") or ""
+        if trans:
+            prev = self._obs_call(lambda o: o.current_transition())
+            with self._lock:
+                if prev and prev != trans and self._trans_prev is None:
+                    self._trans_prev = prev          # an earlier switch may still hold it
+                self._trans_token += 1
+                token, restore = self._trans_token, self._trans_prev is not None
+            if prev and prev != trans:
+                self._obs_call(lambda o: o.set_transition(trans))
+            if restore:
+                threading.Thread(target=self._restore_transition, args=(token,), daemon=True).start()
+        self._obs_call(lambda o: o.set_scene(scene))
+
+    def _restore_transition(self, token):
+        self._sleep(TRANSITION_RESTORE_S)
+        with self._lock:
+            if token != self._trans_token or self._trans_prev is None:
+                return                                # a newer switch restores it
+            prev, self._trans_prev = self._trans_prev, None
+        self._obs_call(lambda o: o.set_transition(prev))
 
     def _hide(self, cfg, why):
         source = cfg.get("source") or ""
@@ -188,7 +222,7 @@ class RemoteReplay:
                 self._back_to = None
             cur = self._obs_call(lambda o: o.current_scene())
             if back and cur == scene:
-                self._obs_call(lambda o: o.set_scene(back))
+                self._switch(back, cfg)
                 print(f"[replay-pc] back to scene '{back}' ({why})")
             elif back:
                 print(f"[replay-pc] scene changed by hand ('{cur}') - left alone ({why})")
@@ -283,7 +317,7 @@ class RemoteReplay:
         cfg = self.config()
         return {"enabled": bool(cfg["url"]), "url": cfg["url"], "scene": cfg.get("scene"),
                 "source": cfg.get("source"),
-                "back_scene": cfg.get("back_scene"), "follow": bool(cfg.get("follow", True)),
+                "back_scene": cfg.get("back_scene"), "transition": cfg.get("transition") or "", "follow": bool(cfg.get("follow", True)),
                 "following": self._following, "rig_mode": self.follow_state,
                 "fallback_local": bool(cfg.get("fallback_local", True)), "last": self.last}
 

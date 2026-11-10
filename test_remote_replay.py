@@ -112,6 +112,43 @@ def unit():
         check("R6 two switches only", obs.calls == ["Replay", "iRacing"], obs.calls)
         check("R7 status live", r.status()["last"].get("state") == "live", r.status())
 
+    # "transition": the stinger only for the replay switches, the old one put back
+    class TransObs(FakeObs):
+        def __init__(self, scene):
+            super().__init__(scene)
+            self.trans, self.log = "Fade", []
+
+        def current_transition(self):
+            return self.trans
+
+        def set_transition(self, name):
+            self.trans = name
+            self.log.append(name)
+
+        def set_scene(self, name):
+            self.log.append(f"scene {name} via {self.trans}")
+            super().set_scene(name)
+    old = rr.TRANSITION_RESTORE_S
+    rr.TRANSITION_RESTORE_S = 0.15
+    with tempfile.TemporaryDirectory() as tmp:
+        obs, rig = TransObs("iRacing"), FakeRig(replay_s=0.5)
+        r = make(tmp, {"url": "x", "poll_s": 0.05, "transition": "Replay Stinger"}, rig, obs)
+        r.replay("3")
+        check("TR1 to Replay with the stinger", wait(lambda: "scene Replay via Replay Stinger" in obs.log), obs.log)
+        check("TR2 Fade back between the switches", wait(lambda: obs.trans == "Fade" and obs.scene == "Replay"), obs.log)
+        check("TR3 back to iRacing with the stinger", wait(lambda: "scene iRacing via Replay Stinger" in obs.log), obs.log)
+        check("TR4 Fade restored at the end", wait(lambda: obs.trans == "Fade"), obs.log)
+        obs.set_scene("Moderator"); obs.set_scene("iRacing")
+        check("TR5 a hand switch keeps Fade", obs.log[-2:] == ["scene Moderator via Fade", "scene iRacing via Fade"], obs.log)
+    with tempfile.TemporaryDirectory() as tmp:
+        obs, rig = TransObs("iRacing"), FakeRig(replay_s=0.3)
+        r = make(tmp, {"url": "x", "poll_s": 0.05}, rig, obs)
+        r.replay("3")
+        wait(lambda: obs.scene == "Replay"); wait(lambda: obs.scene == "iRacing")
+        check("TR6 no transition key = OBS untouched", obs.trans == "Fade"
+              and not [x for x in obs.log if not x.startswith("scene")], obs.log)
+    rr.TRANSITION_RESTORE_S = old
+
     # a second replay while the first is on: one return, to the ORIGINAL scene
     with tempfile.TemporaryDirectory() as tmp:
         obs, rig = FakeObs("Main"), FakeRig(replay_s=0.4)
