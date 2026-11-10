@@ -187,6 +187,14 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 10, 2026 (Go Live ends a remote replay):** Thomas: sometimes the
+rig's replay shows nothing and Go Live on the stream PC did not help. Dashboard
+/go_live + Stream Deck go_live → `_go_live_all()`: local go_live AND, with a
+replay PC set, `RemoteReplay.go_live()` = POST rig `/replay/remote/live` (rig:
+poller.go_live + RemoteState.abort), _gen bumped (running watcher steps aside),
+follow quiet, OBS back at once (_hide) also when the rig is unreachable.
+test_remote_replay GL1-GL6, D8-D9. BOTH PCs need the update. Restart 5000.
+
 **November 10, 2026 (prompter follows the track):** the prompter picked its
 notes file once at start-up and stayed on Hungaroring while iRacing was at Spa.
 `Prompter._ensure` now re-picks by the iRacing track each poll: a track change

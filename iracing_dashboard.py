@@ -7055,6 +7055,15 @@ def replay_remote():
     return jsonify({"ok": ok, "message": msg, "seq": seq})
 
 
+@app.route("/replay/remote/live", methods=["POST"])
+def replay_remote_live():
+    """THIS PC is the replay PC: Go Live pressed on the stream PC."""
+    ok, msg = poller.go_live()
+    poller.remote_state.abort()
+    print(f"[replay-pc] Go Live from {request.remote_addr}: {msg}")
+    return jsonify({"ok": ok, "message": msg})
+
+
 @app.route("/replay/remote/status")
 def replay_remote_status():
     """seq / state of the replays sent from the stream PC, plus this PC's own
@@ -7073,9 +7082,19 @@ def replay_pc_status():
     return jsonify(poller.replay_pc.status())
 
 
+def _go_live_all():
+    """Go Live here AND on the replay PC (OBS back to the live picture)."""
+    ok, msg = poller.go_live()
+    if poller.replay_pc.enabled:
+        rig = poller.replay_pc.go_live()
+        msg = f"{msg}; {rig}"
+        ok = True                    # OBS is back even if iRacing here is not connected
+    return ok, msg
+
+
 @app.route("/go_live", methods=["POST"])
 def go_live():
-    ok, msg = poller.go_live()
+    ok, msg = _go_live_all()
     return jsonify({"ok": ok, "message": msg})
 
 
@@ -7222,7 +7241,7 @@ def streamdeck(action, param=None):
 
     # --- playback ---
     if action == "go_live":
-        ok, msg = poller.go_live()
+        ok, msg = _go_live_all()
 
     # --- hide / show iRacing's broadcast HUD (toggle) ---
     # Same logic as the dashboard's Hide-UI button and the POST

@@ -259,6 +259,27 @@ class RemoteReplay:
         self.last["state"] = "live"
         self._hide(cfg, why)
 
+    def go_live(self) -> str:
+        """Go Live pressed on the stream PC (2026-11-10, Thomas: sometimes the
+        replay shows nothing and the local Go Live did not help): the rig goes
+        live too, the watcher of a running replay steps aside, OBS goes back at
+        once - also when the rig does not answer."""
+        cfg = self.config()
+        with self._lock:
+            self._gen += 1                   # running watchers step aside
+            self._following = False
+            self._live_n = self._lost_n = 0
+            self._quiet_until = self._clock() + FOLLOW_QUIET_S
+        try:
+            self._http("POST", cfg["url"] + "/replay/remote/live", {}, float(cfg["timeout_s"]))
+            rig = "replay PC live"
+        except Exception as e:
+            rig = f"replay PC not reachable ({e})"
+        self.last["state"] = "live"
+        self._hide(cfg, "Go Live by hand")
+        print(f"[replay-pc] Go Live by hand: {rig}")
+        return rig
+
     # -- follow the rig's own replays -----------------------------------------
     def start_follow(self):
         if self._follower is None:
@@ -335,6 +356,11 @@ class RemoteState:
             self.seq += 1
             self.state = "replaying"
             return self.seq
+
+    def abort(self):
+        """Go Live from the stream PC: whatever was replaying is over."""
+        with self._lock:
+            self.state = "live"
 
     def done(self, seq: int, failed: bool = False):
         with self._lock:

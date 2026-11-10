@@ -58,6 +58,9 @@ class FakeRig:
             raise OSError("connection refused")
         if method == "POST":
             self.posts.append((url, body))
+            if url.endswith("/replay/remote/live"):
+                self.state.abort()
+                return {"ok": True}
             if self.refuse:
                 return {"ok": False, "message": "not connected"}
             seq = self.state.begin()
@@ -148,6 +151,36 @@ def unit():
         check("TR6 no transition key = OBS untouched", obs.trans == "Fade"
               and not [x for x in obs.log if not x.startswith("scene")], obs.log)
     rr.TRANSITION_RESTORE_S = old
+
+    # Go Live by hand while the rig hangs in its replay: back at once, rig told
+    with tempfile.TemporaryDirectory() as tmp:
+        obs, rig = FakeObs("iRacing"), FakeRig(replay_s=30)
+        r = make(tmp, {"url": "x", "poll_s": 0.05}, rig, obs)
+        r.replay("5")
+        wait(lambda: obs.scene == "Replay")
+        t0 = time.time()
+        msg = r.go_live()
+        check("GL1 OBS back at once", obs.scene == "iRacing" and time.time() - t0 < 1, (obs.calls, msg))
+        check("GL2 rig told to go live", rig.posts[-1][0] == "http://x:5000/replay/remote/live"
+              and rig.state.get()["state"] == "live", rig.posts)
+        time.sleep(0.3)
+        check("GL3 the old watcher does not switch again", obs.calls == ["Replay", "iRacing"], obs.calls)
+        r.replay("6")
+        check("GL4 next replay works again", wait(lambda: obs.scene == "Replay"), obs.calls)
+        r.go_live()
+    with tempfile.TemporaryDirectory() as tmp:
+        obs, rig = FakeObs("iRacing"), FakeRig(replay_s=30)
+        r = make(tmp, {"url": "x", "poll_s": 0.05}, rig, obs)
+        r.replay("5")
+        wait(lambda: obs.scene == "Replay")
+        rig.down = True
+        msg = r.go_live()
+        check("GL5 rig unreachable: OBS back anyway", obs.scene == "iRacing" and "not reachable" in msg, (obs.calls, msg))
+    with tempfile.TemporaryDirectory() as tmp:
+        obs, rig = FakeObs("Main"), FakeRig()
+        r = make(tmp, {"url": "x", "poll_s": 0.05}, rig, obs)
+        r.go_live()
+        check("GL6 nothing on: scene untouched", obs.calls == [], obs.calls)
 
     # a second replay while the first is on: one return, to the ORIGINAL scene
     with tempfile.TemporaryDirectory() as tmp:
@@ -335,6 +368,18 @@ def dash():
         d.poller.replay_pc._http = lambda *a: (_ for _ in ()).throw(OSError("down"))
         r = client.post("/replay_5s", json={"car_number": "7", "incident_id": 9001}).get_json()
         check("D7 fallback local", r.get("ok") and len(calls) == 1, (r, calls))
+
+        # Go Live on the stream PC: the "rig" (same app) gets /replay/remote/live
+        d.poller.replay_pc._http = http
+        lives = []
+        d.poller.go_live = lambda: (lives.append(1) or (False, "not connected"))
+        obs.scene = "Replay"
+        d.poller.replay_pc._back_to = "iRacing"
+        r = client.post("/go_live").get_json()
+        check("D8 /go_live: both PCs live + OBS back", r.get("ok") and len(lives) == 2
+              and obs.scene == "iRacing" and "replay PC live" in r["message"], (r, lives, obs.calls))
+        r = client.get("/streamdeck/go_live").get_json()
+        check("D9 Stream Deck go_live does the same", len(lives) == 4, (r, lives))
 
 
 if __name__ == "__main__":
