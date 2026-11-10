@@ -100,6 +100,12 @@ so log output and status dots stay visually clear.
 
 ## Other conventions
 
+- **Config files have a page:** `settings_page.py` (launcher button
+  "⚙ Einstellungen", http://127.0.0.1:5090, this PC only). A NEW hand-edited
+  config JSON (or a new key users should set) → add it to `FILES` there (key,
+  kind, default = the module's default, German label / help), to updater
+  `PROTECTED` and `.gitignore`; `python3 test_settings_page.py` checks the
+  defaults against the modules and that every file is protected + ignored.
 - Port numbers increment from 5000. Don't reuse.
 - **Shared poller base class:** `iracing_sdk_base.py` provides `SDKPoller`
   (IRSDK connection, poll loop, Lock-protected `data` dict, graceful stop)
@@ -180,6 +186,32 @@ an entry to `CAR_PREFIX_TO_BRAND` in `car_brands.py` if it's a car family
 that isn't already prefix-matched.
 
 ## Recent sessions
+
+**November 10, 2026 (EINSTELLUNGEN page - the config JSONs as one page):**
+Thomas: too many JSON files to remember. Counted: 7 hand-edited overlay configs
+(show_config, commentary_config, championship_config, proam_config, rc_config,
+replay_pc_config, league_manager) + youtube_config (has 5005/youtube/setup) +
+6 iCAS files in racecontrol/data (own UI) + ~8 caches. NEW `settings_page.py`
+(stdlib, no Flask): `FILES` schema per file (groups of fields: bool / int /
+float / intopt / text / textopt / secret / select / time / list / json, dotted
+keys for nested dicts, default + German help), `view()` (secrets never sent,
+SECRET_SET marker; keys the form does not cover = "Weitere Schlüssel" JSON),
+`save()` (merges into the file, unknown keys kept, a key is written only when
+the file has it or it differs from the default, empty secret = keep, "löschen"
+box clears, a select value without an option is kept, broken JSON never
+overwritten, temp + os.replace). Page: nav per file + links to the pages that
+have their own settings (5005 YouTube, iCAS 8080), "applies" line (restart of
+which overlay), after a save "↻ Neu starten: …" restarts the RUNNING overlays
+that use the file via the launcher. Served by the LAUNCHER (`Background`
+thread, 127.0.0.1:5090, POST only from its own origin; busy port retried 20 s;
+no SO_REUSEADDR on Windows; closed before "Update & restart" relaunches and on
+close). launch_gui.py: header button "⚙ Einstellungen", `_running_names`,
+`_restart_tags`. league_manager.json (logger token) was neither gitignored nor
+PROTECTED - added. test_settings_page.py 50/50 (defaults vs show_runner /
+race_commentator / race_qa / race_graphics / cls_proam / remote_replay /
+championship source, read / save / secrets / extra / errors, HTTP + origin,
+launcher helper); launcher run with a stubbed tkinter; page rendered in
+Chromium (desktop + phone). NOT tried on Windows.
 
 **November 10, 2026 (iCASControl 0.1.37 - Auto Steward PROFILES):** Thomas
 switches between IEC and GT3 WCT rules by hand every time. steward.`Profiles`

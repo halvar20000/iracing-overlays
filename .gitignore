@@ -75,3 +75,4 @@ avatar/out/
 racecontrol/data/
 # replay on a second PC (sim rig): its address + OBS scene
 replay_pc_config.json
+league_manager.json

@@ -22,6 +22,16 @@ Der Installer
 `install.bat` kann jederzeit erneut laufen (Reparatur) – eigene Einstellungen
 (Meisterschaft, YouTube, Pro/Am, Logs …) bleiben erhalten.
 
+## Einstellungen
+
+Knopf **„⚙ Einstellungen“** oben im Launcher: eine Seite im Browser
+(`http://127.0.0.1:5090`, nur auf diesem PC) für alle Einstellungsdateien –
+KI-Show, KI-Kommentar / Stimme / Gabi / Frag Claude, Meisterschaft, PRO / AM,
+Race-Control-Banner, Replay-PC, Race-Logger-Upload. Kein JSON mehr von Hand.
+Nach dem Speichern zeigt die Seite, welches Overlay neu starten muss, und
+startet es auf Knopfdruck neu. API-Schlüssel und Passwörter werden nie
+angezeigt: Feld leer lassen = bleibt, wie es ist.
+
 ## Updates
 
 Der Launcher prüft beim Start, ob es auf GitHub etwas Neues gibt. Dann erscheint

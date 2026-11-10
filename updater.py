@@ -67,6 +67,7 @@ PROTECTED = {
     "show_script.json",
     "rc_config.json",
     "replay_pc_config.json",
+    "league_manager.json",          # race logger CLS upload token
 }
 PROTECTED_DIRS = ("logs/", ".git/", "racecontrol/data/")
 

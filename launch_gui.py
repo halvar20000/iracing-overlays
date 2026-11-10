@@ -42,6 +42,10 @@ try:
     import updater  # stdlib only; missing in very old folders -> no banner
 except Exception:  # pragma: no cover
     updater = None
+try:
+    import settings_page  # the config files as one page (stdlib only)
+except Exception:  # pragma: no cover
+    settings_page = None
 
 # ---------------------------------------------------------------------------
 # Overlay definitions — (tag, friendly name, script filename, port, tag color)
@@ -310,6 +314,11 @@ class LauncherApp(tk.Tk):
             for o in OVERLAYS
         }
 
+        self._settings_srv = None
+        if settings_page is not None:
+            self._settings_srv = settings_page.start_in_thread(
+                running_cb=self._running_names, restart_cb=self._restart_tags)
+
         self._build_ui()
         self._size_to_contents()
         self._poll_status()
@@ -393,6 +402,15 @@ class LauncherApp(tk.Tk):
             font=("Segoe UI", 9, "bold"), cursor="hand2",
         )
         btn_stop_all.pack(side="right")
+
+        if settings_page is not None:
+            btn_settings = tk.Button(
+                header, text="⚙ Einstellungen", command=self._open_settings,
+                bg=COLOR_PANEL_ALT, fg=COLOR_TEXT, activebackground="#2a2a38",
+                activeforeground=COLOR_TEXT, relief="flat", padx=14, pady=6,
+                font=("Segoe UI", 9, "bold"), cursor="hand2",
+            )
+            btn_settings.pack(side="right", padx=(0, 6))
 
         # --- update banner (hidden until a check finds something) ---
         self._banner = tk.Frame(self, bg="#1f2a1f", highlightthickness=1,
@@ -611,6 +629,38 @@ class LauncherApp(tk.Tk):
             self._append_log("launcher", "OVERLAYS.html not found - update the "
                              "launcher (or run make_streamdeck_icons.py --table)")
 
+    def _open_settings(self):
+        bg = self._settings_srv
+        if bg is None or bg.srv is None:
+            self._append_log("launcher", "settings page not running"
+                             + (f" ({bg.error})" if bg is not None and bg.error else ""))
+            return
+        webbrowser.open(settings_page.url())
+
+    def _close_settings(self):
+        if self._settings_srv is not None:
+            try:
+                self._settings_srv.close()       # free port 5090 for the next launcher
+            except Exception:
+                pass
+
+    def _running_names(self):
+        """For the settings page: {tag: name} of the overlays running now."""
+        return {o[0]: o[1] for o in OVERLAYS if self.controllers[o[0]].is_running}
+
+    def _restart_tags(self, tags):
+        """Settings page: restart these overlays (only the running ones)."""
+        todo = [t for t in tags if t in self.controllers and self.controllers[t].is_running]
+
+        def work():
+            for t in todo:
+                self.log_queue.put((t, "restarting (new settings)"))
+                self.controllers[t].stop()
+                self.controllers[t].start()
+                time.sleep(0.15)
+        threading.Thread(target=work, daemon=True).start()
+        return todo
+
     def _toggle_log(self):
         if self._log_visible.get():
             self._log_frame.pack_forget()
@@ -788,6 +838,7 @@ class LauncherApp(tk.Tk):
         kw = dict(cwd=str(HERE))
         if os.name == "nt":
             kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+        self._close_settings()
         try:
             subprocess.Popen(args, **kw)
         except Exception as e:
@@ -811,6 +862,7 @@ class LauncherApp(tk.Tk):
 
     # ----- shutdown --------------------------------------------------------
     def _on_close(self):
+        self._close_settings()
         running = [c for c in self.controllers.values() if c.is_running]
         if running:
             self._append_log("launcher", f"stopping {len(running)} overlay(s)…")
