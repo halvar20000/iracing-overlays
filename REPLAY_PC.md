@@ -58,7 +58,8 @@ Alles wie bisher am Dashboard des **Stream-PCs**: ▶ 10s / 20s in der Incident-
 |---|---|---|
 | `url` | – | Adresse des Sim-Rigs (IP reicht, Port 5000 wird ergänzt). Leer = aus |
 | `scene` | `Replay` | OBS-Szene während des Replays. `""` = OBS nicht anfassen |
-| `source` | – | statt Szenenwechsel: diese Quelle (z. B. `Replay NDI`) in der laufenden Szene ein- und danach wieder ausblenden. Die NDI-Quelle dafür in die iRacing-Szene legen, **unter** die Overlays |
+| `source` | – | statt Szenenwechsel: diese Quelle (z. B. `Replay NDI`) in der laufenden Szene ein- und danach wieder ausblenden. Mehrere Namen mit Komma, z. B. `.73remoteview, .73Live_Replay, .73Owncarlivery` (das, was die Stream-Deck-Taste „.73Remote“ einblendet). Die NDI-Quelle dafür in die iRacing-Szene legen, **unter** die Overlays |
+| `hide_sources` | `[]` | nur mit `source`: diese Quellen solange ausblenden und danach wieder einblenden, z. B. `["Owncarlivery", "Replay/Live"]` (nur die, die gerade an waren) |
 | `follow` | `true` | auch Replays einblenden, die direkt am Sim-Rig gestartet wurden. `false` = nur die vom Stream-PC |
 | `back_scene` | – | feste Szene danach (sonst die Szene vor dem Replay) |
 | `transition` | – | OBS-Übergang (z. B. `Replay Stinger`) nur für die Replay-Wechsel, danach wieder der vorige |

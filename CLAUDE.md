@@ -187,6 +187,16 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 10, 2026 (replay PC: several sources instead of the scene switch):**
+Thomas: a replay started on .73's dashboard should play in the iRacing scene,
+like his Stream Deck multi-action ".73Remote" (a key cannot be pressed from
+outside). replay_pc_config `source` takes "a, b, c" (all shown), NEW
+`hide_sources` [names] = off meanwhile (only those that were on), back on
+after. `remote_replay.source_names()`; settings page field. Read from his OBS:
+the iRacing scene holds .73remoteview / .73Live_Replay / .73Owncarlivery (off)
+and Owncarlivery / Replay/Live (on). With `source` there is no scene switch,
+so the stinger (`transition`) does not play. test_remote_replay M1-M5.
+
 **November 10, 2026 (Go Live ends a remote replay):** Thomas: sometimes the
 rig's replay shows nothing and Go Live on the stream PC did not help. Dashboard
 /go_live + Stream Deck go_live → `_go_live_all()`: local go_live AND, with a

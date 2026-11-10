@@ -18,6 +18,10 @@ restart). OBS connection = show_config.json "obs".
 `source` set (e.g. "Replay NDI") = no scene switch: that source is shown in
 the scene on air (the NDI picture placed in the iRacing scene, below the
 overlays) and hidden again at the same moment the scene would switch back.
+Several names "a, b, c" = all of them (2026-11-10, Thomas: the NDI picture +
+the rig's own live badge / livery, what his ".73Remote" Stream Deck key
+shows); `hide_sources` [names] = switched off meanwhile (only those that were
+on) and back on afterwards (e.g. the stream PC's own badge / livery).
 `follow` (default on): the sim rig's OWN replays (started on its dashboard or
 in iRacing there) bring the source / scene up too - a background thread polls
 the rig's /replay/remote/status, which carries its playback mode; not live =
@@ -48,11 +52,18 @@ HERE = Path(__file__).resolve().parent
 CONFIG_FILE = HERE / "replay_pc_config.json"
 DEFAULTS = {"url": "", "scene": "Replay", "source": "", "back_scene": "", "fallback_local": True,
             "timeout_s": 3.0, "extra_s": 20.0, "poll_s": 0.5, "follow": True,
-            "transition": ""}
+            "transition": "", "hide_sources": []}
 TRANSITION_RESTORE_S = 2.5  # previous OBS transition back after this (stinger ~1.1 s)
 FOLLOW_LIVE_POLLS = 2       # rig reported live this many polls in a row = hide
 FOLLOW_LOST_POLLS = 6       # rig unreachable this many polls while shown = hide
 FOLLOW_QUIET_S = 3.0        # after a replay sent from here, its return to live is not a new replay
+
+
+def source_names(value) -> list:
+    """'a, b' or ["a", "b"] -> ["a", "b"] (OBS source names)."""
+    if isinstance(value, str):
+        value = value.split(",")
+    return [str(v).strip() for v in (value or []) if str(v).strip()]
 
 
 def normalize_url(url: str) -> str:
@@ -88,7 +99,7 @@ class RemoteReplay:
         self._lock = threading.Lock()
         self._gen = 0                        # newest replay; older watchers step aside
         self._back_to = None                 # scene to return to (the one before the FIRST replay)
-        self._shown = None                   # (scene, source) shown in source mode
+        self._shown = None                   # (scene, [shown], [hidden]) in source mode
         self.last = {}                       # status for /replay_pc
         self._watching = 0                   # replays sent from here still being watched
         self._following = False              # source / scene up because of the rig's own replay
@@ -166,16 +177,28 @@ class RemoteReplay:
         return True, f"replay on the second PC (#{car_number})"
 
     def _show(self, cfg):
-        source = cfg.get("source") or ""
-        scene = "" if source else (cfg.get("scene") or "")
-        if source:
+        names = source_names(cfg.get("source"))
+        scene = "" if names else (cfg.get("scene") or "")
+        if names:
             cur = self._obs_call(lambda o: o.current_scene())
-            if cur and self._obs_call(lambda o: o.set_visible(cur, source, True) or True):
+            with self._lock:
+                if not cur or self._shown is not None:
+                    return
+            items = self._obs_call(lambda o: o.scene_items(cur)) or {}
+            shown = [n for n in names
+                     if self._obs_call(lambda o, n=n: o.set_visible(cur, n, True) or True)]
+            hidden = []
+            if shown:
+                # cfg "hide_sources": off while the replay is on, back on after
+                for n in source_names(cfg.get("hide_sources")):
+                    if n not in names and items.get(n, (0, False))[1] \
+                            and self._obs_call(lambda o, n=n: o.set_visible(cur, n, False) or True):
+                        hidden.append(n)
                 with self._lock:
-                    if self._shown is None:
-                        self._shown = (cur, source)
-            elif cur:
-                print(f"[replay-pc] source '{source}' not in scene '{cur}'")
+                    self._shown = (cur, shown, hidden)
+            missing = [n for n in names if n not in shown]
+            if missing:
+                print(f"[replay-pc] source(s) {missing} not in scene '{cur}'")
         if scene:
             cur = self._obs_call(lambda o: o.current_scene())
             with self._lock:
@@ -209,13 +232,16 @@ class RemoteReplay:
         self._obs_call(lambda o: o.set_transition(prev))
 
     def _hide(self, cfg, why):
-        source = cfg.get("source") or ""
-        scene = "" if source else (cfg.get("scene") or "")
+        scene = "" if source_names(cfg.get("source")) else (cfg.get("scene") or "")
         with self._lock:
             shown, self._shown = self._shown, None
         if shown:
-            self._obs_call(lambda o: o.set_visible(shown[0], shown[1], False))
-            print(f"[replay-pc] '{shown[1]}' hidden in '{shown[0]}' ({why})")
+            sc, on, off = shown
+            for n in on:
+                self._obs_call(lambda o, n=n: o.set_visible(sc, n, False))
+            for n in off:
+                self._obs_call(lambda o, n=n: o.set_visible(sc, n, True))
+            print(f"[replay-pc] {on} hidden in '{sc}'" + (f", {off} back on" if off else "") + f" ({why})")
         if scene:
             with self._lock:
                 back = self._back_to
@@ -362,7 +388,7 @@ class RemoteReplay:
     def status(self) -> dict:
         cfg = self.config()
         return {"enabled": bool(cfg["url"]), "url": cfg["url"], "scene": cfg.get("scene"),
-                "source": cfg.get("source"),
+                "source": cfg.get("source"), "hide_sources": source_names(cfg.get("hide_sources")),
                 "back_scene": cfg.get("back_scene"), "transition": cfg.get("transition") or "", "follow": bool(cfg.get("follow", True)),
                 "following": self._following, "rig_mode": self.follow_state,
                 "fallback_local": bool(cfg.get("fallback_local", True)), "last": self.last}

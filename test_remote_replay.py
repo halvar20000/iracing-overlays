@@ -38,6 +38,9 @@ class FakeObs:
 
     items = {"iRacing": {"Replay NDI": False}}
 
+    def scene_items(self, scene):
+        return {n: (i, v) for i, (n, v) in enumerate(self.items.get(scene, {}).items())}
+
     def set_visible(self, scene, source, visible):
         if source not in self.items.get(scene, {}):
             raise KeyError(f"{source} not in {scene}")
@@ -337,6 +340,27 @@ def unit():
         rig.down, rig.mode, obs.calls = False, None, []
         r.follow_tick()
         check("F11 older rig without mode = nothing", obs.calls == [], obs.calls)
+    # several sources + hide_sources (Thomas's ".73Remote" key as config)
+    with tempfile.TemporaryDirectory() as tmp:
+        obs, rig = FakeObs("iRacing"), FakeRig(replay_s=0.3)
+        obs.items = {"iRacing": {".73remoteview": False, ".73Live_Replay": False, ".73Owncarlivery": False,
+                                 "Owncarlivery": True, "Replay/Live": True, "Trackmap": False}}
+        r = make(tmp, {"url": "x", "source": ".73remoteview, .73Live_Replay, .73Owncarlivery, Fehlt",
+                       "hide_sources": ["Owncarlivery", "Replay/Live", "Trackmap"], "poll_s": 0.05}, rig, obs)
+        rig.mode = "replay"
+        r.follow_tick()
+        it = obs.items["iRacing"]
+        check("M1 all three shown, local ones off", it[".73remoteview"] and it[".73Live_Replay"]
+              and it[".73Owncarlivery"] and not it["Owncarlivery"] and not it["Replay/Live"], obs.calls)
+        check("M2 a source that was off is not touched", "iRacing/Trackmap=False" not in obs.calls, obs.calls)
+        rig.mode = "live"
+        r.follow_tick(); r.follow_tick()
+        check("M3 back as before", not it[".73remoteview"] and not it[".73Live_Replay"]
+              and not it[".73Owncarlivery"] and it["Owncarlivery"] and it["Replay/Live"]
+              and not it["Trackmap"], obs.calls)
+        check("M4 status lists hide_sources", r.status()["hide_sources"] == ["Owncarlivery", "Replay/Live", "Trackmap"])
+        check("M5 names", rr.source_names("a, ,b") == ["a", "b"] and rr.source_names(["x "]) == ["x"]
+              and rr.source_names(None) == [])
     with tempfile.TemporaryDirectory() as tmp:
         obs, rig = FakeObs("Main"), FakeRig()
         rig.mode = "replay"

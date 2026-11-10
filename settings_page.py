@@ -226,7 +226,11 @@ FILES = [
         {"title": "Replay-PC", "fields": [
             F("url", "text", "", "Adresse des Replay-PCs", "z. B. 192.168.86.73. Leer = aus."),
             F("scene", "text", "Replay", "OBS-Szene während des Replays", "Leer = Szene nicht wechseln."),
-            F("source", "text", "", "Stattdessen diese Quelle einblenden", "z. B. Replay NDI. Leer = Szene wechseln."),
+            F("source", "text", "", "Stattdessen diese Quelle(n) einblenden",
+              "In der Szene, die gerade läuft, z. B. .73remoteview, .73Live_Replay, .73Owncarlivery "
+              "(durch Komma getrennt). Leer = Szene wechseln."),
+            F("hide_sources", "list", [], "Diese Quellen solange ausblenden",
+              "Nur mit Quelle(n) oben, z. B. Owncarlivery, Replay/Live. Danach wieder an."),
             F("back_scene", "text", "", "Feste Szene danach", "Leer = die Szene vor dem Replay."),
             F("transition", "text", "", "OBS-Übergang nur für diese Wechsel",
               "z. B. Replay Stinger (Name wie im Dock Szenenübergänge). Die Szenen dann OHNE "
