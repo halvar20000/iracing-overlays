@@ -353,40 +353,8 @@ class LauncherApp(tk.Tk):
         header = tk.Frame(self, bg=COLOR_BG)
         header.pack(fill="x", padx=16, pady=(14, 6))
 
-        # HALVAR TV Overlay logo (img/launcher_logo.png, on the launcher's own
-        # background colour); the plain text title if it is missing / unreadable
-        self._logo = None
-        try:
-            self._logo = tk.PhotoImage(file=os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                                         "img", "launcher_logo.png"))
-        except Exception:
-            self._logo = None
-        if self._logo is not None:
-            title = tk.Label(header, image=self._logo, bg=COLOR_BG, bd=0)
-        else:
-            title = tk.Label(
-                header,
-                text="iRacing Overlays",
-                bg=COLOR_BG, fg=COLOR_TEXT,
-                font=("Segoe UI", 17, "bold"),
-            )
-        title.pack(side="left")
-
-        subtitle = tk.Label(
-            header,
-            text="Start, stop, and monitor all your OBS overlays",
-            bg=COLOR_BG, fg=COLOR_MUTED,
-            font=("Segoe UI", 9),
-        )
-        subtitle.pack(side="left", padx=(10, 0), pady=(6, 0))
-
-        self._version_lbl = tk.Label(
-            header, text="", bg=COLOR_BG, fg=COLOR_MUTED,
-            font=("Segoe UI", 8), cursor="hand2",
-        )
-        self._version_lbl.pack(side="left", padx=(12, 0), pady=(6, 0))
-        self._version_lbl.bind("<Button-1>", lambda e: self._check_updates(manual=True))
-
+        # Buttons first: pack hands out the width in packing order, so the
+        # labels on the left are cut off at a narrow window, not the buttons.
         btn_start_all = tk.Button(
             header, text="Start All", command=self._start_all,
             bg=COLOR_ACCENT, fg="white", activebackground=COLOR_ACCENT2,
@@ -411,6 +379,40 @@ class LauncherApp(tk.Tk):
                 font=("Segoe UI", 9, "bold"), cursor="hand2",
             )
             btn_settings.pack(side="right", padx=(0, 6))
+
+        # HALVAR TV Overlay logo (img/launcher_logo.png, on the launcher's own
+        # background colour); the plain text title if it is missing / unreadable
+        self._logo = None
+        try:
+            self._logo = tk.PhotoImage(file=os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                         "img", "launcher_logo.png"))
+        except Exception:
+            self._logo = None
+        if self._logo is not None:
+            title = tk.Label(header, image=self._logo, bg=COLOR_BG, bd=0)
+        else:
+            title = tk.Label(
+                header,
+                text="iRacing Overlays",
+                bg=COLOR_BG, fg=COLOR_TEXT,
+                font=("Segoe UI", 17, "bold"),
+            )
+        title.pack(side="left")
+
+        self._version_lbl = tk.Label(
+            header, text="", bg=COLOR_BG, fg=COLOR_MUTED,
+            font=("Segoe UI", 8), cursor="hand2",
+        )
+        self._version_lbl.pack(side="left", padx=(12, 0), pady=(6, 0))
+        self._version_lbl.bind("<Button-1>", lambda e: self._check_updates(manual=True))
+
+        subtitle = tk.Label(
+            header,
+            text="Start, stop, and monitor all your OBS overlays",
+            bg=COLOR_BG, fg=COLOR_MUTED,
+            font=("Segoe UI", 9),
+        )
+        subtitle.pack(side="left", padx=(10, 0), pady=(6, 0))
 
         # --- update banner (hidden until a check finds something) ---
         self._banner = tk.Frame(self, bg="#1f2a1f", highlightthickness=1,
