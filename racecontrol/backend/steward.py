@@ -80,6 +80,7 @@ the PRO-behind text also %pcnr% / %pdname% (the PRO car).
 The chat lines only go out while the header's iRACING CHAT is ON.
 
 Config: racecontrol/data/steward_config.json (gitignored, updater-protected).
+Profiles (one set of rules per league): data/steward_profiles.json.
 """
 
 from __future__ import annotations
@@ -340,6 +341,112 @@ def save_config(cfg: dict, path: Optional[Path] = None) -> None:
         tmp.replace(path)
     except Exception as exc:
         print(f"[steward] could not save {path.name}: {exc}", file=sys.stderr)
+
+
+# -- profiles (2026-11-10 Thomas: one set of rules per league) -----------------
+# data/steward_profiles.json {"active": name, "profiles": {name: cfg}}. The
+# active profile follows every Rules save; loading one replaces the rules.
+# "enabled" (the header ON / OFF switch) is never part of a profile.
+PROFILES_PATH = DATA_DIR / "steward_profiles.json"
+PROFILE_MAX = 20
+SEED_WCT = "GT3 WCT"
+SEED_OLD = "Bisherige Einstellungen"
+
+
+def profile_name(name) -> str:
+    return " ".join(str(name or "").split())[:40]
+
+
+def _profile_cfg(cfg: dict) -> dict:
+    out = clean(cfg)
+    out.pop("enabled", None)
+    return out
+
+
+class Profiles:
+    def __init__(self, path: Optional[Path] = None):
+        self.path = path or PROFILES_PATH
+        self.active = ""
+        self.items: dict = {}
+        self._load()
+
+    def _load(self) -> None:
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+            self.items = {profile_name(k): _profile_cfg(v)
+                          for k, v in (raw.get("profiles") or {}).items()
+                          if profile_name(k) and isinstance(v, dict)}
+            self.active = profile_name(raw.get("active"))
+            if self.active not in self.items:
+                self.active = ""
+        except FileNotFoundError:
+            pass
+        except Exception as exc:
+            print(f"[steward] {self.path.name} unreadable: {exc}", file=sys.stderr)
+
+    def seed(self, current: dict) -> None:
+        """First start: the GT3 WCT defaults + whatever was set up so far."""
+        if self.items or self.path.exists():
+            return
+        wct = dict(DEFAULT_CONFIG, seq_enabled=True)
+        self.items = {SEED_WCT: _profile_cfg(wct)}
+        old = _profile_cfg(current)
+        if old != self.items[SEED_WCT]:
+            self.items[SEED_OLD] = old
+            self.active = SEED_OLD
+        else:
+            self.active = SEED_WCT
+        self._save()
+
+    def _save(self) -> None:
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"active": self.active,
+                                       "profiles": self.items}, indent=1),
+                           encoding="utf-8")
+            tmp.replace(self.path)
+        except Exception as exc:
+            print(f"[steward] could not save {self.path.name}: {exc}", file=sys.stderr)
+
+    def status(self) -> dict:
+        return {"active": self.active, "names": sorted(self.items, key=str.lower)}
+
+    def follow_edit(self, cfg: dict) -> None:
+        """Rules saved: the active profile takes the new values."""
+        if self.active in self.items:
+            self.items[self.active] = _profile_cfg(cfg)
+            self._save()
+
+    def save_as(self, name, cfg: dict) -> str:
+        name = profile_name(name)
+        if not name:
+            return "profile name missing"
+        if name not in self.items and len(self.items) >= PROFILE_MAX:
+            return f"at most {PROFILE_MAX} profiles"
+        self.items[name] = _profile_cfg(cfg)
+        self.active = name
+        self._save()
+        return ""
+
+    def load(self, name, current: dict):
+        """-> new rules (current ON / OFF kept) or None for an unknown name."""
+        name = profile_name(name)
+        if name not in self.items:
+            return None
+        self.active = name
+        self._save()
+        return clean(dict(self.items[name], enabled=bool(current.get("enabled", True))))
+
+    def delete(self, name) -> bool:
+        name = profile_name(name)
+        if name not in self.items:
+            return False
+        del self.items[name]
+        if self.active == name:
+            self.active = ""
+        self._save()
+        return True
 
 
 # -- the rules that act during a session ---------------------------------------

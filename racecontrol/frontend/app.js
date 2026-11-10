@@ -270,9 +270,51 @@ function announceAuto() {
   State.lastAutoId = max;
 }
 
+// profiles (one set of rules per league)
+function renderStewardProfiles() {
+  const p = (State.steward && State.steward.profiles) || { active: '', names: [] };
+  const sel = $('#steward-profile');
+  const key = JSON.stringify(p);
+  if (sel.dataset.key !== key && document.activeElement !== sel) {
+    sel.dataset.key = key;
+    sel.innerHTML = (p.active ? '' : '<option value="">- no profile -</option>')
+      + p.names.map((n) => `<option>${esc(n)}</option>`).join('');
+    sel.value = p.active || '';
+  }
+  $('#sdlg-prof').textContent = p.active || '- none -';
+}
+function loadStewardProfile() {
+  const sel = $('#steward-profile');
+  const name = sel.value;
+  const p = (State.steward && State.steward.profiles) || {};
+  if (!name || name === p.active) return;
+  if (!confirm(`Load the Auto Steward profile "${name}"? Its rules replace the current ones.`)) {
+    sel.value = p.active || '';
+    return;
+  }
+  send({ action: 'steward_profile', op: 'load', name });
+}
+function saveStewardProfileAs() {
+  const name = (prompt('Name of the new profile (e.g. IEC, GT3 WCT):') || '').trim();
+  if (!name) return;
+  const names = ((State.steward && State.steward.profiles) || {}).names || [];
+  if (names.includes(name) && !confirm(`Overwrite the profile "${name}"?`)) return;
+  // the dialog's values go into the NEW profile only, not the old active one
+  const rules = collectStewardRules({});
+  $('#sdlg').classList.add('hidden');
+  send({ action: 'steward_profile', op: 'save_as', name, rules });
+}
+function deleteStewardProfile() {
+  const name = ((State.steward && State.steward.profiles) || {}).active;
+  if (!name) return;
+  if (!confirm(`Delete the profile "${name}"? The rules themselves stay as they are.`)) return;
+  send({ action: 'steward_profile', op: 'delete', name });
+}
+
 function updateStewardToggle() {
   const s = State.steward;
   if (!s) return;
+  renderStewardProfiles();
   const t = $('#steward-toggle');
   t.textContent = s.enabled ? 'AUTO STEWARD ON' : 'AUTO STEWARD OFF';
   t.className = 'chat-toggle steward ' + (s.enabled ? 'on' : 'off');
@@ -341,7 +383,9 @@ function syncBlueSections() {
 function saveStewardRules(ok) {
   $('#sdlg').classList.add('hidden');
   if (!ok) return;
-  const msg = { action: 'set_steward' };
+  send(collectStewardRules({ action: 'set_steward' }));
+}
+function collectStewardRules(msg) {
   STEWARD_FIELDS.forEach((k) => {
     const el = $('#s-' + k);
     msg[k] = el.type === 'checkbox' ? el.checked
@@ -352,7 +396,7 @@ function saveStewardRules(ok) {
     at: r.querySelector('.seq-t').value.trim(),
     text: r.querySelector('.seq-x').value.trim(),
   })).filter((st) => st.at && st.text);
-  send(msg);
+  return msg;
 }
 
 async function askStreamUrl() {
@@ -958,6 +1002,9 @@ function wire() {
   $('#steward-toggle').addEventListener('click', () =>
     send({ action: 'set_steward', enabled: !(State.steward && State.steward.enabled) }));
   $('#steward-rules').addEventListener('click', openStewardRules);
+  $('#steward-profile').addEventListener('change', loadStewardProfile);
+  $('#prof-saveas').addEventListener('click', saveStewardProfileAs);
+  $('#prof-del').addEventListener('click', deleteStewardProfile);
   $('#s-cb_enabled').addEventListener('change', syncBlueSections);
   $('#sdlg-ok').addEventListener('click', () => saveStewardRules(true));
   $('#seq-add').addEventListener('click', () => addSeqRow());

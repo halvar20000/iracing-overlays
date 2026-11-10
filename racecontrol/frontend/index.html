@@ -57,6 +57,7 @@
       <div class="chat-box" title="Auto Steward: incident limit (15x, then every 6x), full course caution when several cars crash at once, timed sequencer messages (GT3 WCT quali AM / PRO), blue flags">
         <button id="steward-toggle" class="chat-toggle steward off">AUTO STEWARD OFF</button>
         <div class="chat-sub">
+          <select id="steward-profile" title="Profile = one set of rules per league (IEC, GT3 WCT, ...). Choosing one loads its rules; Rules saves go into the active profile."></select>
           <button id="steward-rules" title="Limits, caution, sequencer, blue flags">Rules</button>
         </div>
       </div>
@@ -378,6 +379,10 @@
   <div class="dlg sdlg">
     <div class="dlg-head"><span>Auto Steward rules</span>
       <button class="dlg-x" id="sdlg-x">&times;</button></div>
+    <div class="prof-row">Profile: <b id="sdlg-prof">-</b>
+      <button type="button" id="prof-saveas" title="Save the rules in this dialog under a new name (e.g. IEC)">Save as new profile...</button>
+      <button type="button" id="prof-del" title="Delete the active profile (the rules stay as they are)">Delete profile</button>
+      <span class="note">Save writes into the active profile. Choose a profile in the header to load it.</span></div>
     <fieldset><legend>Incident limit (message only - iRacing gives the penalty)</legend>
       <label>Drive through at <input id="s-dt_first" type="number" min="0" max="99">x,
         then every further <input id="s-dt_every" type="number" min="0" max="99">x</label>

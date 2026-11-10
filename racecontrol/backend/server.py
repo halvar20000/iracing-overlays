@@ -74,6 +74,8 @@ class Engine:
         self.chat_cfg = chat.load_config()
         self.stream_cfg = stream.load_config()
         self.steward_cfg = steward.load_config()
+        self.profiles = steward.Profiles()
+        self.profiles.seed(self.steward_cfg)
         self.auto = steward.AutoSteward()
         self.proam = proam.ProAm()            # CLS PRO / AM (GT3 WCT)
         # (laps, deadline) - !pacelaps for an auto caution once it is out
@@ -450,7 +452,7 @@ class Engine:
     # -- decisions onto the stream (step 3) -----------------------------------
 
     def steward_status(self) -> dict:
-        return dict(self.steward_cfg)
+        return dict(self.steward_cfg, profiles=self.profiles.status())
 
     def stream_status(self) -> dict:
         return {"enabled": bool(self.stream_cfg.get("enabled")),
@@ -730,6 +732,42 @@ class Engine:
             return {"type": "ack", "text": "stream banner "
                     + ("ON" if self.stream_cfg["enabled"] else "OFF")}
 
+        if action == "steward_profile":
+            op, name = msg.get("op"), steward.profile_name(msg.get("name"))
+            if op == "load":
+                cfg = self.profiles.load(name, self.steward_cfg)
+                if cfg is None:
+                    return {"type": "ack", "text": f"no profile '{name}'"}
+                self.steward_cfg = cfg
+                steward.save_config(cfg)
+                st.note_system(f"Auto Steward profile '{name}' loaded: "
+                               f"incidents {steward.describe(cfg)}")
+                return {"type": "ack", "text": f"profile {name} loaded"}
+            if op == "save_as":
+                rules = msg.get("rules")
+                if isinstance(rules, dict):        # the Rules dialog's values
+                    cfg = dict(self.steward_cfg)
+                    cfg.update({k: v for k, v in rules.items()
+                                if k in steward.DEFAULT_CONFIG and k != "enabled"})
+                    cfg = steward.clean(cfg)
+                else:
+                    cfg = self.steward_cfg
+                err = self.profiles.save_as(name, cfg)
+                if err:
+                    return {"type": "ack", "text": err}
+                self.steward_cfg = cfg
+                steward.save_config(cfg)
+                if err:
+                    return {"type": "ack", "text": err}
+                st.note_system(f"Auto Steward rules saved as profile '{name}'")
+                return {"type": "ack", "text": f"saved as profile {name}"}
+            if op == "delete":
+                if not self.profiles.delete(name):
+                    return {"type": "ack", "text": f"no profile '{name}'"}
+                st.note_system(f"Auto Steward profile '{name}' deleted")
+                return {"type": "ack", "text": f"profile {name} deleted"}
+            return {"type": "ack", "text": f"profile: unknown '{op}'"}
+
         if action == "set_steward":
             cfg = dict(self.steward_cfg)
             for k in steward.DEFAULT_CONFIG:
@@ -737,6 +775,7 @@ class Engine:
                     cfg[k] = msg[k]
             self.steward_cfg = steward.clean(cfg)
             steward.save_config(self.steward_cfg)
+            self.profiles.follow_edit(self.steward_cfg)
             c = self.steward_cfg
             st.note_system(
                 f"Auto Steward {'ON' if c['enabled'] else 'OFF'}: incidents "

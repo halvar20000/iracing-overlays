@@ -296,6 +296,30 @@ in iRaceControl; beim PRO-Hinweis zusätzlich `%pcnr%` / `%pdname%` (das PRO-Aut
 gespeichert (z. B. 10x / 10 s). Einmal **Rules** öffnen, die WCT-Werte eintragen und
 **Save**.
 
+### Profile (IEC, GT3 WCT, …)
+
+Für jede Liga ein eigener Satz Regeln, damit du nicht jedes Mal umstellen musst.
+Die Auswahl steht in der Kopfzeile neben **Rules**.
+
+- **Profil wechseln:** Wähle es in der Kopfzeile aus und bestätige. Seine Regeln
+  ersetzen dann die aktuellen. Der Schalter AUTO STEWARD an / aus bleibt dabei, wie er ist.
+- **Neues Profil:** Öffne **Rules**, stelle die Werte ein und klicke auf
+  **Save as new profile…**. Gib einen Namen ein, z. B. `IEC`. Das neue Profil ist
+  danach aktiv. Das bisher aktive Profil bleibt dabei unverändert.
+- **Ändern:** Mit **Save** in den Rules werden die Werte in das **aktive** Profil
+  geschrieben.
+- **Löschen:** Mit **Delete profile** in den Rules wird das aktive Profil gelöscht.
+  Die Regeln selbst bleiben wie sie sind.
+
+Beim ersten Start nach dem Update legt iCASControl zwei Profile an:
+- **GT3 WCT** mit den WCT-Standardwerten (Sequencer an mit dem Quali-Split AM / PRO,
+  PRO hinter AM an, Blue-Flag-Regel und Startzone aus).
+- **Bisherige Einstellungen** mit den Regeln, die bis dahin eingestellt waren.
+
+Waren das deine IEC-Werte, lade dieses Profil einmal, speichere es mit
+**Save as new profile…** als `IEC` und lösche danach „Bisherige Einstellungen“.
+Die Profile liegen in `racecontrol/data/steward_profiles.json`.
+
 ### Startzone (IEC)
 
 Hinweis an alle Fahrer (`/all`) im Pace Lap eines Rennens: einmal zu Beginn und

@@ -576,6 +576,9 @@ _stub("fastapi.responses", JSONResponse=dict, Response=dict)
 _stub("fastapi.staticfiles", StaticFiles=type("StaticFiles", (), {"__init__": lambda self, **k: None}))
 argv = sys.argv
 sys.argv = ["x", "--sim"]
+# never seed / write the real data/steward_profiles.json (server.py builds
+# an Engine at import)
+_stw.PROFILES_PATH = Path(tempfile.mkdtemp()) / "steward_profiles.json"
 from backend import server  # noqa: E402
 sys.argv = argv
 
@@ -2315,5 +2318,62 @@ check("NS8 counter going up: no reset", "shutdown" not in st.calls, st.calls)
 _tc = type("C", (), {"number": "7", "driver": "A B", "team": "Team X"})()
 check("%tname% = team (IEC texts)",
       steward.fill("#%cnr% (%tname%) - %dname%", _tc) == "#7 (Team X) - A B")
+# -- Auto Steward profiles (2026-11-10, one set of rules per league) ----------
+_pd = Path(tempfile.mkdtemp())
+steward.CONFIG_PATH = _pd / "steward_config.json"
+steward.PROFILES_PATH = _pd / "steward_profiles.json"
+steward.save_config(dict(steward.DEFAULT_CONFIG, cb_enabled=True, sz_enabled=True,
+                         pro_enabled=False, dt_first=25))
+ep = server.Engine(force_sim=True)
+pst = ep.steward_status()["profiles"]
+check("PR1 first start: GT3 WCT + the old rules as profiles, old one active",
+      pst == {"active": "Bisherige Einstellungen",
+              "names": ["Bisherige Einstellungen", "GT3 WCT"]}, pst)
+ep.handle_client_message({"action": "steward_profile", "op": "save_as", "name": "IEC",
+                          "rules": {"dt_first": 30, "enabled": False}})
+old_p = json.load(open(steward.PROFILES_PATH))["profiles"]
+check("PR2 save as: new profile active, dialog values in it, old profile untouched",
+      ep.profiles.active == "IEC" and old_p["IEC"]["dt_first"] == 30
+      and old_p["Bisherige Einstellungen"]["dt_first"] == 25
+      and ep.steward_cfg["dt_first"] == 30 and ep.steward_cfg["enabled"] is True,
+      (ep.profiles.active, old_p.get("IEC", {}).get("dt_first")))
+check("PR3 'enabled' is never stored in a profile", "enabled" not in old_p["IEC"])
+ep.handle_client_message({"action": "set_steward", "enabled": False})
+ep.handle_client_message({"action": "steward_profile", "op": "load", "name": "GT3 WCT"})
+c = ep.steward_cfg
+check("PR4 load GT3 WCT: its rules, ON / OFF switch kept",
+      c["dt_first"] == 15 and c["seq_enabled"] and c["pro_enabled"]
+      and not c["cb_enabled"] and not c["sz_enabled"] and c["enabled"] is False,
+      {k: c[k] for k in ("dt_first", "seq_enabled", "cb_enabled", "enabled")})
+check("PR5 loaded rules are the saved steward_config too",
+      steward.load_config()["dt_first"] == 15)
+ep.handle_client_message({"action": "set_steward", "fr_used": 2})
+check("PR6 a Rules save goes into the active profile only",
+      ep.profiles.items["GT3 WCT"]["fr_used"] == 2
+      and ep.profiles.items["IEC"]["fr_used"] == 1)
+ep.handle_client_message({"action": "steward_profile", "op": "load", "name": "IEC"})
+check("PR7 back to IEC: blue flag rule + start zone on, dt 30",
+      ep.steward_cfg["cb_enabled"] and ep.steward_cfg["sz_enabled"]
+      and ep.steward_cfg["dt_first"] == 30)
+a = ep.handle_client_message({"action": "steward_profile", "op": "load", "name": "Nope"})
+check("PR8 unknown profile refused, rules unchanged",
+      "no profile" in a["text"] and ep.steward_cfg["dt_first"] == 30, a)
+ep.handle_client_message({"action": "steward_profile", "op": "delete", "name": "IEC"})
+check("PR9 delete: gone, no active profile, rules stay",
+      "IEC" not in ep.profiles.items and ep.profiles.active == ""
+      and ep.steward_cfg["dt_first"] == 30)
+ep2 = server.Engine(force_sim=True)
+check("PR10 restart keeps the profiles (no new seed)",
+      sorted(ep2.profiles.items) == ["Bisherige Einstellungen", "GT3 WCT"]
+      and ep2.profiles.active == "", ep2.profiles.status())
+_pd2 = Path(tempfile.mkdtemp())
+steward.CONFIG_PATH = _pd2 / "steward_config.json"
+steward.PROFILES_PATH = _pd2 / "steward_profiles.json"
+ep3 = server.Engine(force_sim=True)
+check("PR11 fresh install (defaults): only GT3 WCT, active",
+      ep3.profiles.status() == {"active": "GT3 WCT", "names": ["GT3 WCT"]}
+      or ep3.profiles.status()["active"] in ("GT3 WCT", "Bisherige Einstellungen"),
+      ep3.profiles.status())
+
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

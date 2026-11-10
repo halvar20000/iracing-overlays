@@ -181,6 +181,21 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 10, 2026 (iCASControl 0.1.37 - Auto Steward PROFILES):** Thomas
+switches between IEC and GT3 WCT rules by hand every time. steward.`Profiles`
+(data/steward_profiles.json {active, profiles {name: cfg}}, max 20, names <= 40
+chars; "enabled" = the header ON / OFF is never stored and kept on a load).
+WS action `steward_profile` {op load | save_as (+ `rules` = the dialog's values,
+go into the NEW profile only) | delete, name}; every set_steward also writes into
+the ACTIVE profile (`follow_edit`). Snapshot `steward.profiles` {active, names}.
+First start seeds "GT3 WCT" (defaults + seq_enabled) and, if different, "Bisherige
+Einstellungen" (= the old steward_config, active). UI: select in the header next
+to Rules (load with confirm), profile row at the top of the Rules dialog (Save as
+new profile..., Delete profile). Follow mode: goes to the MAIN iCAS (its profiles).
+test_incidents PR1-PR11, 387/387 (tests redirect PROFILES_PATH BEFORE importing
+server - it builds an Engine at import and would seed the real data/). Driven in
+headless Chromium against the sim server. Guide section "Profile". Restart iCAS.
+
 **November 9, 2026 (WCT Pro/Am intro races):** Andreas: Jim Gallo, not yet
 PRO/AM, vanished from the result + championship overlays. Rule (CLS v2.51.0):
 an unclassified WCT driver races as a guest, keeps his overall position,
