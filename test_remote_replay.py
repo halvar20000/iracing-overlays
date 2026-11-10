@@ -60,6 +60,10 @@ class FakeRig:
             self.posts.append((url, body))
             if url.endswith("/replay/remote/live"):
                 self.state.abort()
+                self.mode = "live"
+                return {"ok": True}
+            if url.endswith("/replay/remote/jump"):
+                self.mode = "replay"
                 return {"ok": True}
             if self.refuse:
                 return {"ok": False, "message": "not connected"}
@@ -181,6 +185,38 @@ def unit():
         r = make(tmp, {"url": "x", "poll_s": 0.05}, rig, obs)
         r.go_live()
         check("GL6 nothing on: scene untouched", obs.calls == [], obs.calls)
+
+    # Jump to round: rig plays from there, OBS on the replay until Go Live
+    with tempfile.TemporaryDirectory() as tmp:
+        obs, rig = FakeObs("iRacing"), FakeRig()
+        r = make(tmp, {"url": "x", "poll_s": 0.05}, rig, obs)
+        ok, msg = r.jump(37.5, 2)
+        check("J1 rig gets time + session, OBS on Replay", ok and rig.posts[-1] ==
+              ("http://x:5000/replay/remote/jump", {"t_session": 37.5, "session_num": 2})
+              and obs.scene == "Replay", (msg, rig.posts, obs.calls))
+        r._quiet_until = 0
+        for _ in range(5):
+            r.follow_tick()
+        check("J2 stays on Replay while the rig replays", obs.scene == "Replay", obs.calls)
+        r.go_live()
+        check("J3 Go Live: back + rig live", obs.scene == "iRacing" and rig.mode == "live", obs.calls)
+        for _ in range(5):
+            r.follow_tick()
+        check("J4 no extra switches", obs.calls == ["Replay", "iRacing"], obs.calls)
+    with tempfile.TemporaryDirectory() as tmp:
+        obs, rig = FakeObs("iRacing"), FakeRig()
+        r = make(tmp, {"url": "x", "poll_s": 0.05, "follow": False}, rig, obs)
+        r.jump(10.0)
+        r._quiet_until = 0
+        for _ in range(3):
+            r.follow_tick()
+        check("J5 follow off: still on Replay until Go Live", obs.scene == "Replay", obs.calls)
+        r.go_live()
+        check("J6 then back", obs.scene == "iRacing", obs.calls)
+        rig.down = True
+        ok, msg = r.jump(10.0)
+        check("J7 rig down: unreachable, OBS untouched", not ok and msg.startswith("unreachable")
+              and obs.scene == "iRacing", (msg, obs.calls))
 
     # a second replay while the first is on: one return, to the ORIGINAL scene
     with tempfile.TemporaryDirectory() as tmp:
@@ -380,6 +416,20 @@ def dash():
               and obs.scene == "iRacing" and "replay PC live" in r["message"], (r, lives, obs.calls))
         r = client.get("/streamdeck/go_live").get_json()
         check("D9 Stream Deck go_live does the same", len(lives) == 4, (r, lives))
+
+        # Jump to round on the stream PC plays on the "rig"
+        jumps = []
+        d.poller.jump_to_replay_time = lambda t, sess=None: (jumps.append((t, sess)) or (True, "jumped"))
+        d.poller._lap_start_times.clear()
+        d.poller._lap_start_times.update({1: 120.0, 2: 215.0})
+        obs.scene, obs.calls[:] = "iRacing", []
+        r = client.post("/replay/jump_lap", json={"target": "start"}).get_json()
+        check("D10 jump to start -> rig route, once, OBS on Replay",
+              r.get("ok") and jumps == [(120.0, None)] and obs.scene == "Replay", (r, jumps, obs.calls))
+        client.post("/go_live")
+        d.poller.replay_pc._http = lambda *a: (_ for _ in ()).throw(OSError("down"))
+        r = client.post("/replay/jump_lap", json={"target": 2}).get_json()
+        check("D11 rig down: jumps here", r.get("ok") and len(jumps) == 2 and jumps[-1] == (215.0, None), (r, jumps))
 
 
 if __name__ == "__main__":

@@ -193,7 +193,12 @@ rig's replay shows nothing and Go Live on the stream PC did not help. Dashboard
 replay PC set, `RemoteReplay.go_live()` = POST rig `/replay/remote/live` (rig:
 poller.go_live + RemoteState.abort), _gen bumped (running watcher steps aside),
 follow quiet, OBS back at once (_hide) also when the rig is unreachable.
-test_remote_replay GL1-GL6, D8-D9. BOTH PCs need the update. Restart 5000.
+test_remote_replay GL1-GL6, D8-D9. BOTH PCs need the update. Restart 5000. Same day: "Jump to round"
+(/replay/jump_lap start / lap N) with a replay PC set → `_jump_here_or_rig` →
+RemoteReplay.jump(): POST rig `/replay/remote/jump` {t_session, session_num}
+(rig: jump_to_replay_time, plays on), OBS shows the replay (`_following` when
+follow is on, quiet 3 s) until Go Live; rig unreachable = local jump. J1-J7,
+D10-D11.
 
 **November 10, 2026 (prompter follows the track):** the prompter picked its
 notes file once at start-up and stayed on Hungaroring while iRacing was at Spa.

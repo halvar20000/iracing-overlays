@@ -3327,14 +3327,29 @@ class TelemetryPoller:
             return False, "no lap data recorded yet (run the dashboard during the race)"
         if str(target).strip().lower() == "start":
             t = min(times.values())
-            return self.jump_to_replay_time(t)
+            return self._jump_here_or_rig(t)
         try:
             lap = int(target)
         except (TypeError, ValueError):
             return False, f"invalid target: {target!r}"
         if lap not in times:
             return False, f"lap {lap} not recorded"
-        return self.jump_to_replay_time(times[lap])
+        return self._jump_here_or_rig(times[lap])
+
+    def _jump_here_or_rig(self, t):
+        """With a replay PC set, the jump plays THERE (the stream PC stays
+        live, OBS shows the replay picture until Go Live); rig down = here
+        (fallback_local)."""
+        if self.replay_pc.enabled:
+            try:
+                sess = int(self.ir["SessionNum"] or 0) if self.connected else None
+            except Exception:
+                sess = None
+            ok, msg = self.replay_pc.jump(t, sess)
+            if ok or not msg.startswith("unreachable") \
+                    or not self.replay_pc.config().get("fallback_local", True):
+                return ok, msg
+        return self.jump_to_replay_time(t)
 
     def set_auto_follow(self, enabled: bool):
         self.auto_follow = bool(enabled)
@@ -7053,6 +7068,21 @@ def replay_remote():
         poller.remote_state.done(seq)
     print(f"[replay-pc] request from {request.remote_addr}: #{car} -> {msg}")
     return jsonify({"ok": ok, "message": msg, "seq": seq})
+
+
+@app.route("/replay/remote/jump", methods=["POST"])
+def replay_remote_jump():
+    """THIS PC is the replay PC: "Jump to round" from the stream PC - plays on
+    from that SessionTime until Go Live."""
+    p = request.get_json(silent=True) or {}
+    try:
+        t = float(p["t_session"])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"ok": False, "error": "t_session required"}), 400
+    sess = p.get("session_num")
+    ok, msg = poller.jump_to_replay_time(t, int(sess) if sess is not None else None)
+    print(f"[replay-pc] jump from {request.remote_addr}: {msg}")
+    return jsonify({"ok": ok, "message": msg})
 
 
 @app.route("/replay/remote/live", methods=["POST"])

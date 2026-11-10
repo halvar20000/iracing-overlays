@@ -259,6 +259,31 @@ class RemoteReplay:
         self.last["state"] = "live"
         self._hide(cfg, why)
 
+    def jump(self, t_session, session_num=None):
+        """"Jump to round" on the stream PC (2026-11-10): the rig plays on from
+        that moment, OBS shows its picture until Go Live (or the rig is live
+        again - the follower). -> (ok, message); 'unreachable: …' = the caller
+        may jump locally."""
+        cfg = self.config()
+        body = {"t_session": float(t_session), "session_num": session_num}
+        try:
+            res = self._http("POST", cfg["url"] + "/replay/remote/jump", body, float(cfg["timeout_s"]))
+        except Exception as e:
+            print(f"[replay-pc] jump: {cfg['url']} not reachable: {e}")
+            return False, f"unreachable: {e}"
+        if not res.get("ok"):
+            msg = res.get("message") or res.get("error") or "refused"
+            return False, f"replay PC: {msg}"
+        with self._lock:
+            self._gen += 1                   # a running replay watcher steps aside
+            self._following = bool(cfg.get("follow", True))
+            self._live_n = 0
+            self._quiet_until = self._clock() + FOLLOW_QUIET_S   # rig settles first
+        self.last = {"ok": True, "jump": float(t_session), "at": time.time(), "state": "replaying"}
+        self._show(cfg)
+        print(f"[replay-pc] jump to t={float(t_session):.1f}s on {cfg['url']}")
+        return True, f"replay PC jumped to t={float(t_session):.1f}s (Go Live = back)"
+
     def go_live(self) -> str:
         """Go Live pressed on the stream PC (2026-11-10, Thomas: sometimes the
         replay shows nothing and the local Go Live did not help): the rig goes

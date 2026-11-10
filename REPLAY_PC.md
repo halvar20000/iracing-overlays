@@ -38,6 +38,9 @@ Alles wie bisher am Dashboard des **Stream-PCs**: ▶ 10s / 20s in der Incident-
 - Hast du die Szene inzwischen selbst gewechselt, bleibt sie, wie sie ist.
 - Die Listen auf dem Stream-PC bleiben erhalten (der Stream-PC springt ja nicht zurück).
 - Ist das Sim-Rig nicht erreichbar, läuft das Replay wie früher auf dem Stream-PC.
+- **Jump to round** (Start / Runde N + Apply) am Stream-PC: Das Sim-Rig springt an
+  diese Stelle und spielt von dort weiter, OBS zeigt das Replay-Bild. Zurück mit
+  **Go Live**. Ist das Sim-Rig nicht erreichbar, springt der Stream-PC selbst.
 - **Replay zeigt nichts / hängt:** am Stream-PC **Go Live** drücken (Dashboard,
   Kamera-/Fahrer-Panel oder Stream-Deck-Taste `go_live`). Das Sim-Rig geht dann
   ebenfalls sofort live, und OBS schaltet gleich zurück aufs Livebild – auch wenn
