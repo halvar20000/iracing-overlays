@@ -476,14 +476,15 @@ COMBO_HTML = r"""
     }
     body.debug { background: #567; }
     body { display: flex; align-items: flex-end; justify-content: flex-start; padding: 8px; }
-    #card { display: none; width: 680px; --panel: #1f9e3a; --ink: #fff;
+    #card { display: none; width: 680px; --panel: #1f9e3a; --ink: #fff; --a: 0.75;
             --shade: 0 1px 3px rgba(0,0,0,0.55); user-select: none;
             font-variant-numeric: tabular-nums;
             filter: drop-shadow(0 4px 12px rgba(0,0,0,0.55)); }
     #card.on { display: block; }
 
     .bar { display: flex; align-items: center; gap: 12px; height: 48px; padding-right: 14px;
-           background: linear-gradient(90deg, #15151b, #2b2b35); border-radius: 8px 8px 0 0; }
+           background: linear-gradient(90deg, rgba(21,21,27,var(--a)), rgba(43,43,53,var(--a)));
+           border-radius: 8px 8px 0 0; }
     .tab { display: flex; align-items: center; justify-content: center;
            min-width: 92px; height: 100%; margin-left: 14px; padding: 0 20px;
            background: var(--panel); color: var(--ink); font-size: 28px; font-weight: 800; font-style: italic;
@@ -499,8 +500,11 @@ COMBO_HTML = r"""
                background: rgba(255,255,255,0.12); border-left: 4px solid var(--cls, #888); }
 
     .panel { position: relative; height: 136px; overflow: hidden; border-radius: 0 0 8px 8px;
-             background: linear-gradient(100deg, rgba(0,0,0,0.12), rgba(0,0,0,0) 55%), var(--panel);
              border-top: 2px solid rgba(255,255,255,0.28); }
+    /* the colour on its own layer, so ?alpha= makes it see-through and not the text / car */
+    .panel::before { content: ""; position: absolute; inset: 0; opacity: var(--a);
+             background: linear-gradient(100deg, rgba(0,0,0,0.12), rgba(0,0,0,0) 55%), var(--panel); }
+    .panel > * { z-index: 1; }
     /* a white chip: logos are multicoloured, so they cannot be turned white */
     .brand { position: absolute; left: 12px; top: 10px; height: 46px; max-width: 110px;
              padding: 4px 8px; background: #fff; border-radius: 4px; object-fit: contain; }
@@ -556,6 +560,9 @@ if (qs.get('debug') === '1') document.body.classList.add('debug');
 if (qs.get('zoom')) document.body.style.zoom = qs.get('zoom');
 const FIXED_COLOR = /^[0-9a-fA-F]{6}$/.test(qs.get('color') || '');
 if (FIXED_COLOR) card.style.setProperty('--panel', '#' + qs.get('color'));
+// ?alpha=0..1 = how solid bar + panel are (default 0.75, 1 = the old solid look)
+const ALPHA = parseFloat(qs.get('alpha'));
+if (ALPHA >= 0 && ALPHA <= 1) card.style.setProperty('--a', String(ALPHA));
 document.addEventListener('keydown', e => {
     if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('debug');
 });

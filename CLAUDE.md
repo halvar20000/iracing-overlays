@@ -187,6 +187,11 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 10, 2026 (5017/combo see-through):** Thomas: driver_combo more
+transparent. Bar + coloured panel at `--a` 0.75 (panel colour on a ::before layer
+so text / car / logo / stat boxes stay solid); `?alpha=0..1` per source, 1 = the
+old solid look. Rendered over a picture at 1 / 0.75 / 0.5. Restart 5017.
+
 **November 10, 2026 (EINSTELLUNGEN page - the config JSONs as one page):**
 Thomas: too many JSON files to remember. Counted: 7 hand-edited overlay configs
 (show_config, commentary_config, championship_config, proam_config, rc_config,
