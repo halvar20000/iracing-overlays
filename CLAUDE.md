@@ -187,6 +187,12 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 10, 2026 (REPLAY stinger):** replay scene switch had no visible
+transition - Thomas's OBS had a per-scene override "Cut" on Replay and iRacing.
+NEW `make_replay_stinger.py` → `stingers/replay_stinger.webm` (1.1 s, 1920x1080,
+VP9 alpha, covered ~280-750 ms, OBS transition point 500 ms); setup in
+REPLAY_PC.md. CONFIRMED working by Thomas the same day.
+
 **November 10, 2026 (WCT championship tables: PRO / AM only):** Thomas: no
 "NICHT EINGESTUFT" group in the standings. /table/wct, /live/wct and the /table
 page (no INTRO tab) show only PRO and AM; the race results (/lastrace/wct,
