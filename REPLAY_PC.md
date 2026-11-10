@@ -61,3 +61,17 @@ Status: `http://localhost:5000/replay_pc` (Stream-PC) und
 `http://<Sim-Rig>:5000/replay/remote/status`.
 
 REGIE (KI-Kamera) macht ihre Replays weiterhin auf dem Stream-PC.
+
+## Übergang mit „REPLAY“-Stinger
+
+`stingers/replay_stinger.webm` (1,1 s, transparent) – ein dunkler Balken mit
+oranger Kante wischt mit „REPLAY“ übers Bild, dahinter wird geschnitten.
+
+1. OBS › Dock **Szenenübergänge** › **+** › **Stinger**, Name z. B. `Replay Stinger`.
+2. Videodatei: `stingers\replay_stinger.webm` im Overlay-Ordner.
+3. Übergangspunkt-Typ **Zeit (ms)**, Übergangspunkt **500**.
+4. Rechtsklick auf die Szenen **Replay** und **iRacing** › **Übergang überschreiben** › `Replay Stinger`.
+
+Im `source`-Modus (Quelle ein-/ausblenden) stattdessen bei der NDI-Quelle
+Rechtsklick › **Einblendübergang** / **Ausblendübergang** › Stinger.
+Anderer Text: `python make_replay_stinger.py --text "WIEDERHOLUNG"`.
