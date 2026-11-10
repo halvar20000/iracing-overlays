@@ -187,6 +187,11 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 10, 2026 (WCT championship tables: PRO / AM only):** Thomas: no
+"NICHT EINGESTUFT" group in the standings. /table/wct, /live/wct and the /table
+page (no INTRO tab) show only PRO and AM; the race results (/lastrace/wct,
+/lastround) keep the grey intro group. test_wct_board C5. Restart 5010.
+
 **November 10, 2026 (5017/combo see-through):** Thomas: driver_combo more
 transparent. Bar + coloured panel at `--a` 0.75 (panel colour on a ::before layer
 so text / car / logo / stat boxes stay solid); `?alpha=0..1` per source, 1 = the

@@ -151,15 +151,13 @@ d = ch._table_wct({"league": {}, "season": {"proAmEnabled": True}, "standings": 
     srow(1, "P", 90, proAmClass="PRO"), srow(2, "A", 182, proAmClass="AM"), srow(3, "A2", 100, proAmClass="AM")]})
 check("C2 Pro/Am: PRO then AM, class positions", [(s["label"], [r["pos"] for r in s["rows"]]) for s in d["sections"]]
       == [("PRO", [1]), ("AM", [1, 2])], str(d))
-# Pro/Am intro race (CLS 2.51.0): unclassified driver = grey group, no points;
-# an unclassified driver who never raced is not listed
+# Pro/Am intro race: an unclassified driver is not in the championship table
 d = ch._table_wct({"league": {}, "season": {"proAmEnabled": True}, "standings": [
     srow(1, "P", 90, proAmClass="PRO", roundsCompleted=3), srow(2, "A", 80, proAmClass="AM", roundsCompleted=3),
     srow(3, "Jim", 0, proAmClass=None, roundsCompleted=1), srow(4, "Nobody", 0, proAmClass=None, roundsCompleted=0)]})
-check("C5 intro: grey NICHT EINGESTUFT after PRO / AM, no points",
+check("C5 intro: championship table = PRO / AM only, unclassified left out (2026-11-10)",
       [(s["label"], [(r["name"], r["pts"]) for r in s["rows"]]) for s in d["sections"]]
-      == [("PRO", [("P", 90)]), ("AM", [("A", 80)]), ("NICHT EINGESTUFT", [("Jim", None)])]
-      and d["sections"][2]["color"] == wct_board.INTRO_COLOR, str(d))
+      == [("PRO", [("P", 90)]), ("AM", [("A", 80)])], str(d))
 def ires(pos, name, pa, pts):
     return {"position": pos, "name": name, "iracingMemberId": name, "startNumber": str(pos), "proAmClass": pa,
             "car": "Car", "status": "CLASSIFIED", "lapsBehind": 0, "gapMs": None, "bestLapMs": 90000, "fastestLap": False, "points": pts}

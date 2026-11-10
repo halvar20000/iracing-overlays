@@ -2092,8 +2092,7 @@ function renderTable(d) {
     // shown. Ranks renumbered inside the class; CLS order (its tie-breaks)
     // kept. ?class=pro|am pins one, ?class=all = the old mixed list.
     const ratedCls = ['PRO', 'AM'].filter(c => st.standings.some(x => x.proAmClass === c));
-    const introRow = x => !x.proAmClass && (x.roundsCompleted || 0) > 0;
-    const classes = ratedCls.concat(st.standings.some(introRow) ? ['INTRO'] : []);
+    const classes = ratedCls;      // not classified yet = not in the table (2026-11-10)
     const proAm = !!(st.season && st.season.proAmEnabled) && ratedCls.length > 0 && classP() !== 'all';
     let list = st.standings, label = '', tabs = '';
     if (proAm) {
@@ -2104,8 +2103,7 @@ function renderTable(d) {
             raceIdx = wrap(raceIdx, classes.length);
             cls = classes[raceIdx];
         }
-        list = st.standings.filter(x => cls === 'INTRO' ? introRow(x) : x.proAmClass === cls)
-            .map((x, i) => ({ ...x, rank: i + 1, points: cls === 'INTRO' ? '–' : x.points }));
+        list = st.standings.filter(x => x.proAmClass === cls).map((x, i) => ({ ...x, rank: i + 1 }));
         label = ' · ' + cls;
         if (classes.length > 1) tabs = `<div class="tabs">${classes.map(c => `<span class="${c === cls ? 'on' : ''}">${c}</span>`).join('')}</div>`;
     }
@@ -2432,13 +2430,7 @@ def _table_wct(st: dict) -> dict:
                          key=lambda r: (-(r.get("points") or 0), r.get("rank") or 999))
             if grp:
                 out["sections"].append({"label": cls, "color": col, "rows": board(grp)})
-        intro = [r for r in rows if not r.get("proAmClass") and (r.get("roundsCompleted") or 0) > 0]
-        if intro:
-            lines = board(intro)
-            for line in lines:
-                line["pts"] = None
-            out["sections"].append({"label": INTRO_LABEL, "color": wct_board.INTRO_COLOR, "rows": lines})
-        return out
+        return out       # not classified yet: no championship table (Thomas, 2026-11-10)
     classes = []
     for r in rows:
         if r.get("carClassName") and r["carClassName"] not in classes:
@@ -2498,14 +2490,7 @@ def _live_wct(ps: dict) -> dict:
             grp = [c for c in rows if c.get("pro_am") == cls]
             if grp:
                 out["sections"].append({"label": cls, "color": col, "rows": board(grp)})
-        intro = [c for c in rows if not c.get("pro_am")
-                 and (c.get("in_race") or c.get("rounds") or any(c.get("earlier") or []))]
-        if intro:
-            lines = board(intro)
-            for line in lines:
-                line["pts"], line["value"] = None, ""
-            out["sections"].append({"label": INTRO_LABEL, "color": wct_board.INTRO_COLOR, "rows": lines})
-        return out
+        return out       # not classified yet: no championship table (Thomas, 2026-11-10)
     classes = []
     for c in sorted(rows, key=lambda c: c.get("rank") or 999):
         if c.get("car_class_name") and c["car_class_name"] not in classes:
