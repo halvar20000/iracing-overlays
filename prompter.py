@@ -204,12 +204,26 @@ class Prompter:
         self._cards: list[dict] = []
         self._mtime = None
         self._loaded = None
+        self._track = None       # track the file was picked for
+        self._manual = False     # file chosen by hand: kept until the track changes
 
     # -- content -----------------------------------------------------------
     def _ensure(self):
         files = note_files(self.notes_dir)
-        if self.file not in files:
-            self.file = pick_for_track(files, self.track_fn()) or (files[0] if files else None)
+        # follow the track (2026-11-10: it stayed on the file picked at start-up,
+        # Hungaroring, while iRacing was at Spa); a file chosen by hand stays
+        # until the track changes; a new matching file (after an update) is taken
+        try:
+            track = self.track_fn() or ""
+        except Exception:
+            track = ""
+        if track and track != self._track:
+            self._track, self._manual = track, False
+        best = pick_for_track(files, track) if track and not self._manual else None
+        if best and best != self.file:
+            self.file, self.idx = best, 0
+        elif self.file not in files:
+            self.file = pick_for_track(files, track) or (files[0] if files else None)
             self.idx = 0
         if not self.file:
             self._cards, self._mtime, self._loaded = [], None, None
@@ -267,6 +281,7 @@ class Prompter:
                     earlier = [k for k in starts if k < here]
                     self.idx = here if self.idx != here or not earlier else earlier[-1]
             elif cmd == "file" and arg in note_files(self.notes_dir):
+                self._manual = True
                 if arg != self.file:
                     self.file, self.idx = arg, 0
                     self._loaded = None

@@ -187,6 +187,13 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 10, 2026 (prompter follows the track):** the prompter picked its
+notes file once at start-up and stayed on Hungaroring while iRacing was at Spa.
+`Prompter._ensure` now re-picks by the iRacing track each poll: a track change
+or a better-matching file appearing (after an update) switches; a file chosen by
+hand (`file/<name>`) stays until the track changes; no track = file kept.
+test_prompter.py P1-P7. Spa notes (WCT R8) in show_notes/. Restart 5000.
+
 **November 10, 2026 (REPLAY stinger):** replay scene switch had no visible
 transition - Thomas's OBS had a per-scene override "Cut" on Replay and iRacing.
 NEW `make_replay_stinger.py` → `stingers/replay_stinger.webm` (1.1 s, 1920x1080,

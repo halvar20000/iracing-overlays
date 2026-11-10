@@ -4,6 +4,12 @@
 
 ---
 
+## Intro-Einzeiler
+
+> „Sieben Kilometer Ardennen, Eau Rouge, die Kemmel-Gerade und ein Wetter, das sich nicht entscheiden kann: Willkommen in Spa zu Lauf 8 der CAS GT3 WCT!“
+
+---
+
 ## Quick Facts
 
 | | |
@@ -93,13 +99,7 @@
 
 ---
 
-## Intro-Einzeiler
-
-> „Sieben Kilometer Ardennen, Eau Rouge, die Kemmel-Gerade und ein Wetter, das sich nicht entscheiden kann: Willkommen in Spa zu Lauf 8 der CAS GT3 WCT!“
-
----
-
-### Quellen
+## Quellen
 - [Wikipedia: Circuit de Spa-Francorchamps](https://en.wikipedia.org/wiki/Circuit_de_Spa-Francorchamps)
 - [Formula 1: Spa-Francorchamps](https://www.formula1.com/en/information/belgium-circuit-de-spa-francorchamps.3LltuYaAXVRU8iezEsjzGw)
 - [BSimRacing: iRacing 2024 Update für Spa](https://bsimracing.com/iracing-new-content-video-2024-update-for-the-circuit-de-spa-francorchamps)
