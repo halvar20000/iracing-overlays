@@ -71,7 +71,8 @@ GT3 WCT's iRaceControl ruleset (Thomas's screenshot, 2026-10-27), race only:
   ``pro_text`` when a PRO car is within ``pro_gap_s`` behind him on track
   (same race, not lapping him - that is the blue flag), from lap
   ``pro_from_lap`` on, not under caution.  Once per AM / PRO pair and race:
-  the AM may well be the faster one, so it is never repeated.  Only in a
+  the AM may well be the faster one, so it is never repeated; and at most
+  one line per AM in ``PRO_AM_QUIET_S`` (a PRO train = one hint).  Only in a
   WCT field (backend/proam.py); every other league has no PRO / AM.
 
 Texts take %cnr% (car number) and %dname% (driver), like iRaceControl;
@@ -92,6 +93,7 @@ from typing import Optional
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 CONFIG_PATH = DATA_DIR / "steward_config.json"
+PRO_AM_QUIET_S = 120.0   # at most one PRO-behind hint per AM in this time
 DEFAULT_CONFIG = {
     "enabled": True,
     "dt_first": 15, "dt_every": 6,
@@ -502,6 +504,7 @@ class AutoSteward:
         self._fr_sent: set[int] = set()
         self._meatball: dict[int, bool] = {}
         self._pro_sent: set[tuple[int, int]] = set()    # (AM, PRO) told
+        self._pro_last: dict[int, float] = {}           # AM -> last hint
         # blue flag rule: (slow, fast) -> blue period
         self._cb: dict[tuple[int, int], dict] = {}
         self._cb_grace: dict[tuple[int, int], float] = {}  # (unlapper, car) -> until
@@ -615,6 +618,10 @@ class AutoSteward:
             # the opening laps: the field is packed, everybody is "behind"
             if getattr(am, "proam", "") != "AM" or am.laps_completed + 1 < from_lap:
                 continue
+            # a train of PROs = one line, not one per car (WCT Spa 2026-11-10:
+            # #173 got four in 10 s)
+            if state.session_time - self._pro_last.get(am.car_idx, -1e9) < PRO_AM_QUIET_S:
+                continue
             for pro in pros:
                 if (am.car_idx, pro.car_idx) in self._pro_sent:
                     continue
@@ -631,6 +638,7 @@ class AutoSteward:
                 if not lap_t or d * lap_t > gap_max:
                     continue
                 self._pro_sent.add((am.car_idx, pro.car_idx))
+                self._pro_last[am.car_idx] = state.session_time
                 out.append({"type": "pro_behind", "car": am, "pro": pro,
                             "gap": d * lap_t,
                             "text": fill_pro(rules.get("pro_text"), am, pro)})

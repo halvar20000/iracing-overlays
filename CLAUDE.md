@@ -187,6 +187,25 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 11, 2026 (iCASControl 0.1.38 - WCT Spa post-mortem, Thomas's
+race log + iCAS autosave + eventresult of 10.11.):** race fine otherwise
+(result = eventresult, Micewski's black flag 2.5 s after his pit entry =
+speeding). Three iCAS faults: (1) iRacing's one-to-green bit 0x200 stayed set
+for a tick after the green (SessionState already RACING) -> read as a caution:
+"ONE TO GREEN", a short caution began and "/all ONE LAP TO GREEN - RESTART AT
+THE END OF THIS LAP" went to every driver at the start. iracing_source drops a
+caution-less one-to-green for GREEN_SETTLE_S 10 s after the race turns RACING
+(`_racing_since`; first look already RACING = iCAS restarted mid-race =
+counts). (2) every car "took the lead" on the pace lap and in the shuffle at
+the green -> no lead lines outside RACING or in the first LEAD_SETTLE_S 10 s
+(RaceState `_racing_t`). (3) PRO-behind: #173 got four hints in 10 s from a
+train of PROs -> at most one per AM in PRO_AM_QUIET_S 120 s (pairs stay once).
+test_incidents OG1-OG4, LD1-LD2, PR12-PR13 (4 fail on the old code), 395/395.
+Seen, NOT changed: the race logger's own driver_of_day said Manfred Baar
+(local dotd_history: previous "Tyler Hudson"); CLS crowned Michael Gessner -
+Baar was COTA's DotD (back-to-back). The 5013 overlay takes the block from CLS.
+Restart iCAS.
+
 **November 10, 2026 (no "lost control" at the pit exit):** Thomas: misleading.
 Where the pit lane joins the track its lap pct does not match the racing line
 (jump back / reads stopped) = speed collapse or "moved backwards". Dashboard

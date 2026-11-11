@@ -92,6 +92,7 @@ _NOT_A_FLAG = {"local_yellow", "blue", "crossed", "debris", "black",
                "disqualify", "furled"}
 
 
+GREEN_SETTLE_S = 10.0   # one-to-green bit left over at the green: no caution
 CHAT_RETRY_KINDS = ("black", "yellow")  # flag / caution not there -> typed once more
 CHAT_RETRY_DELAY_MS = 40.0            # ... with this much time per character
 CHAT_RETRY_OPEN_S = 0.8               # ... and this long after opening the chat
@@ -228,6 +229,9 @@ class IRacingSource(DataSource):
         self._inc_next = 0.0
         self._totals: Optional[dict[int, int]] = None
         self._session_num = 0
+        self._racing_key = None
+        self._racing_since: Optional[float] = None
+        self._racing_prev: Optional[int] = None
         self._replay_busy = False
         self.sectors = FieldSectors() if FieldSectors else None
         self.inc_debug: dict = {}
@@ -522,8 +526,21 @@ class IRacingSource(DataSource):
         for bit, label in _FLAG_BITS:
             if flags_val & bit and label not in active_flags:
                 active_flags.append(label)
+        # one-to-green without a caution = the pace lap before the start.  It
+        # also stays set for a tick or two once the race is RACING (WCT Spa
+        # 2026-11-10: read as a caution, "ONE LAP TO GREEN" went to all at
+        # the green) -> not a caution until GREEN_SETTLE_S into the race
+        now_t = float(self._g("SessionTime", 0.0) or 0.0)
+        rkey = (session_key, cur_num)
+        if rkey != self._racing_key:
+            self._racing_key, self._racing_since = rkey, None
+            self._racing_prev = state_id
+        if state_id == 4 and self._racing_prev not in (None, 4):
+            self._racing_since = now_t
+        self._racing_prev = state_id
         if "one_to_green" in active_flags and "caution" not in active_flags \
-                and state_id != 4:
+                and (state_id != 4 or (self._racing_since is not None and
+                                       now_t - self._racing_since < GREEN_SETTLE_S)):
             active_flags.remove("one_to_green")   # pace lap before the start
         if not [f for f in active_flags if f not in _NOT_A_FLAG]:
             active_flags.insert(0, "green")

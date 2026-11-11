@@ -138,6 +138,7 @@ STEWARD_CHAT_KEEP = 300
 STEWARD_CHAT_LEN = 400
 # Official points this soon after a detection of the same car belong to it.
 MATCH_POINTS_S = 20.0
+LEAD_SETTLE_S = 10.0   # no "takes the lead" lines in the first seconds of a race
 # Fields of a Car that survive a restart (autosave).
 _SAVED_CAR_FIELDS = ("number", "driver", "team", "incident_points",
                      "unresolved", "niw_count", "pit_stops", "laps_led",
@@ -183,6 +184,7 @@ class RaceState:
         self.source_name = "none"
         self.connected = False
         self._leader_idx: Optional[int] = None
+        self._racing_t: Optional[float] = None   # SessionTime of the green
         self._prev_flags: list[str] = []
         self.session_num = 0
         self.session_key = ""
@@ -235,6 +237,11 @@ class RaceState:
         self.session_config = s.track_config
         self.session_length_km = s.track_length_km
         self.session_type = s.session_type
+        if s.session_state == "RACING" and self.session_state not in (
+                "RACING", "INVALID"):
+            self._racing_t = s.session_time      # the green of this race
+        elif s.session_state != "RACING":
+            self._racing_t = None
         self.session_state = s.session_state
         if not s.in_replay:            # the clocks stay on the live race
             self.session_time = s.session_time
@@ -476,7 +483,12 @@ class RaceState:
         prev = self._leader_idx
         if prev != leader.car_idx and leader.car_idx in self.cars:
             # a lead change means nothing in practice / qualifying
-            if prev is not None and "RACE" in self.session_type.upper():
+            # nor on the pace lap / in the shuffle at the green (WCT Spa
+            # 2026-11-10: 19 cars "took the lead" in the 3 s after the green)
+            settled = self.session_state == "RACING" and (
+                self._racing_t is None
+                or self.session_time - self._racing_t >= LEAD_SETTLE_S)
+            if prev is not None and settled and "RACE" in self.session_type.upper():
                 self._log(LOG_INFO,
                           f"Car #{self.cars[leader.car_idx].number} "
                           f"takes the lead", car=self.cars[leader.car_idx],

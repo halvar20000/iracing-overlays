@@ -410,6 +410,27 @@ check("only local yellow, no caution ever -> green",
       flagframe(200, 0x0008).session.flags[0] == "green")
 check("one-to-green bit on the pace lap (parade) = not a caution",
       "one_to_green" not in flagframe(5, 0x0200, state=3).session.flags)
+# 2026-11-10 WCT Spa: the bit was still set for a tick after the green ->
+# "ONE LAP TO GREEN - RESTART AT THE END OF THIS LAP" went to all at the start
+src._racing_key = None
+fs2 = _RS()
+seq2 = [(180, 0x0200, 3), (184.5, 0x0204, 4), (185.2, 0x0204, 4),
+        (186, 0x0004, 4)]
+og = []
+for t, bits, st in seq2:
+    fr = flagframe(t, bits, state=st)
+    fs2.ingest(fr)
+    og.append((list(fr.session.flags), _stw._caution_out(fs2)))
+check("OG1 one-to-green left over at the green = no caution",
+      not any(c for _, c in og) and not any("one_to_green" in f for f, _ in og), og)
+check("OG2 ... and no ONE TO GREEN / caution over log lines",
+      not [e.text for e in fs2.events if "ONE TO GREEN" in e.text
+           or "caution over" in e.text], [e.text for e in fs2.events])
+check("OG3 a caution's one-to-green later in the race still counts",
+      "one_to_green" in flagframe(400, 0x0204, state=4).session.flags)
+src._racing_key = None
+check("OG4 iCAS started mid-race (first look RACING): one-to-green counts",
+      "one_to_green" in flagframe(900, 0x0204, state=4).session.flags)
 
 ir = fake_ir(53, {})
 src._ir = ir
@@ -500,6 +521,25 @@ pract2.session.session_type = "PRACTICE"
 rs4.ingest(pract2)
 check("no 'takes the lead' in practice",
       not any("lead" in e.text for e in rs4.events))
+# 2026-11-10 WCT Spa: 19 cars "took the lead" on the pace lap / at the green
+rs5 = RaceState()
+def lframe(t, first, state):
+    fr = frame(t, [cf(0, "7"), cf(1, "14")])
+    fr.session.session_state = state
+    a, b = fr.cars if first == 0 else fr.cars[::-1]
+    a.position, b.position = 1, 2
+    return fr
+rs5.ingest(lframe(10, 0, "PARADE LAPS"))
+rs5.ingest(lframe(20, 1, "PARADE LAPS"))
+rs5.ingest(lframe(100, 0, "RACING"))
+rs5.ingest(lframe(103, 1, "RACING"))
+rs5.ingest(lframe(105, 0, "RACING"))
+check("LD1 no lead lines on the pace lap / in the first 10 s after the green",
+      not any("lead" in e.text for e in rs5.events), [e.text for e in rs5.events])
+rs5.ingest(lframe(130, 1, "RACING"))
+check("LD2 a real lead change later is logged",
+      any("#14 takes the lead" in e.text for e in rs5.events),
+      [e.text for e in rs5.events])
 
 print("Sector times")
 src3 = irs.IRacingSource()
@@ -1892,6 +1932,21 @@ check("not a WCT field: no classes, no hint", eng7.state.cars[1].proam == ""
       and len(autos("auto_pro_behind")) == 2)
 check("old saved rules get the new rule switched on",
       steward.clean({"dt_first": 15})["pro_enabled"] is True)
+# 2026-11-10 WCT Spa: #173 got four hints in 10 s from a train of PROs
+FakeRoster.classes = {107: "PRO", 108: "PRO", 114: "AM", 121: "AM"}
+def ptrain(t, p8):
+    return sframe(t, [pcar(0, "7", 107, 0.492), pcar(3, "8", 108, p8),
+                      pcar(1, "14", 114, 0.50), pcar(2, "21", 121, 0.10)],
+                  num=8, key="p-3")
+k0 = len(autos("auto_pro_behind"))
+pstep(ptrain(3000, 0.30))
+pstep(ptrain(3004, 0.494))
+check("PR12 PRO train behind one AM = ONE hint",
+      len(autos("auto_pro_behind")) == k0 + 1, len(autos("auto_pro_behind")) - k0)
+pstep(ptrain(3130, 0.494))
+check("PR13 the second PRO still behind 2 min later -> its own hint",
+      len(autos("auto_pro_behind")) == k0 + 2
+      and "#8" in autos("auto_pro_behind")[-1].text, autos("auto_pro_behind")[-1].text)
 
 
 print("Blue flag rule (multiclass + lapping, IEC)")
