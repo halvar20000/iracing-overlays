@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Session Clock — loader</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0); overflow: hidden;
+  }
+</style>
+</head>
+<body>
+<script>
+  // Loader: waits (up to GIVE_UP_MS) until the overlay server answers, then
+  // navigates THIS page straight to the overlay - a top-level page, exactly
+  // like a URL browser source. Newer OBS versions block the background ping
+  // from a local file, so after GIVE_UP_MS we go anyway.
+  var URL_ = "http://localhost:5011/clock";
+  var GIVE_UP_MS = 4000;
+  var t0 = Date.now();
+
+  function go() { window.location.replace(URL_); }
+
+  function tick() {
+    fetch(URL_, { mode: "no-cors", cache: "no-store" })
+      .then(go)
+      .catch(function () {
+        if (Date.now() - t0 >= GIVE_UP_MS) go();
+        else setTimeout(tick, 1000);
+      });
+  }
+  tick();
+</script>
+</body>
+</html>

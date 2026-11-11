@@ -43,6 +43,7 @@ OVERLAYS = [
     ("logger_chart",  "Race Logger Chart", 5009, "/chart/render"),
     ("champ",         "Championship",     5010, "/overlay"),
     ("sess",          "Session Info",     5011),
+    ("sess_clock",    "Session Clock",    5011, "/clock"),
     ("line",          "Corner Cues",      5012),
     ("dotd",          "Driver of the Day", 5013),
     ("delta",         "Quali Delta",      5014),

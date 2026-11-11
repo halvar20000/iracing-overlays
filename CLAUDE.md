@@ -187,6 +187,19 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 11, 2026 (race clock `5011/clock`, IMSA look):** from Thomas's
+IMSA WeatherTech picture: round dark clock face, league logo on top (CLS
+`logos/<slug>.webp`, league from 5010 /api/roundinfo via wct_board.EventInfo
+- 5010 off = no logo; `?logo=<url>|0`), session name, remaining time
+(H:MM:SS / MM:SS, lap-limited = "N LAPS"), flag bar: green, yellow = full
+course caution (0x4000 / 0x8000, one-to-green only after a caution - the bit
+also flies on the pace lap and a tick after the green) AND the pace laps
+(SessionState 3), grey before (1-2), white, checkered (state >= 5), red; local
+yellows stay green. `?size=300` diameter, `?flag=0`, `?debug=1` / H,
+`?demo=1&league=<slug>`. /status carries `flag` + `league`. Loader
+sess_clock.html, icon "Renn-Uhr", OBS_OVERLAYS row. test_session_clock.py
+16/16 (needs flask); rendered (demo, WCT + PCCD logos). Restart 5011.
+
 **November 11, 2026 (iCASControl 0.1.38 - WCT Spa post-mortem, Thomas's
 race log + iCAS autosave + eventresult of 10.11.):** race fine otherwise
 (result = eventresult, Micewski's black flag 2.5 s after his pit entry =

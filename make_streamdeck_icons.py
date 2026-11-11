@@ -160,6 +160,7 @@ OVERLAY_ICONS = [
     ("rc_banner",     "live",   "flag",      "Race Control"),
     ("weather",       "live",   "cloud",     "Wetter"),
     ("sess",          "live",   "clock",     "Restzeit"),
+    ("sess_clock",    "live",   "clock",     "Renn-Uhr"),
     ("live",          "live",   "broadcast", "LIVE / Replay"),
     ("turn",          "live",   "turn",      "Kurve"),
     ("topspeed",      "live",   "speedo",    "Top Speed"),

@@ -51,6 +51,7 @@ Quelle: `?auto=1` (+ `?secs=`), `?cycle=20` (lastrace / table) oder
 | Top Speed im Sektor der Kamera (Top 5 + Auto der Kamera) | 5014 `/speed` | `topspeed.html` | ✓ 456 × 390 (`?top=3` ≈ 456 × 310) |
 | Wetter-Leiste | 5016 | `weather.html` | ✓ 980 × 100 |
 | Session-Info (Restzeit) | 5011 | `sess.html` | ≈ 300 × 120 |
+| Renn-Uhr (Logo, Session, Restzeit, Flaggen-Balken) | 5011/clock | `sess_clock.html` | 340 × 340 (`?size=300` Durchmesser, `?logo=<url>\|0`, `?flag=0`, `?demo=1`) |
 | LIVE / REPLAY-Badge | 5004 | `live.html` | ≈ 300 × 80 |
 | Meisterschaft live (Top 10) | 5010 `/overlay` | `champ.html` | ✓ 540 × 545 (`?top=0` = alle ≈ 540 × 1530) |
 | Titelkampf (Duell) | 5010 `/duel` | `duel.html` | ✓ 676 × 125 |
