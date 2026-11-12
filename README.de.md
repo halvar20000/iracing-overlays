@@ -140,4 +140,8 @@ anderes braucht, sag es — ein Wunsch aus einer echten Übertragung zählt.
 
 ## Lizenz & Attribution
 
+Die Overlays sind Open Source unter der [MIT-Lizenz](LICENSE): Jeder Streamer darf sie kostenlos nutzen, ändern und weitergeben, auch in monetarisierten Streams. Bitte den Copyright-Hinweis drinlassen.
+
+Nicht von der MIT-Lizenz erfasst: Die Herstellerlogos in `brands/` sind Marken ihrer Inhaber; die Flaggen in `flags/` stehen unter der MIT-Lizenz ihres eigenen Autors (`flags/LICENSE.flag-icons`).
+
 Streckengeometrie: SIMRacingApps-Projekt von Jeffrey Gilliam (Apache 2.0) und OpenStreetMap-Mitwirkende (ODbL) — siehe `tracks/NOTICE.txt`.

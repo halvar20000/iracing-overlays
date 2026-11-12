@@ -168,4 +168,8 @@ say so — a request from a real broadcast carries weight.
 
 ## License & attribution
 
+The overlays are open source under the [MIT License](LICENSE): every streamer may use, change and share them for free, including on monetised streams. Please keep the copyright notice.
+
+Not covered by the MIT License: the car manufacturer logos in `brands/` are trademarks of their owners; the flag icons in `flags/` are MIT by their own author (`flags/LICENSE.flag-icons`).
+
 Track geometry: SIMRacingApps project by Jeffrey Gilliam (Apache 2.0) and OpenStreetMap contributors (ODbL) — see `tracks/NOTICE.txt`.
