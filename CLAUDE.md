@@ -187,6 +187,26 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 15, 2026 (iCASControl 0.1.39 - profiles loadable from Rules, one
+profile per CLS league loaded by itself, driver chat off for the start):**
+Thomas: profiles could only be saved. Loading worked only from the small
+header select; the Rules dialog had none -> profile select + Load (refills the
+dialog once the snapshot shows it active, `pendingRulesLoad`). NEW
+`backend/league.py` (`League`: repo-root cls_league_detect.LeagueDetector,
+started only once a car with a UserID is seen, detect every 10 s) +
+steward.Profiles `leagues` {profile: slug} (one profile per league,
+`set_league`, `for_league`; old files guessed by name WCT / IEC / PCC / SFL /
+COMBINED, then saved); Engine `_auto_profile()` loads the league's profile once
+per (session, league) - a hand-loaded one stays; WS op `league`; status
+carries leagues / detected league / choices. Rule `nc_enabled` (default OFF):
+race, `nc_when` grid (WARMUP) | parade -> `/all nc_text` then `!nchat` (chat
+COMMANDS chat_off_all / chat_on_all, no car = every driver); `nc_back` (default
+on) -> `!chat` + nc_back_text at CHECKERED / COOLDOWN (also after an iCAS
+restart mid-race). test_incidents NC1-NC13, LG1-LG15, 424/424; League checked
+against the real CLS cache (WCT / IEC fields detected); dialog driven in
+headless Chromium. NOT tried in iRacing: whether `!nchat` without a name hits
+every driver (iRacing docs say so). Restart iCAS.
+
 **November 11, 2026 (race clock `5011/clock`, IMSA look):** from Thomas's
 IMSA WeatherTech picture: round dark clock face, league logo on top (CLS
 `logos/<slug>.webp`, league from 5010 /api/roundinfo via wct_board.EventInfo

@@ -44,6 +44,13 @@ Rules dialog:
   event) - ``sz_text`` to everybody on the pace lap of a race: when it begins
   and again when the field reaches the last quarter of the lap (each pace
   lap), drivers forgot the zone at the start with only the briefing.
+* DRIVER CHAT OFF FOR THE START (``nc_enabled``, 0.1.39, 2026-11-15 Thomas;
+  default OFF): race only - when the cars are on the grid (``nc_when``
+  "grid" = SessionState WARMUP, or "parade" = when the pace lap begins)
+  ``nc_text`` goes to everybody and ``!nchat`` (no car = every driver)
+  switches the drivers' chat off; never after the green.  ``nc_back``: at
+  the checkered flag ``!chat`` switches it on again (+ ``nc_back_text`` if
+  set).  Admins (race control) can always chat.
 * BLUE FLAG RULE (``cb_enabled``, 0.1.17, IEC - multiclass + lapping): a
   car gets a private ``cb_text`` when a car of a FASTER CLASS (iRacing's
   CarClassEstLapTime, else the class's best laps) or a car LAPPING him is
@@ -114,6 +121,10 @@ DEFAULT_CONFIG = {
     # the point of the rule: the green flag does NOT mean go at these starts
     "sz_text": "IGNORE THE GREEN FLAG! ALL CLASSES INCL. LMP2: ACCELERATE ONLY "
                "IN THE STARTING ZONE - CLASS LEADER DECIDES WHERE",
+    # driver chat off for the start (2026-11-15 Thomas)
+    "nc_enabled": False, "nc_when": "grid",
+    "nc_text": "DRIVER CHAT IS NOW DISABLED FOR THE START - RACE CONTROL ONLY",
+    "nc_back": True, "nc_back_text": "DRIVER CHAT IS ENABLED AGAIN",
     # sequencer (like iRaceControl's): an RC message to everybody at a
     # session time; default = the GT3 WCT quali AM / PRO split
     "seq_enabled": False,
@@ -137,7 +148,7 @@ DEFAULT_CONFIG = {
 }
 _BOOL = ("enabled", "fcy_enabled", "seq_enabled", "blue_enabled",
          "meatball_enabled", "pro_enabled", "cb_enabled", "cb_dt", "fcy_short",
-         "fcy_pitopen", "otg_enabled", "sz_enabled")
+         "fcy_pitopen", "otg_enabled", "sz_enabled", "nc_enabled", "nc_back")
 _INT = ("dt_first", "dt_every", "fcy_incs", "fcy_window_s",
         "fcy_cooldown_s", "fcy_laps", "fcy_end_protect_min",
         "blue_repeat_s", "bf_warn_s", "bf_dt_s", "fr_used", "pro_from_lap",
@@ -145,7 +156,7 @@ _INT = ("dt_first", "dt_every", "fcy_incs", "fcy_window_s",
         "fcy_short_laps", "fcy_pit_open_s")
 _SIGNED: tuple = ()
 _FLOAT = ("blue_gap_s", "pro_gap_s", "cb_gap_s")
-_TEXT = ("otg_text", "sz_text", "bf_warn_text", "bf_dt_text",
+_TEXT = ("otg_text", "sz_text", "nc_text", "nc_back_text", "bf_warn_text", "bf_dt_text",
          "fr_text", "meatball_text", "pro_text", "cb_text", "cb_dt_text")
 PACELAPS_RETRY_S = 10.0   # short caution: !pacelaps 1 again if no one-to-green
 PACELAPS_TRIES = 12
@@ -320,6 +331,8 @@ def clean(cfg: dict) -> dict:
     out["fcy_short_laps"] = min(20, max(1, out["fcy_short_laps"]))
     if out["fcy_wave"] not in ("class", "overall", "off"):
         out["fcy_wave"] = "class"
+    if out["nc_when"] not in ("grid", "parade"):
+        out["nc_when"] = "grid"
     return out
 
 
@@ -365,11 +378,25 @@ def _profile_cfg(cfg: dict) -> dict:
     return out
 
 
+# 0.1.39: a profile can belong to a CLS league - iCAS loads it by itself
+# when that league's drivers are in the session.  Old files get a guess by
+# the profile's name (once, then saved).
+LEAGUE_GUESS = (("WCT", "cas-gt3-wct"), ("IEC", "cas-iec"),
+                ("PCC", "cas-pccd"), ("PORSCHE", "cas-pccd"),
+                ("SFL", "cas-sfl-cup"), ("COMBINED", "cas-combined-cup"))
+
+
+def league_slug(v) -> str:
+    v = str(v or "").strip().lower()
+    return v if v and len(v) <= 60 and all(c.isalnum() or c == "-" for c in v) else ""
+
+
 class Profiles:
     def __init__(self, path: Optional[Path] = None):
         self.path = path or PROFILES_PATH
         self.active = ""
         self.items: dict = {}
+        self.leagues: dict = {}            # profile name -> CLS league slug
         self._load()
 
     def _load(self) -> None:
@@ -381,6 +408,13 @@ class Profiles:
             self.active = profile_name(raw.get("active"))
             if self.active not in self.items:
                 self.active = ""
+            if isinstance(raw.get("leagues"), dict):
+                self.leagues = {profile_name(k): league_slug(v)
+                                for k, v in raw["leagues"].items()
+                                if profile_name(k) in self.items and league_slug(v)}
+            else:
+                self._guess_leagues()
+                self._save()
         except FileNotFoundError:
             pass
         except Exception as exc:
@@ -398,13 +432,26 @@ class Profiles:
             self.active = SEED_OLD
         else:
             self.active = SEED_WCT
+        self._guess_leagues()
         self._save()
+
+    def _guess_leagues(self) -> None:
+        taken = set(self.leagues.values())
+        for name in sorted(self.items, key=str.lower):
+            if name in self.leagues:
+                continue
+            for word, slug in LEAGUE_GUESS:
+                if word in name.upper() and slug not in taken:
+                    self.leagues[name] = slug
+                    taken.add(slug)
+                    break
 
     def _save(self) -> None:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.path.with_suffix(".tmp")
             tmp.write_text(json.dumps({"active": self.active,
+                                       "leagues": self.leagues,
                                        "profiles": self.items}, indent=1),
                            encoding="utf-8")
             tmp.replace(self.path)
@@ -412,7 +459,28 @@ class Profiles:
             print(f"[steward] could not save {self.path.name}: {exc}", file=sys.stderr)
 
     def status(self) -> dict:
-        return {"active": self.active, "names": sorted(self.items, key=str.lower)}
+        return {"active": self.active, "names": sorted(self.items, key=str.lower),
+                "leagues": dict(self.leagues)}
+
+    def set_league(self, name, slug) -> str:
+        """Profile ``name`` belongs to league ``slug`` ("" = none).  One
+        profile per league: another profile of that league lets go."""
+        name = profile_name(name)
+        if name not in self.items:
+            return f"no profile '{name}'"
+        slug = league_slug(slug)
+        for k in [k for k, v in self.leagues.items() if v == slug or k == name]:
+            del self.leagues[k]
+        if slug:
+            self.leagues[name] = slug
+        self._save()
+        return ""
+
+    def for_league(self, slug) -> str:
+        for name, s in self.leagues.items():
+            if s == slug and name in self.items:
+                return name
+        return ""
 
     def follow_edit(self, cfg: dict) -> None:
         """Rules saved: the active profile takes the new values."""
@@ -445,6 +513,7 @@ class Profiles:
         if name not in self.items:
             return False
         del self.items[name]
+        self.leagues.pop(name, None)
         if self.active == name:
             self.active = ""
         self._save()
@@ -494,6 +563,8 @@ class AutoSteward:
         self._otg: Optional[bool] = None  # one-to-green last seen
         self._sz_begun = False            # start zone: first message sent
         self._sz_armed = False            # ... field in the first part of a lap
+        self._nc_off = False              # driver chat switched off (start)
+        self._nc_back = False             # ... and on again (checkered)
         self._session = None
         self._fcy_block_until = -1.0      # session time
         self._seq_sent: set[int] = set()
@@ -529,6 +600,8 @@ class AutoSteward:
         out += self._one_to_green(state, rules)
         if rules.get("sz_enabled"):
             out += self._start_zone(state, rules)
+        if rules.get("nc_enabled"):
+            out += self._chat_off(state, rules)
         if rules.get("cb_enabled"):
             out += self._blue_rule(state, rules)     # replaces the two below
         else:
@@ -822,6 +895,30 @@ class AutoSteward:
             out.append({"type": "start_zone", "when": "last part of the pace lap",
                         "text": text})
         return out
+
+    # driver chat off for the start ------------------------------------------
+
+    def _chat_off(self, state, rules: dict) -> list[dict]:
+        if not _is_race(state):
+            return []
+        ss = state.session_state
+        pre = ("WARMUP", "PARADE LAPS") if rules.get("nc_when") == "grid" \
+            else ("PARADE LAPS",)
+        if ss in pre and not self._nc_off:
+            self._nc_off = True
+            return [{"type": "chat_off", "when": "on the grid" if ss == "WARMUP"
+                     else "pace lap begins",
+                     "text": str(rules.get("nc_text") or "").strip()}]
+        if ss == "RACING":
+            # iCAS (re)started after the start: the chat was switched off
+            # then (by us or by hand) - still switch it on at the end
+            self._nc_off = True
+        if ss in ("CHECKERED", "COOLDOWN") and self._nc_off \
+                and not self._nc_back and rules.get("nc_back"):
+            self._nc_back = True
+            return [{"type": "chat_on",
+                     "text": str(rules.get("nc_back_text") or "").strip()}]
+        return []
 
     # sequencer: timed RC messages -------------------------------------------
 

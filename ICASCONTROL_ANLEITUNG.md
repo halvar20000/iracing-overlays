@@ -301,8 +301,18 @@ gespeichert (z. B. 10x / 10 s). Einmal **Rules** öffnen, die WCT-Werte eintrage
 Für jede Liga ein eigener Satz Regeln, damit du nicht jedes Mal umstellen musst.
 Die Auswahl steht in der Kopfzeile neben **Rules**.
 
-- **Profil wechseln:** Wähle es in der Kopfzeile aus und bestätige. Seine Regeln
-  ersetzen dann die aktuellen. Der Schalter AUTO STEWARD an / aus bleibt dabei, wie er ist.
+- **Profil wechseln:** Wähle es in der Kopfzeile aus und bestätige, oder in den
+  **Rules** oben in der Liste **Profile** auswählen und **Load** klicken (die Werte
+  erscheinen gleich im Dialog). Seine Regeln ersetzen dann die aktuellen. Der
+  Schalter AUTO STEWARD an / aus bleibt dabei, wie er ist.
+- **Automatisch je Liga:** In den Rules hinter „Active: …, league“ die CLS-Liga des
+  aktiven Profils wählen (z. B. GT3 WCT → CAS GT3 WCT, IEC → CAS IEC). Sind in der
+  Session die Fahrer dieser Liga (mindestens 3 und die Hälfte des Feldes, wie beim
+  Meisterschafts-Overlay), lädt iCASControl das Profil von selbst, einmal pro
+  Session; im Log steht „League CAS IEC (18 of 22 drivers) - … profile 'IEC' loaded“.
+  Lädst du danach von Hand ein anderes, bleibt es bis zur nächsten Session. Eine
+  Liga gehört zu höchstens einem Profil. Profile mit WCT / IEC / PCC / SFL im Namen
+  bekommen ihre Liga beim ersten Start vorgeschlagen.
 - **Neues Profil:** Öffne **Rules**, stelle die Werte ein und klicke auf
   **Save as new profile…**. Gib einen Namen ein, z. B. `IEC`. Das neue Profil ist
   danach aktiv. Das bisher aktive Profil bleibt dabei unverändert.
@@ -328,6 +338,18 @@ noch einmal, wenn das Feld im letzten Viertel der Runde ist.
 - Häkchen **Start zone** in den Rules setzen und den Text prüfen. Es ist anfangs
   aus, weil die Regel nur für bestimmte Events gilt; danach wieder ausschalten.
 - Braucht **iRACING CHAT** an und einen Admin-Account, wie alle Chat-Befehle.
+
+### Driver Chat aus zum Start
+
+Kurz vor dem Start bekommen alle Fahrer eine Nachricht (`/all`), danach schaltet
+`!nchat` den Chat aller Fahrer aus (Admins / Race Control können weiter schreiben).
+
+- Häkchen **Driver chat OFF for the start** in den Rules. Zeitpunkt: **auf dem
+  Grid** (vor der Einführungsrunde, Standard) oder **wenn die Einführungsrunde
+  beginnt**. Nur im Rennen, nie nach der Grünen Flagge.
+- **switch it ON again at the checkered flag:** bei der Zielflagge `!chat` (Chat
+  wieder an), danach die zweite Nachricht (leer = keine).
+- Braucht **iRACING CHAT** an und einen Admin-Account.
 
 ### Sequencer
 

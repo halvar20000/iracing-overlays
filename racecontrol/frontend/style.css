@@ -582,3 +582,5 @@ fieldset.cb-replaced[disabled] .cb-off-note { display: block; }
   margin: 0 0 10px; padding: 8px 10px; border: 1px solid #ffb02055;
   border-radius: 4px; background: #2a1d0855; }
 .prof-row b { color: #ffd27a; }
+.prof-row select { max-width: 200px; }
+.prof-league { margin-left: 6px; }

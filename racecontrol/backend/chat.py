@@ -60,6 +60,9 @@ COMMANDS: dict[str, Optional[str]] = {
     "remove_admin": "!nadmin #{num}",
     "chat_on": "!chat #{num}",
     "chat_off": "!nchat #{num}",
+    # no car = every driver (admins keep their chat)
+    "chat_on_all": "!chat",
+    "chat_off_all": "!nchat",
     "remove": "!remove #{num} {msg}",
     # !black takes no message: the reason follows as a second line
     "penalty_reason": "/all #{num} {driver}: {msg}",

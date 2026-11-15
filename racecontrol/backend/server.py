@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from backend import APP_NAME, __version__
-from backend import access, chat, follow, proam, steward, stream, tunnel
+from backend import access, chat, follow, league, proam, steward, stream, tunnel
 from backend.race_state import RaceState, save_json
 from backend.sources.base import DataSource
 from backend.sources.simulator import SimulatorSource
@@ -78,6 +78,8 @@ class Engine:
         self.profiles.seed(self.steward_cfg)
         self.auto = steward.AutoSteward()
         self.proam = proam.ProAm()            # CLS PRO / AM (GT3 WCT)
+        self.league = league.League()         # CLS league -> steward profile
+        self._league_seen: Optional[str] = None
         # (laps, deadline) - !pacelaps for an auto caution once it is out
         self._pending_laps: Optional[tuple[int, float]] = None
         self._stream_lock = threading.Lock()
@@ -136,6 +138,7 @@ class Engine:
         self._restored_key = None
         self._last_event_rev = self._last_track_rev = -1
         self._saved_rev = -1
+        self._league_seen = None        # a new session: look at the league again
         self.state.note_system(note)
 
     # -- the race loop ------------------------------------------------------
@@ -159,6 +162,7 @@ class Engine:
             self._maybe_restore()
             if self.steward_cfg.get("pro_enabled"):
                 self.proam.apply(self.state)
+            self._auto_profile()
             for act in self.auto.check(self.state, self.steward_cfg):
                 self._steward_action(act)
             self._maybe_caution_laps()
@@ -176,6 +180,35 @@ class Engine:
         self._drain_stream_log()
 
     # -- Auto Steward (step 3c) ------------------------------------------------
+
+    def _auto_profile(self) -> None:
+        """0.1.39: the league's drivers are in the session -> load the
+        profile that belongs to it, once per session and league (a profile
+        chosen by hand afterwards stays)."""
+        if self.state.in_replay:
+            return
+        lg = self.league.update(self.state)
+        if not lg or lg["slug"] == self._league_seen:
+            return
+        self._league_seen = lg["slug"]
+        name = self.profiles.for_league(lg["slug"])
+        who = f"{lg['name']} ({lg['matched']} of {lg['drivers']} drivers)"
+        if not name:
+            self.state.note_system(f"League {who} - no Auto Steward profile "
+                                   f"belongs to it (Rules: League)")
+            return
+        if name == self.profiles.active:
+            self.state.note_system(f"League {who} - Auto Steward profile "
+                                   f"'{name}' is active")
+            return
+        cfg = self.profiles.load(name, self.steward_cfg)
+        if cfg is None:
+            return
+        self.steward_cfg = cfg
+        steward.save_config(cfg)
+        self.state.note_system(f"League {who} - Auto Steward profile "
+                                    f"'{name}' loaded: incidents "
+                                    f"{steward.describe(cfg)}")
 
     def _steward_action(self, act: dict) -> None:
         st = self.state
@@ -233,6 +266,21 @@ class Engine:
                          lap=st._leader_lap())
             ev.kind, ev.source = "auto_start_zone", "auto"
             self.to_iracing("message_all", msg=act["text"])
+        elif kind in ("chat_off", "chat_on"):
+            off = kind == "chat_off"
+            what = (f"driver chat OFF ({act['when']})" if off
+                    else "driver chat ON again (checkered)")
+            ev = st._log("message", f"AUTO STEWARD: {what}"
+                         + (f" - RC message to all: {act['text']}"
+                            if act["text"] else ""), lap=st._leader_lap())
+            ev.kind, ev.source = "auto_" + kind, "auto"
+            if off and act["text"]:         # tell them first, then switch off
+                self.to_iracing("message_all", msg=act["text"])
+            result = self.to_iracing("chat_off_all" if off else "chat_on_all")
+            st.note_system(f"Driver chat {'off' if off else 'on'}: {result}",
+                           category="flag")
+            if not off and act["text"]:
+                self.to_iracing("message_all", msg=act["text"])
         elif kind == "sequence":
             text = act["text"]
             ev = st._log("message", f"AUTO STEWARD: sequencer "
@@ -452,7 +500,9 @@ class Engine:
     # -- decisions onto the stream (step 3) -----------------------------------
 
     def steward_status(self) -> dict:
-        return dict(self.steward_cfg, profiles=self.profiles.status())
+        return dict(self.steward_cfg, profiles=dict(
+            self.profiles.status(), league=self.league.current,
+            choices=self.league.choices()))
 
     def stream_status(self) -> dict:
         return {"enabled": bool(self.stream_cfg.get("enabled")),
@@ -757,10 +807,20 @@ class Engine:
                     return {"type": "ack", "text": err}
                 self.steward_cfg = cfg
                 steward.save_config(cfg)
-                if err:
-                    return {"type": "ack", "text": err}
                 st.note_system(f"Auto Steward rules saved as profile '{name}'")
                 return {"type": "ack", "text": f"saved as profile {name}"}
+            if op == "league":
+                err = self.profiles.set_league(name, msg.get("league"))
+                if err:
+                    return {"type": "ack", "text": err}
+                slug = steward.league_slug(msg.get("league"))
+                st.note_system(f"Auto Steward profile '{name}' "
+                               + (f"belongs to the league {slug} - loaded by "
+                                  f"itself when its drivers are in the session"
+                                  if slug else "belongs to no league"))
+                self._league_seen = None      # check the field again
+                return {"type": "ack", "text": f"profile {name}: league "
+                        + (slug or "none")}
             if op == "delete":
                 if not self.profiles.delete(name):
                     return {"type": "ack", "text": f"no profile '{name}'"}

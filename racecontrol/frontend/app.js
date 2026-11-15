@@ -282,6 +282,47 @@ function renderStewardProfiles() {
     sel.value = p.active || '';
   }
   $('#sdlg-prof').textContent = p.active || '- none -';
+  // Rules dialog: profile list + league of the active profile
+  const dsel = $('#sdlg-profsel'), lsel = $('#sdlg-league');
+  if (dsel.dataset.key !== key && document.activeElement !== dsel) {
+    dsel.dataset.key = key;
+    dsel.innerHTML = p.names.map((n) => `<option>${esc(n)}</option>`).join('');
+    dsel.value = p.active || p.names[0] || '';
+  }
+  const lkey = JSON.stringify([p.active, p.leagues, p.choices]);
+  if (lsel.dataset.key !== lkey && document.activeElement !== lsel) {
+    lsel.dataset.key = lkey;
+    const cur = (p.leagues || {})[p.active] || '';
+    const ch = (p.choices || []).slice();
+    if (cur && !ch.some((c) => c.slug === cur)) ch.push({ slug: cur, name: cur });
+    lsel.innerHTML = '<option value="">- none -</option>'
+      + ch.map((c) => `<option value="${esc(c.slug)}">${esc(c.name)}</option>`).join('');
+    lsel.value = cur;
+    lsel.disabled = !p.active;
+  }
+  $('#sdlg-detected').textContent = p.league
+    ? `now: ${p.league.name}, ${p.league.matched} of ${p.league.drivers} drivers`
+    : 'no league detected';
+  // a profile loaded from the dialog: show its rules there
+  if (State.pendingRulesLoad && State.pendingRulesLoad === p.active) {
+    State.pendingRulesLoad = null;
+    if (!$('#sdlg').classList.contains('hidden')) openStewardRules();
+  }
+}
+function loadProfileFromDialog() {
+  const name = $('#sdlg-profsel').value;
+  if (!name) return;
+  const p = (State.steward && State.steward.profiles) || {};
+  if (name === p.active) { openStewardRules(); return; }   // = undo edits
+  if (!confirm(`Load the profile "${name}"? Its rules replace the ones in this dialog (unsaved changes are lost).`)) return;
+  State.pendingRulesLoad = name;
+  send({ action: 'steward_profile', op: 'load', name });
+}
+function setProfileLeague() {
+  const p = (State.steward && State.steward.profiles) || {};
+  if (!p.active) return;
+  send({ action: 'steward_profile', op: 'league', name: p.active,
+    league: $('#sdlg-league').value });
 }
 function loadStewardProfile() {
   const sel = $('#steward-profile');
@@ -323,6 +364,7 @@ function updateStewardToggle() {
         + `${s.fcy_laps > 0 ? `, ${s.fcy_laps} laps` : ''})` : 'off'}`
     + (s.fcy_short ? ` | short caution: ${s.fcy_pitopen ? `pits +${s.fcy_pit_open_s}s, ` : ''}${s.fcy_short_laps} lap(s) from lap 2, wave ${s.fcy_wave}` : '')
     + (s.sz_enabled ? ' | start zone reminder: on' : '')
+    + (s.nc_enabled ? ` | driver chat off at the ${s.nc_when === 'parade' ? 'pace lap' : 'grid'}` : '')
     + ` | sequencer: ${s.seq_enabled ? (s.sequence || []).length + ' msg' : 'off'}`
     + (s.cb_enabled ? ` | blue flag rule: ${s.cb_gap_s}s, every ${s.cb_every_s}s`
         + (s.cb_dt ? `, DT after a lap (max ${s.cb_dt_max_s}s)` : '')
@@ -340,7 +382,8 @@ const STEWARD_FIELDS = ['dt_first', 'dt_every', 'fcy_enabled', 'fcy_incs',
   'cb_enabled', 'cb_gap_s', 'cb_every_s', 'cb_from_lap', 'cb_text', 'cb_dt',
   'cb_dt_max_s', 'cb_dt_text', 'cb_grace_s',
   'fcy_short', 'fcy_pitopen', 'fcy_pit_open_s', 'fcy_short_laps', 'fcy_wave',
-  'otg_enabled', 'otg_text', 'sz_enabled', 'sz_text'];
+  'otg_enabled', 'otg_text', 'sz_enabled', 'sz_text',
+  'nc_enabled', 'nc_when', 'nc_text', 'nc_back', 'nc_back_text'];
 function openStewardRules() {
   const s = State.steward || {};
   STEWARD_FIELDS.forEach((k) => {
@@ -1004,6 +1047,8 @@ function wire() {
   $('#steward-rules').addEventListener('click', openStewardRules);
   $('#steward-profile').addEventListener('change', loadStewardProfile);
   $('#prof-saveas').addEventListener('click', saveStewardProfileAs);
+  $('#prof-load').addEventListener('click', loadProfileFromDialog);
+  $('#sdlg-league').addEventListener('change', setProfileLeague);
   $('#prof-del').addEventListener('click', deleteStewardProfile);
   $('#s-cb_enabled').addEventListener('change', syncBlueSections);
   $('#sdlg-ok').addEventListener('click', () => saveStewardRules(true));

@@ -2141,6 +2141,57 @@ step(pl(600, [0.2, 0.2], key="sz-4"))
 check("SZ13 empty text: nothing", len(sent7[k:]) == 5, sent7[k:])
 
 
+# 0.1.39: driver chat off for the start, on again at the checkered flag
+print("Driver chat off for the start")
+eng7.state = RaceState()
+eng7.auto.reset()
+k = len(sent7)
+nc = lambda: [x for x in sent7[k:] if "nchat" in x or x.strip() == "!chat"
+              or "DRIVER CHAT" in x]
+step(pl(100, [0.99, 0.01], key="nc-1", state="WARMUP"))
+check("NC1 rule OFF by default: nothing", nc() == [], nc())
+check("NC1b old saved rules: OFF, grid, back ON",
+      steward.clean({"enabled": True})["nc_enabled"] is False
+      and steward.clean({})["nc_when"] == "grid" and steward.clean({})["nc_back"])
+eng7.steward_cfg = steward.clean({"nc_enabled": True})
+eng7.auto.reset()
+step(pl(110, [0.99, 0.01], key="nc-2", state="GET IN CAR"))
+check("NC2 get in car: nothing yet", nc() == [], nc())
+step(pl(120, [0.99, 0.01], key="nc-2", state="WARMUP"))
+check("NC3 on the grid: message to all FIRST, then !nchat (no car)",
+      nc() == ["/all DRIVER CHAT IS NOW DISABLED FOR THE START - RACE CONTROL ONLY",
+               "!nchat"], nc())
+step(pl(130, [0.2, 0.2], key="nc-2"))
+step(pl(200, [0.5, 0.5], key="nc-2", state="RACING"))
+check("NC4 pace lap / green: not again", len(nc()) == 2, nc())
+check("NC5 logged as auto_chat_off", len(autos("auto_chat_off")) == 1)
+step(pl(900, [0.1, 0.1], key="nc-2", state="CHECKERED"))
+step(pl(910, [0.2, 0.2], key="nc-2", state="COOLDOWN"))
+check("NC6 checkered: !chat then the message, once",
+      nc()[2:] == ["!chat", "/all DRIVER CHAT IS ENABLED AGAIN"], nc())
+eng7.steward_cfg = steward.clean({"nc_enabled": True, "nc_when": "parade",
+                                  "nc_back": False})
+k = len(sent7)
+step(pl(1000, [0.99, 0.01], key="nc-3", state="WARMUP"))
+check("NC7 'parade': not on the grid", nc() == [], nc())
+step(pl(1010, [0.99, 0.01], key="nc-3"))
+check("NC8 'parade': when the pace lap begins", len(nc()) == 2, nc())
+step(pl(1900, [0.1, 0.1], key="nc-3", state="CHECKERED"))
+check("NC9 back OFF: chat stays off", len(nc()) == 2, nc())
+eng7.steward_cfg = steward.clean({"nc_enabled": True})
+k = len(sent7)
+step(pl(2000, [0.2, 0.2], key="nc-4", stype="LONE QUALIFY", state="WARMUP"))
+check("NC10 not a race: nothing", nc() == [], nc())
+step(pl(2100, [0.5, 0.5], key="nc-5", state="RACING"))
+check("NC11 iCAS started after the green: no chat off", nc() == [], nc())
+step(pl(2900, [0.5, 0.5], key="nc-5", state="CHECKERED"))
+check("NC12 ... but on again at the checkered flag", nc()[:1] == ["!chat"], nc())
+eng7.steward_cfg = steward.clean({"nc_enabled": True, "nc_text": " "})
+k = len(sent7)
+step(pl(3000, [0.99, 0.01], key="nc-6", state="WARMUP"))
+check("NC13 empty text: only !nchat", nc() == ["!nchat"], nc())
+
+
 print("Short caution (Le Mans)")
 eng7.chat_cfg["enabled"] = True
 eng7.steward_cfg = steward.clean({"fcy_short": True, "fcy_laps": 3,
@@ -2382,7 +2433,7 @@ steward.save_config(dict(steward.DEFAULT_CONFIG, cb_enabled=True, sz_enabled=Tru
 ep = server.Engine(force_sim=True)
 pst = ep.steward_status()["profiles"]
 check("PR1 first start: GT3 WCT + the old rules as profiles, old one active",
-      pst == {"active": "Bisherige Einstellungen",
+      {k: pst[k] for k in ("active", "names")} == {"active": "Bisherige Einstellungen",
               "names": ["Bisherige Einstellungen", "GT3 WCT"]}, pst)
 ep.handle_client_message({"action": "steward_profile", "op": "save_as", "name": "IEC",
                           "rules": {"dt_first": 30, "enabled": False}})
@@ -2426,9 +2477,80 @@ steward.CONFIG_PATH = _pd2 / "steward_config.json"
 steward.PROFILES_PATH = _pd2 / "steward_profiles.json"
 ep3 = server.Engine(force_sim=True)
 check("PR11 fresh install (defaults): only GT3 WCT, active",
-      ep3.profiles.status() == {"active": "GT3 WCT", "names": ["GT3 WCT"]}
+      ep3.profiles.status()["names"] == ["GT3 WCT"]
       or ep3.profiles.status()["active"] in ("GT3 WCT", "Bisherige Einstellungen"),
       ep3.profiles.status())
+
+# -- 0.1.39: profile per CLS league, loaded by itself ---------------------------
+print("Profile per league")
+check("LG1 fresh install: GT3 WCT belongs to cas-gt3-wct",
+      ep3.profiles.leagues == {"GT3 WCT": "cas-gt3-wct"}, ep3.profiles.leagues)
+_pd3 = Path(tempfile.mkdtemp())
+steward.PROFILES_PATH = _pd3 / "steward_profiles.json"
+steward.CONFIG_PATH = _pd3 / "steward_config.json"
+json.dump({"active": "GT3 WCT", "profiles": {
+    "GT3 WCT": steward._profile_cfg(dict(steward.DEFAULT_CONFIG)),
+    "IEC 24h": steward._profile_cfg(dict(steward.DEFAULT_CONFIG, cb_enabled=True, dt_first=30)),
+    "Test": steward._profile_cfg(dict(steward.DEFAULT_CONFIG, dt_first=9))}},
+    open(steward.PROFILES_PATH, "w"))
+
+
+class FakeLeague:
+    def __init__(self): self.current = None
+    def update(self, state): return self.current
+    def choices(self): return [{"slug": "cas-iec", "name": "CAS IEC"}]
+
+
+ep4 = server.Engine(force_sim=True)
+check("LG2 old file without leagues: guessed by name (WCT, IEC), saved",
+      ep4.profiles.leagues == {"GT3 WCT": "cas-gt3-wct", "IEC 24h": "cas-iec"}
+      and json.load(open(steward.PROFILES_PATH))["leagues"] == ep4.profiles.leagues,
+      ep4.profiles.leagues)
+ep4.league = FakeLeague()
+ep4._auto_profile()
+check("LG3 no league detected: nothing changes", ep4.profiles.active == "GT3 WCT")
+ep4.league.current = {"slug": "cas-iec", "name": "CAS IEC", "matched": 18, "drivers": 22}
+ep4._auto_profile()
+check("LG4 IEC field: profile 'IEC 24h' loaded by itself",
+      ep4.profiles.active == "IEC 24h" and ep4.steward_cfg["cb_enabled"]
+      and steward.load_config()["dt_first"] == 30, ep4.profiles.active)
+check("LG5 logged with the league + driver count",
+      any("CAS IEC (18 of 22 drivers)" in e.text and "IEC 24h" in e.text
+          for e in ep4.state.events), [e.text for e in ep4.state.events][-3:])
+ep4.handle_client_message({"action": "steward_profile", "op": "load", "name": "Test"})
+ep4._auto_profile()
+check("LG6 a profile loaded by hand afterwards stays (same session + league)",
+      ep4.profiles.active == "Test")
+ep4._fresh_state("new session")
+ep4._auto_profile()
+check("LG7 a new session: the league's profile again", ep4.profiles.active == "IEC 24h")
+a = ep4.handle_client_message({"action": "steward_profile", "op": "league",
+                               "name": "Test", "league": "cas-iec"})
+check("LG8 one profile per league: Test takes cas-iec from IEC 24h",
+      ep4.profiles.leagues.get("Test") == "cas-iec"
+      and "IEC 24h" not in ep4.profiles.leagues, (a, ep4.profiles.leagues))
+ep4._auto_profile()
+check("LG9 changing the league looks at the field again -> Test",
+      ep4.profiles.active == "Test")
+ep4.handle_client_message({"action": "steward_profile", "op": "league",
+                           "name": "Test", "league": ""})
+check("LG10 league none: no mapping", "Test" not in ep4.profiles.leagues)
+a = ep4.handle_client_message({"action": "steward_profile", "op": "league",
+                               "name": "Test", "league": "bad slug!"})
+check("LG11 bad slug = none", "Test" not in ep4.profiles.leagues, a)
+ep4.league.current = {"slug": "cas-pccd", "name": "CAS PCC", "matched": 5, "drivers": 6}
+ep4._auto_profile()
+check("LG12 league without profile: note, rules unchanged",
+      ep4.profiles.active == "Test" and "no Auto Steward profile"
+      in ep4.state.events[-1].text, ep4.state.events[-1].text)
+ep4.handle_client_message({"action": "steward_profile", "op": "delete", "name": "GT3 WCT"})
+check("LG13 deleting a profile drops its league", "GT3 WCT" not in ep4.profiles.leagues)
+pst = ep4.steward_status()["profiles"]
+check("LG14 status: leagues, detected league, choices",
+      pst["league"]["slug"] == "cas-pccd" and pst["choices"][0]["slug"] == "cas-iec"
+      and "leagues" in pst, pst)
+check("LG15 chat commands for every driver", chat.build("chat_off_all") == "!nchat"
+      and chat.build("chat_on_all") == "!chat")
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

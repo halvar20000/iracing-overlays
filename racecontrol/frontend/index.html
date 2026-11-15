@@ -379,10 +379,13 @@
   <div class="dlg sdlg">
     <div class="dlg-head"><span>Auto Steward rules</span>
       <button class="dlg-x" id="sdlg-x">&times;</button></div>
-    <div class="prof-row">Profile: <b id="sdlg-prof">-</b>
+    <div class="prof-row">Profile: <select id="sdlg-profsel" title="The saved profiles - Load puts its rules into this dialog and makes them active"></select>
+      <button type="button" id="prof-load">Load</button>
       <button type="button" id="prof-saveas" title="Save the rules in this dialog under a new name (e.g. IEC)">Save as new profile...</button>
       <button type="button" id="prof-del" title="Delete the active profile (the rules stay as they are)">Delete profile</button>
-      <span class="note">Save writes into the active profile. Choose a profile in the header to load it.</span></div>
+      <span class="prof-league">Active: <b id="sdlg-prof">-</b>, league
+        <select id="sdlg-league" title="iCAS loads this profile by itself when the drivers of this CLS league are in the session"></select></span>
+      <span class="note">OK saves into the active profile. A profile with a league is loaded by itself when that league's drivers are in the session (<span id="sdlg-detected">no league detected</span>).</span></div>
     <fieldset><legend>Incident limit (message only - iRacing gives the penalty)</legend>
       <label>Drive through at <input id="s-dt_first" type="number" min="0" max="99">x,
         then every further <input id="s-dt_every" type="number" min="0" max="99">x</label>
@@ -413,6 +416,15 @@
     <fieldset><legend><label><input id="s-sz_enabled" type="checkbox"> Start zone - RC message to everybody on the pace lap (only for events with this rule, e.g. IEC)</label></legend>
       <input id="s-sz_text" type="text" maxlength="200" class="wide">
       <span class="note">sent when the pace lap begins and again in the last quarter of each pace lap. Needs iRACING CHAT ON and an admin account.</span>
+    </fieldset>
+    <fieldset><legend><label><input id="s-nc_enabled" type="checkbox"> Driver chat OFF for the start - RC message to everybody, then !nchat (race)</label></legend>
+      <label>when <select id="s-nc_when">
+        <option value="grid">the cars are on the grid (before the pace lap)</option>
+        <option value="parade">the pace lap begins</option></select></label>
+      <input id="s-nc_text" type="text" maxlength="200" class="wide">
+      <label><input id="s-nc_back" type="checkbox"> switch it ON again at the checkered flag (!chat), message:</label>
+      <input id="s-nc_back_text" type="text" maxlength="200" class="wide" placeholder="(no message)">
+      <span class="note">Admins (race control) can always chat. Needs iRACING CHAT ON and an admin account.</span>
     </fieldset>
     <fieldset><legend><label><input id="s-seq_enabled" type="checkbox"> Sequencer - RC message to everybody at a session time</label></legend>
       <div id="seq-rows"></div>
