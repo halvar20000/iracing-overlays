@@ -1,0 +1,53 @@
+# prio	file	title	subtitle
+# prio: A = CAS-Ligen (gefahren oder typisch GT3/Cup), B = bekannte Strecke, C = selten
+A	algarve_gp	AUTÓDROMO INTERNACIONAL DO ALGARVE	Portimão · Portugal
+A	imola_gp	AUTODROMO ENZO E DINO FERRARI	Imola · Italy
+A	monza_full	AUTODROMO NAZIONALE MONZA	Monza · Italy
+A	mugello_gp	MUGELLO CIRCUIT	Scarperia e San Piero · Italy
+A	silverstone_2019_gp	SILVERSTONE CIRCUIT	Silverstone, Northamptonshire · UK
+A	donington_gp	DONINGTON PARK	Castle Donington, Leicestershire · UK
+A	oulton_international	OULTON PARK	Little Budworth, Cheshire · UK
+A	thruxton	THRUXTON CIRCUIT	Andover, Hampshire · UK
+A	snetterton_300	SNETTERTON CIRCUIT	Snetterton, Norfolk · UK
+A	zandvoort_2023_gp	CIRCUIT ZANDVOORT	Zandvoort · Netherlands
+A	zolder	CIRCUIT ZOLDER	Heusden-Zolder · Belgium
+A	magnycours_gp	CIRCUIT DE NEVERS MAGNY-COURS	Magny-Cours · France
+A	oschersleben_gp	MOTORSPORT ARENA OSCHERSLEBEN	Oschersleben · Germany
+A	nurburgring_nordschleife	NÜRBURGRING NORDSCHLEIFE	Nürburg · Germany
+A	nurburgring_combined	NÜRBURGRING 24H	Nürburg · Germany
+A	suzuka_grandprix	SUZUKA CIRCUIT	Suzuka, Mie · Japan
+A	motegi_gp	MOBILITY RESORT MOTEGI	Motegi, Tochigi · Japan
+A	okayama_full	OKAYAMA INTERNATIONAL CIRCUIT	Mimasaka, Okayama · Japan
+A	bathurst	MOUNT PANORAMA CIRCUIT	Bathurst, New South Wales · Australia
+A	phillipisland	PHILLIP ISLAND GRAND PRIX CIRCUIT	Phillip Island, Victoria · Australia
+A	interlagos	AUTÓDROMO JOSÉ CARLOS PACE	São Paulo · Brazil
+A	roadamerica	ROAD AMERICA	Elkhart Lake, Wisconsin · USA
+A	watkinsglen_2021_fullcourse	WATKINS GLEN INTERNATIONAL	Watkins Glen, New York · USA
+A	indianapolis_2022_road	INDIANAPOLIS MOTOR SPEEDWAY	Speedway, Indiana · USA
+A	mosport	CANADIAN TIRE MOTORSPORT PARK	Bowmanville, Ontario · Canada
+B	aragon_gp	MOTORLAND ARAGÓN	Alcañiz · Spain
+B	jerez_gp	CIRCUITO DE JEREZ – ÁNGEL NIETO	Jerez de la Frontera · Spain
+B	hermanosrodriguez_gp	AUTÓDROMO HERMANOS RODRÍGUEZ	Mexico City · Mexico
+B	miami_gp	MIAMI INTERNATIONAL AUTODROME	Miami Gardens, Florida · USA
+B	longbeach	LONG BEACH STREET CIRCUIT	Long Beach, California · USA
+B	midohio_full	MID-OHIO SPORTS CAR COURSE	Lexington, Ohio · USA
+B	sonoma_full	SONOMA RACEWAY	Sonoma, California · USA
+B	limerock_2019_gp	LIME ROCK PARK	Lakeville, Connecticut · USA
+B	portland	PORTLAND INTERNATIONAL RACEWAY	Portland, Oregon · USA
+B	charlotte_2018_roval	CHARLOTTE ROVAL	Concord, North Carolina · USA
+B	chicago_street	CHICAGO STREET COURSE	Chicago, Illinois · USA
+B	stpete	STREETS OF ST. PETERSBURG	St. Petersburg, Florida · USA
+B	belleisle	DETROIT BELLE ISLE	Detroit, Michigan · USA
+B	coronado	QUALCOMM CIRCUIT	Naval Base Coronado, San Diego · USA
+B	adelaide	ADELAIDE STREET CIRCUIT	Adelaide, South Australia · Australia
+B	cadwell_full	CADWELL PARK	Louth, Lincolnshire · UK
+B	knockhill_international	KNOCKHILL RACING CIRCUIT	Dunfermline, Fife · Scotland
+C	sandown	SANDOWN RACEWAY	Melbourne, Victoria · Australia
+C	winton_national	WINTON MOTOR RACEWAY	Benalla, Victoria · Australia
+C	oran_gp	ORAN PARK RACEWAY	Narellan, New South Wales · Australia
+C	tsukuba_2kfull	TSUKUBA CIRCUIT	Shimotsuma, Ibaraki · Japan
+C	ledenon	CIRCUIT DE LÉDENON	Lédenon · France
+C	navarra_speedlong	CIRCUITO DE NAVARRA	Los Arcos · Spain
+C	rudskogen	RUDSKOGEN MOTORSENTER	Rakkestad · Norway
+C	newjersey_full	NEW JERSEY MOTORSPORTS PARK	Millville, New Jersey · USA
+C	willow_international	WILLOW SPRINGS INTERNATIONAL RACEWAY	Rosamond, California · USA

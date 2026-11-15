@@ -4,6 +4,8 @@ usage: python make_track_zoom.py tracks/<track>.json "<TITLE>" "<subtitle>"
   -> zoom_videos/<track>.mp4 (own folder, gitignored like show_notes/videos/;
   the old form with an output path as the 2nd argument still works).
 Needs Pillow + ffmpeg on PATH, internet for the tiles (cached in track_zoom/tilecache).
+Quality: env ZOOM_CRF (default 23, ~20 MB; 17 = the old ~80 MB).
+Batch: zoom_list.tsv (prio, file, title, subtitle) -> make_track_zooms.sh.
 First made for the PCCD finale at the Hungaroring (2026-10-22): 1080p30, 21 s.
 """
 import io, json, math, os, subprocess, sys, threading, urllib.request
@@ -134,7 +136,7 @@ def main():
     n = int(total * FPS)
     ff = subprocess.Popen(["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
                            "-s", f"{W}x{H}", "-r", str(FPS), "-i", "-", "-c:v", "libx264", "-preset", "slow",
-                           "-crf", "17", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out],
+                           "-crf", os.environ.get("ZOOM_CRF", "23"), "-pix_fmt", "yuv420p", "-movflags", "+faststart", out],
                           stdin=subprocess.PIPE)
     pool = ThreadPoolExecutor(16)
     for i in range(n):
