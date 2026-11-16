@@ -187,6 +187,23 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 16, 2026 (Twitch AD BREAKS from 5011, Thomas now Affiliate):**
+Thomas: no ads while racing if possible (affiliates cannot switch ads off).
+His settings: Ads Manager OFF, pre-rolls on, "disable pre-rolls when I run
+ads" (30 s mid-roll = 10 min without pre-roll, 3 min = 1 h). twitch_schedule:
+SCOPE + `channel:edit:commercial` (validate `scopes` stored; an old login =
+`ads_ok` false, page asks to log in again); `run_ad(len)` = POST
+/helix/channels/commercial (lengths snapped to 30..180, default AD_LEN 90,
+"not live" = clear German line, `last_ad`); `ad_tick(key, type)` = auto break
+AD_DELAY_S 60 s into each practice / warm-up session (not testing / quali /
+race), once per session, never within AD_GAP_S 20 min of the last break,
+`ads_auto` default on. 5011: thread `_ad_watch` (5 s, key = session type +
+name from the poller), GET /twitch/ad?len= (Stream Deck, localhost only),
+POST /twitch/ad | /twitch/ads {auto, len}; page section "4. Werbung". Icon
+dashboard/twitch_ad.png ("Werbung jetzt"). test_twitch_schedule 39/39, routes
+via Flask test client. NOT tried against real Twitch. Restart 5011 + log in
+again on /twitch.
+
 **November 16, 2026 (Twitch schedule filled from CLS, `5011/twitch`):**
 Thomas: the Twitch dashboard only offers WEEKLY repeating streams, no single
 dates. NEW `twitch_schedule.py` (`TwitchSchedule`, page PAGE_HTML, served by

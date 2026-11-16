@@ -31,6 +31,7 @@ round dates + the Twitch stream schedule (stream_countdown.py).
 """
 
 import threading
+import time
 from flask import Flask, Response, jsonify, render_template_string, request
 
 import wct_board
@@ -554,6 +555,29 @@ def twitch_status():
     return jsonify(twitch.status())
 
 
+@app.route("/twitch/ad")
+def twitch_ad_get():
+    """Stream Deck (Website action, background): ad break now, ?len=30..180."""
+    if not _local():
+        return jsonify({"error": "Nur auf diesem PC (localhost)."}), 403
+    try:
+        return jsonify({"result": twitch.run_ad(request.args.get("len"))})
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
+def _ad_watch():
+    """Auto ad break 1 min into a practice / warm-up session (twitch.ad_tick)."""
+    while True:
+        time.sleep(5)
+        try:
+            d = poller.get() or {}
+            key = (d.get("session_type"), d.get("session_name")) if d.get("connected") else None
+            twitch.ad_tick(key, d.get("session_type"), bool(d.get("connected")))
+        except Exception as e:
+            print(f"[twitch ad] {e}")
+
+
 @app.route("/twitch/<action>", methods=["POST"])
 def twitch_action(action):
     if not _local():                      # the Twitch login only from this PC
@@ -568,6 +592,10 @@ def twitch_action(action):
             twitch.logout()
         elif action == "auto":
             twitch.set_auto(body.get("on"))
+        elif action == "ads":
+            twitch.set_ads(auto=body.get("auto"), length=body.get("len"))
+        elif action == "ad":
+            return jsonify({"result": twitch.run_ad(body.get("len"))})
         elif action == "streamer":
             twitch.set_streamer(body.get("name", ""))
         elif action == "sync":
@@ -598,6 +626,7 @@ if __name__ == "__main__":
     threading.Thread(target=event.run, daemon=True).start()
     threading.Thread(target=calendar.run, daemon=True).start()
     threading.Thread(target=twitch.run, args=(calendar,), daemon=True).start()
+    threading.Thread(target=_ad_watch, daemon=True).start()
 
     print("\n" + "=" * 60)
     print("  iRacing Session Info Overlay")

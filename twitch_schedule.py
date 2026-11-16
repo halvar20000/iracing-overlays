@@ -32,7 +32,12 @@ import stream_countdown
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATE_PATH = os.path.join(HERE, "twitch_schedule.json")
-SCOPE = "channel:manage:schedule"
+SCOPE = "channel:manage:schedule channel:edit:commercial"
+AD_SCOPE = "channel:edit:commercial"
+AD_LENGTHS = (30, 60, 90, 120, 150, 180)   # what Twitch accepts (seconds)
+AD_LEN = 90          # default break: 30 s = 10 min, 90 s = 30 min without pre-rolls
+AD_DELAY_S = 60      # auto: this long into a practice / warm-up session
+AD_GAP_S = 20 * 60   # auto: never two breaks closer than this
 # Thomas's public dev.twitch.tv app "CAS Zeitplan" (a client id is no secret;
 # another one can be entered on the page)
 DEFAULT_CLIENT_ID = "arjsru8r06eg6iogstizp10byosukn"
@@ -93,6 +98,15 @@ def title_of(e):
     return " · ".join(parts)[:140]
 
 
+def _ad_len(n):
+    """Nearest break length Twitch accepts."""
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        n = AD_LEN
+    return min(AD_LENGTHS, key=lambda x: abs(x - n))
+
+
 DEFAULT_STREAMER = "Thomas"   # name in the CLS stream calendar (/admin/stream-calendar)
 
 
@@ -127,6 +141,7 @@ class TwitchSchedule:
         self.clock = clock
         self._lock = threading.RLock()
         self.pending = None           # running device login
+        self._ad_key, self._ad_since, self._ad_done = None, 0, False
         self.st = self._load()
 
     # -- state ----------------------------------------------------------
@@ -159,6 +174,9 @@ class TwitchSchedule:
                     "logged_in": bool(st.get("refresh_token") or st.get("access_token")),
                     "login": st.get("login", ""), "auto": st.get("auto", True),
                     "streamer": st.get("streamer", DEFAULT_STREAMER),
+                    "ads_ok": AD_SCOPE in (st.get("scopes") or []),
+                    "ads_auto": st.get("ads_auto", True), "ads_len": st.get("ads_len", AD_LEN),
+                    "last_ad": st.get("last_ad"), "last_ad_result": st.get("last_ad_result", ""),
                     "segments": st.get("segments", {}), "last_sync": st.get("last_sync"),
                     "last_result": st.get("last_result", ""), "log": st.get("log", [])[-15:],
                     "pending": ({"user_code": p["user_code"], "uri": p["uri"],
@@ -190,6 +208,64 @@ class TwitchSchedule:
             self.pending = None
             self._log("Abgemeldet.")
             self._save()
+
+    def set_ads(self, auto=None, length=None):
+        with self._lock:
+            if auto is not None:
+                self.st["ads_auto"] = bool(auto)
+            if length is not None:
+                self.st["ads_len"] = _ad_len(length)
+            self._save()
+
+    # -- ad breaks ----------------------------------------------------------
+    def run_ad(self, length=None, why="von Hand"):
+        """Start a mid-roll ad break now (stream must be live). -> German line.
+        Every 30 s of it keeps pre-rolls off for 10 minutes (Twitch rule)."""
+        with self._lock:
+            n = _ad_len(length if length is not None else self.st.get("ads_len", AD_LEN))
+            if AD_SCOPE not in (self.st.get("scopes") or []):
+                msg = "Werbung: erst neu bei Twitch anmelden (Berechtigung für Werbung fehlt)."
+            else:
+                if not self.st.get("user_id"):
+                    self._token()
+                code, d = self._api("POST", "/channels/commercial",
+                                    data={"broadcaster_id": self.st.get("user_id", ""), "length": n})
+                row = (d.get("data") or [{}])[0] if isinstance(d.get("data"), list) else {}
+                if code == 200 and row.get("length"):
+                    self.st["last_ad"] = self.clock()
+                    msg = f"Werbung {row['length']} s gestartet ({why})."
+                    if row.get("retry_after"):
+                        msg += f" Nächste frühestens in {int(row['retry_after']) // 60} min."
+                else:
+                    m = str(d.get("message") or row.get("message") or d)
+                    if any(x in m.lower() for x in ("not live", "offline", "streaming live")):
+                        m = "Kanal ist nicht live"
+                    msg = f"Werbung NICHT gestartet ({why}): {code} {m}"
+            self.st["last_ad_result"] = msg
+            self._log(msg)
+            self._save()
+            return msg
+
+    def ad_tick(self, session_key, session_type, connected=True):
+        """Auto ad break: AD_DELAY_S into each practice / warm-up session,
+        at most one per AD_GAP_S. Called every few seconds by 5011.
+        Returns the result line when it fired, else None."""
+        now = self.clock()
+        with self._lock:
+            if not connected or not session_key:
+                return None
+            if session_key != self._ad_key:
+                self._ad_key, self._ad_since, self._ad_done = session_key, now, False
+            t = str(session_type or "").lower()
+            quiet = ("practice" in t or "warm" in t) and "testing" not in t
+            if (self._ad_done or not quiet or not self.st.get("ads_auto", True)
+                    or AD_SCOPE not in (self.st.get("scopes") or [])
+                    or now - self._ad_since < AD_DELAY_S):
+                return None
+            self._ad_done = True                          # one try per session
+            if now - (self.st.get("last_ad") or 0) < AD_GAP_S:
+                return None
+        return self.run_ad(why=f"automatisch, {session_type}")
 
     # -- login (device code flow) ----------------------------------------
     def start_login(self, wait=True):
@@ -251,6 +327,7 @@ class TwitchSchedule:
         if code == 200:
             self.st["user_id"] = d.get("user_id", "")
             self.st["login"] = d.get("login", "")
+            self.st["scopes"] = d.get("scopes") or []
 
     def _token(self):
         """A valid access token (refreshed when < 10 min left), else raises."""
@@ -455,6 +532,18 @@ abgeglichen, solange 5011 läuft. Rennen eines anderen Streamers werden wieder e
 <button class="sec" onclick="sync(1)">Vorschau</button><button onclick="sync(0)">Jetzt abgleichen</button>
 <div id="res" style="margin-top:10px"></div></section>
 
+<section><h2>4. Werbung</h2>
+<div class="sub">Startet eine Werbepause (Stream muss live sein). Jede 30 s Werbung = 10 min ohne Pre-Roll für neue
+Zuschauer, 90 s = 30 min. Stream Deck: Website-Aktion „im Hintergrund“ auf
+<code>http://localhost:5011/twitch/ad</code> (oder <code>?len=60</code>).</div>
+<div id="adwarn"></div>
+<p>Länge <select id="adlen" onchange="post('ads', {len: +this.value})">
+<option>30</option><option>60</option><option>90</option><option>120</option><option>150</option><option>180</option></select> s
+<button onclick="post('ad', {len: +$('adlen').value}).then(d => d.result && alert(d.result))">Werbung jetzt</button></p>
+<label><input type="checkbox" id="adauto" onchange="post('ads', {auto: this.checked})"> automatisch 1 min nach Beginn
+von Training / Warm-up in iRacing (höchstens alle 20 min)</label>
+<div id="adres" class="mut" style="margin-top:6px"></div></section>
+
 <section><h2>Eingetragene Termine</h2><table id="segs"></table></section>
 <section><h2>Protokoll</h2><pre id="log"></pre></section>
 </main>
@@ -480,6 +569,9 @@ async function load() {
   const s = await (await fetch('/twitch/status', {cache: 'no-store'})).json();
   if (!typing) { $('cid').value = s.client_id || ''; $('who').value = s.streamer || ''; }
   $('auto').checked = !!s.auto;
+  $('adauto').checked = !!s.ads_auto; if (document.activeElement !== $('adlen')) $('adlen').value = s.ads_len;
+  $('adwarn').innerHTML = s.logged_in && !s.ads_ok ? '<p class="err">Für Werbung einmal abmelden und neu anmelden (neue Berechtigung).</p>' : '';
+  $('adres').textContent = s.last_ad_result ? (s.last_ad ? 'Letzte Werbung ' + fmt(s.last_ad) + ' · ' : '') + s.last_ad_result : '';
   let h;
   if (!s.client_id) h = '<span class="mut">Erst die Client-ID speichern.</span>';
   else if (s.pending && !s.pending.error) h = 'Öffne <a href="' + s.pending.uri + '" target="_blank">' + esc(s.pending.uri) +

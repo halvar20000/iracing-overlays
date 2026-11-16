@@ -128,6 +128,7 @@ URL wie unten. Das Dashboard (Port 5000) muss laufen.
 | `page_prev.png` | `http://localhost:5001/nav/prev` — alle Seiten: Seite zurück |
 | `page_first.png` | `http://localhost:5001/nav/first` — alle Seiten: Seite 1 / nach oben |
 | `page_auto.png` | `http://localhost:5001/nav/auto` — automatisch blättern an/aus — wirkt nur noch auf Quellen mit `?auto=1` (grau: `dashboard_off/page_auto.png`) |
+| `twitch_ad.png` | `http://localhost:5011/twitch/ad` — Twitch-Werbepause jetzt (Länge von der Seite 5011/twitch, oder `?len=60`); Stream muss live sein, erst neu bei Twitch anmelden |
 
 Seit 25.10.2026 blättert und scrollt **kein Overlay mehr von selbst** — nur
 diese Tasten bewegen die Seiten: Startaufstellung (`grid.html`, `grid_cars`,

@@ -236,6 +236,8 @@ DASH_ICONS = [
     ("page_prev",         "tool",   "prev",        "Seite zurück",      "5001/nav/prev"),
     ("page_first",        "tool",   "list",        "Seite 1",           "5001/nav/first"),
     ("page_auto",         "tool",   "clock",       "Auto blättern",     "5001/nav/auto"),
+    # Twitch ad break now (5011/twitch, twitch_schedule.run_ad), ?len=30..180
+    ("twitch_ad",         "tool",   "film",        "Werbung jetzt",     "5011/twitch/ad"),
     # PAGES, not /streamdeck commands: Website action without "background"
     ("ot_panel",          "tool",   "overtake",    "Überhol Fenster",   "/overtakes/panel"),
     ("cam_panel",         "tool",   "camera",      "Kamera Fenster",    "/cameras/panel"),

@@ -12,7 +12,7 @@ def check(name, cond):
 class FakeTwitch:
     def __init__(self):
         self.segs = {}; self.n = 0; self.calls = []; self.polls = 0; self.refresh_ok = True
-        self.token = None
+        self.token = None; self.ads = []
     def __call__(self, method, url, headers=None, data=None, form=None, timeout=15):
         u = urllib.parse.urlparse(url); q = dict(urllib.parse.parse_qsl(u.query))
         self.calls.append((method, u.path))
@@ -32,8 +32,15 @@ class FakeTwitch:
                 assert form["refresh_token"] == "RT1" and "client_secret" not in form
                 self.token = "AT2"; return 200, {"access_token": "AT2", "refresh_token": "RT1", "expires_in": 14000}
         if u.path == "/oauth2/validate":
-            return 200, {"user_id": "583034073", "login": "sim_racing_broadcast"}
+            return 200, {"user_id": "583034073", "login": "sim_racing_broadcast",
+                         "scopes": getattr(self, "scopes", ts.SCOPE.split())}
         assert headers["Authorization"] == "Bearer " + self.token and headers["Client-Id"] == "CID"
+        if u.path == "/helix/channels/commercial":
+            assert method == "POST" and data["broadcaster_id"] == "583034073"
+            self.ads.append(data["length"])
+            if not getattr(self, "live", True):
+                return 400, {"error": "Bad Request", "status": 400, "message": "To start a commercial, the broadcaster must be streaming live."}
+            return 200, {"data": [{"length": data["length"], "message": "", "retry_after": 480}]}
         if u.path == "/helix/games":
             return 200, {"data": [{"id": "19554", "name": "iRacing"}]}
         if u.path == "/helix/schedule" and method == "GET":
@@ -155,6 +162,43 @@ except ValueError as e:
 check("state file has no token after that", "refresh_token" not in json.load(open(tmp)))
 t.set_client("OTHER")
 check("other client id drops the login", not t.status()["logged_in"] and t.status()["client_id"] == "OTHER")
+
+# ---- ad breaks (a fresh login with the ad scope)
+fake2 = FakeTwitch(); fake2.token = "AT1"
+ad_clock = [NOW]
+a = ts.TwitchSchedule(path=tmp + ".ads", http=fake2, clock=lambda: ad_clock[0])
+a.st.update({"client_id": "CID", "access_token": "AT1", "refresh_token": "RT1", "expires_at": NOW + 9999})
+a._whoami()
+check("ad scope requested at login", "channel:edit:commercial" in ts.SCOPE.split() and a.status()["ads_ok"])
+check("ad length snapped to what Twitch takes", ts._ad_len(100) == 90 and ts._ad_len("999") == 180 and ts._ad_len(None) == 90)
+r = a.run_ad(60)
+check("ad by hand: 60 s sent, line + last_ad", fake2.ads == [60] and "60 s gestartet" in r and a.st["last_ad"] == NOW)
+fake2.live = False
+r = a.run_ad()
+check("not live: clear line, last_ad unchanged", "nicht live" in r and "NICHT" in r and a.st["last_ad"] == NOW)
+fake2.live = True
+key = ("Practice", "PRACTICE")
+ad_clock[0] = NOW + 30 * 60
+check("auto: nothing in the first minute", a.ad_tick(key, "Practice") is None)
+ad_clock[0] += 61
+check("auto: fires 1 min into practice", "automatisch" in (a.ad_tick(key, "Practice") or "") and fake2.ads[-1] == 90)
+ad_clock[0] += 120
+check("auto: only once per session", a.ad_tick(key, "Practice") is None)
+n = len(fake2.ads)
+for _ in range(3):
+    ad_clock[0] += 61; a.ad_tick(("Race", "RACE"), "Race")
+check("auto: never in quali / race", len(fake2.ads) == n)
+ad_clock[0] += 61; a.ad_tick(("Warmup", "WARMUP"), "Warmup"); ad_clock[0] += 61
+check("auto: warm-up within 20 min of the last break -> skipped", a.ad_tick(("Warmup", "WARMUP"), "Warmup") is None and len(fake2.ads) == n)
+ad_clock[0] += 25 * 60; a.ad_tick(("Warmup", "W2"), "Warmup"); ad_clock[0] += 61
+check("auto: next warm-up after the gap fires", a.ad_tick(("Warmup", "W2"), "Warmup") and len(fake2.ads) == n + 1)
+a.set_ads(auto=False); ad_clock[0] += 25 * 60; a.ad_tick(("Practice", "P3"), "Practice"); ad_clock[0] += 61
+check("auto off: nothing", a.ad_tick(("Practice", "P3"), "Practice") is None and len(fake2.ads) == n + 1)
+old = ts.TwitchSchedule(path=tmp + ".old", http=fake2, clock=lambda: ad_clock[0])
+old.st.update({"client_id": "CID", "access_token": "AT1", "refresh_token": "RT1", "expires_at": NOW + 9999,
+               "user_id": "583034073", "scopes": ["channel:manage:schedule"]})
+check("old login without the ad scope: asks to log in again, nothing sent",
+      "neu bei Twitch anmelden" in old.run_ad() and not old.status()["ads_ok"] and len(fake2.ads) == n + 1)
 
 print(f"\n{ok} passed, {fail} failed")
 raise SystemExit(1 if fail else 0)
