@@ -187,6 +187,24 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 16, 2026 (race logger 1.5.0 — real contact / spin / slow-down, for
+Johann):** Johann: a +2 was always logged as a spin (iRacing gives 0x / 2x / 4x
+for contacts), 0x wall touches were missing, the furled black flag (slow down)
+too. NEW `local_incidents.py`: `LocalCarWatch` thread (own IRSDK handle, 20 Hz;
+the logger loop is 2 Hz) feeds `LocalIncidentDetector` (pure) for the LOCAL car:
+contact = world-velocity change / accelerometer >= CONTACT_G 5 g (car within
+CAR_NEAR_M 12 m = `collision` + with_car_idx, else `wall_contact`), spin = slip
+angle >= 70 deg for 0.25 s (`lost_control`), off track >= 0.4 s at speed;
+detections within 3 s = one incident, held HOLD_S 4 s so
+PlayerCarMyIncidentCount's points land on it (`points`, 0 = 0x), points alone =
+`points_only`; raw peak_g / slip_deg / speed_kmh kept (thresholds are GUESSES,
+tune from the first real log). Logger: source "local" events, the local car is
+skipped in the SDK-points path and the dashboard feed while watched; points-only
++2/+3 = `spin_or_contact` (was lost_control); CAR_PENALTY_BITS 0x80000
+`slowdown` + `penalty_end` duration_s. LOGGER_VERSION 1.5.0 (rebuild the exe).
+cas-race-center render_charts knows the new types. test_local_incidents.py
+21/21; tire / inc / cls_live tests pass. NOT tried in iRacing.
+
 **November 16, 2026 (Twitch AD BREAKS from 5011, Thomas now Affiliate):**
 Thomas: no ads while racing if possible (affiliates cannot switch ads off).
 His settings: Ads Manager OFF, pre-rolls on, "disable pre-rolls when I run

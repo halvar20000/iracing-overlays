@@ -40,6 +40,16 @@ What's captured per session:
                      dashboard's /incidents feed (port 5000); deduped,
                      so the same incident is never written twice. Absent
                      when the dashboard isn't running.
+                     The LOCAL car (the driver running the logger) is
+                     told apart by its own motion instead
+                     (local_incidents.py, source "local"): incident_type
+                     wall_contact / collision (+ with_car_number) /
+                     lost_control (spin) / off_track / points_only, with
+                     `points` (0 = a 0x contact), peak_g, slip_deg,
+                     speed_kmh. From points alone (other cars, no
+                     dashboard) a +2 is "spin_or_contact".
+  - penalty        — also `slowdown` (furled black flag); `penalty_end`
+                     with duration_s when it comes down.
   - inc            — OFFICIAL iRacing incident POINTS: one event each
                      time a car's count changes (delta + new total +
                      lap). Read straight from iRacing, so it needs no
@@ -80,6 +90,12 @@ except ImportError:
           "logged. Run 'pip install requests' to enable.")
 
 from iracing_sdk_base import SDKPoller, GridBaseline, setup_utf8_stdout
+try:
+    import irsdk as _irsdk_mod
+    from local_incidents import LocalCarWatch
+except Exception:                      # never stop the logger over it
+    _irsdk_mod = None
+    LocalCarWatch = None
 setup_utf8_stdout()
 
 
@@ -104,7 +120,7 @@ LOGS_DIR.mkdir(parents=True, exist_ok=True)
 # league site automatically. The file is ALWAYS kept locally as well — the
 # upload is a convenience, never the only copy. Failed uploads stay visible
 # on the setup page with a "Send again" button.
-LOGGER_VERSION   = "1.4.1"
+LOGGER_VERSION   = "1.5.0"
 CLS_DEFAULT_URL  = "https://league.simracing-hub.com"
 CLS_CONFIG_PATH  = HERE / "league_manager.json"
 CLS_STATE_PATH   = LOGS_DIR / "upload_state.json"
@@ -422,6 +438,7 @@ CAR_PENALTY_BITS = {
     0x0020:    "blue_flag",        # let faster car by
     0x10000:   "black_flag",       # drive-through / stop-go
     0x20000:   "disqualify",       # DQ
+    0x80000:   "slowdown",         # furled black flag: slow down / warning
     0x100000:  "repair",           # mandatory repair (meatball)
 }
 
@@ -676,6 +693,17 @@ class RaceLogger(SDKPoller):
         # bits in CarIdxSessionFlags are iRacing's authoritative signal
         # that a penalty has been assessed against a specific car.
         self._prev_car_session_flags: dict[int, int] = {}
+        # When each car's slow-down (furled black) went up -> its duration.
+        self._slowdown_since: dict[int, float] = {}
+        # Incidents of the LOCAL car from its own motion (local_incidents.py,
+        # 20 Hz thread): contact (wall / car), spin, off track, with the
+        # incident points iRacing gives for them.
+        self._local_watch = None
+        if LocalCarWatch is not None and _irsdk_mod is not None:
+            try:
+                self._local_watch = LocalCarWatch(_irsdk_mod)
+            except Exception as e:
+                print(f"[logger] local incident watch off: {e!r}")
 
         # Slow-lap detection — rolling history of recent lap times per
         # driver. When a new lap is more than SLOW_LAP_THRESHOLD slower
@@ -761,6 +789,7 @@ class RaceLogger(SDKPoller):
         self._setup_sig = None
         self._prev_session_flags = 0
         self._prev_car_session_flags.clear()
+        self._slowdown_since.clear()
         self._lap_history.clear()
         self._fuel_lap_start = None
         self._fuel_used_history.clear()
@@ -813,6 +842,8 @@ class RaceLogger(SDKPoller):
         """
         if self._log_fp is not None and not self._final_written:
             self._write_final_provisional()
+        if self._local_watch is not None:
+            self._local_watch.stop()
         super().stop()
 
     def _emit(self, event: dict) -> None:
@@ -832,7 +863,8 @@ class RaceLogger(SDKPoller):
         # Skip the verbose session_start/end blocks — those are big and
         # the monitor renders them from a different code path.
         if event.get("type") in ("lap", "incident", "inc", "pit", "flag",
-                                 "penalty", "slow_lap", "driver_change"):
+                                 "penalty", "penalty_end", "slow_lap",
+                                 "driver_change"):
             self._recent_events.appendleft(event)
 
     # ----- iRacing read helpers ------------------------------------------
@@ -1114,17 +1146,23 @@ class RaceLogger(SDKPoller):
         self._note_incident_source("sdk", len(counts))
 
         by_idx = {d["car_idx"]: d for d in self._log_session_meta.get("drivers", [])}
+        lw = getattr(self, "_local_watch", None)
+        local_watched = self._local_idx() if lw is not None and lw.active else None
         for cidx, val in counts.items():
             prev = self._sdk_inc_prev.get(cidx)
             self._sdk_inc_prev[cidx] = val
             if prev is None or val <= prev:
                 continue
             delta = val - prev
-            # iRacing's own severities, the same buckets the dashboard uses.
+            if cidx == local_watched:
+                continue        # the local car: _maybe_emit_local_incidents
+            # Points alone cannot tell what happened: 1x is off track, but
+            # iRacing gives 2x for a loss of control AND for a contact
+            # (0x / 2x / 4x by impact), so +2 is not called a spin.
             if delta <= 1:
                 kind = "off_track"
             elif delta <= 3:
-                kind = "lost_control"
+                kind = "spin_or_contact"
             else:
                 kind = "collision"
             d = by_idx.get(cidx, {})
@@ -1240,6 +1278,56 @@ class RaceLogger(SDKPoller):
             "skies":        self.ir["Skies"],
         })
 
+    # ----- the local car's own incidents ----------------------------------
+    def _local_idx(self):
+        try:
+            return (self.ir["DriverInfo"] or {}).get("DriverCarIdx")
+        except Exception:
+            return None
+
+    def _maybe_emit_local_incidents(self) -> None:
+        """Hand out what local_incidents.LocalCarWatch found: contact with a
+        wall / a car, spin, off track - each with the incident points iRacing
+        gave for it ("points": 0 = a 0x contact)."""
+        w = getattr(self, "_local_watch", None)
+        if w is None:
+            return
+        found = w.drain()
+        if not found or self._log_fp is None:
+            return
+        me = self._local_idx()
+        by_idx = {d["car_idx"]: d for d in self._log_session_meta.get("drivers", [])}
+        d = by_idx.get(me, {})
+        labels = {"wall_contact": "contact with the wall",
+                  "collision": "contact with a car", "lost_control": "spin",
+                  "off_track": "off track", "points_only": "incident points"}
+        for ev in found:
+            parts = [labels.get(ev["incident_type"], ev["incident_type"])]
+            other = by_idx.get(ev.get("with_car_idx"))
+            if other:
+                parts[0] += " #%s %s" % (other.get("car_number", ""), other.get("name", ""))
+            if ev["spun"] and ev["incident_type"] != "lost_control":
+                parts.append("spun")
+            if ev["off_track"] and ev["incident_type"] != "off_track":
+                parts.append("off track")
+            parts.append("+%dx" % ev["points"])
+            out = {
+                "type":          "incident",
+                "car_idx":       me,
+                "car_number":    d.get("car_number", ""),
+                "driver":        d.get("name", ""),
+                "details":       ", ".join(parts),
+                "source":        "local",
+            }
+            out.update(ev)
+            if other:
+                out["with_car_number"] = other.get("car_number", "")
+                out["with_driver"] = other.get("name", "")
+            if me is not None:
+                self._driver_incident_count[me] = self._driver_incident_count.get(me, 0) + 1
+            self._emit(out)
+            self._incidents_logged += 1
+
     # ----- per-car penalty detection -------------------------------------
     def _maybe_emit_penalty_events(self) -> None:
         """Watch each car's CarIdxSessionFlags for newly-set penalty
@@ -1257,6 +1345,19 @@ class RaceLogger(SDKPoller):
             prev = self._prev_car_session_flags.get(idx, 0)
             self._prev_car_session_flags[idx] = cur
             new_bits = cur & ~prev
+            slow = self.__dict__.setdefault("_slowdown_since", {})
+            if (prev & ~cur) & 0x80000 and idx in slow:
+                self._emit({
+                    "type":         "penalty_end",
+                    "t_session":    round(t_session, 2),
+                    "car_idx":      idx,
+                    "car_number":   d["car_number"],
+                    "driver":       d["name"],
+                    "penalty_type": "slowdown",
+                    "duration_s":   round(t_session - slow.pop(idx), 1),
+                })
+            if new_bits & 0x80000:
+                slow[idx] = t_session
             if not new_bits:
                 continue
             for bit, name in CAR_PENALTY_BITS.items():
@@ -2111,6 +2212,10 @@ class RaceLogger(SDKPoller):
                 # which we don't want to retro-log into a new session.
                 if self._log_fp is None:
                     continue
+                lw = getattr(self, "_local_watch", None)
+                if (lw is not None and lw.active
+                        and cidx is not None and str(cidx) == str(self._local_idx())):
+                    continue    # its own motion says it better (local_incidents)
                 t_inc_wall = inc.get("t_wall")  # noqa: F841 — kept for future use
                 event = {
                     "type":         "incident",
@@ -2131,6 +2236,12 @@ class RaceLogger(SDKPoller):
         if requests is not None and not self._incident_thread_started:
             self._incident_thread.start()
             self._incident_thread_started = True
+        w = getattr(self, "_local_watch", None)
+        if w is not None and not w.is_alive() and w._running:
+            try:
+                w.start()
+            except RuntimeError:
+                pass
 
         session_key, session_type, meta = self._detect_session_change()
 
@@ -2179,6 +2290,7 @@ class RaceLogger(SDKPoller):
         self._maybe_emit_weather()
         self._refresh_driver_names()
         self._maybe_emit_sdk_incidents()
+        self._maybe_emit_local_incidents()
         self._maybe_emit_penalty_events()
         self._maybe_emit_incident_points()
         self._maybe_emit_laps()
