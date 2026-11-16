@@ -187,6 +187,28 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 16, 2026 (Twitch schedule filled from CLS, `5011/twitch`):**
+Thomas: the Twitch dashboard only offers WEEKLY repeating streams, no single
+dates. NEW `twitch_schedule.py` (`TwitchSchedule`, page PAGE_HTML, served by
+5011: /twitch, /twitch/status, POST /twitch/{client,login,logout,sync,auto} -
+POSTs localhost only): Helix one-off segments (is_recurring false, timezone
+Europe/Berlin, category iRacing via /helix/games) for every CLS race day of
+the STREAM_START leagues in the next HORIZON_DAYS 42 (`plan()`: start = the
+countdown's stream time, `DURATION` 150 min, IEC 300, title "CAS GT3 WCT ·
+Lauf 9 · Fuji …"); key league:round; moved round = PATCH, gone = DELETE (only
+segments it created; past ones just forgotten), deleted on Twitch by hand =
+created again, lost state = adopted by start + title. Login = Device Code
+Flow of a PUBLIC dev.twitch.tv app (Thomas creates it once, pastes the Client
+ID - preset DEFAULT_CLIENT_ID = his app "CAS Zeitplan", checked: /oauth2/device
+answers with a code; code shown on the page, confirmed at twitch.tv/activate), scope
+channel:manage:schedule, refresh without secret (public refresh tokens are
+single-use, die after 30 days unused). State twitch_schedule.json (gitignored
++ PROTECTED). Auto sync every 6 h while 5011 runs (first 2 min after start).
+Countdown drops Twitch events within 120 s of a CLS event (our own segments).
+Settings page LINKS entry. test_twitch_schedule.py 19/19 against a fake Twitch;
+page rendered. NOT tried against real Twitch (only: /oauth2/device answers).
+Restart 5011.
+
 **November 16, 2026 (stream countdown `5011/countdown`):** Thomas used
 bregvorn.com's stream countdown, re-made by hand for every stream. NEW
 `stream_countdown.py` (page + `Calendar`, served by the session-info server

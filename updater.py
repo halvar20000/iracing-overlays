@@ -64,6 +64,7 @@ PROTECTED = {
     "commentary_config.json",
     "show_config.json",
     "vts_token.json",
+    "twitch_schedule.json",         # Twitch app id + login (5011/twitch)
     "show_script.json",
     "rc_config.json",
     "replay_pc_config.json",

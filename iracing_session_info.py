@@ -27,6 +27,7 @@ checkered).  ?size=300 ?logo=<url>|0 ?flag=0 ?debug=1 ?demo=1
 
 /countdown = stream countdown ("GLEICH GEHT'S LOS"), target from the CLS
 round dates + the Twitch stream schedule (stream_countdown.py).
+/twitch = fills the Twitch schedule from the CLS race days (twitch_schedule.py).
 """
 
 import threading
@@ -34,6 +35,7 @@ from flask import Flask, Response, jsonify, render_template_string, request
 
 import wct_board
 import stream_countdown
+import twitch_schedule
 
 from iracing_sdk_base import SDKPoller, setup_utf8_stdout
 setup_utf8_stdout()
@@ -173,6 +175,7 @@ app = Flask(__name__)
 poller = SessionInfoPoller(poll_hz=4)
 event = wct_board.EventInfo()       # league from 5010 (logo on /clock)
 calendar = stream_countdown.Calendar()   # CLS round dates + Twitch schedule (/countdown)
+twitch = twitch_schedule.TwitchSchedule()  # CLS race days -> Twitch schedule (/twitch)
 
 
 @app.after_request
@@ -537,6 +540,46 @@ def countdown_data():
     return jsonify(d)
 
 
+def _local():
+    return request.remote_addr in ("127.0.0.1", "::1")
+
+
+@app.route("/twitch")
+def twitch_page():
+    return Response(twitch_schedule.PAGE_HTML, mimetype="text/html")
+
+
+@app.route("/twitch/status")
+def twitch_status():
+    return jsonify(twitch.status())
+
+
+@app.route("/twitch/<action>", methods=["POST"])
+def twitch_action(action):
+    if not _local():                      # the Twitch login only from this PC
+        return jsonify({"error": "Nur auf diesem PC (localhost)."}), 403
+    body = request.get_json(silent=True) or {}
+    try:
+        if action == "client":
+            twitch.set_client(body.get("client_id", ""))
+        elif action == "login":
+            twitch.start_login()
+        elif action == "logout":
+            twitch.logout()
+        elif action == "auto":
+            twitch.set_auto(body.get("on"))
+        elif action == "sync":
+            ev = calendar.events()
+            if not ev:
+                return jsonify({"error": "Noch keine CLS-Termine geladen - gleich nochmal."})
+            return jsonify({"actions": twitch.sync(ev, dry=bool(body.get("dry")))})
+        else:
+            return jsonify({"error": "unknown"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)})
+    return jsonify({"ok": True})
+
+
 @app.route("/status")
 def status():
     d = dict(poller.get())
@@ -552,12 +595,14 @@ if __name__ == "__main__":
     t.start()
     threading.Thread(target=event.run, daemon=True).start()
     threading.Thread(target=calendar.run, daemon=True).start()
+    threading.Thread(target=twitch.run, args=(calendar,), daemon=True).start()
 
     print("\n" + "=" * 60)
     print("  iRacing Session Info Overlay")
     print("  Open in browser:  http://localhost:5011")
     print("  Race clock:       http://localhost:5011/clock")
     print("  Stream countdown: http://localhost:5011/countdown")
+    print("  Twitch schedule:  http://localhost:5011/twitch")
     print("  Transparent background — designed as an OBS browser source.")
     print("  Shows the active session name + total / remaining time.")
     print("  Press Ctrl+C to stop")

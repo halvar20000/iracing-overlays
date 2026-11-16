@@ -216,6 +216,10 @@ class Calendar:
             for src in ("cls", "twitch"):
                 if src in errors:
                     events += [e for e in self._events if e["source"] == src]
+            # our own Twitch segments (twitch_schedule.py) repeat the CLS days
+            cls_t = [e["t"] for e in events if e["source"] == "cls"]
+            events = [e for e in events if e["source"] != "twitch"
+                      or not any(abs(e["t"] - t) < 120 for t in cls_t)]
             self._events = sorted(events, key=lambda e: e["t"])
             self.errors = errors
             self.fetched = time.time()

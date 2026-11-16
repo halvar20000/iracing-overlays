@@ -258,6 +258,8 @@ FILES = [
 LINKS = [
     {"title": "YouTube-Bild (5005)", "url": "http://localhost:5005/youtube/setup",
      "desc": "Link einfügen, stumm ja / nein."},
+    {"title": "Twitch-Zeitplan (5011)", "url": "http://localhost:5011/twitch",
+     "desc": "CLS-Renntage automatisch in den Twitch-Zeitplan - Client-ID + Anmeldung dort."},
     {"title": "iCASControl (8080)", "url": "http://localhost:8080/",
      "desc": "Auto Steward (Regeln, Profile), iRacing-Chat, Stream-Banner, Stewards - alles in der Oberfläche."},
 ]
