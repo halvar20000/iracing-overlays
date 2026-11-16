@@ -103,10 +103,13 @@ def cls_events(league, round_info):
         if t is None or str(r.get("status") or "").upper() in ("COMPLETED", "CANCELLED"):
             continue
         track = r.get("track") or ""
-        out.append({"t": stream_time(t, slug), "race_t": t, "source": "cls", "league": slug, "league_name": name,
-                    "round": r.get("number"), "track": track,
-                    "title": " · ".join(x for x in (name, f"LAUF {r.get('number')}"
-                                                    if r.get("number") else "", track.upper()) if x)})
+        e = {"t": stream_time(t, slug), "race_t": t, "source": "cls", "league": slug, "league_name": name,
+             "round": r.get("number"), "track": track,
+             "title": " · ".join(x for x in (name, f"LAUF {r.get('number')}"
+                                             if r.get("number") else "", track.upper()) if x)}
+        if "streamer" in r:                       # CLS stream calendar (v2.59.1+)
+            e["streamer"] = r.get("streamer")
+        out.append(e)
     return out
 
 

@@ -43,6 +43,8 @@ class FakeTwitch:
         if u.path == "/helix/schedule/segment":
             assert q["broadcaster_id"] == "583034073"
             if method == "POST":
+                if getattr(self, "no_affiliate", False):
+                    return 403, {"error": "Forbidden", "status": 403, "message": "single segment creation not authorized"}
                 assert data["is_recurring"] is False and data["timezone"] == "Europe/Berlin" and data["category_id"] == "19554"
                 self.n += 1; i = f"seg{self.n}"; self.segs[i] = dict(data)
                 return 200, {"data": {"segments": [dict(s, id=k) for k, s in self.segs.items()]}}
@@ -55,19 +57,30 @@ class FakeTwitch:
 
 NOW = sc._iso("2026-11-16T12:00:00Z")
 clock = [NOW]
-def ev(league, rnd, race_iso, track):
+def ev(league, rnd, race_iso, track, streamer="Thomas"):
     t = sc._iso(race_iso)
     return {"t": sc.stream_time(t, league), "race_t": t, "source": "cls", "league": league,
-            "league_name": "", "round": rnd, "track": track, "title": ""}
+            "league_name": "", "round": rnd, "track": track, "title": "", "streamer": streamer}
 EVENTS = [ev("cas-gt3-wct", 9, "2026-11-17T18:00:00Z", "Fuji International Speedway"),
           ev("cas-pccd", 9, "2026-11-19T19:00:00Z", "Virginia International Raceway"),
           ev("cas-iec", 4, "2026-11-28T16:00:00Z", "Michelin Raceway Road Atlanta"),
           ev("cas-fun-league", 3, "2026-11-20T19:00:00Z", "Lime Rock"),        # no stream time -> not planned
-          ev("cas-gt3-wct", 20, "2027-03-01T18:00:00Z", "Far away")]         # beyond the horizon
+          ev("cas-gt3-wct", 20, "2027-03-01T18:00:00Z", "Far away"),         # beyond the horizon
+          ev("cas-sfl-cup", 1, "2026-11-25T19:00:00Z", "Road Atlanta", "Andreas"),  # Andreas streams it
+          ev("cas-combined-cup", 7, "2026-11-18T19:00:00Z", "Oschersleben", None)]  # nobody on the calendar
 twitch_ev = dict(EVENTS[0], source="twitch")
 
 p = ts.plan(EVENTS + [twitch_ev], NOW)
 check("plan: only leagues with a stream time, within 6 weeks, CLS only", sorted(p) == ["cas-gt3-wct:9", "cas-iec:4", "cas-pccd:9"])
+check("plan: streamer None = every race", "cas-sfl-cup:1" in ts.plan(EVENTS, NOW, streamer=None))
+check("plan: name case-insensitive", sorted(ts.plan(EVENTS, NOW, streamer="andreas")) == ["cas-sfl-cup:1"])
+ce = sc.cls_events("cas-pccd", {"league": {"slug": "cas-pccd"}, "rounds": [
+    {"number": 9, "startsAt": "2026-11-19T19:00:00.000Z", "status": "UPCOMING", "track": "VIR", "streamer": "Andreas"},
+    ]})
+ce_old = sc.cls_events("cas-pccd", {"league": {"slug": "cas-pccd"}, "rounds": [
+    {"number": 9, "startsAt": "2026-11-19T19:00:00.000Z", "status": "UPCOMING", "track": "VIR"}]})
+check("countdown events carry the CLS streamer (only when CLS sends it)",
+      ce[0]["streamer"] == "Andreas" and "streamer" not in ce_old[0] and ts.has_streamers(ce) and not ts.has_streamers(ce_old))
 check("plan: PCC stream 19:40 CET, title + duration", p["cas-pccd:9"]["start"] == sc._iso("2026-11-19T18:40:00Z")
       and p["cas-pccd:9"]["title"] == "CAS Porsche Community Cup · Lauf 9 · Virginia International Raceway"
       and p["cas-iec:4"]["duration"] == 300)
@@ -89,10 +102,25 @@ check("poll: then logged in", t.poll_login_once() is True and t.status()["logged
 
 dry = t.sync(EVENTS, dry=True)
 check("dry run: 3 new, nothing sent", len(dry) == 3 and all(a.startswith("NEU") for a in dry) and not fake.segs)
+old_cls = [{k: v for k, v in e.items() if k != "streamer"} for e in EVENTS]
+na = t.sync(old_cls)
+check("CLS without stream calendar: nothing sent, clear line", len(na) == 1 and "Stream-Kalender" in na[0]
+      and not any(c == ("POST", "/helix/schedule/segment") for c in fake.calls))
+fake.no_affiliate = True
+na = t.sync(EVENTS)
+check("403 per segment: reported per race, auto stays on", all(a.startswith("FEHLER 403") for a in na) and len(na) == 3
+      and t.status()["auto"] and not fake.segs)
+fake.no_affiliate = False
 acts = t.sync(EVENTS)
 check("sync: 3 segments created", len(fake.segs) == 3 and len(acts) == 3 and len(t.st["segments"]) == 3)
 check("sync: ids stored per round", t.st["segments"]["cas-iec:4"]["id"] in fake.segs)
 check("sync: second run changes nothing", t.sync(EVENTS) == [] and len(fake.segs) == 3)
+handed = [dict(e, streamer="Andreas") if e["league"] == "cas-pccd" else e for e in EVENTS]
+acts = t.sync(handed)
+check("race handed to Andreas -> removed from the schedule", acts == ["ENTFERNT CAS Porsche Community Cup · Lauf 9 · Virginia International Raceway"]
+      and len(fake.segs) == 2)
+acts = t.sync(EVENTS)
+check("handed back -> created again", len(acts) == 1 and acts[0].startswith("NEU") and len(fake.segs) == 3)
 
 moved = [dict(EVENTS[0], t=EVENTS[0]["t"] + 86400)] + EVENTS[1:]
 acts = t.sync(moved)

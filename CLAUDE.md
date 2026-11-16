@@ -206,8 +206,16 @@ single-use, die after 30 days unused). State twitch_schedule.json (gitignored
 + PROTECTED). Auto sync every 6 h while 5011 runs (first 2 min after start).
 Countdown drops Twitch events within 120 s of a CLS event (our own segments).
 Settings page LINKS entry. test_twitch_schedule.py 19/19 against a fake Twitch;
-page rendered. NOT tried against real Twitch (only: /oauth2/device answers).
-Restart 5011.
+page rendered. FIRST REAL SYNC (same day): 13 of 14 created; CAS IEC R4
+(Sat 28.11. 17:00, 300 min) got 403 "single segment creation not authorized"
+- cause unknown (Twitch docs: one-off segments only for Affiliates / Partners,
+yet the others went through). Then Thomas: only HIS streams -> CLS round-info
+`rounds[].streamer` (v2.59.1, from the admin stream calendar
+/admin/stream-calendar: Thomas / Andreas / Open) -> countdown events carry
+`streamer`, plan() keeps only state "streamer" (default "Thomas", field on the
+page, POST /twitch/streamer); a race handed to Andreas = segment DELETED; a
+CLS feed WITHOUT the field = sync refuses (would delete everything).
+test_twitch_schedule 27/27. Restart 5011.
 
 **November 16, 2026 (stream countdown `5011/countdown`):** Thomas used
 bregvorn.com's stream countdown, re-made by hand for every stream. NEW

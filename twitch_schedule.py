@@ -93,9 +93,18 @@ def title_of(e):
     return " · ".join(parts)[:140]
 
 
-def plan(events, now=None, horizon_days=HORIZON_DAYS):
+DEFAULT_STREAMER = "Thomas"   # name in the CLS stream calendar (/admin/stream-calendar)
+
+
+def has_streamers(events):
+    """True when the CLS feed says who streams (round-info `streamer`)."""
+    return any("streamer" in e for e in events if e.get("source") == "cls")
+
+
+def plan(events, now=None, horizon_days=HORIZON_DAYS, streamer=DEFAULT_STREAMER):
     """Wanted segments {key: {start, duration, title}} from the countdown's
-    events: CLS race days of the leagues with a stream time, still ahead."""
+    events: CLS race days of the leagues with a stream time, still ahead,
+    that the CLS stream calendar gives to `streamer` (None = all)."""
     now = time.time() if now is None else now
     out = {}
     for e in events:
@@ -103,6 +112,8 @@ def plan(events, now=None, horizon_days=HORIZON_DAYS):
         if e.get("source") != "cls" or lg not in stream_countdown.STREAM_START:
             continue
         if not (now < e["t"] < now + horizon_days * 86400):
+            continue
+        if streamer and str(e.get("streamer") or "").strip().lower() != streamer.strip().lower():
             continue
         key = f"{lg}:{e.get('round')}"
         out[key] = {"start": int(e["t"]), "duration": DURATION.get(lg, 150), "title": title_of(e)}
@@ -147,6 +158,7 @@ class TwitchSchedule:
             return {"client_id": st.get("client_id", ""),
                     "logged_in": bool(st.get("refresh_token") or st.get("access_token")),
                     "login": st.get("login", ""), "auto": st.get("auto", True),
+                    "streamer": st.get("streamer", DEFAULT_STREAMER),
                     "segments": st.get("segments", {}), "last_sync": st.get("last_sync"),
                     "last_result": st.get("last_result", ""), "log": st.get("log", [])[-15:],
                     "pending": ({"user_code": p["user_code"], "uri": p["uri"],
@@ -159,6 +171,11 @@ class TwitchSchedule:
                 for k in ("access_token", "refresh_token", "expires_at", "user_id", "login"):
                     self.st.pop(k, None)
             self.st["client_id"] = client_id
+            self._save()
+
+    def set_streamer(self, name):
+        with self._lock:
+            self.st["streamer"] = (name or "").strip()[:40] or DEFAULT_STREAMER
             self._save()
 
     def set_auto(self, on):
@@ -293,7 +310,18 @@ class TwitchSchedule:
         list of German action lines. dry = only say what would happen."""
         with self._lock:
             now = self.clock()
-            want = plan(events, now)
+            who = self.st.get("streamer", DEFAULT_STREAMER)
+            if not has_streamers(events):
+                # an old CLS without the stream calendar: everything would look
+                # like "not my race" and our segments would be deleted
+                msg = ("CLS sagt noch nicht, wer welches Rennen streamt "
+                       "(Stream-Kalender fehlt im Feed) - nichts geändert.")
+                if not dry:
+                    self.st["last_result"] = msg
+                    self._log(msg)
+                    self._save()
+                return [msg]
+            want = plan(events, now, streamer=who)
             mine = self.st.setdefault("segments", {})
             acts = []
             if not dry:
@@ -404,8 +432,9 @@ pre { white-space: pre-wrap; margin: 0; font: 13px ui-monospace, monospace; colo
 a { color: #b892ff; }
 </style></head><body><main>
 <h1>Twitch-Zeitplan aus dem CLS</h1>
-<div class="sub">Trägt jeden CAS-Renntag (Streamstart PCC / SFL / CC 19:40, WCT 19:00, IEC 17:00) als einzelnen
-Termin in den Twitch-Zeitplan ein - die nächsten 6 Wochen, alle 6 Stunden abgeglichen, solange 5011 läuft.</div>
+<div class="sub">Trägt jeden CAS-Renntag, den du laut CLS-Stream-Kalender streamst (Streamstart PCC / SFL / CC 19:40,
+WCT 19:00, IEC 17:00), als einzelnen Termin in den Twitch-Zeitplan ein - die nächsten 6 Wochen, alle 6 Stunden
+abgeglichen, solange 5011 läuft. Rennen eines anderen Streamers werden wieder entfernt.</div>
 
 <section id="s-app"><h2>1. Twitch-App (einmalig)</h2>
 <ol>
@@ -420,6 +449,8 @@ Termin in den Twitch-Zeitplan ein - die nächsten 6 Wochen, alle 6 Stunden abgeg
 <div id="login"></div></section>
 
 <section><h2>3. Abgleich</h2>
+<p>Nur Rennen von <input type="text" id="who" style="width:140px"> <button class="sec" onclick="post('streamer', {name: $('who').value})">Speichern</button>
+<span class="mut">(Name wie im CLS-Stream-Kalender)</span></p>
 <label><input type="checkbox" id="auto" onchange="post('auto', {on: this.checked})"> automatisch (alle 6 Stunden)</label><br>
 <button class="sec" onclick="sync(1)">Vorschau</button><button onclick="sync(0)">Jetzt abgleichen</button>
 <div id="res" style="margin-top:10px"></div></section>
@@ -443,10 +474,11 @@ async function sync(dry) {
   $('res').innerHTML = d.error ? '<span class="err">' + esc(d.error) + '</span>'
     : (dry ? '<b>Vorschau:</b><br>' : '<b>Erledigt:</b><br>') + (d.actions.length ? d.actions.map(esc).join('<br>') : 'Alles aktuell.');
 }
-let typing = false; $('cid').addEventListener('focus', () => typing = true); $('cid').addEventListener('blur', () => typing = false);
+let typing = false;
+for (const id of ['cid', 'who']) { $(id).addEventListener('focus', () => typing = true); $(id).addEventListener('blur', () => typing = false); }
 async function load() {
   const s = await (await fetch('/twitch/status', {cache: 'no-store'})).json();
-  if (!typing) $('cid').value = s.client_id || '';
+  if (!typing) { $('cid').value = s.client_id || ''; $('who').value = s.streamer || ''; }
   $('auto').checked = !!s.auto;
   let h;
   if (!s.client_id) h = '<span class="mut">Erst die Client-ID speichern.</span>';

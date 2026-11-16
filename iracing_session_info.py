@@ -568,6 +568,8 @@ def twitch_action(action):
             twitch.logout()
         elif action == "auto":
             twitch.set_auto(body.get("on"))
+        elif action == "streamer":
+            twitch.set_streamer(body.get("name", ""))
         elif action == "sync":
             ev = calendar.events()
             if not ev:
