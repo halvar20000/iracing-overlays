@@ -187,6 +187,30 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 16, 2026 (stream countdown `5011/countdown`):** Thomas used
+bregvorn.com's stream countdown, re-made by hand for every stream. NEW
+`stream_countdown.py` (page + `Calendar`, served by the session-info server
+5011: /countdown, /countdown/data): target found by itself = every CAS
+league's round dates from CLS (/api/overlay/leagues + round-info `rounds[].
+startsAt`, completed rounds skipped) + the Twitch stream schedule as
+iCalendar (api.twitch.tv/helix/schedule/icalendar?broadcaster_id= - public,
+no login; id once via decapi.me; weekly RRULEs expanded) - his Twitch
+schedule was EMPTY on 2026-11-16, so CLS does the work. Refresh 10 min; a
+calendar that fails keeps its last events. The page takes the first event
+whose start + `?offset=` min is ahead; `?live=30` min the end text ("WIR
+SIND LIVE", `?end=`) stays, then the next event. Look of his picture: title
+"GLEICH GEHT'S LOS" (`?title=`), dark tiles TAGE / STD / MIN / SEK
+(`?days=auto|0`), info line league · LAUF n · track (`?info=0`).
+`?league=a,b` `?source=cls|twitch` `?to=<local time>` (fixed) `?zoom=`
+`?debug=1` / H `?demo=1`. Loader countdown.html, icon "Countdown",
+OBS_OVERLAYS row. test_countdown.py 14/14 (offline); rendered against live
+CLS. Same day, Thomas: count to the real STREAM start, not CLS's race start
+-> `STREAM_START` {slug: "HH:MM"} (PCC / SFL / Combined 19:40, WCT 19:00, IEC
+17:00, Europe/Berlin via zoneinfo - `tzdata` added to requirements for
+Windows; fails = the PC's local time) on the race's local date; event keeps
+`race_t`; a league without an entry = CLS start. Pre-race page: ?offset=-40.
+test_countdown 19/19. Restart 5011.
+
 **November 15, 2026 (iCASControl 0.1.39 - profiles loadable from Rules, one
 profile per CLS league loaded by itself, driver chat off for the start):**
 Thomas: profiles could only be saved. Loading worked only from the small

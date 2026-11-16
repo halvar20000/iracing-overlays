@@ -24,12 +24,16 @@ content, scales to whatever source size you set.
 championship server 5010), session name, remaining time and a flag bar
 (green / yellow = full course caution or pace laps / red / white /
 checkered).  ?size=300 ?logo=<url>|0 ?flag=0 ?debug=1 ?demo=1
+
+/countdown = stream countdown ("GLEICH GEHT'S LOS"), target from the CLS
+round dates + the Twitch stream schedule (stream_countdown.py).
 """
 
 import threading
-from flask import Flask, Response, jsonify, render_template_string
+from flask import Flask, Response, jsonify, render_template_string, request
 
 import wct_board
+import stream_countdown
 
 from iracing_sdk_base import SDKPoller, setup_utf8_stdout
 setup_utf8_stdout()
@@ -168,6 +172,7 @@ class SessionInfoPoller(SDKPoller):
 app = Flask(__name__)
 poller = SessionInfoPoller(poll_hz=4)
 event = wct_board.EventInfo()       # league from 5010 (logo on /clock)
+calendar = stream_countdown.Calendar()   # CLS round dates + Twitch schedule (/countdown)
 
 
 @app.after_request
@@ -519,6 +524,19 @@ def clock():
     return Response(CLOCK_HTML, mimetype="text/html")
 
 
+@app.route("/countdown")
+def countdown():
+    return Response(stream_countdown.COUNTDOWN_HTML, mimetype="text/html")
+
+
+@app.route("/countdown/data")
+def countdown_data():
+    d = calendar.data()
+    if request.args.get("refresh") == "1":
+        calendar.refresh()
+    return jsonify(d)
+
+
 @app.route("/status")
 def status():
     d = dict(poller.get())
@@ -533,11 +551,13 @@ if __name__ == "__main__":
     t = threading.Thread(target=poller.run, daemon=True)
     t.start()
     threading.Thread(target=event.run, daemon=True).start()
+    threading.Thread(target=calendar.run, daemon=True).start()
 
     print("\n" + "=" * 60)
     print("  iRacing Session Info Overlay")
     print("  Open in browser:  http://localhost:5011")
     print("  Race clock:       http://localhost:5011/clock")
+    print("  Stream countdown: http://localhost:5011/countdown")
     print("  Transparent background — designed as an OBS browser source.")
     print("  Shows the active session name + total / remaining time.")
     print("  Press Ctrl+C to stop")
