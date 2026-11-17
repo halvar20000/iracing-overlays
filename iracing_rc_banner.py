@@ -1183,9 +1183,13 @@ if (qs.get('debug') === '1') document.body.classList.add('debug');
 document.addEventListener('keydown', e => { if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('debug'); });
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let lastId = null; const queue = []; let busy = false;
+// OBS pauses requestAnimationFrame while the source is not on air (other scene), but timers
+// keep running: the late rAF then put a banner up AFTER its hide timer had fired -> stuck.
+let cur = 0, hideAt = 0;
+function hideNow() { document.getElementById('rc').classList.remove('show'); }
 function wanted(m) { return m.source === 'iracing' ? SHOW_FLAGS : m.source === 'atvo' ? SHOW_ATVO : m.source === 'icas' ? SHOW_ICAS : true; }
 function show(m) {
-  busy = true;
+  busy = true; const my = ++cur;
   const rc = document.getElementById('rc');
   rc.className = 'rc ' + (m.kind || '');
   // the tag already says RACE CONTROL (iRaceControl's default INFO headline)
@@ -1195,13 +1199,17 @@ function show(m) {
   document.getElementById('car').innerHTML = c ? `<span class="num"${c.color ? ` style="background:${esc(c.color)};color:${esc(c.text)}"` : ''}>#${esc(c.num)}</span>`
       + `<span>${esc(c.label)}</span>${c.driver ? `<span class="drv">${esc(c.driver)}</span>` : ''}`
       + (c.class ? `<span class="cls" style="background:${esc(c.color)};color:${esc(c.text)}">${esc(c.class)}</span>` : '') : '';
-  requestAnimationFrame(() => rc.classList.add('show'));
   const words = ((m.headline || '') + ' ' + (m.text || '')).split(/\s+/).length;
-  const secs = Math.max(SECS, m.secs || 0, Math.min(25, words * 0.6));
+  const secs = Math.min(60, Math.max(SECS, m.secs || 0, Math.min(25, words * 0.6)));
+  hideAt = Date.now() + secs * 1000;
+  requestAnimationFrame(() => { if (my === cur && Date.now() < hideAt) rc.classList.add('show'); });
   if (REPORT) fetch('/rc/onair', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({secs})}).catch(() => {});
-  setTimeout(() => { rc.classList.remove('show'); setTimeout(() => { busy = false; next(); }, 450); }, secs * 1000);
+  setTimeout(() => { if (my === cur) hideNow(); setTimeout(() => { busy = false; next(); }, 450); }, secs * 1000);
 }
 function next() { if (!busy && queue.length) show(queue.shift()); }
+// watchdog: whatever happened, nothing stays up past its time
+setInterval(() => { if (Date.now() > hideAt + 500) hideNow(); }, 1000);
+document.addEventListener('visibilitychange', () => { if (Date.now() > hideAt) hideNow(); });
 async function poll() {
   try {
     const d = await (await fetch('/rc/state', {cache: 'no-store'})).json();
