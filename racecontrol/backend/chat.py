@@ -26,10 +26,10 @@ Config: racecontrol/data/chat_config.json (gitignored, updater-protected):
     {"enabled": false, "method": "post", "char_delay_ms": 6,
      "commands": {"notify": "/all #{num} {msg}", ...}}   # template overrides
 """
-
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 import time
@@ -142,6 +142,52 @@ def save_config(cfg: dict, path: Optional[Path] = None) -> None:
 # ---------------------------------------------------------------------------
 # Typing into the sim window (Windows only)
 # ---------------------------------------------------------------------------
+
+def admin_rights_problem(keys=None) -> str:
+    """0.1.40: Windows silently drops the keys we post into a program that
+    runs with HIGHER rights - iRacing "run as administrator" while iCAS is
+    not = nothing ever arrives, no error anywhere (Andreas, 2026-11-17).
+    Returns a German / English hint or "" (fine, unknown, not Windows)."""
+    if os.name != "nt":
+        return ""
+    try:
+        import ctypes
+        from ctypes import wintypes as w
+        sh, u = ctypes.windll.shell32, ctypes.windll.user32
+        k32, adv = ctypes.windll.kernel32, ctypes.windll.advapi32
+        if sh.IsUserAnAdmin():
+            return ""                               # we can reach anything
+        hwnd = (keys.find_window() if keys else
+                u.FindWindowW(SIM_WINDOW_CLASS, None))
+        if not hwnd:
+            return ""
+        pid = w.DWORD()
+        u.GetWindowThreadProcessId(w.HWND(hwnd), ctypes.byref(pid))
+        k32.OpenProcess.restype = w.HANDLE
+        h = k32.OpenProcess(0x1000, False, pid.value)  # QUERY_LIMITED_INFORMATION
+        if not h:
+            return ""
+        try:
+            tok = w.HANDLE()
+            if not adv.OpenProcessToken(h, 0x0008, ctypes.byref(tok)):
+                elevated = True                     # refused = higher rights
+            else:
+                val, ret = w.DWORD(), w.DWORD()
+                ok = adv.GetTokenInformation(tok, 20, ctypes.byref(val), 4,
+                                             ctypes.byref(ret))  # TokenElevation
+                k32.CloseHandle(tok)
+                elevated = bool(ok and val.value)
+        finally:
+            k32.CloseHandle(h)
+        if elevated:
+            return ("iRacing runs as ADMINISTRATOR, iCAS does not - Windows "
+                    "blocks the chat, nothing arrives. Start the overlay "
+                    "launcher as administrator too, or untick 'Run as "
+                    "administrator' for iRacing.")
+    except Exception:
+        return ""
+    return ""
+
 
 WM_KEYDOWN, WM_KEYUP, WM_CHAR = 0x0100, 0x0101, 0x0102
 VK_RETURN = 0x0D

@@ -160,6 +160,26 @@ bei Updates nie überschrieben.
 
 ---
 
+### Ein Knopf: ARMED / PASSIVE (ab 0.1.40)
+
+Oben rechts sitzt der große Knopf:
+
+- **PASSIVE** (grau) – iCAS liest nur mit. Nichts geht in den iRacing-Chat
+  oder auf den Stream-Banner, der Auto Steward ist aus. Richtig für den
+  stillen Beobachter.
+- **ARMED** (rot) – alles scharf: iRacing-Chat, Auto Steward und (wenn eine
+  Adresse eingetragen ist) der Stream-Banner. Beim Scharfschalten schickt
+  iCAS eine Testzeile „iCASControl chat test“ in den iRacing-Chat – nur
+  Admins sehen sie. Kommt sie nicht an, stimmt etwas nicht.
+- **MIXED** (gelb) – einzelne Schalter wurden von Hand gesetzt. Ein Klick
+  schaltet alles scharf.
+
+Das Zahnrad daneben zeigt die einzelnen Schalter (Chat, Banner, Auto
+Steward) für Sonderfälle. Ein roter Balken unter der Kopfzeile warnt, wenn
+iRacing als Administrator läuft und iCAS nicht – dann blockiert Windows den
+Chat. Lösung: den Overlay-Launcher ebenfalls als Administrator starten oder
+bei iRacing „Als Administrator ausführen“ abhaken.
+
 ## 6. Vorfälle und Entscheidungen
 
 ### Woher die Vorfälle kommen

@@ -1072,8 +1072,9 @@ check("simulator: command only written to the log",
       and any("Would send to iRacing: !dq #14" in e.text
               for e in eng5.state.events), ack)
 check("snapshot carries the chat status",
-      snap_of(eng4)["chat"] == {"enabled": False, "method": "post",
-                                              "available": True})
+      {k: snap_of(eng4)["chat"][k] for k in ("enabled", "method", "available")}
+      == {"enabled": False, "method": "post", "available": True}
+      and snap_of(eng4)["chat"]["mode"] in ("passive", "mixed"))
 
 print("Decisions to the stream banner (step 3)")
 from backend import stream  # noqa: E402
@@ -2551,6 +2552,44 @@ check("LG14 status: leagues, detected league, choices",
       and "leagues" in pst, pst)
 check("LG15 chat commands for every driver", chat.build("chat_off_all") == "!nchat"
       and chat.build("chat_on_all") == "!chat")
+
+
+# 0.1.40 ARMED / PASSIVE - one switch
+em = server.Engine(force_sim=True)
+em.state = RaceState()
+em.state.ingest(frame(10, [cf(0, "7"), cf(1, "14")]))
+msent = []
+em.source = type("S", (), {"name": "iracing",
+                           "send_chat": lambda self, *a: msent.append(a) or "typed",
+                           "send_command": lambda self, c, **k: "x"})()
+em.handle_client_message({"action": "set_mode", "mode": "passive"})
+check("MO1 passive: chat, steward, banner off", em.mode() == "passive"
+      and not em.chat_cfg["enabled"] and not em.steward_cfg["enabled"]
+      and not em.stream_cfg["enabled"], em.chat_status())
+em.stream_cfg["banner_url"] = "http://192.0.2.10:5019"
+a = em.handle_client_message({"action": "set_mode", "mode": "armed"})
+check("MO2 armed: all three on + a test line typed", em.mode() == "armed"
+      and em.chat_cfg["enabled"] and em.steward_cfg["enabled"]
+      and em.stream_cfg["enabled"] and msent and "ARMED" in a["text"], (a, msent))
+check("MO3 saved to the files", json.load(open(chat.CONFIG_PATH))["enabled"] is True
+      and json.load(open(steward.CONFIG_PATH))["enabled"] is True)
+em.stream_cfg["banner_url"] = ""
+em.handle_client_message({"action": "set_mode", "mode": "passive"})
+em.handle_client_message({"action": "set_mode", "mode": "armed"})
+check("MO4 no banner address: banner stays off, still armed",
+      em.mode() == "armed" and not em.stream_cfg["enabled"])
+em.handle_client_message({"action": "set_steward", "enabled": False})
+check("MO5 one switch off by hand = mixed", em.mode() == "mixed"
+      and em.chat_status()["mode"] == "mixed")
+n0 = len(msent)
+em.handle_client_message({"action": "set_mode", "mode": "passive"})
+r = em.handle_client_message({"action": "car", "car_idx": 1, "command": "eol"})
+check("MO6 passive: a command is only logged, nothing typed",
+      len(msent) == n0 and "chat OFF" in r["text"], r)
+check("MO7 unknown mode refused", "?" in em.handle_client_message(
+      {"action": "set_mode", "mode": "x"})["text"])
+check("MO8 rights check is quiet off Windows", chat.admin_rights_problem() == ""
+      and em.chat_status()["rights"] == "")
 
 print(f"\n{PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

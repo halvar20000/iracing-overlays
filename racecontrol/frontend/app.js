@@ -132,6 +132,7 @@ function handleMessage(msg) {
       State.stream = msg.stream || null;
       State.steward = msg.steward || null;
       updateChatToggle();
+      updateModeToggle();
       updateStreamToggle();
       updateStewardToggle();
       renderNet(msg.net);
@@ -245,6 +246,23 @@ function updateChatToggle() {
     + 'commands are only written to the log';
   const m = $('#chat-method');
   if (document.activeElement !== m) m.value = c.method || 'post';
+}
+
+let modeDetailsOpen = false;
+function updateModeToggle() {
+  const c = State.chat;
+  if (!c) return;
+  const mode = c.mode || 'passive';
+  const t = $('#mode-toggle');
+  t.className = 'mode-toggle ' + mode;
+  t.innerHTML = mode === 'armed' ? 'ARMED<small>live - commands go to iRacing</small>'
+    : mode === 'mixed' ? 'MIXED<small>some switches on - click = ARMED</small>'
+    : 'PASSIVE<small>read only</small>';
+  $('#mode-details').classList.toggle('hidden', !(modeDetailsOpen || mode === 'mixed'));
+  const w = $('#rights-warn');
+  const problem = mode !== 'passive' && c.rights;
+  w.textContent = problem ? '\u26a0 ' + c.rights : '';
+  w.classList.toggle('hidden', !problem);
 }
 
 function updateStreamToggle() {
@@ -1017,6 +1035,20 @@ function wire() {
   $('#cam-sel').addEventListener('click', () => {
     if (State.selectedCar === null) { toast('Select a car in the timing list first'); return; }
     send({ action: 'camera', op: 'car', car_idx: State.selectedCar });
+  });
+
+  // 0.1.40 one switch
+  $('#mode-toggle').addEventListener('click', () => {
+    const armed = State.chat && State.chat.mode === 'armed';
+    if (!armed && !confirm('ARM iCAS?\n\nPenalties, messages and cautions go '
+        + 'into the iRacing chat, the Auto Steward acts by itself and decisions '
+        + 'go to the stream banner.\n\nThis PC\'s iRacing account must be '
+        + 'ADMIN of the session.')) return;
+    send({ action: 'set_mode', mode: armed ? 'passive' : 'armed' });
+  });
+  $('#mode-more').addEventListener('click', () => {
+    modeDetailsOpen = !modeDetailsOpen;
+    updateModeToggle();
   });
 
   // chat to iRacing (step 2)

@@ -584,3 +584,21 @@ fieldset.cb-replaced[disabled] .cb-off-note { display: block; }
 .prof-row b { color: #ffd27a; }
 .prof-row select { max-width: 200px; }
 .prof-league { margin-left: 6px; }
+
+/* 0.1.40 one switch ARMED / PASSIVE */
+.mode-box { display: flex; align-items: stretch; gap: 3px; }
+.mode-toggle { font-family: var(--mono); font-weight: 900; font-size: 15px;
+  letter-spacing: .06em; padding: 8px 16px; border-radius: 6px; cursor: pointer;
+  border: 2px solid var(--line, #333); min-width: 128px; }
+.mode-toggle.passive { background: var(--panel-2); color: #b9c0cc; border-color: #5a6170; }
+.mode-toggle.armed { background: #3a0d12; color: #ff8a8a; border-color: #ff3b3b;
+  box-shadow: 0 0 10px rgba(255,59,59,.45); }
+.mode-toggle.mixed { background: #2a2208; color: #ffd27a; border-color: #ffb020; }
+.mode-toggle small { display: block; font-size: 9px; font-weight: 700; letter-spacing: 0; opacity: .8; }
+.mode-more { background: var(--panel-2); color: var(--mut); border: 1px solid #444;
+  border-radius: 6px; cursor: pointer; font-size: 14px; padding: 0 6px; }
+.mode-details { display: flex; gap: 6px; }
+.mode-details.hidden { display: none; }
+.rights-warn { background: #5a0b10; color: #fff; font-weight: 700; padding: 6px 14px;
+  font-size: 13px; border-bottom: 2px solid #ff3b3b; }
+.rights-warn.hidden { display: none; }

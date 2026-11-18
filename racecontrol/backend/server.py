@@ -467,7 +467,60 @@ class Engine:
     def chat_status(self) -> dict:
         return {"enabled": bool(self.chat_cfg.get("enabled")),
                 "method": self.chat_cfg.get("method", "post"),
-                "available": self._chat_capable()}
+                "available": self._chat_capable(),
+                "rights": self.rights_problem(),
+                "mode": self.mode()}
+
+    def rights_problem(self) -> str:
+        """0.1.40: iRacing elevated, iCAS not = the chat never arrives.
+        Checked at most every 10 s (a few Windows calls)."""
+        now = time.monotonic()
+        if now - getattr(self, "_rights_t", -99) > 10:
+            self._rights_t = now
+            self._rights = (chat.admin_rights_problem()
+                            if self._chat_capable() else "")
+        return self._rights
+
+    def mode(self) -> str:
+        """0.1.40 one switch: ARMED = chat + Auto Steward (+ stream banner
+        when it has an address), PASSIVE = nothing goes out, else MIXED."""
+        c = bool(self.chat_cfg.get("enabled"))
+        a = bool(self.steward_cfg.get("enabled"))
+        b = bool(self.stream_cfg.get("enabled"))
+        if c and a:
+            return "armed"
+        if not (c or a or b):
+            return "passive"
+        return "mixed"
+
+    def set_mode(self, mode: str) -> str:
+        st = self.state
+        on = mode == "armed"
+        self.chat_cfg["enabled"] = on
+        chat.save_config(self.chat_cfg)
+        self.steward_cfg = steward.clean(dict(self.steward_cfg, enabled=on))
+        steward.save_config(self.steward_cfg)
+        self.profiles.follow_edit(self.steward_cfg)
+        self.stream_cfg["enabled"] = on and bool(self.stream_cfg.get("banner_url"))
+        stream.save_config(self.stream_cfg)
+        if not on:
+            st.note_system("PASSIVE: iCAS only reads iRacing - nothing goes "
+                           "to the iRacing chat or the stream banner, Auto "
+                           "Steward off")
+            return "PASSIVE - read only"
+        st.note_system("ARMED: iRacing chat, Auto Steward"
+                       + (" and stream banner" if self.stream_cfg["enabled"]
+                          else " (stream banner has no address - stays off)")
+                       + " ON")
+        self._rights_t = -99
+        problem = self.rights_problem()
+        if problem:
+            st.note_system("WARNING: " + problem)
+            return "ARMED - but: " + problem
+        if not self._chat_capable():
+            return "ARMED (simulator - commands only go to the log)"
+        test = self.to_iracing("test", force=True)
+        return "ARMED - test line sent to the iRacing chat (" + test + ")"
 
     def to_iracing(self, kind: str, car=None, msg: str = "", sec: float = 0,
                    verify=None, force: bool = False, n="") -> str:
@@ -752,6 +805,12 @@ class Engine:
             self.running = bool(msg.get("running", True))
             st.note_system(f"Controller set to {'RUN' if self.running else 'STOP'}")
             return {"type": "ack", "text": f"{'RUN' if self.running else 'STOP'}"}
+
+        if action == "set_mode":
+            mode = msg.get("mode")
+            if mode not in ("armed", "passive"):
+                return {"type": "ack", "text": f"mode '{mode}'?"}
+            return {"type": "ack", "text": self.set_mode(mode)}
 
         if action == "set_chat":
             self.chat_cfg["enabled"] = bool(msg.get("enabled", False))

@@ -37,6 +37,12 @@
       REPLAY &middot; log paused &middot; <b>LIVE</b></button>
 
     <div class="conn">
+      <div class="mode-box">
+        <button id="mode-toggle" class="mode-toggle passive"
+                title="ARMED = everything on: iRacing chat (penalties, messages, caution), Auto Steward, stream banner. PASSIVE = read only, nothing goes to iRacing.">PASSIVE</button>
+        <button id="mode-more" class="mode-more" title="Show the single switches">&#9881;</button>
+      </div>
+      <div id="mode-details" class="mode-details hidden">
       <div class="chat-box" title="Steward commands typed into the iRacing chat. This PC's iRacing account must be ADMIN of the session.">
         <button id="chat-toggle" class="chat-toggle off">iRACING CHAT OFF</button>
         <div class="chat-sub">
@@ -61,6 +67,7 @@
           <button id="steward-rules" title="Limits, caution, sequencer, blue flags">Rules</button>
         </div>
       </div>
+      </div>
       <div class="chat-box" title="Stewards online + steward chat (several stewards at once)">
         <button id="stw-toggle" class="chat-toggle stw">STEWARDS <b id="stw-count">1</b><i id="stw-unread" class="hidden">0</i></button>
         <div class="chat-sub"><span id="stw-me" class="dim">&mdash;</span></div>
@@ -72,6 +79,7 @@
       </div>
     </div>
   </header>
+  <div id="rights-warn" class="rights-warn hidden"></div>
 
   <!-- ================= MAIN ================= -->
   <main>
