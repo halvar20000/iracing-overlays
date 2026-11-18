@@ -425,10 +425,11 @@
       <input id="s-sz_text" type="text" maxlength="200" class="wide">
       <span class="note">sent when the pace lap begins and again in the last quarter of each pace lap. Needs iRACING CHAT ON and an admin account.</span>
     </fieldset>
-    <fieldset><legend><label><input id="s-nc_enabled" type="checkbox"> Driver chat OFF for the start - RC message to everybody, then !nchat (race)</label></legend>
+    <fieldset><legend><label><input id="s-nc_enabled" type="checkbox"> Driver chat OFF for the start - RC message to everybody, then !nchat (race, or from the qualifying on)</label></legend>
       <label>when <select id="s-nc_when">
         <option value="grid">the cars are on the grid (before the pace lap)</option>
-        <option value="parade">the pace lap begins</option></select></label>
+        <option value="parade">the pace lap begins</option>
+        <option value="quali">the QUALIFYING begins (stays off until the race ends)</option></select></label>
       <input id="s-nc_text" type="text" maxlength="200" class="wide">
       <label><input id="s-nc_back" type="checkbox"> switch it ON again at the checkered flag (!chat), message:</label>
       <input id="s-nc_back_text" type="text" maxlength="200" class="wide" placeholder="(no message)">

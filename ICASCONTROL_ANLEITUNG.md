@@ -367,6 +367,10 @@ Kurz vor dem Start bekommen alle Fahrer eine Nachricht (`/all`), danach schaltet
 - Häkchen **Driver chat OFF for the start** in den Rules. Zeitpunkt: **auf dem
   Grid** (vor der Einführungsrunde, Standard) oder **wenn die Einführungsrunde
   beginnt**. Nur im Rennen, nie nach der Grünen Flagge.
+- Dritte Wahl **the QUALIFYING begins**: Nachricht + `!nchat` schon, wenn das
+  Qualifying beginnt. Auf dem Grid des Rennens kommt `!nchat` noch einmal ohne
+  Nachricht (falls iRacing den Chat mit der neuen Session wieder anschaltet).
+  Der Chat bleibt so bis zur Zielflagge des Rennens aus.
 - **switch it ON again at the checkered flag:** bei der Zielflagge `!chat` (Chat
   wieder an), danach die zweite Nachricht (leer = keine).
 - Braucht **iRACING CHAT** an und einen Admin-Account.

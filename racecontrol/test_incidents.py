@@ -2191,6 +2191,24 @@ eng7.steward_cfg = steward.clean({"nc_enabled": True, "nc_text": " "})
 k = len(sent7)
 step(pl(3000, [0.99, 0.01], key="nc-6", state="WARMUP"))
 check("NC13 empty text: only !nchat", nc() == ["!nchat"], nc())
+# 0.1.41: chat off already from the qualifying on
+eng7.steward_cfg = steward.clean({"nc_enabled": True, "nc_when": "quali"})
+check("NC14 'quali' is a valid choice", eng7.steward_cfg["nc_when"] == "quali")
+k = len(sent7)
+step(pl(3100, [0.2, 0.2], key="nc-7", stype="PRACTICE", state="RACING"))
+check("NC15 'quali': nothing in practice", nc() == [], nc())
+step(pl(3200, [0.2, 0.2], key="nc-8", stype="LONE QUALIFY", state="WARMUP"))
+check("NC16 'quali': qualifying begins = message + !nchat",
+      nc() == ["/all DRIVER CHAT IS NOW DISABLED FOR THE START - RACE CONTROL ONLY",
+               "!nchat"], nc())
+step(pl(3300, [0.5, 0.5], key="nc-8", stype="LONE QUALIFY", state="RACING"))
+step(pl(3900, [0.5, 0.5], key="nc-8", stype="LONE QUALIFY", state="CHECKERED"))
+check("NC17 'quali': not again in the quali, not on at its end", len(nc()) == 2, nc())
+step(pl(4000, [0.99, 0.01], key="nc-9", state="WARMUP"))
+check("NC18 'quali': race grid = !nchat again, no message", nc()[2:] == ["!nchat"], nc())
+step(pl(4900, [0.5, 0.5], key="nc-9", state="CHECKERED"))
+check("NC19 'quali': on again at the race's checkered flag",
+      nc()[3:] == ["!chat", "/all DRIVER CHAT IS ENABLED AGAIN"], nc())
 
 
 print("Short caution (Le Mans)")

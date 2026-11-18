@@ -51,6 +51,10 @@ Rules dialog:
   switches the drivers' chat off; never after the green.  ``nc_back``: at
   the checkered flag ``!chat`` switches it on again (+ ``nc_back_text`` if
   set).  Admins (race control) can always chat.
+  ``nc_when`` "quali" (2026-11-18 Thomas): already when the QUALIFYING
+  session begins (message + ``!nchat``); in the race ``!nchat`` is sent once
+  more on the grid WITHOUT a message (in case iRacing switched it on again
+  with the new session), on again at the checkered flag as above.
 * BLUE FLAG RULE (``cb_enabled``, 0.1.17, IEC - multiclass + lapping): a
   car gets a private ``cb_text`` when a car of a FASTER CLASS (iRacing's
   CarClassEstLapTime, else the class's best laps) or a car LAPPING him is
@@ -331,7 +335,7 @@ def clean(cfg: dict) -> dict:
     out["fcy_short_laps"] = min(20, max(1, out["fcy_short_laps"]))
     if out["fcy_wave"] not in ("class", "overall", "off"):
         out["fcy_wave"] = "class"
-    if out["nc_when"] not in ("grid", "parade"):
+    if out["nc_when"] not in ("grid", "parade", "quali"):
         out["nc_when"] = "grid"
     return out
 
@@ -899,16 +903,25 @@ class AutoSteward:
     # driver chat off for the start ------------------------------------------
 
     def _chat_off(self, state, rules: dict) -> list[dict]:
+        when = rules.get("nc_when")
+        if when == "quali" and _is_quali(state):
+            if not self._nc_off:
+                self._nc_off = True
+                return [{"type": "chat_off", "when": "qualifying begins",
+                         "text": str(rules.get("nc_text") or "").strip()}]
+            return []
         if not _is_race(state):
             return []
         ss = state.session_state
-        pre = ("WARMUP", "PARADE LAPS") if rules.get("nc_when") == "grid" \
+        pre = ("WARMUP", "PARADE LAPS") if when in ("grid", "quali") \
             else ("PARADE LAPS",)
         if ss in pre and not self._nc_off:
             self._nc_off = True
+            # "quali": the drivers were told then - only !nchat again here
+            text = "" if when == "quali" \
+                else str(rules.get("nc_text") or "").strip()
             return [{"type": "chat_off", "when": "on the grid" if ss == "WARMUP"
-                     else "pace lap begins",
-                     "text": str(rules.get("nc_text") or "").strip()}]
+                     else "pace lap begins", "text": text}]
         if ss == "RACING":
             # iCAS (re)started after the start: the chat was switched off
             # then (by us or by hand) - still switch it on at the end
