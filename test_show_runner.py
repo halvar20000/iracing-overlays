@@ -837,5 +837,35 @@ sr._ENABLED_CACHE.update(t=0.0, mtime=None)
 check("no file = on", sr.show_enabled() is True)
 sr.CONFIG_FILE = _real_cfg
 
+# last race of a two-race round: the page turns RACE 1 -> RACE 2 -> COMBINED
+# with the sentences (Stream Deck page keys on 5001 /nav)
+pages = []
+obsP = FakeObs(SCENES, media={"Streckenvideo": 0.2})
+cP = sr.load_config(); cP["obs"] = {"host": "127.0.0.1", "port": obsP.port}; cP["segments"] = ["last_race"]
+fP = {"letzte_runde": {"name": "R6", "rennen": [{"rennen": 1, "top5": []}, {"rennen": 2, "top5": []}],
+                       "gesamtwertung": True}}
+spP = Speaker()
+rP = sr.ShowRunner(cP, ObsClient(port=obsP.port), spP, facts_fn=lambda: fP,
+                   script_fn=lambda f, s: ({"last_race": "Rennen eins A. Rennen eins B. Rennen zwei A. "
+                                                         "Rennen zwei B. Gesamt A. Gesamt B."}, "template"),
+                   director_on=lambda: None, page=pages.append)
+at = []
+rP.start()
+def wP():
+    rP.tick()
+    if rP.seg:
+        d = sum(1 for i, _, _ in spP.lines if spP.is_done(i))
+        if not at or at[-1] != (d, len(pages)):
+            at.append((d, len(pages)))
+check("paging: run completes", wait_for(lambda: rP.state == "done", 15, tick=wP), rP.status()["log"])
+check("paging: first, then next twice", pages == ["first", "next", "next"], pages)
+check("paging: race 2 after 2 sentences, combined after 4",
+      all(n == (1 + (d >= 2) + (d >= 4)) for d, n in at), at)
+# a single-race round / Pro/Am pinned class: no paging
+fP["letzte_runde"]["rennen"] = fP["letzte_runde"]["rennen"][:1]
+pages.clear(); rP.state = "idle"; rP.start()
+wait_for(lambda: rP.state == "done", 15, tick=rP.tick)
+check("paging: one race = no page keys", pages == [], pages)
+
 print(f"\n{'ALL PASS' if not fails else f'{fails} FAILED'}")
 raise SystemExit(1 if fails else 0)

@@ -111,6 +111,9 @@ DEFAULT_CONFIG = {
     "host_name": "",                  # name the AI host introduces itself with ("" = none)
     "notes_dir": "show_notes",
     "champ_url": "http://127.0.0.1:5010/api/roundinfo",
+    # page keys of the result pages (grid server); the last-race segment
+    # turns RACE 1 -> RACE 2 -> COMBINED while it is spoken
+    "nav_url": "http://127.0.0.1:5001/nav",
 }
 SEGMENT_SOURCES = {"last_race": "last_race", "standings": "standings",
                    "last_race_pro": "last_race_pro", "last_race_am": "last_race_am",
@@ -254,6 +257,15 @@ def pin_class(cfg: dict, cls: str | None, timeout: float = 2.0) -> None:
     base = (cfg.get("champ_url") or DEFAULT_CONFIG["champ_url"]).split("/api/")[0]
     q = urllib.parse.urlencode({"cls": cls or ""})
     with urllib.request.urlopen(f"{base}/api/prerace_pin?{q}", timeout=timeout) as r:
+        r.read()
+
+
+def page_nav(cfg: dict, cmd: str, timeout: float = 2.0) -> None:
+    """Page the result / table pages like the Stream Deck "Seite" keys do
+    (grid server 5001 /nav/<cmd>: next | prev | first)."""
+    url = (cfg.get("nav_url") or DEFAULT_CONFIG["nav_url"]).rstrip("/")
+    req = urllib.request.Request(f"{url}/{cmd}", data=b"", method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         r.read()
 
 
@@ -409,6 +421,7 @@ def build_facts(roundinfo: dict | None, track: dict, notes: str | None, video_s:
         dotd = lr.get("driverOfTheDay") or {}
         facts["letzte_runde"] = {"name": lr.get("name"), "strecke": lr.get("track"),
                                  "rennen": races,
+                                 "gesamtwertung": bool(lr.get("combined")) and len(races) > 1,
                                  "fahrer_des_tages": dotd.get("winnerName")}
     done = season.get("completedRounds") or 0
     if rows and done:
@@ -536,7 +549,8 @@ SEGMENT_BRIEF = {
              "kommen. Kurz: 25-40 Wörter.",
     "last_race": "Rückblick auf die letzte Runde: Sieger und Podium (pro Rennen), wer überrascht "
                  "hat (z. B. weit vorgefahren), schnellste Runde, Fahrer des Tages. 60-90 Wörter. "
-                 "Dabei ist die Ergebnisliste im Bild.",
+                 "Dabei ist die Ergebnisliste im Bild. Bei zwei Rennen der Reihe nach: erst Rennen 1, "
+                 "dann Rennen 2, dann die Gesamtwertung der Runde (gesamtwertung) — die Seite blättert mit.",
     "standings": "Meisterschaftsstand: wer führt, Abstand, wer dahinter lauert, bei Pro/Am beide "
                  "Klassen kurz. 50-80 Wörter. Die Tabelle ist im Bild.",
     "track": "Die Strecke vorstellen: wo sie liegt (ort; dabei ist eine Karte im Bild), Charakter, Schlüsselkurven, wo man überholen kann. {words}.",
@@ -1052,7 +1066,7 @@ class ShowRunner:
 
     def __init__(self, cfg, obs, speaker, facts_fn, script_fn, director_on,
                  clock=time.time, local_now=None, listening=lambda: True, pin=None, store=None,
-                 points_fn=None, kind="pre", director_off=None, avatar=None):
+                 points_fn=None, kind="pre", director_off=None, avatar=None, page=None):
         self.cfg = cfg
         self.obs = obs
         self.speaker = speaker
@@ -1063,6 +1077,7 @@ class ShowRunner:
         self.local_now = local_now or _dt.datetime.now
         self.listening = listening
         self.pin = pin or (lambda cls: None)   # pin the 5010 pages to "pro" / "am" / None
+        self.page = page or (lambda cmd: None) # page keys of the result pages (next / first)
         self.state = "idle"            # idle | preparing | running | done | stopped
         self.script: dict = {}
         self.script_source = ""
@@ -1512,6 +1527,43 @@ class ShowRunner:
                     return SEGMENT_CLASS[s]
         return cls
 
+    def _page_views(self, sid):
+        """How many pages the last-race page has while `sid` runs: RACE 1,
+        RACE 2 (… ) and COMBINED. Only the plain segment of a non-Pro/Am
+        round — a pinned class shows the round total only."""
+        if sid != "last_race" or self._seg_class(sid):
+            return 1
+        lr = (self.facts or {}).get("letzte_runde") or {}
+        n = len(lr.get("rennen") or [])
+        return n + (1 if lr.get("gesamtwertung") and n > 1 else 0)
+
+    def _setup_paging(self, sid, seg):
+        views = self._page_views(sid)
+        if views < 2 or len(seg["ids"]) < 2:
+            return
+        self._do_page("first")
+        seg["paging"] = {"views": views, "at": 0}
+
+    def _tick_paging(self, seg):
+        """Turn the page as the sentences go by: after sentence k of n the
+        page shows view floor(k * views / n) — race 1 at the start, the round
+        total for the last part."""
+        pg = seg.get("paging")
+        if not pg:
+            return
+        n = len(seg["ids"])
+        done = sum(1 for i in seg["ids"] if self.speaker.is_done(i))
+        want = min(pg["views"] - 1, done * pg["views"] // n)
+        while pg["at"] < want:
+            pg["at"] += 1
+            self._do_page("next")
+
+    def _do_page(self, cmd):
+        try:
+            self.page(cmd)
+        except Exception as e:
+            self._note(f"Seite {cmd}: {e}")
+
     def _pin(self, cls):
         try:
             self.pin(cls)
@@ -1552,9 +1604,12 @@ class ShowRunner:
             self._source("track_video", True)
             if self._obs(lambda: self.obs.media_restart(vid), f"Video {vid}"):
                 seg["media"] = vid
-        chunks = [] if self._avatar_play(sid, text, seg) else split_sentences(text)
+        # a page that turns with the talk (RACE 1 -> 2 -> COMBINED): one line per sentence
+        per = 1 if self._page_views(sid) > 1 else 220
+        chunks = [] if self._avatar_play(sid, text, seg) else split_sentences(text, per)
         for ch in chunks:
             seg["ids"].append(self.speaker.say(ch, sid))
+        self._setup_paging(sid, seg)
         words = len(text.split())
         # safety net: no voice page listening / audio lost -> move on anyway
         seg["deadline"] = self.clock() + words / WORDS_PER_S * 1.6 + DEADLINE_PAD_S
@@ -1584,6 +1639,7 @@ class ShowRunner:
                 self._note(f"Video {vid} läuft")
             seg["deadline"] = self.clock() + DEADLINE_PAD_S
             return
+        self._tick_paging(seg)
         media_done = True
         if seg["media"]:
             try:

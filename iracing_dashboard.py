@@ -352,7 +352,8 @@ class TelemetryPoller:
             scfg, self.show_obs, _ShowSpeaker(self.commentator),
             facts_fn=self._show_facts, script_fn=self._show_script,
             director_on=lambda: self.set_director(True),
-            pin=lambda cls: show_runner.pin_class(scfg, cls), store=show_runner.SCRIPT_FILE,
+            pin=lambda cls: show_runner.pin_class(scfg, cls),
+            page=lambda cmd: show_runner.page_nav(scfg, cmd), store=show_runner.SCRIPT_FILE,
             points_fn=self._show_points, avatar=self.avatar_renderer)
         self._point_at = 0.0              # last talking point spoken (quiet moments in quali / race)
         self.post_show = show_runner.ShowRunner(           # ABSPANN after the race
