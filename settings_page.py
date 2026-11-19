@@ -89,6 +89,8 @@ FILES = [
             F("avatar.segments", "list", ["intro", "outro", "goodbye"], "Abschnitte mit Gabi im Bild"),
             F("avatar.prepare_min", "int", 20, "Minuten vor der Startzeit vorbereiten"),
             F("avatar.max_words", "int", 45, "Höchstens Wörter pro Video", "Länger = nur Stimme."),
+            F("avatar.max_per_day", "int", 3, "Höchstens bezahlte Videos pro Tag",
+              "Danach nur noch Stimme (0 = kein Limit). Gleicher Lauf + Strecke = altes Video, kostet nichts."),
         ]},
         {"title": "OBS", "fields": [
             F("obs.host", "text", "127.0.0.1", "OBS-Adresse"),

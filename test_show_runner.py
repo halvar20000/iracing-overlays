@@ -734,7 +734,7 @@ import avatar_sync
 class FakeRenderer:
     def __init__(self, ready): self.ready, self.ensured = ready, []
     def available(self): return True
-    def ensure(self, kind, seg, text): self.ensured.append((kind, seg, text))
+    def ensure(self, kind, seg, text, topic=""): self.ensured.append((kind, seg, text))
     def get(self, kind, seg, text): return Path(f"/tmp/{kind}_{seg}.mp4") if seg in self.ready else None
     def status(self, kind): return {s: {"state": "ready"} for s in self.ready}
 obs15 = FakeObs({"Moderator": {"Gabi": False}, "iRacing": {}}, media={"Gabi": 0.6})
@@ -837,7 +837,7 @@ with tempfile.TemporaryDirectory() as td_r:
     vox = type("V", (), {"synth": lambda self, t: (b"a", "audio/mpeg", "edge")})()
     rr = avatar_sync.AvatarRenderer(vox, lipsync_fn=lambda d, n, out_name=None, **k:
                                     (fake_ls(d, n, out_name="kaputt" if "Fehler" in rr.jobs[("pre", "outro")]["text"] else out_name)
-                                     if False else fake_ls(d, n, out_name=out_name)))
+                                     if False else fake_ls(d, n, out_name=out_name)), out_dir=td_r)
     rr.ensure("pre", "intro", "Hallo.")
     wait_for(lambda: rr.jobs[("pre", "intro")]["state"] == "ready", 5)
     (Path(td_r) / Path(rr.jobs[("pre", "intro")]["file"]).name).write_bytes(b"x")
@@ -850,6 +850,48 @@ with tempfile.TemporaryDirectory() as td_r:
     wait_for(lambda: rr.jobs[("pre", "outro")]["state"] == "failed", 5)
     check("renderer: a failure is reported, no video", rr.jobs[("pre", "outro")]["state"] == "failed"
           and "FAILED" in rr.jobs[("pre", "outro")]["error"] and rr.get("pre", "outro", "Tschüss.") is None)
+
+# Gabi's paid videos (2026-11-19: the intro was ordered again and again until the
+# sync.so credits were gone): same topic = old text reused, daily limit, 402 not retried
+with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td_q:
+    calls_q = []
+    def ls_q(d, n, out_name=None, **k):
+        calls_q.append(out_name)
+        p_ = Path(td_q) / f"{out_name}.mp4"; p_.write_bytes(b"x")
+        return p_
+    vox = type("V", (), {"synth": lambda self, t: (b"a", "audio/mpeg", "edge")})()
+    rq = avatar_sync.AvatarRenderer(vox, lipsync_fn=ls_q, out_dir=td_q)
+    rq.max_per_day = 2
+    rq.ensure("pre", "intro", "Hallo Oschersleben.", "cas-combined-cup:7:Oschersleben")
+    wait_for(lambda: rq.jobs[("pre", "intro")]["state"] == "ready", 5)
+    rq2 = avatar_sync.AvatarRenderer(vox, lipsync_fn=ls_q, out_dir=td_q)     # = dashboard restarted
+    check("avatar reuse: old text for the same race", rq2.reuse_text("pre", "intro", "cas-combined-cup:7:Oschersleben")
+          == "Hallo Oschersleben." and rq2.reuse_text("pre", "intro", "cas-combined-cup:8:Spa") is None)
+    rq2.max_per_day = 2
+    rq2.ensure("pre", "outro", "Eins.", "t"); wait_for(lambda: rq2.jobs[("pre", "outro")]["state"] == "ready", 5)
+    rq2.ensure("pre", "goodbye", "Zwei.", "t"); wait_for(lambda: rq2.jobs[("pre", "goodbye")]["state"] != "queued", 5)
+    check("avatar: daily limit (2) - third order refused, nothing sent", len(calls_q) == 2
+          and rq2.jobs[("pre", "goodbye")]["state"] == "failed" and "Tageslimit" in rq2.jobs[("pre", "goodbye")]["error"],
+          (calls_q, rq2.jobs[("pre", "goodbye")]))
+    rq3 = avatar_sync.AvatarRenderer(vox, out_dir=td_q,
+                                     lipsync_fn=lambda d, n, out_name=None, **k: calls_q.append("402") or
+                                     (_ for _ in ()).throw(RuntimeError('sync.so 402: {"errorCode":"insufficient_credits"}')))
+    rq3.max_per_day = 0
+    rq3.ensure("post", "goodbye", "Tschüss.", "t"); wait_for(lambda: rq3.jobs[("post", "goodbye")]["state"] == "failed", 5)
+    n_q = len(calls_q); rq3.ensure("post", "goodbye", "Tschüss.", "t"); time.sleep(0.2)
+    check("avatar: out of credits - the same text is not ordered again", len(calls_q) == n_q)
+    # the show takes the saved text instead of the new script line
+    obs_q = FakeObs(SCENES, media={"Streckenvideo": 0.2})
+    c_q = sr.load_config(); c_q["obs"] = {"host": "127.0.0.1", "port": obs_q.port}
+    f_q = dict(facts, liga_slug="cas-combined-cup", runde=7, strecke="Oschersleben")
+    r_q = sr.ShowRunner(c_q, ObsClient(port=obs_q.port), Speaker(), facts_fn=lambda: f_q,
+                        script_fn=lambda f, s_: ({k: ("Ganz neuer Text." if k == "intro" else "Text.") for k in s_}, "claude"),
+                        director_on=lambda: None, avatar=avatar_sync.AvatarRenderer(vox, lipsync_fn=ls_q, out_dir=td_q))
+    r_q.avatar.available = lambda: True
+    r_q.prepare()
+    check("show: intro of the same race = the text Gabi already said (no new order)",
+          r_q.script.get("intro") == "Hallo Oschersleben.", (r_q.script.get("intro"), r_q.status().get("log")[-5:]))
+    wait_for(lambda: all(j["state"] not in ("queued", "rendering") for j in r_q.avatar.jobs.values()), 5)
 
 # hand edits: kept, empty segment skipped, survive a restart, never rewritten automatically
 with tempfile.TemporaryDirectory() as td:

@@ -126,7 +126,8 @@ DEFAULT_CONFIG = {
     # the script is written prepare_min before start_at. Not ready in time /
     # failed -> that segment is spoken by the voice.
     "avatar": {"enabled": True, "segments": ["intro", "outro", "goodbye"], "prepare_min": 20,
-               "max_words": 45},              # longer = voice only (≈ 19 s of paid video at most)
+               "max_words": 45,               # longer = voice only (≈ 19 s of paid video at most)
+               "max_per_day": 3},             # paid videos per day at most (0 = no limit)
     "model": "claude-sonnet-5-5",
     "host_name": "",                  # name the AI host introduces itself with ("" = none)
     "notes_dir": "show_notes",
@@ -1594,16 +1595,36 @@ class ShowRunner:
         n = len((self.script.get(sid) or "").split())
         return n <= int(self._avatar_cfg().get("max_words") or 45)
 
+    def _avatar_topic(self) -> str:
+        """What a Gabi video is about: league, round, track (+ race of the round
+        for the Abspann) — the same topic reuses the video made before."""
+        f = self.facts or {}
+        parts = [f.get("liga_slug") or f.get("liga") or "", str(f.get("runde") or ""), f.get("strecke") or ""]
+        if self.kind == "post":
+            parts.append(str(f.get("rennen_nr") or ""))
+        return ":".join(parts) if any(parts[:3]) else ""
+
     def _avatar_render(self):
         """Have Gabi's videos made for the avatar segments (in the background)."""
         if not self._avatar_on():
             return
+        try:
+            self.avatar.max_per_day = int(self._avatar_cfg().get("max_per_day", 3))
+        except (TypeError, ValueError):
+            pass
         for sid in self._avatar_segs():
             if not self._avatar_words_ok(sid):
                 self._note(f"Gabi-Video für {sid}: Text zu lang (> {self._avatar_cfg().get('max_words') or 45} "
                            "Wörter) – dort spricht die Stimme; kürzen, dann wird das Video erzeugt")
                 continue
-            self.avatar.ensure(self.kind, sid, self.script.get(sid) or "")
+            topic = self._avatar_topic()
+            if not self.edited:                  # a video for this race already exists: same words, no new order
+                reuse = getattr(self.avatar, "reuse_text", None)
+                old = reuse(self.kind, sid, topic) if reuse else None
+                if old and old.strip() != (self.script.get(sid) or "").strip():
+                    self.script[sid] = old
+                    self._note(f"Gabi-Video für {sid} schon vorhanden – Text von damals übernommen")
+            self.avatar.ensure(self.kind, sid, self.script.get(sid) or "", topic)
 
     def _avatar_play(self, sid, text, seg) -> bool:
         """Gabi says this segment as a video, if it is ready. False = voice."""

@@ -26,6 +26,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 AVATAR_DIR = HERE / "avatar"
 OUT_DIR = AVATAR_DIR / "out"                  # gitignored: generated videos
+# paid videos per day at most (Thomas 2026-11-19: the intro was ordered again
+# and again until the credits were gone); show_config avatar.max_per_day
+MAX_PER_DAY = 3
 API = "https://api.sync.so/v2"
 DEFAULT_CLIP = AVATAR_DIR / "gabi_speaking.mp4"   # a SPEAKING base: a still one (mouth closed) barely moved the lips
 IDLE_LOOP = AVATAR_DIR / "gabi_idle_loop.mp4"        # gabi_still.mp4 forward + backward: between sentences, no credits
@@ -107,6 +110,7 @@ class AvatarRenderer:
         self.lipsync = lipsync_fn or lipsync
         self.out_dir = Path(out_dir) if out_dir else OUT_DIR
         self.jobs: dict = {}            # (kind, seg) -> {text, state, file, error, at}
+        self.max_per_day = MAX_PER_DAY
         self._q: list = []
         self._lock = threading.Lock()
         self._worker = None
@@ -128,7 +132,66 @@ class AvatarRenderer:
         self.jobs[(kind, seg)] = {"text": text, "state": "ready", "file": str(path), "error": "",
                                   "at": time.time(), "saved": True}
 
-    def ensure(self, kind: str, seg: str, text: str):
+    # -- reuse + daily limit ---------------------------------------------------
+    def reuse_text(self, kind: str, seg: str, topic: str) -> str | None:
+        """The text of the newest video already made for this kind / segment /
+        topic (league:round:track) — the show takes it word for word instead of
+        a new script line, so a rewritten script orders nothing."""
+        if not topic:
+            return None
+        best, at = None, -1.0
+        try:
+            metas = list(self.out_dir.glob(f"{kind}_{seg}_*.json"))
+        except OSError:
+            return None
+        for m in metas:
+            try:
+                d = json.loads(m.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if d.get("topic") != topic or not d.get("text"):
+                continue
+            if self._saved(kind, seg, d["text"]) is None:
+                continue
+            if float(d.get("at") or 0) > at:
+                best, at = d["text"], float(d.get("at") or 0)
+        return best
+
+    def _orders_file(self) -> Path:
+        return self.out_dir / "orders.json"
+
+    def orders_today(self) -> int:
+        try:
+            d = json.loads(self._orders_file().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return 0
+        return int(d.get(time.strftime("%Y-%m-%d")) or 0)
+
+    def _count_order(self):
+        day = time.strftime("%Y-%m-%d")
+        try:
+            d = json.loads(self._orders_file().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            d = {}
+        d = {k: v for k, v in d.items() if k >= time.strftime("%Y-%m-%d", time.localtime(time.time() - 30 * 86400))}
+        d[day] = int(d.get(day) or 0) + 1
+        try:
+            self.out_dir.mkdir(parents=True, exist_ok=True)
+            tmp = self._orders_file().with_suffix(".tmp")
+            tmp.write_text(json.dumps(d), encoding="utf-8")
+            os.replace(tmp, self._orders_file())
+        except OSError:
+            pass
+
+    def _write_meta(self, out, kind, seg, text, topic):
+        try:
+            Path(out).with_suffix(".json").write_text(json.dumps(
+                {"kind": kind, "seg": seg, "text": text, "topic": topic, "at": time.time()},
+                ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
+
+    def ensure(self, kind: str, seg: str, text: str, topic: str = ""):
         text = (text or "").strip()
         if not text:
             return
@@ -137,11 +200,14 @@ class AvatarRenderer:
             j = self.jobs.get(key)
             if j and j["text"] == text and j["state"] in ("queued", "rendering", "ready"):
                 return
+            if j and j["text"] == text and j["state"] == "failed" and j.get("no_retry"):
+                return                            # out of credits / daily limit: not again and again
             saved = self._saved(kind, seg, text)
             if saved is not None:                 # paid for already: no new order
                 self._adopt(kind, seg, text, saved)
                 return
-            self.jobs[key] = {"text": text, "state": "queued", "file": None, "error": "", "at": time.time()}
+            self.jobs[key] = {"text": text, "state": "queued", "file": None, "error": "", "at": time.time(),
+                              "topic": topic}
             self._q.append(key)
             if not (self._worker and self._worker.is_alive()):
                 self._worker = threading.Thread(target=self._run, daemon=True, name="AvatarRender")
@@ -177,18 +243,29 @@ class AvatarRenderer:
                 j = self.jobs.get(key)
                 if not j or j["state"] != "queued":
                     continue
+                limit = int(self.max_per_day or 0)
+                if limit > 0 and self.orders_today() >= limit:
+                    j["state"], j["no_retry"] = "failed", True
+                    j["error"] = (f"Tageslimit: heute schon {limit} Gabi-Videos bestellt "
+                                  "(show_config avatar.max_per_day) – nur Stimme")
+                    continue
                 j["state"], text = "rendering", j["text"]
             try:
                 data, mime, _ = self.voice.synth(text)
                 name = f"{key[0]}_{key[1]}_{self._tag(text)}"
                 out = self.lipsync(data, "a.mp3" if "mpeg" in mime else "a.wav", out_name=name)
+                self._count_order()
+                self._write_meta(out, key[0], key[1], text, j.get("topic") or "")
                 with self._lock:
                     if self.jobs.get(key) is j:          # text not changed meanwhile
                         j["state"], j["file"] = "ready", str(out)
             except Exception as e:
+                msg = f"{type(e).__name__}: {e}"
                 with self._lock:
                     if self.jobs.get(key) is j:
-                        j["state"], j["error"] = "failed", f"{type(e).__name__}: {e}"
+                        j["state"], j["error"] = "failed", msg
+                        # no credits: never ordered again for this text (would only fail again)
+                        j["no_retry"] = "402" in msg or "insufficient_credits" in msg
 
 
 class AvatarTest:
