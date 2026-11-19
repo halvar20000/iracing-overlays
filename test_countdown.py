@@ -28,6 +28,8 @@ t0 = sc._iso("2026-11-17T18:30:00Z")
 check("ical: first event in UTC", ev[0]["t"] == t0 and ev[0]["title"] == "CAS GT3 WCT Fuji, live")
 check("ical: weekly rule expanded", any(e["t"] == t0 + 7 * 86400 for e in ev) and len(ev) > 5)
 check("ical: TZID local time", any(e["t"] == sc._iso("2026-11-19T18:30:00Z") for e in ev))
+ev2 = sc.ical_events("BEGIN:VEVENT\r\nDTSTART;TZID=/Europe/Berlin:20261119T194000\r\nSUMMARY:x\r\nEND:VEVENT\r\n")
+check("ical: Twitch's TZID=/Europe/Berlin (leading slash) = Berlin, not UTC", ev2 and ev2[0]["t"] == sc._iso("2026-11-19T18:40:00Z"))
 
 RI = {"league": {"slug": "cas-gt3-wct", "name": "CAS GT3 WCT"},
       "rounds": [{"number": 8, "status": "COMPLETED", "startsAt": "2026-11-10T18:00:00.000Z", "track": "Spa"},

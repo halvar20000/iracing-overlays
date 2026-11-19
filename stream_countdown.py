@@ -128,7 +128,9 @@ def _ical_time(value, params):
             if "TZID" in params:
                 try:
                     from zoneinfo import ZoneInfo
-                    return dt.replace(tzinfo=ZoneInfo(params.split("TZID=")[1].split(";")[0])).timestamp()
+                    # Twitch writes "TZID=/Europe/Berlin" (leading slash)
+                    tzid = params.split("TZID=")[1].split(";")[0].strip('"').lstrip("/")
+                    return dt.replace(tzinfo=ZoneInfo(tzid)).timestamp()
                 except Exception:
                     pass
             return dt.replace(tzinfo=timezone.utc).timestamp()
