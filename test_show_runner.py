@@ -892,6 +892,22 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td_q:
     check("show: intro of the same race = the text Gabi already said (no new order)",
           r_q.script.get("intro") == "Hallo Oschersleben.", (r_q.script.get("intro"), r_q.status().get("log")[-5:]))
     wait_for(lambda: all(j["state"] not in ("queued", "rendering") for j in r_q.avatar.jobs.values()), 5)
+    # a video picked by hand on /show: used whatever the text, nothing ordered
+    rp = avatar_sync.AvatarRenderer(vox, lipsync_fn=ls_q, out_dir=td_q)
+    old_vid = Path(td_q) / "pre_intro_0123456789.mp4"; old_vid.write_bytes(b"x")    # an old one, no json
+    lst = rp.list_videos("pre", "intro")
+    check("pick: old + new intro videos listed", {v["file"] for v in lst} >= {"pre_intro_0123456789.mp4"}
+          and any(v["text"] == "Hallo Oschersleben." for v in lst), lst)
+    check("pick: unknown file refused", rp.pick("pre", "intro", "gibtsnicht.mp4") is not None)
+    n_p = len(calls_q)
+    check("pick: saved", rp.pick("pre", "intro", "pre_intro_0123456789.mp4") is None)
+    rp2 = avatar_sync.AvatarRenderer(vox, lipsync_fn=ls_q, out_dir=td_q)      # restart keeps it
+    rp2.ensure("pre", "intro", "Ein völlig anderer Text.", "x"); time.sleep(0.2)
+    check("pick: used for any text after a restart, no order", len(calls_q) == n_p
+          and rp2.get("pre", "intro", "Noch was anderes.") == old_vid
+          and rp2.status("pre")["intro"].get("pick") == "pre_intro_0123456789.mp4", rp2.status("pre"))
+    rp2.pick("pre", "intro", "")
+    check("pick: back to automatic", rp2.get("pre", "intro", "Ein völlig anderer Text.") is None)
 
 # hand edits: kept, empty segment skipped, survive a restart, never rewritten automatically
 with tempfile.TemporaryDirectory() as td:

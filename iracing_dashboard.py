@@ -6157,18 +6157,47 @@ function draw(d, force) {
             const t = d.script[s] || '';
             const av = (d.avatar || {})[s];
             const avl = av ? ' <span class="words" style="float:none;margin-left:8px">🎬 Gabi: ' +
-                ({queued: 'wartet', rendering: 'Video wird erzeugt …', ready: 'Video fertig', failed: 'Fehler – nur Stimme'}[av.state] || av.state) +
-                '</span>' : '';
+                (av.pick ? 'gewähltes Video' : ({queued: 'wartet', rendering: 'Video wird erzeugt …', ready: 'Video fertig',
+                  failed: 'Fehler – nur Stimme', none: 'kein Video – nur Stimme'}[av.state] || av.state)) +
+                (av.state === 'failed' && av.error ? ' <span title="' + esc(av.error) + '">ⓘ</span>' : '') +
+                '</span><div class="avpick" style="margin:4px 0">Video: <select data-avseg="' + s +
+                '" style="max-width:70%;background:#1b1d24;color:#e8e8ee;border:1px solid #3a3d48;border-radius:4px;padding:3px 6px"><option value="">automatisch (nach dem Text)</option></select> ' +
+                '<a data-avprev="' + s + '" target="_blank" style="display:none">▶ ansehen</a></div>' : '';
             return '<div class="seg' + (t ? '' : ' off') + '"><b>' + esc(NAMES[s] || s) + '</b>' + avl +
                 '<span class="words" id="w_' + s + '">' + words(t) + ' Wörter</span>' +
                 '<textarea data-seg="' + s + '" rows="' + Math.max(3, Math.ceil(t.length / 95) + 1) + '">' + esc(t) + '</textarea></div>';
         }).join('');
+        el.querySelectorAll('select[data-avseg]').forEach(fillAvatarPick);
         el.querySelectorAll('textarea').forEach(ta => ta.addEventListener('input', () => {
             dirty = true; document.getElementById('edit').className = 'row dirty';
             document.getElementById('w_' + ta.dataset.seg).textContent = words(ta.value) + ' Wörter';
         }));
     }
     document.getElementById('edit').className = 'row' + (dirty ? ' dirty' : '');
+}
+// Gabi videos already in avatar/out, chosen by hand (no credits needed)
+async function fillAvatarPick(sel) {
+    const seg = sel.dataset.avseg, prev = document.querySelector('a[data-avprev="' + seg + '"]');
+    let d;
+    try { d = await (await fetch(BASE + '/avatar/videos?seg=' + encodeURIComponent(seg))).json(); } catch (e) { return; }
+    for (const v of d.videos || []) {
+        const o = document.createElement('option');
+        const t = new Date(v.at * 1000);
+        o.value = v.file;
+        o.textContent = t.toLocaleDateString('de-DE') + ' ' + t.toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'}) +
+            ' · ' + (v.text ? v.text.slice(0, 70) + (v.text.length > 70 ? '…' : '') : v.file);
+        sel.appendChild(o);
+    }
+    sel.value = d.pick || '';
+    const showPrev = () => { prev.style.display = sel.value ? 'inline' : 'none'; prev.href = '/avatar/video/' + sel.value; };
+    showPrev();
+    sel.addEventListener('change', async () => {
+        showPrev();
+        const r = await (await fetch(BASE + '/avatar/pick', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                              body: JSON.stringify({seg, file: sel.value})})).json();
+        if (!r.ok) document.getElementById('err').textContent = r.error || 'Fehler';
+        shownKey = ''; tick();
+    });
 }
 async function save() {
     const script = {};
@@ -6934,6 +6963,47 @@ def abspann_action(action):
     else:
         return jsonify({"ok": False, "error": f"unknown action {action}"})
     return jsonify({"ok": True})
+
+
+def _avatar_videos(sh):
+    seg = re.sub(r"[^a-z_]", "", request.args.get("seg") or "")
+    av = sh.avatar
+    if not av or not seg:
+        return jsonify({"videos": [], "pick": ""})
+    pk = av.picked(sh.kind, seg)
+    return jsonify({"videos": av.list_videos(sh.kind, seg), "pick": pk.name if pk else ""})
+
+
+def _avatar_pick(sh):
+    body = request.get_json(silent=True) or {}
+    seg = re.sub(r"[^a-z_]", "", str(body.get("seg") or ""))
+    name = str(body.get("file") or "")
+    if not sh.avatar or not seg or (name and not re.fullmatch(r"[A-Za-z0-9_-]+\.mp4", name)):
+        return jsonify({"ok": False, "error": "ungültig"})
+    err = sh.avatar.pick(sh.kind, seg, name)
+    if not err:
+        sh._note(f"Gabi-Video für {seg}: " + (name or "automatisch"))
+    return jsonify({"ok": not err, "error": err})
+
+
+@app.route("/show/avatar/videos")
+def show_avatar_videos():
+    return _avatar_videos(poller.show)
+
+
+@app.route("/show/avatar/pick", methods=["POST"])
+def show_avatar_pick():
+    return _avatar_pick(poller.show)
+
+
+@app.route("/abspann/avatar/videos")
+def abspann_avatar_videos():
+    return _avatar_videos(poller.post_show)
+
+
+@app.route("/abspann/avatar/pick", methods=["POST"])
+def abspann_avatar_pick():
+    return _avatar_pick(poller.post_show)
 
 
 @app.route("/show/script", methods=["POST"])

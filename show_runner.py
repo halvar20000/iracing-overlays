@@ -1645,7 +1645,10 @@ class ShowRunner:
         return True
 
     def avatar_status(self) -> dict:
-        return self.avatar.status(self.kind) if self.avatar else {}
+        st = self.avatar.status(self.kind) if self.avatar else {}
+        for sid in self._avatar_segs():                # every Gabi segment can get a video picked
+            st.setdefault(sid, {"state": "none", "error": "", "file": None, "saved": False})
+        return st
 
     def _pick_track_video(self) -> bool:
         """Is there a video to play for today's track? Points the media source

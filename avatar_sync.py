@@ -132,6 +132,82 @@ class AvatarRenderer:
         self.jobs[(kind, seg)] = {"text": text, "state": "ready", "file": str(path), "error": "",
                                   "at": time.time(), "saved": True}
 
+    # -- videos chosen by hand on /show (Thomas 2026-11-19: no credits left, the
+    # videos are all there already) -------------------------------------------
+    def _picks_file(self) -> Path:
+        return self.out_dir / "picks.json"
+
+    def picks(self) -> dict:
+        try:
+            d = json.loads(self._picks_file().read_text(encoding="utf-8"))
+            return d if isinstance(d, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def picked(self, kind: str, seg: str) -> Path | None:
+        name = self.picks().get(f"{kind}:{seg}")
+        if not name:
+            return None
+        p = self.out_dir / Path(name).name
+        try:
+            return p if p.is_file() and p.stat().st_size > 0 else None
+        except OSError:
+            return None
+
+    def pick(self, kind: str, seg: str, name: str = "") -> str | None:
+        """Use this file of avatar/out for the segment, whatever the text ("" =
+        automatic again). -> error text or None."""
+        name = Path(name or "").name
+        if name and not (self.out_dir / name).is_file():
+            return f"{name} nicht in {self.out_dir}"
+        d = self.picks()
+        if name:
+            d[f"{kind}:{seg}"] = name
+        else:
+            d.pop(f"{kind}:{seg}", None)
+        try:
+            self.out_dir.mkdir(parents=True, exist_ok=True)
+            tmp = self._picks_file().with_suffix(".tmp")
+            tmp.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, self._picks_file())
+        except OSError as e:
+            return str(e)
+        with self._lock:
+            j = self.jobs.get((kind, seg))
+            if name:
+                self.jobs[(kind, seg)] = {"text": (j or {}).get("text", ""), "state": "ready",
+                                          "file": str(self.out_dir / name), "error": "", "at": time.time(),
+                                          "saved": True, "picked": True}
+            elif j and j.get("picked"):
+                self.jobs.pop((kind, seg), None)
+        return None
+
+    def list_videos(self, kind: str, seg: str) -> list:
+        """The finished videos for this segment in avatar/out, newest first
+        (text known only for videos made since 2026-11-19)."""
+        out = []
+        try:
+            files = list(self.out_dir.glob(f"{kind}_{seg}_*.mp4"))
+        except OSError:
+            return out
+        for p in files:
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            if st.st_size <= 0:
+                continue
+            text, topic = "", ""
+            try:
+                m = json.loads(p.with_suffix(".json").read_text(encoding="utf-8"))
+                text, topic = m.get("text") or "", m.get("topic") or ""
+            except (OSError, ValueError):
+                pass
+            out.append({"file": p.name, "at": st.st_mtime, "kb": st.st_size // 1024,
+                        "text": text, "topic": topic})
+        out.sort(key=lambda x: -x["at"])
+        return out
+
     # -- reuse + daily limit ---------------------------------------------------
     def reuse_text(self, kind: str, seg: str, topic: str) -> str | None:
         """The text of the newest video already made for this kind / segment /
@@ -196,7 +272,12 @@ class AvatarRenderer:
         if not text:
             return
         key = (kind, seg)
+        chosen = self.picked(kind, seg)
         with self._lock:
+            if chosen is not None:                # chosen by hand: that one, never an order
+                self.jobs[key] = {"text": text, "state": "ready", "file": str(chosen), "error": "",
+                                  "at": time.time(), "saved": True, "picked": True}
+                return
             j = self.jobs.get(key)
             if j and j["text"] == text and j["state"] in ("queued", "rendering", "ready"):
                 return
@@ -217,6 +298,9 @@ class AvatarRenderer:
         return bool(api_key())
 
     def get(self, kind: str, seg: str, text: str) -> Path | None:
+        chosen = self.picked(kind, seg)
+        if chosen is not None:
+            return chosen
         text = (text or "").strip()
         j = self.jobs.get((kind, seg))
         if j and j["state"] == "ready" and j["text"] == text and j["file"] and Path(j["file"]).exists():
@@ -230,9 +314,14 @@ class AvatarRenderer:
         return None
 
     def status(self, kind: str) -> dict:
-        return {seg: {"state": j["state"], "error": j["error"], "file": Path(j["file"]).name if j["file"] else None,
-                      "saved": bool(j.get("saved"))}
-                for (k, seg), j in list(self.jobs.items()) if k == kind}
+        st = {seg: {"state": j["state"], "error": j["error"], "file": Path(j["file"]).name if j["file"] else None,
+                    "saved": bool(j.get("saved"))}
+              for (k, seg), j in list(self.jobs.items()) if k == kind}
+        for key, name in self.picks().items():
+            k, _, seg = key.partition(":")
+            if k == kind:
+                st.setdefault(seg, {"state": "ready", "error": "", "file": name, "saved": True})["pick"] = name
+        return st
 
     def _run(self):
         while True:
