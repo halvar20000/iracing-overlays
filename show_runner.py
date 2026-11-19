@@ -1290,8 +1290,8 @@ class ShowRunner:
                 name = self._name(key)
                 if name and (self._items is None or name in self._items):
                     self._source(key, False)
-            if self._items is not None and self._has("avatar_idle"):
-                self._source("avatar_idle", True)     # Gabi sits in the studio the whole show
+            self._idle_on = None
+            self._idle(True)                          # Gabi sits in the studio (off while a picture is up)
             self._solid_pages()
             self._shown = None
             self._pin(None)
@@ -1315,6 +1315,7 @@ class ShowRunner:
                 self._end_segment()
             self.seg = None
             if was in ("running", "preparing"):
+                self._idle(True)
                 self._note("gestoppt")
 
     def tick(self):
@@ -1584,6 +1585,9 @@ class ShowRunner:
         sid = self.segments[self.seg_i]
         text = self.script.get(sid) or ""
         seg = {"id": sid, "ids": [], "started": self.clock(), "media": None}
+        # Gabi's idle loop only while nothing else is in the picture (Thomas,
+        # 2026-11-19: not behind results / tables / the track pictures)
+        self._idle(not (sid in SEGMENT_SOURCES or sid == "track"))
         if sid in SEGMENT_SOURCES:
             self._pin(self._seg_class(sid))
             key = self._src_key(sid)
@@ -1689,7 +1693,17 @@ class ShowRunner:
             self._source("track_video", False)
         self.seg = None
 
+    def _idle(self, on):
+        """Show / hide the "Gabi Ruhe" loop (only if the scene has it), once per change."""
+        if getattr(self, "_items", None) is None or not self._has("avatar_idle"):
+            return
+        if getattr(self, "_idle_on", None) is on:
+            return
+        self._idle_on = on
+        self._source("avatar_idle", on)
+
     def _finish(self):
+        self._idle(True)                            # the studio is not left empty
         if self.kind == "post":                     # Abspann: no hand-over, no REGIE
             end = self.cfg.get("post_end_scene")
             if end:

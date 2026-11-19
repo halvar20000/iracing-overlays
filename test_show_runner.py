@@ -584,8 +584,8 @@ check("solid_fix: a solid page is left alone, a loader next to the old one is us
       and sr.solid_fix("results", "browser_source", {"is_local_file": True,
                        "local_file": str(sr.HERE / "obs_loaders" / "results.html")})
           == {"local_file": str(sr.HERE / "obs_loaders" / "results_solid.html")})
-# Gabi's idle loop: switched ON at the start (it was off) and left on to the end
-# (Andreas, 2026-10-21: after the greeting she vanished from the studio)
+# Gabi's idle loop: on while she only talks, off while a picture is up
+# (Andreas 2026-10-21: she vanished; Thomas 2026-11-19: not behind the results)
 obs18 = FakeObs({"Moderator": {"Ergebnis": False, "Meisterschaft": False, "Gabi Ruhe": False}, "iRacing": {}},
                 media={})
 c18 = sr.load_config(); c18["obs"] = {"host": "127.0.0.1", "port": obs18.port}
@@ -598,9 +598,19 @@ def w18():
     r18.tick()
     idle18.append(obs18.scenes["Moderator"]["Gabi Ruhe"])
 r18.start()
-check("idle loop switched on at the start and kept on to the end",
-      obs18.scenes["Moderator"]["Gabi Ruhe"] is True and wait_for(lambda: r18.state == "done", 20, tick=w18)
-      and all(idle18) and obs18.scenes["Moderator"]["Gabi Ruhe"] is True, idle18[:5])
+seg18 = []
+def w18():
+    r18.tick()
+    seg18.append((r18.seg["id"] if r18.seg else None, obs18.scenes["Moderator"]["Gabi Ruhe"]))
+on_start = obs18.scenes["Moderator"]["Gabi Ruhe"]
+check("idle loop: runs to the end", wait_for(lambda: r18.state == "done", 20, tick=w18), r18.status()["log"])
+pic18 = {s for s in sr.SEGMENT_SOURCES} | {"track"}
+check("idle loop: on for the talk without a picture (greeting / goodbye)",
+      any(v for sid, v in seg18 if sid and sid not in pic18) and
+      all(v for sid, v in seg18 if sid and sid not in pic18), seg18)
+check("idle loop: off while results / tables are up (Thomas 2026-11-19)",
+      any(sid in pic18 for sid, _ in seg18) and not any(v for sid, v in seg18 if sid in pic18), seg18)
+check("idle loop: on again at the end", obs18.scenes["Moderator"]["Gabi Ruhe"] is True)
 r17 = sr.ShowRunner(dict(sr.load_config(), avatar={"segments": ["intro", "last_race", "track", "schedule", "outro"], "max_words": 5}),
                     None, Speaker(), lambda: {}, lambda f, s_: ({}, "t"), lambda: None)
 r17.segments = ["intro", "last_race", "track", "schedule", "outro"]
