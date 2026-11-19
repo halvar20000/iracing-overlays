@@ -536,7 +536,7 @@ input[type=checkbox] { width:20px; height:20px; margin-top:5px; accent-color:var
   .row { grid-template-columns: 1fr; } .bar { left:0; }
 }
 </style></head><body>
-<header><h1>⚙ Overlay-Einstellungen</h1><span>Statt JSON-Dateien von Hand: hier ändern, speichern, ggf. neu starten.</span></header>
+<header><h1>⚙ Overlay-Einstellungen</h1><span>Statt JSON-Dateien von Hand: hier ändern, speichern, ggf. neu starten.</span><a href="/menu" style="margin-left:auto;color:#7cc4ff;text-decoration:none">☰ Alle Seiten</a></header>
 <div class="wrap"><nav id="nav"></nav><main id="main"></main></div>
 <div class="bar"><button class="save" id="save">Speichern</button>
   <button id="reset">Änderungen verwerfen</button>
@@ -674,6 +674,148 @@ $('#reset').onclick = () => openFile(CUR);
 """
 
 
+# -- the page menu (/menu): every operator / config page in one place ----------
+# (title, url, tag of the launcher overlay that serves it or None, short help)
+MENU = [
+    {"group": "Regie & Live", "items": [
+        ("Dashboard", "http://localhost:5000/", "dashboard",
+         "Kameras, Replays, Vorfälle, REGIE an / aus"),
+        ("Kamera-Fenster", "http://localhost:5000/cameras/panel", "dashboard",
+         "Nur die Kameragruppen als Tasten"),
+        ("Fahrer-Fenster", "http://localhost:5000/drivers/panel", "dashboard",
+         "Fahrerliste, Klick = Kamera auf den Fahrer"),
+        ("Überhol-Fenster", "http://localhost:5000/overtakes/panel", "dashboard",
+         "Überholungen mit Replay 10 s / 20 s"),
+        ("Incident-Fenster", "http://localhost:5000/incidents/panel", "dashboard",
+         "Dreher, Kollisionen, Off-Tracks mit Replay"),
+        ("Teleprompter", "http://localhost:5000/prompter", "dashboard",
+         "Stream-Notizen Karte für Karte"),
+        ("Frag Claude", "http://localhost:5000/ask", "dashboard",
+         "Fragen per Stream Deck, Antworten abspielen"),
+    ]},
+    {"group": "Show (Gabi)", "items": [
+        ("Moderation vor dem Rennen", "http://localhost:5000/show", "dashboard",
+         "Skript, Gabi-Videos, Start / Weiter / Stopp, OBS prüfen"),
+        ("Abspann", "http://localhost:5000/abspann", "dashboard",
+         "Nach dem Rennen: Ergebnis, Tabelle, Verabschiedung"),
+        ("Highlight-Video", "http://localhost:5000/highlights", "dashboard",
+         "Szenen wählen und aus dem Replay aufnehmen"),
+        ("Gabi-Test", "http://localhost:5000/avatar", "dashboard",
+         "Ein Satz → Stimme → Lip-Sync-Video"),
+    ]},
+    {"group": "Liga & Meisterschaft", "items": [
+        ("Meisterschaft: Liga / Saison", "http://localhost:5010/", "champ",
+         "Welche Liga die Tabellen-, Ergebnis- und RSVP-Seiten zeigen (Auto / fest)"),
+        ("Race Logger", "http://localhost:5009/", "logger",
+         "Live-Monitor, Rennlogs herunterladen"),
+        ("Race Logger: CLS-Upload", "http://localhost:5009/league", "logger",
+         "Token, automatischer Upload, Live-Reifendaten"),
+    ]},
+    {"group": "Race Control", "items": [
+        ("iCASControl", "http://localhost:8080/", "racectrl",
+         "Auto Steward, Profile, iRacing-Chat, Stewards"),
+        ("Race-Control-Banner", "http://localhost:5019/panel", "rcmsg",
+         "ATVO-Empfang, Testmeldung, eigene Meldung"),
+    ]},
+    {"group": "Twitch & YouTube", "items": [
+        ("Twitch: Zeitplan + Werbung", "http://localhost:5011/twitch", "sess",
+         "CLS-Renntage in den Twitch-Zeitplan, Werbepausen"),
+        ("YouTube-Bild", "http://localhost:5005/youtube/setup", "standings",
+         "Link einfügen, stumm ja / nein"),
+    ]},
+    {"group": "Übersicht", "items": [
+        ("Einstellungen (Config-Dateien)", "/", None,
+         "Alle JSON-Einstellungen als Formular"),
+        ("Alle Overlays (OBS-Quellen)", "#overview", None,
+         "Jedes Overlay mit URL, Loader-Pfad und Größe, durchsuchbar"),
+    ]},
+]
+
+
+MENU_PAGE = r"""<!doctype html>
+<html lang="de"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overlay-Seiten</title>
+<style>
+:root { --bg:#0f0f15; --panel:#181820; --panel2:#1f1f29; --line:#2c2c3a; --text:#e8e8f0;
+  --muted:#9a9aab; --acc:#9146ff; --ok:#4ade80; --off:#5a5a6a; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--text); font:15px "Segoe UI", system-ui, sans-serif; }
+header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex; gap:16px;
+  align-items:center; flex-wrap:wrap; }
+header h1 { margin:0; font-size:20px; }
+header input { margin-left:auto; background:var(--panel2); color:var(--text); border:1px solid var(--line);
+  border-radius:6px; padding:8px 10px; font:inherit; width:260px; max-width:100%; }
+main { padding:16px 20px 40px; display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr));
+  gap:16px; align-items:start; }
+section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 12px 6px; }
+section h2 { margin:2px 4px 8px; font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:#cdb8ff; }
+a.item { display:flex; gap:10px; align-items:flex-start; padding:9px 8px; border-radius:7px;
+  color:var(--text); text-decoration:none; border-top:1px solid #23232e; }
+section a.item:first-of-type { border-top:0; }
+a.item:hover { background:var(--panel2); }
+.dot { width:10px; height:10px; border-radius:50%; background:var(--off); margin-top:6px; flex:none; }
+.dot.on { background:var(--ok); box-shadow:0 0 6px var(--ok); }
+.dot.none { background:transparent; border:1px solid var(--off); }
+.t { font-weight:600; }
+.t small { color:var(--muted); font-weight:400; margin-left:6px; font-size:12px; }
+.d { color:var(--muted); font-size:13px; margin-top:2px; }
+.item.off .t { color:#b8b8c6; }
+.hidden { display:none !important; }
+footer { color:var(--muted); font-size:12px; padding:0 20px 20px; }
+</style></head><body>
+<header><h1>☰ Overlay-Seiten</h1>
+<input id="q" type="search" placeholder="Suchen … (z. B. twitch, liga, gabi)" autofocus></header>
+<main id="m"></main>
+<footer>Grüner Punkt = das Overlay, das die Seite liefert, läuft im Launcher. Grauer Punkt = im Launcher starten.</footer>
+<script>
+const MENU = /*__MENU__*/[];
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const port = (u) => { const m = /:(\d+)\//.exec(u); return m ? m[1] : ''; };
+document.getElementById('m').innerHTML = MENU.map((g) =>
+  `<section><h2>${esc(g.group)}</h2>` + g.items.map(([t, u, tag, d]) =>
+    `<a class="item" href="${esc(u)}" target="_blank" data-tag="${esc(tag || '')}"
+       data-s="${esc((g.group + ' ' + t + ' ' + d + ' ' + u).toLowerCase())}">
+       <span class="dot${tag ? '' : ' none'}"></span>
+       <span><div class="t">${esc(t)}${port(u) ? `<small>${port(u)}</small>` : ''}</div>
+       <div class="d">${esc(d)}</div></span></a>`).join('') + `</section>`).join('');
+const q = document.getElementById('q');
+q.addEventListener('input', () => {
+  const words = q.value.toLowerCase().split(/\s+/).filter(Boolean);
+  document.querySelectorAll('a.item').forEach((a) =>
+    a.classList.toggle('hidden', !words.every((w) => a.dataset.s.includes(w))));
+  document.querySelectorAll('section').forEach((s) =>
+    s.classList.toggle('hidden', !s.querySelector('a.item:not(.hidden)')));
+});
+async function status() {
+  try {
+    const r = await (await fetch('/api/running')).json();
+    const run = new Set(r.running || []);
+    document.querySelectorAll('a.item[data-tag]').forEach((a) => {
+      const tag = a.dataset.tag; if (!tag) return;
+      const on = run.has(tag);
+      a.querySelector('.dot').classList.toggle('on', on);
+      a.classList.toggle('off', !on);
+    });
+  } catch (e) {}
+}
+document.querySelectorAll('a.item[href="#overview"]').forEach((a) => a.addEventListener('click', async (e) => {
+  e.preventDefault();
+  try {
+    const r = await (await fetch('/api/open_overview', {method: 'POST'})).json();
+    if (!r.ok) alert(r.error || 'Fehler');
+  } catch (err) { alert('Launcher nicht erreichbar'); }
+}));
+status(); setInterval(status, 3000);
+</script></body></html>"""
+
+
+def menu_page() -> str:
+    return MENU_PAGE.replace("/*__MENU__*/[]", json.dumps(
+        [{"group": g["group"], "items": [list(i) for i in g["items"]]} for g in MENU],
+        ensure_ascii=False).replace("</", "<\\/"))
+
+
 class _Handler(BaseHTTPRequestHandler):
     server_version = "OverlaySettings/1"
     base: Path = HERE
@@ -707,6 +849,8 @@ class _Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == "/":
             return self._send(200, PAGE, "text/html; charset=utf-8")
+        if path == "/menu":
+            return self._send(200, menu_page(), "text/html; charset=utf-8")
         if path == "/api/spec":
             return self._send(200, page_spec())
         if path == "/api/running":
@@ -737,6 +881,15 @@ class _Handler(BaseHTTPRequestHandler):
             if ok:
                 print(f"[settings] {spec['file']} saved")
             return self._send(200, {"ok": ok, **res})
+        if path == "/api/open_overview":
+            # OVERLAYS.html is a local file (icons + "Pfad kopieren" need its
+            # file:// location) - a browser will not follow a file:// link from
+            # this http page, so this PC's browser is told to open it
+            f = self.base / "OVERLAYS.html"
+            if not f.is_file():
+                return self._send(404, {"ok": False, "error": "OVERLAYS.html fehlt - Launcher aktualisieren"})
+            webbrowser.open(f.as_uri())
+            return self._send(200, {"ok": True})
         if path == "/api/restart":
             if not self.restart_cb:
                 return self._send(200, {"ok": False, "error": "Neustart nur aus dem Launcher"})
@@ -795,8 +948,8 @@ def start_in_thread(port: int = PORT, running_cb=None, restart_cb=None, wait_s=2
     return Background(port, running_cb, restart_cb, wait_s)
 
 
-def url(port: int = PORT) -> str:
-    return f"http://127.0.0.1:{port}/"
+def url(port: int = PORT, page: str = "") -> str:
+    return f"http://127.0.0.1:{port}/{page}"
 
 
 if __name__ == "__main__":

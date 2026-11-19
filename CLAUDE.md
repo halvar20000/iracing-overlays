@@ -106,6 +106,10 @@ so log output and status dots stay visually clear.
   kind, default = the module's default, German label / help), to updater
   `PROTECTED` and `.gitignore`; `python3 test_settings_page.py` checks the
   defaults against the modules and that every file is protected + ignored.
+- **Operator pages have a menu:** launcher button "☰ Seiten" = `settings_page.py`
+  `/menu` (http://127.0.0.1:5090/menu). A NEW operator / config page → add it to
+  `MENU` there (title, URL, launcher tag for the running dot, German help);
+  `test_settings_page.py` M2/M3 check the tag and its port.
 - Port numbers increment from 5000. Don't reuse.
 - **Shared poller base class:** `iracing_sdk_base.py` provides `SDKPoller`
   (IRSDK connection, poll loop, Lock-protected `data` dict, graceful stop)

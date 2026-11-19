@@ -379,6 +379,13 @@ class LauncherApp(tk.Tk):
                 font=("Segoe UI", 9, "bold"), cursor="hand2",
             )
             btn_settings.pack(side="right", padx=(0, 6))
+            btn_menu = tk.Button(
+                header, text="☰ Seiten", command=self._open_menu,
+                bg=COLOR_PANEL_ALT, fg=COLOR_TEXT, activebackground="#2a2a38",
+                activeforeground=COLOR_TEXT, relief="flat", padx=14, pady=6,
+                font=("Segoe UI", 9, "bold"), cursor="hand2",
+            )
+            btn_menu.pack(side="right", padx=(0, 6))
 
         # HALVAR TV Overlay logo (img/launcher_logo.png, on the launcher's own
         # background colour); the plain text title if it is missing / unreadable
@@ -631,13 +638,17 @@ class LauncherApp(tk.Tk):
             self._append_log("launcher", "OVERLAYS.html not found - update the "
                              "launcher (or run make_streamdeck_icons.py --table)")
 
-    def _open_settings(self):
+    def _open_settings(self, page=""):
         bg = self._settings_srv
         if bg is None or bg.srv is None:
             self._append_log("launcher", "settings page not running"
                              + (f" ({bg.error})" if bg is not None and bg.error else ""))
             return
-        webbrowser.open(settings_page.url())
+        webbrowser.open(settings_page.url(page=page))
+
+    def _open_menu(self):
+        """☰ Seiten: every operator / config page as one menu (5090/menu)."""
+        self._open_settings("menu")
 
     def _close_settings(self):
         if self._settings_srv is not None:

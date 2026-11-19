@@ -10,6 +10,7 @@ import urllib.request
 from pathlib import Path
 
 import settings_page as sp
+HERE = Path(__file__).resolve().parent
 
 PASS = FAIL = 0
 
@@ -202,6 +203,31 @@ check("H7 restart goes to the launcher", r["ok"] and restarted == ["dashboard"],
 st, r = req("/api/file/nope")
 check("H8 unknown file 404", st == 404)
 check("H9 only bound to this PC", srv.server_address[0] == "127.0.0.1")
+
+# --- page menu (/menu) ---
+st, page = req("/menu")
+check("M1 menu page served, every entry in it",
+      st == 200 and all(i[0] in page for g in sp.MENU for i in g["items"]) and "/*__MENU__*/" not in page)
+lg = (HERE / "launch_gui.py").read_text(encoding="utf-8")
+tags = set(re.findall(r'^\s*\("([a-z]+)",\s*"', lg, re.M))
+bad = [i for g in sp.MENU for i in g["items"] if i[2] and i[2] not in tags]
+check("M2 every menu tag is a launcher overlay", not bad, bad)
+ports = {"dashboard": 5000, "champ": 5010, "logger": 5009, "racectrl": 8080,
+         "rcmsg": 5019, "sess": 5011, "standings": 5005}
+bad = [i for g in sp.MENU for i in g["items"] if i[2] and f":{ports.get(i[2])}/" not in i[1]]
+check("M3 each entry's URL is on its overlay's port", not bad, bad)
+opened = []
+_wb = sp.webbrowser.open
+sp.webbrowser.open = lambda u: opened.append(u)
+st, r = req("/api/open_overview", {}, origin=f"http://127.0.0.1:{port}")
+check("M4 overview missing = clear error", st == 404 and "OVERLAYS.html" in r.get("error", ""), r)
+(base / "OVERLAYS.html").write_text("<html></html>", encoding="utf-8")
+st, r = req("/api/open_overview", {}, origin=f"http://127.0.0.1:{port}")
+check("M5 overview opened as a local file", st == 200 and opened and opened[0].startswith("file:"), (r, opened))
+st, r = req("/api/open_overview", {}, origin="https://example.com")
+check("M6 not from another website", st == 403 and len(opened) == 1)
+sp.webbrowser.open = _wb
+check("M7 menu url", sp.url(5090, "menu") == "http://127.0.0.1:5090/menu")
 srv.shutdown()
 
 print("Launcher helper")
