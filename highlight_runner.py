@@ -97,9 +97,10 @@ HL_CAMS = {
     "spin":    ["TV1", "TV2", "TV3"],
     "fastest": ["TV1", "TV2", "TV3"],
     "dotd":    ["TV1", "TV2", "TV3"],
+    "quali_lap": ["TV1", "TV2", "TV3"],
 }
 
-MOOD = {"fastest": "normal", "caution": "hype", "restart": "hype", "start": "hype", "finish": "hype"}
+MOOD = {"fastest": "normal", "quali_lap": "normal", "caution": "hype", "restart": "hype", "start": "hype", "finish": "hype"}
 
 
 def _norm(s) -> str:
@@ -122,6 +123,21 @@ def pick_group(kind: str, groups: list, k: int = 0):
 def default_texts(info: dict) -> dict:
     track = info.get("track") or "der Strecke"
     win = info.get("winner")
+    chs = info.get("chapters") or []
+    if info.get("program") and chs:
+        parts = [("das Qualifying" if c["kind"] == "quali" else c["label"].title()) for c in chs]
+        what = ", ".join(parts[:-1]) + " und " + parts[-1] if len(parts) > 1 else parts[0]
+        intro = f"Willkommen zu den Highlights aus {track}: {what}!"
+        wins = [w for w in info.get("winners") or [] if w]
+        if len(wins) > 1 and len(set(wins)) == 1:
+            outro = f"Das war's aus {track} — {wins[0]} gewinnt beide Rennen. Danke fürs Zuschauen!"
+        elif len(wins) > 1:
+            outro = (f"Das war's aus {track} — Siege für " + " und ".join(wins)
+                     + ". Danke fürs Zuschauen, bis zum nächsten Rennen!")
+        else:
+            outro = (f"Das war's — {wins[0]} gewinnt in {track}. Danke fürs Zuschauen!" if wins
+                     else "Das waren die Highlights. Danke fürs Zuschauen, bis zum nächsten Rennen!")
+        return {"intro": intro, "outro": outro}
     intro = f"Willkommen zu den Highlights vom Rennen in {track}! Hier sind die besten Szenen."
     outro = (f"Das war's — {win} gewinnt in {track}. Danke fürs Zuschauen, bis zum nächsten Rennen!"
              if win else "Das waren die Highlights. Danke fürs Zuschauen, bis zum nächsten Rennen!")
@@ -519,14 +535,29 @@ class HighlightRunner:
         return bool(self.opts.get("tables") and self.obs is not None and (src.get("results") or src.get("standings")))
 
     def _pages(self) -> list:
-        """[(source key, class or None, spoken line)] after the finish."""
+        """[(source key, class or None, spoken line, (session_num, t) to seek or None)]
+        after the finish. Whole evening (opts["chapters"]): the result of EACH
+        race — the replay is put into that race's session, 5002 shows the
+        session it is in — then the championship from the last race."""
         out = []
         classes = ["PRO", "AM"] if self.opts.get("proam") else [None]
-        for key, what in (("results", "Das Endergebnis"), ("standings", "Die Meisterschaft nach diesem Rennen")):
-            if not self.cfg["sources"].get(key):
-                continue
+        cls_txt = lambda c: f" in der Klasse {'Pro' if c == 'PRO' else 'A M'}" if c else ""
+        races = [c for c in self.opts.get("chapters") or [] if c.get("kind") == "race"]
+        if self.cfg["sources"].get("results"):
+            if races:
+                for ch in races:
+                    lab = ch.get("label") or "Rennen"
+                    for c in classes:
+                        out.append(("results", c, f"Das Ergebnis von {lab.title()}{cls_txt(c)}.",
+                                    (ch.get("session_num"), float(ch.get("t_end") or 0))))
+            else:
+                for c in classes:
+                    out.append(("results", c, f"Das Endergebnis{cls_txt(c)}.", None))
+        if self.cfg["sources"].get("standings"):
+            seek = (races[-1].get("session_num"), float(races[-1].get("t_end") or 0)) if races else None
             for c in classes:
-                out.append((key, c, f"{what}" + (f" in der Klasse {'Pro' if c == 'PRO' else 'A M'}." if c else ".")))
+                out.append(("standings", c, ("Die Meisterschaft nach diesem Abend" if races else
+                                             "Die Meisterschaft nach diesem Rennen") + cls_txt(c) + ".", seek))
         return out
 
     def _pin(self, cls):
@@ -561,10 +592,21 @@ class HighlightRunner:
         if src.get("avatar_idle"):
             self._obs(lambda: self.obs.set_visible(mod, src["avatar_idle"], True), "Gabi Ruhe")
         shown = None
-        for n, (key, cls, line) in enumerate(pages):
+        at = None
+        for n, (key, cls, line, seek) in enumerate(pages):
             if self._stop.is_set():
                 break
             self.phase = ("Ergebnis" if key == "results" else "Meisterschaft") + (f" {cls}" if cls else "")
+            if seek and seek[0] is not None and seek != at:
+                # the replay into that race's session: the result page shows it
+                if self.replay.seek(seek[0], max(0.0, seek[1])) is False:
+                    self._note(f"  (Replay springt nicht zu Session {seek[0]} – Ergebnis evtl. vom falschen Rennen)")
+                try:
+                    self.replay.pause()
+                except Exception:
+                    pass
+                at = seek
+                self.phase += f" ({seek[0]})"
             self._pin(cls)
             if shown != key:
                 if shown:
@@ -656,6 +698,7 @@ class HighlightRunner:
                    f"{t0:.0f}-{t1:.0f} s, Kamera {g.get('name')}")
         if self.opts.get("card") and not sc.get("overlay"):     # the grid graphic is its own title
             self._card = {"title": sc.get("title"), "text": sc.get("text"), "driver": sc.get("driver"),
+                          "chapter": sc.get("chapter") or "",
                           "number": sc.get("car_number"), "kind": sc["kind"], "n": i + 1, "of": len(self.scenes)}
             self._card_until = self.clock() + float(self.cfg["card_s"])
         if self.opts.get("voice") and self.speaker is not None and sc.get("text"):

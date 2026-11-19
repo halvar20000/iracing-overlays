@@ -230,6 +230,49 @@ with tempfile.TemporaryDirectory() as td:
           and [d["complete"] for d in ls] == [True, False, False] and ls[0]["track"] == "Indy"
           and ls[0]["laps"] == 60, ls)
 
+# ---- whole evening (2026-11-19): qualifying top 3 (pole last) + race 1 + race 2
+with tempfile.TemporaryDirectory() as td:
+    def wlog(name, events):
+        with open(_os.path.join(td, name), "w", encoding="utf-8") as f:
+            for e in events:
+                f.write(_json.dumps(e) + "\n")
+    drs = [{"car_idx": i, "name": f"Fahrer {i}", "car_number": str(10 + i), "car": "BMW M2"} for i in range(5)]
+    def head(stype, num):
+        return {"type": "session_start", "track": "Oschersleben", "session_type": stype, "session_num": num,
+                "subsession_id": 777, "drivers": drs}
+    best = {0: 98.4, 1: 97.9, 2: 98.1, 3: 99.0, 4: 98.0}
+    qev = [head("Lone Qualify", 1)]
+    for i, bl in best.items():                    # out lap, flying lap = best, in lap
+        t = 100.0 + 10 * i
+        for d in (110.0, bl, 120.0):
+            qev.append({"type": "lap", "car_idx": i, "t_session": t, "lap_time": d})
+            t += d
+        qev.append({"type": "lap", "car_idx": i, "t_session": t})
+    qev.append({"type": "session_end", "final": [{"car_idx": i, "best_lap": bl, "position": 0} for i, bl in best.items()]})
+    wlog("20261118-194500_osch_lone_qualify.jsonl", qev)
+    qs = H.quali_scenes(qev)
+    check("quali: top 3, P3 first, pole last", [s["pos"] for s in qs] == [3, 2, 1]
+          and [s["car_idx"] for s in qs] == [2, 4, 1], [(s["pos"], s["car_idx"]) for s in qs])
+    pole = qs[-1]
+    check("quali: pole scene = its whole flying lap (+2 s / +3 s)",
+          abs((pole["t_end"] - pole["t_start"]) - (97.9 + 5.0)) < 0.05 and pole["session_num"] == 1
+          and pole["title"] == "Pole-Position" and "1:37,900" in pole["text"], pole)
+    check("quali: gap to pole in the line", "+0,100" in qs[1]["text"], qs[1]["text"])
+    race = [{"type": "lap", "car_idx": i, "lap": 1, "t_session": 300.0 + i} for i in range(5)]
+    wlog("20261118-200716_osch_race.jsonl", [head("Race", 2)] + race)
+    wlog("20261118-203824_osch_race.jsonl", [head("Race", 4)] + race)
+    wlog("20261118-210000_osch_race.jsonl", [head("Race", 4)] + race)      # replay copy: later file
+    wlog("20261118-190000_other_race.jsonl", [dict(head("Race", 2), subsession_id=1)])
+    sl = H.session_logs(_os.path.join(td, "20261118-203824_osch_race.jsonl"))
+    check("session logs: quali + both races of the same event, live files, in order",
+          [(l["kind"], l["session_num"], _os.path.basename(l["path"])[:15]) for l in sl]
+          == [("quali", 1, "20261118-194500"), ("race", 2, "20261118-200716"), ("race", 4, "20261118-203824")], sl)
+    pr = H.pick_program(_os.path.join(td, "20261118-200716_osch_race.jsonl"))
+    chs = pr["info"]["chapters"]
+    check("program: chapters QUALIFYING / RENNEN 1 / RENNEN 2",
+          [c["label"] for c in chs][:1] == ["QUALIFYING"] and pr["scenes"][0]["chapter"] == "QUALIFYING"
+          and pr["scenes"][0]["chapter_start"] and pr["info"]["program"], chs)
+
 print(f"\n{passes} PASS, {len(fails)} FAIL")
 for f in fails:
     print("  FAIL", f)

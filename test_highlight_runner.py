@@ -677,6 +677,30 @@ r.start(SCENES[2:3], {"record": True, "tables": False})
 r.wait(30)
 check("tables off: no page shown", not any(p[1] or p[2] for p in to3.pages_at_switch if p[0] == "Moderator"))
 
+# whole evening (2026-11-19): a result page per race, the replay put into that race's session first
+chs = [{"label": "QUALIFYING", "kind": "quali", "session_num": 1, "t_end": 400.0},
+       {"label": "RENNEN 1", "kind": "race", "session_num": 2, "t_end": 1493.3},
+       {"label": "RENNEN 2", "kind": "race", "session_num": 4, "t_end": 1497.2}]
+rp = FakeReplay(speed=10)
+to4 = TableObs(MOD_TABLES)
+to4.pages_at_switch = []
+to4.replay = rp
+r = R.HighlightRunner(rp, TracingObs(to4.port, rp), cfg=dict(CFG, fade_s=0.3, table_s=0.5))
+check("program pages: result R1, result R2, championship",
+      [(k, sk) for k, _, _, sk in R.HighlightRunner(rp, None, cfg=CFG, ).__class__._pages(
+          type("X", (), {"opts": {"chapters": chs}, "cfg": r.cfg})())]
+      == [("results", (2, 1493.3)), ("results", (4, 1497.2)), ("standings", (4, 1497.2))])
+r.start(SCENES[2:3], {"record": True, "chapters": chs})
+r.wait(60)
+seeks = [c for c in rp.calls if c[0] == "seek"]
+check("program: replay into race 1, then race 2 for the result pages (once each)",
+      seeks[-2:] == [("seek", 2, 1493.3), ("seek", 4, 1497.2)], seeks)
+check("program: run done", r.status()["state"] == "done", r.status()["error"])
+txt = R.default_texts({"track": "Oschersleben", "program": True, "chapters": chs,
+                       "winners": ["Thomas Kuebler", "Thomas Kuebler"]})
+check("program texts: intro names all parts, outro the double winner",
+      "das Qualifying, Rennen 1 und Rennen 2" in txt["intro"] and "beide Rennen" in txt["outro"], txt)
+
 # ---------------------------------------------------------------- OBS that cannot pause (Simple output,
 # Recording Quality "Same as stream" - Thomas's profile, 2026-10-21): stop before recording
 class SameAsStreamObs(FakeObs):

@@ -65,8 +65,9 @@ Output: logs/<YYYYMMDD-HHMMSS>_<track>_<sessiontype>.jsonl
         (e.g. ..._race.jsonl, ..._practice.jsonl)
 
 Race AND Practice sessions are logged (including hosted "Practice Only"
-events, which iRacing reports as SessionType "Practice"). Qualifying and
-Warmup sessions are still skipped. Driver-of-the-Day is computed for race
+events, which iRacing reports as SessionType "Practice") and, since 1.5.1,
+QUALIFYING (..._lone_qualify.jsonl; for the highlight video, not sent to
+CLS). Warmup sessions are still skipped. Driver-of-the-Day is computed for race
 sessions only.
 """
 
@@ -120,7 +121,7 @@ LOGS_DIR.mkdir(parents=True, exist_ok=True)
 # league site automatically. The file is ALWAYS kept locally as well — the
 # upload is a convenience, never the only copy. Failed uploads stay visible
 # on the setup page with a "Send again" button.
-LOGGER_VERSION   = "1.5.0"
+LOGGER_VERSION   = "1.5.1"
 CLS_DEFAULT_URL  = "https://league.simracing-hub.com"
 CLS_CONFIG_PATH  = HERE / "league_manager.json"
 CLS_STATE_PATH   = LOGS_DIR / "upload_state.json"
@@ -832,7 +833,8 @@ class RaceLogger(SDKPoller):
         self._log_path = None
         self._log_session_key = None
         # Hand the finished race to the league site (no-op when not configured).
-        cls_autoupload(closed_path)
+        if closed_path is None or "qualif" not in Path(closed_path).name.lower():
+            cls_autoupload(closed_path)           # quali logs are for the highlight video only
 
     def stop(self) -> None:
         """Override SDKPoller.stop() so we get a chance to write the
@@ -2257,7 +2259,9 @@ class RaceLogger(SDKPoller):
         # and Warmup are still skipped — substring match is safe because
         # neither contains "race" or "practice".
         st = session_type.lower()
-        should_log = ("race" in st) or ("practice" in st)
+        # QUALIFYING too (1.5.1, Thomas 2026-11-19): the highlight video shows
+        # the pole lap + top 3 and needs their lap ends; not sent to CLS
+        should_log = ("race" in st) or ("practice" in st) or ("qualif" in st)
 
         if session_key is None or not should_log:
             # Not in a race. If a log was open from the previous session,

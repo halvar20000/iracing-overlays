@@ -58,7 +58,10 @@ WIN = {
     "spin":    (8.0, 6.0),
     "fastest": (22.0, 2.0),
     "dotd":    (12.0, 6.0),
+    "quali_lap": (0.0, 0.0),          # set per lap: the whole flying lap (+ QUALI_PRE_S / QUALI_POST_S)
 }
+QUALI_TOP = 3               # qualifying highlights: the best N laps, P3 -> pole
+QUALI_PRE_S, QUALI_POST_S = 2.0, 3.0
 CROWD_S, CROWD_PENALTY = 180.0, 12   # spread the reel over the race
 MERGE_MAX_S = 36.0          # an overlap is merged only if the union stays this short
 
@@ -81,6 +84,7 @@ KIND_TITLE = {
     "spin": "Dreher",
     "fastest": "Schnellste Runde",
     "dotd": "Fahrer des Tages",
+    "quali_lap": "Qualifying",
 }
 
 
@@ -761,6 +765,122 @@ def pick(events: list[dict], budget_s=DEFAULT_BUDGET_S, classes: dict | None = N
             "winner": race.name(race.winners()[0][0]) if race.winners() else None,
         },
     }
+
+
+# ---------------------------------------------------------------- qualifying
+def quali_scenes(events: list[dict], top=QUALI_TOP) -> list[dict]:
+    """The best `top` qualifying laps as whole-lap scenes, P3 first, pole last
+    (Thomas 2026-11-19: pole lap + top 3). A lap's end = the pair of S/F
+    crossings of that car whose difference matches its best lap."""
+    q = Race(events)
+    best = {}
+    for r in (q.end or {}).get("final") or []:
+        bl = r.get("best_lap")
+        if bl and bl > 0:
+            best[r["car_idx"]] = float(bl)
+    if not best:                                  # no final classification: the lap events
+        for e in q.laps:
+            lt = e.get("lap_time")
+            if lt and lt > 0 and not e.get("on_pit"):
+                best[e["car_idx"]] = min(best.get(e["car_idx"], 1e9), float(lt))
+    ranked = sorted(best.items(), key=lambda kv: kv[1])
+    pole_t = ranked[0][1] if ranked else None
+    out = []
+    for pos, (idx, bl) in enumerate(ranked, 1):
+        if len(out) >= top:
+            break
+        mine = [e["t_session"] for e in q.laps if e["car_idx"] == idx]
+        cand = None
+        for a, b in zip(mine, mine[1:]):
+            d = b - a
+            if abs(d - bl) < 0.7 and (cand is None or abs(d - bl) < cand[0]):
+                cand = (abs(d - bl), b)
+        if cand is None:
+            continue                               # lap end not in the log: no scene
+        t_end = cand[1]
+        gap = "" if pos == 1 else f" (+{bl - pole_t:.3f} s)".replace(".", ",")
+        txt = (f"Die Pole-Position: {q.name(idx)} mit {_laptime(bl)}!" if pos == 1
+               else f"Platz {pos}: {q.name(idx)} mit {_laptime(bl)}{gap}.")
+        sc = _scene("quali_lap", t_end, idx, q, 1000, text=txt, t0=t_end - bl - QUALI_PRE_S,
+                    t1=t_end + QUALI_POST_S, pos=pos, lap_time=bl)
+        sc["title"] = "Pole-Position" if pos == 1 else f"Qualifying · P{pos}"
+        out.append(sc)
+    out.sort(key=lambda s: -s["pos"])               # P3, P2, pole
+    return out
+
+
+# ---------------------------------------------------------------- the whole evening
+def _start_of(p: Path) -> dict:
+    try:
+        with open(p, encoding="utf-8") as f:
+            return json.loads(f.readline() or "{}")
+    except (OSError, ValueError):
+        return {}
+
+
+def session_logs(race_log) -> list[dict]:
+    """The logs of the same hosted session as `race_log` (same folder, same
+    subsession): [{path, kind quali|race, session_num}] in session order. Per
+    session the EARLIEST file = the live one (the logger also writes while a
+    replay plays)."""
+    race_log = Path(race_log)
+    sub = _start_of(race_log).get("subsession_id")
+    if not sub:
+        return [{"path": race_log, "kind": "race", "session_num": _start_of(race_log).get("session_num")}]
+    by_num = {}
+    for p in sorted(race_log.parent.glob("*.jsonl"), key=lambda p: p.name):
+        m = _start_of(p)
+        if m.get("type") != "session_start" or str(m.get("subsession_id")) != str(sub):
+            continue
+        st = (m.get("session_type") or "").lower()
+        kind = "race" if "race" in st else "quali" if "qualif" in st else None
+        if kind is None:
+            continue
+        by_num.setdefault(m.get("session_num"), {"path": p, "kind": kind, "session_num": m.get("session_num")})
+    return [by_num[k] for k in sorted(by_num, key=lambda n: (n is None, n or 0))]
+
+
+def pick_program(race_log, budget_s=DEFAULT_BUDGET_S, proam_cache="proam_cache.json") -> dict:
+    """Highlights of the whole evening: qualifying (top 3, pole last), then
+    every race of the session (RENNEN 1, RENNEN 2 …) with `budget_s` each.
+    Scenes carry `chapter`; info["chapters"] lists them for the result pages."""
+    logs = session_logs(race_log)
+    races = [l for l in logs if l["kind"] == "race"]
+    scenes, chapters, last_info, cands = [], [], {}, 0
+    for l in logs:
+        events = load_log(l["path"])
+        if l["kind"] == "quali":
+            qs = quali_scenes(events)
+            if not qs:
+                continue
+            label = "QUALIFYING"
+            part, info = qs, {"winner": None}
+        else:
+            n = races.index(l) + 1
+            label = f"RENNEN {n}" if len(races) > 1 else "RENNEN"
+            start = next((e for e in events if e.get("type") == "session_start"), {}) or {}
+            classes = classes_for(start.get("drivers") or [], proam_by_name(proam_cache))
+            res = pick(events, budget_s, classes)
+            part, info, last_info = res["scenes"], res["info"], res["info"]
+            cands += res["candidates"]
+            if not part:
+                continue                           # no whole race in that log
+        for i, sc in enumerate(part):
+            sc["chapter"] = label
+            sc["chapter_start"] = i == 0
+            if sc["kind"] == "grid" and any(c["kind"] == "race" for c in chapters):
+                sc.pop("overlay", None)      # the grid graphic = quali order: wrong for race 2 (reversed grid)
+        scenes += part
+        ends = [s["t_end"] for s in part]
+        chapters.append({"label": label, "kind": l["kind"], "session_num": l["session_num"],
+                         "winner": info.get("winner"), "log": Path(l["path"]).name,
+                         "t_end": (info.get("finish_t") or max(ends)) + (8.0 if l["kind"] == "race" else 0.0)})
+    for i, sc in enumerate(scenes):
+        sc["id"] = i + 1
+    info = dict(last_info, chapters=chapters, program=True,
+                winners=[c["winner"] for c in chapters if c["kind"] == "race"])
+    return {"scenes": scenes, "total_s": round(sum(_dur(s) for s in scenes), 1),
+            "candidates": cands, "info": info, "log": str(race_log)}
 
 
 def pick_file(path, budget_s=DEFAULT_BUDGET_S, proam_cache="proam_cache.json") -> dict:

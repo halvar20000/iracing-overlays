@@ -182,12 +182,15 @@ class AvatarRenderer:
                 self.jobs.pop((kind, seg), None)
         return None
 
-    def list_videos(self, kind: str, seg: str) -> list:
+    def list_videos(self, kind: str, seg: str, others: bool = False) -> list:
         """The finished videos for this segment in avatar/out, newest first
-        (text known only for videos made since 2026-11-19)."""
+        (text known only for videos made since 2026-11-19). others=True: then
+        every other Gabi video too (`own` False) — the highlight video can use
+        a greeting / goodbye made for the show (Thomas 2026-11-19)."""
         out = []
+        own = f"{kind}_{seg}_"
         try:
-            files = list(self.out_dir.glob(f"{kind}_{seg}_*.mp4"))
+            files = list(self.out_dir.glob("*.mp4" if others else f"{own}*.mp4"))
         except OSError:
             return out
         for p in files:
@@ -204,8 +207,8 @@ class AvatarRenderer:
             except (OSError, ValueError):
                 pass
             out.append({"file": p.name, "at": st.st_mtime, "kb": st.st_size // 1024,
-                        "text": text, "topic": topic})
-        out.sort(key=lambda x: -x["at"])
+                        "text": text, "topic": topic, "own": p.name.startswith(own)})
+        out.sort(key=lambda x: (not x["own"], -x["at"]))
         return out
 
     # -- reuse + daily limit ---------------------------------------------------

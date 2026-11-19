@@ -333,6 +333,9 @@ class TelemetryPoller:
         # overtakes, battles, leaders, the field — see race_director.py.
         # Mutually exclusive with the other auto camera modes.
         self.director = RaceDirector()
+        # replay of a recorded race: incidents from the race log written live
+        import replay_log_events
+        self.replay_log = replay_log_events.ReplayLogEvents(Path(__file__).resolve().parent / "logs")
         self.commentator = Commentator()  # KOMMENTAR: REGIE log -> German lines
         self.voice = Voice(self.commentator.cfg)   # STIMME: each line spoken (OBS /commentary/voice)
         self._weekend: dict = {}
@@ -2253,17 +2256,38 @@ class TelemetryPoller:
                 for d in drivers]
         # events detected while OUR replay was playing come from the replayed
         # footage (the same pass / contact again) — never news
+        try:
+            t_sess = float(self.ir["SessionTime"] or 0.0)
+        except Exception:
+            t_sess = None
+        # a recorded replay with a live race log: its incidents instead of the
+        # detectors' (they miss real contacts and invent spins in replays)
+        log_events, from_log = [], False
+        try:
+            recorded = bool(self.ir["IsReplayPlaying"]) and (self.ir["ReplayFrameNumEnd"] or 0) > 600
+            if recorded and mode == "race":
+                wk = self._weekend or {}
+                log_events = self.replay_log.feed(wk.get("SubSessionID"), self.ir["SessionNum"], t_sess)
+                from_log = self.replay_log.active
+                now_w = time.time()
+                for e in log_events:
+                    e["id"] = f"log-{e['t_session']:.1f}-{e['car_idx']}"
+                    e["wall_clock"] = now_w
+                    print(f"[regie] racelog   {e['type']:<12s} #{e['car_number']} {e['name']} ({e['t_session']:.0f} s)")
+            else:
+                self.replay_log.reset()
+        except Exception as ex:
+            print(f"[regie] race log: {ex}")
         events = []
         for e in list(self._incidents) + list(self._overtakes):
             if self._own_replay_from <= (e.get("wall_clock") or 0) <= self._own_replay_until:
                 if e.get("id") is not None:      # for good — not news after the NEXT replay either
                     self.director.seen_events.add(e["id"])
                 continue
+            if from_log and e.get("type") in ("collision", "lost_control"):
+                continue                          # the log knows the incidents of this race
             events.append(e)
-        try:
-            t_sess = float(self.ir["SessionTime"] or 0.0)
-        except Exception:
-            t_sess = None
+        events = log_events + events
         try:                                  # PRO / AM per driver (WCT) for the commentary
             if self.proam.active_for(c.get("uid") for c in cars):
                 for c in cars:
@@ -2474,7 +2498,10 @@ class TelemetryPoller:
             lead = max((d.get("lap") or 0 for d in drivers), default=0)
             if lead:
                 ctx["runde_fuehrender"] = lead
-            if rp.get("laps_remaining") is not None:
+            # a lap count only for a race that is really decided by laps — our
+            # leagues set 100 laps but race 20 / 25 minutes (Thomas 2026-11-19:
+            # "noch 95 Runden" is wrong)
+            if rp.get("laps_remaining") is not None and not rp.get("total_time"):
                 ctx["runden_uebrig"] = rp["laps_remaining"]
             if rp.get("time_remaining") is not None:
                 ctx["minuten_uebrig"] = int(rp["time_remaining"] // 60)
@@ -6596,7 +6623,7 @@ HIGHLIGHTS_HTML = r"""<!DOCTYPE html>
   .k { display: inline-block; white-space: nowrap; padding: 1px 7px; border-radius: 4px; font-size: 12px; font-weight: 700; background: #333; }
   .k.grid { background: #334155; } .k.start, .k.restart { background: #166534; } .k.finish, .k.class_finish { background: #f4f4f6; color: #111; }
   .k.caution { background: #ca8a04; color: #111; } .k.pass { background: #0e7490; }
-  .k.contact, .k.spin { background: #b91c1c; } .k.fastest { background: #7e22ce; } .k.dotd { background: #c2410c; }
+  .k.contact, .k.spin { background: #b91c1c; } .k.fastest { background: #7e22ce; } .k.dotd { background: #c2410c; } .k.quali_lap { background: #6d28d9; }
   .prog { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; flex: 1; min-width: 160px; }
   .prog i { display: block; height: 100%; width: 0; background: var(--acc); transition: width .4s; }
   pre { white-space: pre-wrap; margin: 0; font-size: 12px; color: var(--dim); max-height: 220px; overflow: auto; }
@@ -6608,6 +6635,7 @@ HIGHLIGHTS_HTML = r"""<!DOCTYPE html>
   <div class="bar">
     <select id="log" style="flex:1;min-width:260px"></select>
     <label>Länge <input id="budget" type="number" value="240" min="60" max="600" step="10" style="width:80px"> s</label>
+    <label title="Qualifying (Top 3, Pole zuletzt), dann Rennen 1, Rennen 2 … desselben Events – die Länge gilt je Rennen; danach Ergebnis jedes Rennens + Meisterschaft"><input type="checkbox" id="o_program" checked> Ganzer Abend</label>
     <button class="main" onclick="pick()">Szenen wählen</button>
   </div>
   <div id="info" class="dim">Rennen wählen (Race-Logger-Datei) – das gleiche Rennen muss in iRacing als Replay offen sein.</div>
@@ -6624,8 +6652,12 @@ HIGHLIGHTS_HTML = r"""<!DOCTYPE html>
     <span id="gabi" class="dim"></span>
   </div>
   <div class="bar" style="align-items:flex-start">
-    <div style="flex:1;min-width:260px"><div class="dim">Intro</div><textarea id="intro"></textarea></div>
-    <div style="flex:1;min-width:260px"><div class="dim">Outro</div><textarea id="outro"></textarea></div>
+    <div style="flex:1;min-width:260px"><div class="dim">Intro</div><textarea id="intro"></textarea>
+      <div class="dim">Gabi-Video: <select class="avpick" data-avseg="intro" style="max-width:100%"><option value="">automatisch (zum Text / bestellen)</option></select>
+      <a data-avprev="intro" target="_blank" style="display:none">▶ ansehen</a></div></div>
+    <div style="flex:1;min-width:260px"><div class="dim">Outro</div><textarea id="outro"></textarea>
+      <div class="dim">Gabi-Video: <select class="avpick" data-avseg="outro" style="max-width:100%"><option value="">automatisch (zum Text / bestellen)</option></select>
+      <a data-avprev="outro" target="_blank" style="display:none">▶ ansehen</a></div></div>
   </div>
 </div>
 <div class="bar">
@@ -6648,7 +6680,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function fmt(t) { t = Math.max(0, Math.round(t)); const h = Math.floor(t/3600), m = Math.floor(t/60)%60, s = t%60;
   return (h ? h + ':' + String(m).padStart(2,'0') : m) + ':' + String(s).padStart(2,'0'); }
-const KIND = {grid:'Startaufstellung', start:'Start', restart:'Restart', caution:'Gelb', finish:'Ziel', class_finish:'Klassensieg', pass:'Überholen',
+const KIND = {grid:'Startaufstellung', quali_lap:'Quali-Runde', start:'Start', restart:'Restart', caution:'Gelb', finish:'Ziel', class_finish:'Klassensieg', pass:'Überholen',
               contact:'Kontakt', spin:'Dreher', fastest:'Schnellste Runde', dotd:'Fahrer des Tages'};
 async function loadLogs() {
   const d = await (await fetch('/highlights/logs')).json();
@@ -6662,7 +6694,8 @@ async function loadLogs() {
 }
 async function pick() {
   $('info').textContent = 'wähle Szenen …';
-  const r = await fetch('/highlights/pick?log=' + encodeURIComponent($('log').value) + '&budget=' + $('budget').value);
+  const r = await fetch('/highlights/pick?log=' + encodeURIComponent($('log').value) + '&budget=' + $('budget').value
+    + ($('o_program').checked ? '&program=1' : ''));
   const d = await r.json();
   if (!d.ok) { $('info').innerHTML = '<span class="err">' + esc(d.error) + '</span>'; return; }
   scenes = d.scenes;
@@ -6674,7 +6707,9 @@ async function pick() {
     render(); return;
   }
   $('info').textContent = `${i.track || ''} ${i.config || ''} · Sieger ${i.winner || '?'} · ${i.drivers} Fahrer · Session ${i.session_num}`
-    + (i.proam ? ' · Pro/Am' : '') + ` · ${scenes.length} Szenen aus ${d.candidates} Kandidaten`;
+    + (i.proam ? ' · Pro/Am' : '') + ` · ${scenes.length} Szenen aus ${d.candidates} Kandidaten`
+    + (i.chapters ? ' · ' + i.chapters.map(c => c.label + (c.winner ? ' (' + c.winner + ')' : '')).join(' → ') : '')
+    + (i.chapters && !i.chapters.some(c => c.kind === 'quali') ? ' · kein Qualifying-Log (Race-Logger ab 1.5.1)' : '');
   if (!$('intro').value || $('intro').dataset.auto === '1') { $('intro').value = d.texts.intro; $('intro').dataset.auto = '1'; }
   if (!$('outro').value || $('outro').dataset.auto === '1') { $('outro').value = d.texts.outro; $('outro').dataset.auto = '1'; }
   checkGabi();
@@ -6689,7 +6724,7 @@ function render() {
     const cls = (running && status.current === i ? 'cur' : '') + (ss === 'fertig' ? ' fertig' : '');
     return `<tr class="${cls}"><td>${i+1}</td><td class="nowrap">${fmt(s.t_start)}</td>
       <td class="nowrap">${(s.t_end - s.t_start).toFixed(0)} s</td>
-      <td><span class="k ${esc(s.kind)}">${esc(KIND[s.kind] || s.kind)}</span></td>
+      <td>${s.chapter_start ? '<b>' + esc(s.chapter) + '</b><br>' : ''}<span class="k ${esc(s.kind)}">${esc(KIND[s.kind] || s.kind)}</span></td>
       <td class="nowrap">#${esc(s.car_number)} ${esc(s.driver)}</td>
       <td><input class="tx" value="${esc(s.text)}" onchange="scenes[${i}].text=this.value"></td>
       <td class="nowrap">${ss ? '<span class="dim">' + esc(ss) + '</span>' :
@@ -6710,7 +6745,8 @@ async function prev(i) {
 }
 function opts() { return {record: $('o_record').checked, card: $('o_card').checked, voice: $('o_voice').checked,
   fade: $('o_fade').checked, tables: $('o_tables').checked, proam: !!(lastInfo && lastInfo.proam),
-  gabi: $('o_gabi').checked, intro: $('intro').value, outro: $('outro').value}; }
+  gabi: $('o_gabi').checked, intro: $('intro').value, outro: $('outro').value,
+  chapters: (lastInfo && lastInfo.chapters) || null}; }
 async function start() {
   const d = await (await fetch('/highlights/start', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify(Object.assign({scenes}, opts()))})).json();
@@ -6718,6 +6754,35 @@ async function start() {
   tick();
 }
 async function stop() { await fetch('/highlights/stop', {method:'POST'}); tick(); }
+async function fillAvatarPick(sel) {   // pick a Gabi video that is already there (no credits needed)
+  const seg = sel.dataset.avseg, prev = document.querySelector('a[data-avprev="' + seg + '"]');
+  let d;
+  try { d = await (await fetch('/highlights/avatar/videos?seg=' + seg)).json(); } catch (e) { return; }
+  let other = null;
+  for (const v of d.videos || []) {
+    const o = document.createElement('option');
+    const t = new Date(v.at * 1000);
+    o.value = v.file;
+    o.textContent = t.toLocaleDateString('de-DE') + ' ' + t.toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit'})
+      + ' · ' + (v.text ? v.text.slice(0, 70) + (v.text.length > 70 ? '…' : '') : v.file);
+    if (!v.own) {
+      if (!other) { other = document.createElement('optgroup'); other.label = 'andere Gabi-Videos (Moderation / Abspann)'; sel.appendChild(other); }
+      other.appendChild(o);
+    } else sel.appendChild(o);
+  }
+  sel.value = d.pick || '';
+  const showPrev = () => { prev.style.display = sel.value ? 'inline' : 'none'; prev.href = '/avatar/video/' + sel.value; };
+  showPrev();
+  sel.addEventListener('change', async () => {
+    showPrev();
+    const r = await (await fetch('/highlights/avatar/pick', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                           body: JSON.stringify({seg, file: sel.value})})).json();
+    if (!r.ok) alert(r.error || 'Fehler');
+    if (sel.value) $('o_gabi').checked = true;
+    checkGabi();
+  });
+}
+document.querySelectorAll('select.avpick').forEach(fillAvatarPick);
 async function checkGabi() {     // videos made earlier for these texts? (free)
   await fetch('/highlights/avatar', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({check: true, intro: $('intro').value, outro: $('outro').value})});
@@ -6768,6 +6833,9 @@ HL_CARD_HTML = r"""<!DOCTYPE html>
     .top { display: flex; align-items: stretch; }
     .tag { background: var(--tag); color: #111; font-weight: 800; letter-spacing: 1.5px; font-size: 15px;
            text-transform: uppercase; padding: 6px 14px; }
+    .ch { background: #1d4ed8; color: #fff; font-weight: 800; letter-spacing: 1.5px; font-size: 15px; padding: 6px 12px; }
+    .ch:empty { display: none; }
+    .k-quali_lap { --tag: #a855f7; }
     .no { background: #000; color: #fff; font-weight: 800; font-size: 15px; padding: 6px 10px; }
     .tx { background: var(--bg); font-size: 25px; font-weight: 600; line-height: 1.3; padding: 9px 16px; }
     .k-start, .k-restart { --tag: #22c55e; } .k-finish, .k-class_finish { --tag: #f4f4f6; }
@@ -6775,7 +6843,7 @@ HL_CARD_HTML = r"""<!DOCTYPE html>
     .k-fastest { --tag: #a855f7; } .k-dotd { --tag: #fb923c; }
 </style></head>
 <body>
-<div class="c" id="c"><div class="top"><div class="tag" id="tag"></div><div class="no" id="no"></div></div><div class="tx" id="tx"></div></div>
+<div class="c" id="c"><div class="top"><div class="ch" id="ch"></div><div class="tag" id="tag"></div><div class="no" id="no"></div></div><div class="tx" id="tx"></div></div>
 <script>
 const qs = new URLSearchParams(location.search);
 if (qs.get('debug') === '1') document.body.classList.add('debug-mode');
@@ -6790,6 +6858,7 @@ function show(card) {
   shown = key;
   if (!card) { c.classList.remove('show'); return; }
   c.className = 'c k-' + card.kind;
+  document.getElementById('ch').textContent = card.chapter || '';
   document.getElementById('tag').textContent = card.title || '';
   document.getElementById('no').textContent = card.number ? '#' + card.number : '';
   document.getElementById('tx').textContent = card.text || card.driver || '';
@@ -6847,7 +6916,9 @@ def highlights_pick():
         return jsonify({"ok": False, "error": "Log nicht gefunden (nur *_race.jsonl unter logs/)"}), 404
     try:
         budget = float(request.args.get("budget") or highlights.DEFAULT_BUDGET_S)
-        res = highlights.pick_file(path, budget, Path(__file__).resolve().parent / "proam_cache.json")
+        cache = Path(__file__).resolve().parent / "proam_cache.json"
+        res = (highlights.pick_program(path, budget, cache) if request.args.get("program") == "1"
+               else highlights.pick_file(path, budget, cache))
     except Exception as e:
         return jsonify({"ok": False, "error": f"{type(e).__name__}: {e}"}), 500
     res["log"] = request.args.get("log")
@@ -6872,6 +6943,16 @@ def highlights_start():
             return jsonify({"ok": False, "error": "Szene unvollständig"}), 400
     opts = {k: bool(body.get(k)) for k in ("record", "card", "voice", "gabi", "fade", "tables", "proam")}
     opts.update({k: str(body.get(k) or "")[:400] for k in ("intro", "outro")})
+    chs = []
+    for c in (body.get("chapters") or [])[:8] if isinstance(body.get("chapters"), list) else []:
+        try:
+            chs.append({"label": str(c.get("label") or "")[:30], "kind": str(c.get("kind") or ""),
+                        "session_num": int(c["session_num"]), "t_end": float(c.get("t_end") or 0),
+                        "winner": str(c.get("winner") or "")[:60]})
+        except (KeyError, TypeError, ValueError, AttributeError):
+            pass
+    if chs:
+        opts["chapters"] = chs
     ok, msg = poller.highlights.start(scenes, opts)
     return jsonify({"ok": ok, "msg": msg})
 
@@ -6893,6 +6974,30 @@ def highlights_avatar():
         return jsonify({"ok": False, "error": "kein sync.so-Schlüssel in commentary_config.json"})
     poller.highlights.prepare_avatar(str(body.get("intro") or "")[:400], str(body.get("outro") or "")[:400])
     return jsonify({"ok": True})
+
+
+@app.route("/highlights/avatar/videos")
+def highlights_avatar_videos():
+    """Gabi videos for the highlight intro / outro: its own first, then every
+    other one in avatar/out (show greeting / Abspann goodbye fit too)."""
+    seg = request.args.get("seg") or ""
+    av = poller.highlights.avatar
+    if av is None or seg not in ("intro", "outro"):
+        return jsonify({"videos": [], "pick": ""})
+    pk = av.picked("highlights", seg)
+    return jsonify({"videos": av.list_videos("highlights", seg, others=True), "pick": pk.name if pk else ""})
+
+
+@app.route("/highlights/avatar/pick", methods=["POST"])
+def highlights_avatar_pick():
+    body = request.get_json(silent=True) or {}
+    seg = str(body.get("seg") or "")
+    name = str(body.get("file") or "")
+    av = poller.highlights.avatar
+    if av is None or seg not in ("intro", "outro") or (name and not re.fullmatch(r"[A-Za-z0-9_-]+\.mp4", name)):
+        return jsonify({"ok": False, "error": "ungültig"})
+    err = av.pick("highlights", seg, name)
+    return jsonify({"ok": not err, "error": err})
 
 
 @app.route("/highlights/preview", methods=["POST"])
