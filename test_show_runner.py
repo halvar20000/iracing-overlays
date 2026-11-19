@@ -877,5 +877,61 @@ pages.clear(); rP.state = "idle"; rP.start()
 wait_for(lambda: rP.state == "done", 15, tick=rP.tick)
 check("paging: one race = no page keys", pages == [], pages)
 
+# --- two-race rounds: ZWISCHENSTAND after race 1, Abspann after race 2 looks back on both
+import tempfile as _tf
+RI2 = {"info": {"league": {"slug": "cas-combined-cup", "name": "CAS Combined Cup"},
+                "lastRound": {"races": [{"raceNumber": 1}, {"raceNumber": 2}]},
+                "nextRound": {"number": 7}, "rounds": [{"number": 7}, {"number": 8, "startsAt": "2026-12-02T19:00:00Z"}],
+                "season": {"totalRounds": 12}}}
+check("rounds: races per round from CLS's last round", sr.races_per_round({}, RI2) == 2)
+check("rounds: show_config override", sr.races_per_round({"races_per_round": {"cas-combined-cup": 3}}, RI2) == 3)
+check("rounds: one race without data", sr.races_per_round({}, {"info": {}}) == 1)
+check("rounds: round key", sr.round_key(RI2) == "cas-combined-cup:7")
+f1 = sr.build_post_facts(RES, PROJ, RI2, ["Start."], {"name": "Oschersleben"}, {}, race_no=1, races_total=2)
+check("race 1 of 2: zwischenstand, no next round", f1.get("zwischenstand") and f1["rennen_nr"] == 1
+      and "naechstes_rennen" not in f1, {k: f1.get(k) for k in ("zwischenstand", "rennen_nr")})
+segs1 = sr.available_post_segments(sr.load_config(), f1)
+check("race 1 of 2: interim segments (no goodbye)", segs1[0] == "results" and segs1[-1] == "interim_next"
+      and any(x.startswith("standings_after") for x in segs1) and "goodbye" not in segs1, segs1)
+tp1 = sr.template_post_script(sr.load_config(), f1, segs1)
+check("race 1 of 2: template says race 2 follows", "Rennen 2" in tp1.get("interim_next", ""), tp1)
+mdir = Path(_tf.mkdtemp())
+mp = mdir / "memo.json"
+sr.memo_save("cas-combined-cup:7", 1, f1, path=mp, race_id="A:2")
+memo = sr.memo_load("cas-combined-cup:7", path=mp)
+check("memo: race 1 kept", len(memo) == 1 and memo[0]["rennen"] == 1 and memo[0]["ergebnis"]["top10"])
+check("memo: other round = nothing", sr.memo_load("cas-combined-cup:8", path=mp) == [])
+check("memo: too old = nothing", sr.memo_load("cas-combined-cup:7", path=mp, now=time.time() + 13 * 3600) == [])
+check("race number: same race again (Abspann after the flag) stays 1", sr.race_number(0, memo, "A:2", 2) == 1)
+check("race number: next race = 2 (even with 5010 down)", sr.race_number(0, memo, "B:2", 2) == 2)
+check("race number: from 5010's earlier races", sr.race_number(1, [], "B:2", 2) == 2)
+check("race number: never above the round's races", sr.race_number(5, memo, "C:2", 2) == 2)
+f2 = sr.build_post_facts(RES, PROJ, RI2, ["Ziel."], {"name": "Oschersleben"}, {}, race_no=2, races_total=2,
+                         earlier=memo)
+check("race 2 of 2: Abspann, race 1 in fruehere_rennen", not f2.get("zwischenstand")
+      and f2["fruehere_rennen"][0]["rennen"] == 1 and "naechstes_rennen" in f2)
+segs2 = sr.available_post_segments(sr.load_config(), f2)
+check("race 2 of 2: normal Abspann segments", "goodbye" in segs2 and "interim_next" not in segs2, segs2)
+tp2 = sr.template_post_script(sr.load_config(), f2, segs2)
+check("race 2 of 2: summary mentions race 1", tp2.get("race_summary", "").startswith("Rennen 1"), tp2.get("race_summary"))
+pc = []
+sr.claude_script(sr.load_config(), {"api_key": "k"}, f1, segs1, system=sr.INTERIM_SYSTEM, briefs=sr.INTERIM_BRIEF,
+                 post=lambda p: (pc.append(p), {"content": [{"type": "text", "text": '{"segments": {"results": "x"}}'}]})[1])
+check("interim prompt: ZWISCHENSTAND, no goodbye", "ZWISCHENSTAND" in pc[0]["system"]
+      and "interim_next" in json.loads(pc[0]["messages"][0]["content"])["segmente"])
+# the run: Moderator -> pages -> back to iRacing with REGIE on
+obsI = FakeObs({"Moderator": {"Ergebnis": False, "Meisterschaft": False, "Gabi Ruhe": False}, "iRacing": {}}, media={})
+obsI.current = "iRacing"
+cI = sr.load_config(); cI["obs"] = {"host": "127.0.0.1", "port": obsI.port}
+evI = []
+rI = sr.ShowRunner(cI, ObsClient(port=obsI.port), Speaker(), facts_fn=lambda: f1,
+                   script_fn=lambda f, s_: (sr.template_post_script(cI, f, s_), "template"),
+                   director_on=lambda: evI.append("on"), kind="post", director_off=lambda: evI.append("off"))
+rI.prepare()
+rI.start()
+check("zwischenstand: runs to the end", wait_for(lambda: rI.state == "done", 20, tick=rI.tick), rI.status()["log"])
+check("zwischenstand: back to iRacing, REGIE off then on again", obsI.current == "iRacing" and evI == ["off", "on"],
+      (obsI.current, evI))
+
 print(f"\n{'ALL PASS' if not fails else f'{fails} FAILED'}")
 raise SystemExit(1 if fails else 0)

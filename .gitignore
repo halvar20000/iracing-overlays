@@ -58,6 +58,7 @@ show_config.json
 vts_token.json
 twitch_schedule.json
 show_script.json
+show_round_memo.json
 rc_config.json
 
 # per-track videos for the moderation (big, local)
@@ -77,3 +78,6 @@ racecontrol/data/
 # replay on a second PC (sim rig): its address + OBS scene
 replay_pc_config.json
 league_manager.json
+
+# Google Drive login of the livery upload (token)
+car_Liveries/tools/rclone.conf

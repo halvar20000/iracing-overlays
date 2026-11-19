@@ -66,6 +66,7 @@ PROTECTED = {
     "vts_token.json",
     "twitch_schedule.json",         # Twitch app id + login (5011/twitch)
     "show_script.json",
+    "show_round_memo.json",
     "rc_config.json",
     "replay_pc_config.json",
     "league_manager.json",          # race logger CLS upload token

@@ -359,7 +359,9 @@ class TelemetryPoller:
         self.post_show = show_runner.ShowRunner(           # ABSPANN after the race
             scfg, self.show_obs, _ShowSpeaker(self.commentator),
             facts_fn=self._post_facts, script_fn=self._post_script,
-            director_on=lambda: None, kind="post", director_off=lambda: self.set_director(False),
+            # director_on: after a ZWISCHENSTAND (race 1 of 2) REGIE takes the race again
+            director_on=lambda: self.set_director(True), kind="post",
+            director_off=lambda: self.set_director(False),
             avatar=self.avatar_renderer)
         self._race_story: list = []       # this race told by its live commentary (Abspann summary)
         self.avatar_test = avatar_sync.AvatarTest(self.voice)   # /avatar: sync.so lip-sync test
@@ -2155,18 +2157,38 @@ class TelemetryPoller:
         except Exception:
             pass
         notes_dir = Path(__file__).resolve().parent / (cfg.get("notes_dir") or "show_notes")
+        # two-race rounds: which race of the round just ended (5010 keeps the
+        # earlier races of the round), race 1 remembered for the Abspann
+        total = show_runner.races_per_round(cfg, ri)
+        rkey = show_runner.round_key(ri)
+        rid = f"{wk.get('SessionID')}-{wk.get('SubSessionID')}:{self.ir['SessionNum']}"
+        memo = show_runner.memo_load(rkey) if total > 1 else []
+        race_no = (show_runner.race_number(len((projection or {}).get("earlier_races") or []), memo, rid, total)
+                   if total > 1 else 1)
+        earlier = [r for r in memo if r.get("id") != rid]
         facts = show_runner.build_post_facts(results, projection, ri, list(self._race_story), track,
-                                             classes, notes_dir)
+                                             classes, notes_dir, race_no=race_no, races_total=total,
+                                             earlier=earlier)
+        if total > 1:
+            try:
+                show_runner.memo_save(rkey, race_no, facts, race_id=rid)
+            except Exception as e:
+                print(f"[abspann] Rennen {race_no} nicht gemerkt: {e}")
         if not results:
             self.post_show.last_error = "Ergebnis nicht erreichbar (läuft Race Results auf 5002?)"
         return facts
 
     def _post_script(self, facts: dict, segments: list):
         if self.commentator.ai_enabled:
+            if facts.get("zwischenstand"):
+                system, briefs = show_runner.INTERIM_SYSTEM, show_runner.INTERIM_BRIEF
+            else:
+                system = show_runner.POST_SYSTEM + (show_runner.POST_SYSTEM_ROUND
+                                                    if facts.get("fruehere_rennen") else "")
+                briefs = show_runner.POST_BRIEF
             try:
                 return show_runner.claude_script(self.post_show.cfg, self.commentator.cfg, facts, segments,
-                                                 system=show_runner.POST_SYSTEM,
-                                                 briefs=show_runner.POST_BRIEF), "claude"
+                                                 system=system, briefs=briefs), "claude"
             except Exception as e:
                 self.post_show.last_error = f"Claude-Skript: {e} – Vorlagen benutzt"
         return show_runner.template_post_script(self.post_show.cfg, facts, segments), "template"

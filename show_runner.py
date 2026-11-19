@@ -45,6 +45,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 CONFIG_FILE = HERE / "show_config.json"
 SCRIPT_FILE = HERE / "show_script.json"   # the last script (incl. hand edits), survives a restart
+# two-race rounds (Combined Cup, SFL, PCCD): race 1's result + story, kept for
+# the Abspann after race 2 (survives a dashboard restart between the races)
+ROUND_MEMO_FILE = HERE / "show_round_memo.json"
+ROUND_MEMO_MAX_S = 12 * 3600
 EDIT_KEEP_S = 12 * 3600                   # an edited script is never rewritten automatically within this
 EARLY_GOODBYE_S = 1800                    # Abspann: the goodbye written at the flag is kept this long
 # Gabi's clips and the track video are played ONCE: with "Loop" on (copied
@@ -87,6 +91,12 @@ DEFAULT_CONFIG = {
     # automatically post_delay_s after the chequered flag while REGIE runs
     "post_segments": ["race_summary", "results", "standings_after", "next_round", "goodbye"],
     "post_auto": True,
+    # rounds with several races: after every race but the last a short
+    # ZWISCHENSTAND (result + provisional table + "race 2 next"), then back
+    # to iRacing with REGIE; the Abspann after the last race looks back on all
+    "interim_segments": ["results", "standings_after", "interim_next"],
+    # races per round by CLS slug; missing = as many as the last round had in CLS
+    "races_per_round": {},
     "post_delay_s": 120,
     "post_end_scene": "",             # "" = stay on the Moderator scene at the end
     "auto_start": True,
@@ -745,12 +755,19 @@ POST_SYSTEM = (
     "Antworte NUR mit JSON: {{\"segments\": {{\"<id>\": \"<Text>\", ...}}}} für genau die "
     "verlangten Segment-IDs."
 )
+POST_SYSTEM_ROUND = (
+    " Heute gab es mehrere Rennen: 'fruehere_rennen' sind die Rennen davor (ergebnis + verlauf "
+    "je Rennen), 'ergebnis' und 'verlauf' gehören zum letzten Rennen (rennen_nr). Blicke auf "
+    "ALLE Rennen des Abends zurück, der Reihe nach; die Meisterschaft enthält alle."
+)
 POST_BRIEF = {
     "race_summary": "Zusammenfassung des Rennens aus 'verlauf' und 'ergebnis': wie es lief, die "
-                    "entscheidenden Momente, Duelle, Zwischenfälle. Noch nicht das ganze Ergebnis "
-                    "aufzählen. 60-100 Wörter.",
-    "results": "Das Endergebnis, das Ergebnis ist im Bild: Sieger, Podium (bei Pro/Am je Klasse), "
-               "schnellste Runde, wer die meisten Plätze gutgemacht hat. 50-80 Wörter.",
+                    "entscheidenden Momente, Duelle, Zwischenfälle. Gibt es 'fruehere_rennen', erst "
+                    "kurz Rennen 1 (Sieger, ein Moment daraus), dann ausführlicher das letzte Rennen. "
+                    "Noch nicht das ganze Ergebnis aufzählen. 60-110 Wörter.",
+    "results": "Das Endergebnis, das Ergebnis des letzten Rennens ist im Bild: Sieger, Podium (bei "
+               "Pro/Am je Klasse), schnellste Runde, wer die meisten Plätze gutgemacht hat. Gibt es "
+               "'fruehere_rennen', zum Vergleich kurz, wer Rennen 1 gewonnen hat. 50-90 Wörter.",
     "standings_after": "Die Meisterschaft nach diesem Rennen, die Tabelle ist im Bild: wer führt, "
                        "Abstände, wer gewonnen oder verloren hat (bei Pro/Am beide Klassen). "
                        "Vorläufig, bis die Liga das Ergebnis bestätigt. 50-80 Wörter.",
@@ -763,10 +780,90 @@ POST_BRIEF = {
                            "Vorläufig, bis die Liga das Ergebnis bestätigt. 35-60 Wörter.",
     "standings_after_am": "Weiter mit der Meisterschaft der Klasse AM (meisterschaft.AM), die AM-Tabelle "
                           "ist im Bild: wer führt, Abstände, wer gewonnen oder verloren hat. 35-60 Wörter.",
+    "interim_next": "Überleitung: gleich geht es weiter mit dem nächsten Rennen des Abends "
+                    "(rennen_nr + 1). Keine Verabschiedung. 12-25 Wörter.",
     "next_round": "Hinweis auf das nächste Rennen: Datum, Strecke, Runde x von y. 20-40 Wörter.",
     "goodbye": "Verabschiedung: danke fürs Zuschauen, an die Fahrer, bis zum nächsten Mal. "
                "Kurz: 12-25 Wörter.",
 }
+
+# ZWISCHENSTAND after race 1 of a two-race round: same pages, other words
+INTERIM_SYSTEM = (
+    "Du bist {host} eines deutschsprachigen Twitch-Streams für iRacing-Ligarennen der Community "
+    "CAS. Ein Rennen des Abends ist gerade zu Ende (rennen_nr von rennen_pro_runde), gleich folgt "
+    "das nächste. Du moderierst einen kurzen ZWISCHENSTAND; deine Texte werden von einer "
+    "Sprachausgabe vorgelesen. Schreibe natürlich, locker, kurze Sätze, keine Aufzählungen, keine "
+    "Emojis, KEINE Verabschiedung. Nutze AUSSCHLIESSLICH die gegebenen Daten: 'ergebnis' ist das "
+    "Ergebnis dieses Rennens, 'verlauf' die Live-Kommentare daraus, 'meisterschaft' die Tabelle "
+    "einschließlich dieses Rennens (vorläufig). In Pro/Am-Ligen ('pro_am') gibt es zwei "
+    "Wertungen; vermische sie nie. Erfinde nichts. Antworte NUR mit JSON: "
+    "{{\"segments\": {{\"<id>\": \"<Text>\", ...}}}} für genau die verlangten Segment-IDs."
+)
+INTERIM_BRIEF = dict(POST_BRIEF, **{
+    "results": "Das Ergebnis dieses Rennens ist im Bild: Sieger, Podium (bei Pro/Am je Klasse), ein "
+               "Moment aus 'verlauf', schnellste Runde, wer Plätze gutgemacht hat. 40-70 Wörter.",
+    "standings_after": "Die Meisterschaft nach diesem Rennen, vorläufig, die Tabelle ist im Bild: wer "
+                       "führt, Abstände, wer gewonnen hat (bei Pro/Am beide Klassen). 30-60 Wörter.",
+})
+
+
+def races_per_round(cfg: dict, roundinfo: dict | None) -> int:
+    """How many races a round of this league has: show_config
+    "races_per_round" {slug: n}, else as many as CLS's last round had."""
+    info = (roundinfo or {}).get("info") or {}
+    slug = (info.get("league") or {}).get("slug")
+    n = (cfg.get("races_per_round") or {}).get(slug)
+    if not n:
+        n = len(((info.get("lastRound") or {}).get("races")) or [])
+    try:
+        return max(1, int(n or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def round_key(roundinfo: dict | None) -> str | None:
+    """league + the round being raced tonight (CLS still calls it 'next')."""
+    info = (roundinfo or {}).get("info") or {}
+    slug = (info.get("league") or {}).get("slug")
+    rnd = (info.get("nextRound") or {}).get("number")
+    return f"{slug}:{rnd}" if slug and rnd else None
+
+
+def memo_load(key: str | None, path: Path | None = None, now: float | None = None) -> list:
+    """Earlier races of this round [{rennen, ergebnis, verlauf}] (oldest first)."""
+    path = path or ROUND_MEMO_FILE
+    try:
+        d = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    now = time.time() if now is None else now
+    if not key or d.get("key") != key or now - (d.get("t") or 0) > ROUND_MEMO_MAX_S:
+        return []
+    return list(d.get("races") or [])
+
+
+def race_number(earlier_in_5010: int, memo: list, race_id: str | None, total: int) -> int:
+    """Which race of the round just ended: 5010's earlier races of the round,
+    or the races remembered here tonight (other than this one) — the larger."""
+    mine = sum(1 for r in memo if r.get("id") != race_id)
+    return max(1, min(total, 1 + max(earlier_in_5010, mine)))
+
+
+def memo_save(key: str | None, race_no: int, facts: dict, path: Path | None = None,
+              now: float | None = None, race_id: str | None = None) -> None:
+    """Keep this race (result + story) for the Abspann after the last race."""
+    if not key or not facts.get("ergebnis"):
+        return
+    path = path or ROUND_MEMO_FILE
+    races = [r for r in memo_load(key, path, now)
+             if r.get("rennen") != race_no and (race_id is None or r.get("id") != race_id)]
+    races.append({"rennen": race_no, "id": race_id, "ergebnis": facts["ergebnis"],
+                  "verlauf": list(facts.get("verlauf") or [])[-30:]})
+    races.sort(key=lambda r: r.get("rennen") or 0)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"key": key, "t": time.time() if now is None else now, "races": races},
+                              ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def _lap(sec) -> str | None:
@@ -782,7 +879,8 @@ def _lap(sec) -> str | None:
 
 def build_post_facts(results: dict | None, projection: dict | None, roundinfo: dict | None,
                      story: list, track: dict, classes_by_name: dict | None = None,
-                     notes_dir: Path | None = None) -> dict:
+                     notes_dir: Path | None = None, race_no: int = 1, races_total: int = 1,
+                     earlier: list | None = None) -> dict:
     """Everything the Abspann may say: final result (5002 /results), the
     championship incl. this race (5010 /api/state projection), the next
     round (CLS), and the race told by its live commentary lines."""
@@ -867,6 +965,14 @@ def build_post_facts(results: dict | None, projection: dict | None, roundinfo: d
                                      "strecke": nxt.get("track") or sched.get(_date(nxt.get("startsAt")) or "")}
     if story:
         facts["verlauf"] = [x for x in story][-70:]
+    if races_total > 1:
+        facts["rennen_nr"], facts["rennen_pro_runde"] = race_no, races_total
+        if race_no < races_total:
+            facts["zwischenstand"] = True               # another race follows tonight
+            facts.pop("naechstes_rennen", None)
+        earlier = [r for r in (earlier or []) if (r.get("rennen") or 0) < race_no]
+        if earlier:
+            facts["fruehere_rennen"] = earlier
     return facts
 
 
@@ -877,7 +983,9 @@ def available_post_segments(cfg: dict, facts: dict) -> list[str]:
     have = {"results": set(((facts.get("ergebnis") or {}).get("klassen") or {}).keys()),
             "standings_after": {c for c in ("PRO", "AM") if (facts.get("meisterschaft") or {}).get(c)}}
     out = []
-    for s in cfg.get("post_segments") or DEFAULT_CONFIG["post_segments"]:
+    base = ((cfg.get("interim_segments") or DEFAULT_CONFIG["interim_segments"])
+            if facts.get("zwischenstand") else (cfg.get("post_segments") or DEFAULT_CONFIG["post_segments"]))
+    for s in base:
         if s not in POST_BRIEF or (s in need and not facts.get(need[s])):
             continue
         if s in POST_PROAM_SPLIT and len(have.get(s) or ()) > 1:
@@ -941,6 +1049,14 @@ def template_post_script(cfg: dict, facts: dict, segments: list[str]) -> dict:
                              + (f" vor {t[1]['name']}." if len(t) > 1 else "."))
         parts.append("Das ist der vorläufige Stand, bis die Liga das Ergebnis bestätigt.")
         out["standings_after"] = " ".join(parts)
+    if "interim_next" in segments and facts.get("zwischenstand"):
+        out["interim_next"] = (f"Gleich geht es weiter mit Rennen {(facts.get('rennen_nr') or 1) + 1}. "
+                               "Bleibt dran!")
+    fr = facts.get("fruehere_rennen") or []
+    if "race_summary" in out and fr:
+        w = ((fr[0].get("ergebnis") or {}).get("top10") or [{}])[0].get("name")
+        if w:
+            out["race_summary"] = f"Rennen 1 hatte {w} gewonnen. " + out["race_summary"]
     n = facts.get("naechstes_rennen")
     if "next_round" in segments and n:
         out["next_round"] = (f"Weiter geht es mit Runde {n['runde']} von {n['von']}"
@@ -1704,6 +1820,18 @@ class ShowRunner:
 
     def _finish(self):
         self._idle(True)                            # the studio is not left empty
+        if self.kind == "post" and (self.facts or {}).get("zwischenstand"):
+            # between two races: back to the race, REGIE on again
+            self._obs(lambda: self.obs.set_scene(self.cfg["scenes"]["iracing"]), "Szene iRacing")
+            try:
+                self.director_on()
+                self._note("REGIE an")
+            except Exception as e:
+                self.last_error = f"REGIE: {e}"
+            self.state = "done"
+            self.seg = None
+            self._note("Zwischenstand fertig – weiter mit dem nächsten Rennen")
+            return
         if self.kind == "post":                     # Abspann: no hand-over, no REGIE
             end = self.cfg.get("post_end_scene")
             if end:

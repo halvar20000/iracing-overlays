@@ -77,6 +77,11 @@ FILES = [
             F("post_end_scene", "text", "", "Szene am Ende", "Leer = auf der Moderator-Szene bleiben."),
             F("post_segments", "list", ["race_summary", "results", "standings_after", "next_round", "goodbye"],
               "Abschnitte"),
+            F("races_per_round", "json", {}, "Rennen pro Runde je Liga",
+              "Z. B. {\"cas-combined-cup\": 2}. Leer = so viele wie die letzte Runde bei CLS. "
+              "Nach jedem Rennen außer dem letzten kommt ein kurzer Zwischenstand, dann REGIE."),
+            F("interim_segments", "list", ["results", "standings_after", "interim_next"],
+              "Abschnitte im Zwischenstand"),
         ]},
         {"title": "Gabi (Avatar-Videos über sync.so)", "fields": [
             F("avatar.enabled", "bool", True, "Gabi-Videos an",
