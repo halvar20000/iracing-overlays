@@ -557,8 +557,15 @@ def candidates(race: Race) -> list[dict]:
     # starting grid (graphic over the pace lap), then the start
     if race.green_t is not None:
         pole = _grid_pole(race)
-        out.append(_scene("grid", race.green_t, pole, race, 1000, must=True, overlay="grid",
-                          text=f"Die Startaufstellung — {race.name(pole)} auf der Pole."))
+        top = _grid_top(race, 3)
+        if len(top) >= 3:
+            txt = (f"Die Startaufstellung: {race.name(top[0])} auf der Pole, daneben {_short(race.name(top[1]))}, "
+                   f"dahinter {_short(race.name(top[2]))}.")
+        else:
+            txt = f"Die Startaufstellung — {race.name(pole)} auf der Pole."
+        # the grid graphic (5001) shows the grid of the race the replay is in: race 2's own
+        # StartingPosition, not the qualifying order
+        out.append(_scene("grid", race.green_t, pole, race, 1000, must=True, overlay="grid", text=txt))
         lead = race.leader_at(race.green_t + 3) or pole
         out.append(_scene("start", race.green_t, lead, race, 1000, must=True,
                           text=f"Grüne Flagge — {race.name(lead)} führt das Feld in die erste Kurve."))
@@ -657,6 +664,16 @@ def candidates(race: Race) -> list[dict]:
             out.append(_scene("dotd", t, dotd_idx, race, 80,
                               text=f"Fahrer des Tages: {race.name(dotd_idx)}" + (f" — {_why_de(why)}." if why else ".")))
     return out
+
+
+def _grid_top(race, n) -> list:
+    """The first n grid slots (car idxs) from the lap events' grid_pos."""
+    slot = {}
+    for e in race.laps:
+        g = e.get("grid_pos")
+        if g and e["car_idx"] not in slot and e["car_idx"] in race.drivers:
+            slot[e["car_idx"]] = g
+    return [i for i, _ in sorted(slot.items(), key=lambda kv: kv[1])][:n]
 
 
 def _grid_pole(race):
@@ -950,8 +967,6 @@ def pick_program(race_log, budget_s=DEFAULT_BUDGET_S, proam_cache="proam_cache.j
         for i, sc in enumerate(part):
             sc["chapter"] = label
             sc["chapter_start"] = i == 0
-            if sc["kind"] == "grid" and any(c["kind"] == "race" for c in chapters):
-                sc.pop("overlay", None)      # the grid graphic = quali order: wrong for race 2 (reversed grid)
         scenes += part
         ends = [s["t_end"] for s in part]
         chapters.append({"label": label, "kind": l["kind"], "session_num": l["session_num"],
