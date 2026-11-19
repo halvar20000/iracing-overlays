@@ -124,6 +124,8 @@ DEFAULT_CONFIG = {
     # page keys of the result pages (grid server); the last-race segment
     # turns RACE 1 -> RACE 2 -> COMBINED while it is spoken
     "nav_url": "http://127.0.0.1:5001/nav",
+    # Streckenort is hidden this long after it came up (= the page's flight + hold)
+    "location_s": 13,
 }
 SEGMENT_SOURCES = {"last_race": "last_race", "standings": "standings",
                    "last_race_pro": "last_race_pro", "last_race_am": "last_race_am",
@@ -1675,6 +1677,15 @@ class ShowRunner:
             pg["at"] += 1
             self._do_page("next")
 
+    def _tick_map(self, seg):
+        """Streckenort off once its flight onto the circuit is over (5007
+        /location: 2.5 s pause + 7 s flight + 3 s hold) — not up for the
+        whole track talk (Thomas 2026-11-19)."""
+        if seg.get("map") and self.clock() - seg.get("map_at", self.clock()) >= float(
+                self.cfg.get("location_s") or DEFAULT_CONFIG["location_s"]):
+            self._source("track_location", False)
+            seg["map"] = False
+
     def _do_page(self, cmd):
         try:
             self.page(cmd)
@@ -1714,7 +1725,7 @@ class ShowRunner:
                 self._shown = key
         if sid == "track" and self._has("track_location"):
             self._source("track_location", True)              # the map while the track is talked about
-            seg["map"] = True
+            seg["map"], seg["map_at"] = True, self.clock()
         video_ok = sid == "track" and self._pick_track_video()
         if video_ok and self.cfg.get("video_after_speech", True):
             seg["video_pending"] = self.cfg["sources"]["track_video"]   # started once the text is spoken
@@ -1742,6 +1753,7 @@ class ShowRunner:
         if seg is None:
             return
         spoken = all(self.speaker.is_done(i) for i in seg["ids"])
+        self._tick_map(seg)
         if seg.get("video_pending"):
             if not (spoken or self.clock() > seg["deadline"]):
                 return
@@ -1760,6 +1772,7 @@ class ShowRunner:
             seg["deadline"] = self.clock() + DEADLINE_PAD_S
             return
         self._tick_paging(seg)
+        self._tick_map(seg)
         media_done = True
         if seg["media"]:
             try:

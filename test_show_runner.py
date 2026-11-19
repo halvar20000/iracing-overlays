@@ -422,6 +422,24 @@ check("map during the track talk, then the video, never both", ("track", True, F
       and ("track", False, True) in st12 and not any(m and v for _, m, v in st12)
       and st12.index(("track", True, False)) < st12.index(("track", False, True))
       and all(not m for s_, m, _ in st12 if s_ != "track"), st12)
+# ... and hidden once its flight is over, even while the track is still talked about
+obs12b = FakeObs({"Moderator": {"Streckenvideo": False, "Streckenort": False}, "iRacing": {}}, media={"Streckenvideo": 0.3})
+c12b = sr.load_config(); c12b["obs"] = {"host": "127.0.0.1", "port": obs12b.port}; c12b["location_s"] = 0.05
+long12 = "Motegi liegt in Japan. " * 30
+r12b = sr.ShowRunner(c12b, ObsClient(port=obs12b.port), Speaker(), facts_fn=lambda: facts,
+                     script_fn=lambda f, s: ({}, "template"), director_on=lambda: None)
+r12b.segments, r12b.script, r12b.script_at = ["track"], {"track": long12}, time.time()
+st12b = []
+def w12b():
+    r12b.tick()
+    v = (r12b.seg["id"] if r12b.seg else None, obs12b.scenes["Moderator"]["Streckenort"],
+         obs12b.scenes["Moderator"]["Streckenvideo"])
+    if not st12b or st12b[-1] != v:
+        st12b.append(v)
+r12b.start()
+wait_for(lambda: r12b.state == "done", 20, tick=w12b)
+check("map: off after location_s while the talk goes on", st12b[:3] == [("track", True, False),
+      ("track", False, False), ("track", False, True)], st12b)
 check("place in the facts", sr.build_facts(None, {"name": "Motegi", "place": "Motegi, Japan"}, None, None)["ort"]
       == "Motegi, Japan")
 

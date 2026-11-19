@@ -543,8 +543,12 @@ LOCATION_HTML = r"""<!DOCTYPE html>
        Coordinates from iRacing (WeekendInfo.TrackLatitude/-Longitude).
        Replays the flight whenever the OBS source is shown or the track changes.
        ?start=5 (zoom of the overview) ?zoom=15 (close-up) ?delay=2.5 ?fly=7 (s)
-       ?label=0 hides the name card, ?demo=1 Motegi. Tiles: Esri World Imagery. */
-    html, body { margin: 0; height: 100%; background: #0b0d12; overflow: hidden; }
+       ?label=0 hides the name card, ?demo=1 Motegi. Tiles: Esri World Imagery.
+       ?hold=3 (s): after the flight the whole page fades out to transparent
+       (Thomas 2026-11-19: a black frame stayed); ?hold=-1 keeps the map. */
+    html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+    #wrap { position: absolute; inset: 0; background: #0b0d12; transition: opacity .8s; }
+    #wrap.gone { opacity: 0; }
     #m { position: absolute; inset: 0; background: #0b0d12; }
     .card { position: absolute; left: 32px; bottom: 36px; z-index: 1000; background: rgba(12,14,20,.92);
             border-left: 6px solid #2f7ff0; padding: 14px 22px 16px; color: #f2f2f4;
@@ -558,14 +562,17 @@ LOCATION_HTML = r"""<!DOCTYPE html>
            color: #9aa0ab; font: 22px 'Segoe UI', Arial, sans-serif; z-index: 1001; }
     .leaflet-control-attribution { font-size: 10px; opacity: .7; }
 </style></head>
-<body><div id="m"></div>
+<body><div id="wrap"><div id="m"></div>
 <div class="card" id="card" style="opacity:0"><div class="tag">STRECKE</div><div class="nm" id="nm"></div>
   <div class="cf" id="cf"></div><div class="loc" id="loc"></div></div>
-<div class="msg" id="msg">Warte auf iRacing …</div>
+<div class="msg" id="msg">Warte auf iRacing …</div></div>
 <script>
 const qs = new URLSearchParams(location.search);
 const START = parseFloat(qs.get('start') || '5'), ZOOM = parseFloat(qs.get('zoom') || '15');
 const DELAY = parseFloat(qs.get('delay') || '2.5'), FLY = parseFloat(qs.get('fly') || '7');
+const HOLD = parseFloat(qs.get('hold') || '3');
+const wrap = document.getElementById('wrap');
+let fadeT = null;
 if (qs.get('label') === '0') document.getElementById('card').style.display = 'none';
 const map = L.map('m', {zoomControl: false, attributionControl: true, zoomSnap: 0.25, fadeAnimation: true});
 L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
@@ -577,7 +584,8 @@ let loc = null, key = '', marker = null, timer = null;
 function esc(t) { return String(t || '').replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[c])); }
 function play() {
     if (!loc) return;
-    clearTimeout(timer);
+    clearTimeout(timer); clearTimeout(fadeT);
+    wrap.classList.remove('gone');
     const p = [loc.lat, loc.lon];
     map.stop(); map.setView(p, START, {animate: false});
     if (marker) marker.remove();
@@ -587,6 +595,7 @@ function play() {
     document.getElementById('loc').innerHTML = esc([loc.city, loc.country].filter(Boolean).join(', '));
     document.getElementById('card').style.opacity = 1;
     timer = setTimeout(() => map.flyTo(p, ZOOM, {duration: FLY}), DELAY * 1000);
+    if (HOLD >= 0) fadeT = setTimeout(() => wrap.classList.add('gone'), (DELAY + FLY + HOLD) * 1000);
 }
 async function load() {
     let d;
