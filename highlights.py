@@ -63,6 +63,7 @@ WIN = {
 QUALI_TOP = 3               # qualifying highlights: the best N laps, P3 -> pole
 QUALI_PRE_S, QUALI_POST_S = 2.0, 3.0
 CROWD_S, CROWD_PENALTY = 180.0, 12   # spread the reel over the race
+MUST_KEEP_S = 15.0          # a must scene cut short by an incident keeps at least this
 MERGE_MAX_S = 36.0          # an overlap is merged only if the union stays this short
 
 PIT_EXIT_FALSE_SPIN_S = 20.0   # "moved backwards" this soon after a pit exit = pit-lane artefact
@@ -71,6 +72,9 @@ PASS_MAX_GAP_LAPS = 0.03    # cars this close (in laps) at the swap (~120 m at I
 PASS_CHURN_S = 15.0         # A passes B, B re-passes A within this -> neither counts
 PASS_PIT_GUARD_S = 30.0     # no pass while either car was in the pits around it
 INCIDENT_GROUP_S = 4.0      # incidents this close = one scene (multi-car contact)
+MOMENT_BACK_S = 25.0        # a late-reported incident ("stopped on track"): look this far back
+MOMENT_SPEED_SHARE = 0.6    # ... for the last second the car ran at this share of its pace
+CONTACT_NEAR_LAPS = 0.012   # off track in the same second this close (~45 m) = they touched
 
 KIND_TITLE = {
     "grid": "Startaufstellung",
@@ -171,6 +175,8 @@ class Race:
         self.cautions = self._cautions()
         self.pits = self._pits()
         self.incidents = self._incidents()
+        self.offtracks = [e for e in events if e.get("type") == "incident"
+                          and e.get("incident_type") == "off_track" and e.get("t_session") is not None]
         self.samples = self._progress()        # [(t, {idx: progress})]
         self.finish_t = self._finish_t()
 
@@ -318,6 +324,59 @@ class Race:
             if snap and t >= green + 2.0:
                 samples.append((t, snap))
         return samples
+
+    def progress_at(self, idx, t):
+        prog = None
+        for st, s in self.samples:
+            if st > t:
+                break
+            if idx in s:
+                prog = s[idx]
+        return prog
+
+    def moment_of(self, idx, t) -> float:
+        """When the incident reported at `t` really began: "stopped on track" is
+        reported only after the car stood still for a while (Oschersleben R1:
+        Andreas's spin after a contact at 239 s, reported at 258 s, the scene
+        showed him driving off again — Thomas 2026-11-19). Walk back from t to
+        the last second the car still ran at >= MOMENT_SPEED_SHARE of its
+        normal pace; an off-track of the car shortly before = the moment."""
+        pts = [(st, s[idx]) for st, s in self.samples if idx in s and t - MOMENT_BACK_S - 2 <= st <= t + 1]
+        speeds = []
+        for (a, pa), (b, pb) in zip(self.samples, self.samples[1:]):
+            if idx in pa and idx in pb and b > a:
+                v = (pb[idx] - pa[idx]) / (b - a)
+                if v > 0:
+                    speeds.append(v)
+        m = t
+        if len(pts) >= 3 and speeds:
+            normal = sorted(speeds)[len(speeds) // 2]
+            for (a, pa), (b, pb) in reversed(list(zip(pts, pts[1:]))):
+                if b > t - 1.0:           # the report's own second: the car may roll off already
+                    continue
+                if (pb - pa) / (b - a) >= MOMENT_SPEED_SHARE * normal:
+                    m = b if b < t else t
+                    break
+                if a < t - MOMENT_BACK_S:
+                    break
+        for e in self.offtracks:
+            if e.get("car_idx") == idx and m - 4.0 <= e["t_session"] <= t:
+                m = min(m, float(e["t_session"]))
+        return m
+
+    def contact_partners(self, idx, t) -> list:
+        """Cars that went off track in the same second as `idx`, right beside it
+        (iRacing gave both points at once = they touched)."""
+        mine = self.progress_at(idx, t)
+        out = []
+        for e in self.offtracks:
+            j = e.get("car_idx")
+            if j == idx or j not in self.drivers or abs(e["t_session"] - t) > 1.0 or j in out:
+                continue
+            other = self.progress_at(j, t)
+            if mine is not None and other is not None and abs(mine - other) <= CONTACT_NEAR_LAPS:
+                out.append(j)
+        return out
 
     def order_at(self, t) -> list:
         """Car idxs by progress at the sample nearest before t."""
@@ -550,13 +609,20 @@ def candidates(race: Race) -> list[dict]:
         kind = "contact" if coll else "spin"
         main = (coll or g)[0]
         t = g[0]["t_session"]
-        order = race.order_at(t)
+        t_rep = g[-1]["t_session"]
+        # the real moment (a "stopped" spin is reported late) + a car that touched it
+        m = race.moment_of(main["car_idx"], t)
+        partners = race.contact_partners(main["car_idx"], m) if m < t - 0.5 else []
+        if partners and kind == "spin":
+            kind = "contact"
+        order = race.order_at(m)
         top5 = set(order[:5])
         cars = []
         for e in g:
             if e["car_idx"] not in cars:
                 cars.append(e["car_idx"])
-        pr = 70 if kind == "contact" else (45 if "stopped" in (main.get("details") or "") else 60)
+        cars += [j for j in partners if j not in cars]
+        pr = (70 if kind == "contact" else (45 if "stopped" in (main.get("details") or "") else 60))
         if top5 & set(cars):
             pr += 15
         if len(cars) > 1:
@@ -567,8 +633,13 @@ def candidates(race: Race) -> list[dict]:
         txt = (f"Kontakt zwischen {names}!" if kind == "contact" and len(cars) > 1
                else f"Kontakt für {race.name(main['car_idx'])}!" if kind == "contact"
                else f"{race.name(main['car_idx'])} dreht sich!")
-        out.append(_scene(kind, t, main["car_idx"], race, pr, cars=cars, text=txt,
-                          details=main.get("details")))
+        if m < t - 2.0:                  # reported late: from just before the moment to the stop
+            pre = WIN[kind][0]
+            out.append(_scene(kind, m, main["car_idx"], race, pr, cars=cars, text=txt, details=main.get("details"),
+                              t0=m - pre, t1=min(t_rep + WIN[kind][1], m + 20.0), reported_t=round(t, 2)))
+        else:
+            out.append(_scene(kind, t, main["car_idx"], race, pr, cars=cars, text=txt,
+                              details=main.get("details")))
     # fastest lap
     fl = _fastest(race)
     if fl:
@@ -680,6 +751,17 @@ def select(cands: list[dict], budget_s=DEFAULT_BUDGET_S) -> list[dict]:
             c = clash[0]
             if len(clash) > 1:
                 return False
+            if (c.get("must") and not s.get("must") and s["kind"] in ("contact", "spin")
+                    and c["t_start"] + MUST_KEEP_S <= s["t_start"] < c["t_end"] <= s["t_end"]):
+                # an incident right after the start (Andreas's spin in lap 1, 2026-11-19):
+                # the start scene ends where it begins instead of the incident being dropped
+                if total + _dur(s) - (c["t_end"] - s["t_start"]) > budget_s:
+                    return False
+                total -= c["t_end"] - s["t_start"]
+                c["t_end"] = s["t_start"]
+                chosen.append(dict(s))
+                total += _dur(s)
+                return True
             t0, t1 = min(c["t_start"], s["t_start"]), max(c["t_end"], s["t_end"])
             extra = (t1 - t0) - _dur(c)
             if t1 - t0 > MERGE_MAX_S and not (c.get("must") and extra <= 0):

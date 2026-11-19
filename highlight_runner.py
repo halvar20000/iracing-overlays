@@ -75,7 +75,8 @@ DEFAULTS = {
                 # the Abspann pages on the Moderator scene (results_solid / champ_solid loaders)
                 "results": "Ergebnis", "standings": "Meisterschaft"},
     "table_s": 10.0,        # each results / standings page after the finish
-    "preroll_s": 1.5,       # seek this much before the scene: camera settles off the record
+    "preroll_s": 3.0,       # seek this much before the scene: camera + replay settle off the record
+                            # (1.5 s: iRacing still stuttered after the jump, Thomas 2026-11-19)
     "card_s": 5.0,          # title card on screen at the start of each scene
     "cam_every_s": 12.0,    # next TV camera inside a long scene
     "stall_s": 4.0,         # replay time not moving this long -> kick play again
@@ -413,6 +414,14 @@ class HighlightRunner:
         black = self.cfg["scenes"]["black"]
         still = self.cfg["sources"].get("still")
         if not last and self._still_ok and self._program in ("race", "moderator"):
+            if self._program == "race":
+                # freeze the replay first: the still is then the frame on screen, not
+                # one from a moment earlier (the picture jumped back at the cut)
+                try:
+                    self.replay.pause()
+                except Exception:
+                    pass
+                self.sleep(0.15)
             self._still_n += 1
             path = os.path.join(tempfile.gettempdir(), f"cas_highlight_still_{self._still_n % 2}.jpg")
             src = self.cfg["scenes"][self._program]

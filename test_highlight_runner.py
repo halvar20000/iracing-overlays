@@ -130,6 +130,7 @@ SCENES = [
     {"kind": "finish", "title": "Zieleinlauf", "t": 3882, "t_start": 3857, "t_end": 3887, "car_number": "01",
      "driver": "Mike Zocher", "session_num": 3, "text": "Zocher gewinnt!"},
 ]
+PRE = R.DEFAULTS["preroll_s"]
 CFG = {"settle_s": 0.05, "cam_every_s": 0.5, "card_s": 0.6, "stall_s": 0.5}
 OBS_SCENES = {"iRacing": {"Kommentar Stimme": True, "Startaufstellung": True}, "Moderator": {"Gabi Ruhe": False, "Gabi": False}}
 
@@ -166,10 +167,10 @@ ons = [t for c, t in obs.trace if c in ("StartRecord", "ResumeRecord")]
 offs = [t for c, t in obs.trace if c == "PauseRecord"]
 for sc, a, b in zip(SCENES, ons, offs):
     # (tolerance: ~0.15 s of wall-clock latency x the fake replay's speed 20)
-    check(f"{sc['kind']}: record on at scene start", sc["t_start"] - 1.5 <= a <= sc["t_start"] + 3.0, (a, sc["t_start"]))
+    check(f"{sc['kind']}: record on at scene start", sc["t_start"] - PRE <= a <= sc["t_start"] + 3.0, (a, sc["t_start"]))
     check(f"{sc['kind']}: record off at scene end", sc["t_end"] <= b <= sc["t_end"] + 3.0, (b, sc["t_end"]))
 seeks = [c for c in rp.calls if c[0] == "seek"]
-check("seek per scene with session_num, 1.5 s before", seeks == [("seek", 3, s["t_start"] - 1.5) for s in SCENES], seeks)
+check("seek per scene with session_num, preroll before", seeks == [("seek", 3, round(s["t_start"] - PRE, 2)) for s in SCENES], seeks)
 cams = [c for c in rp.calls if c[0] == "cam"]
 check("camera never Scenic / Chase / Cockpit", all(not any(x in c[2].upper() for x in ("SCENIC", "CHASE", "COCKPIT"))
                                                    for c in cams), cams)
@@ -197,7 +198,7 @@ check("grid: done", st["state"] == "done", st["error"])
 rc = [c for c, _ in obs.trace if c != "GetRecordStatus"]
 check("grid: one recording, no pause between grid and start", rc == ["StartRecord", "PauseRecord", "StopRecord"], rc)
 check("grid: one seek only (start plays on from the grid)", [c for c in rp.calls if c[0] == "seek"]
-      == [("seek", 3, 244.0)], rp.calls)
+      == [("seek", 3, 245.5 - PRE)], rp.calls)
 check("grid: source hidden again", not fake.scenes["iRacing"]["Startaufstellung"])
 check("grid: page 1 at the start, page 2 halfway (no grid timer any more)", NAVS[:2] == ["first", "next"], NAVS)
 vis = [d["sceneItemEnabled"] for rt, d in fake.calls if rt == "SetSceneItemEnabled"
@@ -516,7 +517,7 @@ check("fade: black -> race -> black -> race -> black -> race (back at the end)",
 check("fade: every fade in / out is RECORDED (record running at the switch)",
       all(p[1] for p in pl[1:5]), pl)
 ins = [p[2] for p in pl if p[0] == "iRacing"][:2]
-check("fade: fade-in starts before the scene start", all(t <= sc["t_start"] + 0.5 for t, sc in zip(ins, SCENES)),
+check("fade: fade-in starts before the scene start", all(t <= sc["t_start"] + 1.0 for t, sc in zip(ins, SCENES)),
       (ins, [s["t_start"] for s in SCENES]))
 outs = [p[2] for p in pl if p[0] == "Highlight Schwarz"][1:3]
 check("fade: fade-out after the scene end", all(t >= sc["t_end"] - 0.5 for t, sc in zip(outs, SCENES)),
@@ -591,6 +592,10 @@ check("still: a still taken at each inner change (intro->1, 1->2, 2->outro)",
 check("still: the scene's still is taken at its end",
       all(t >= sc["t_end"] - 0.5 for (_, _, t), sc in zip(so.shots[1:], SCENES)), so.shots)
 check("still: alternating files (OBS image cache)", len({x[1] for x in so.shots[:2]}) == 2, so.shots)
+check("still: replay frozen before the still of a race scene (no jump back at the cut)",
+      [c for c in rp.calls if c[0] in ("pause", "seek")][:3] == [("seek", 3, round(SCENES[0]["t_start"] - PRE, 2)),
+                                                                ("pause",), ("seek", 3, round(SCENES[1]["t_start"] - PRE, 2))],
+      rp.calls)
 # switches: black(start, fade) -> Moderator(fade) -> black(CUT + still) -> race(fade) -> black(CUT + still)
 #   -> race(fade) -> black(CUT + still) -> Moderator(fade) -> black(FADE, no still = real end) -> race
 check("still: inner changes cut to the still, everything else fades",

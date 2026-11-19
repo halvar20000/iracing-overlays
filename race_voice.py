@@ -53,7 +53,9 @@ KEEP_MAX_AGE_S = 300.0   # ...a moderation line (keep=True) waits much longer
 # make a pass sound different from a pit stop. Base rate = "tts_rate".
 # Override per mood in commentary_config.json "moods": {"hype": {"rate": "+25%", ...}}.
 MOODS = {
-    "hype":   {"rate": +16, "pitch": "+10Hz", "volume": "+15%"},
+    # hype was +16 % / +10 Hz: Gabi's female voice (Katja) sounded like a
+    # chipmunk in the highlight video (Thomas 2026-11-19) -> faster + louder, barely higher
+    "hype":   {"rate": +8,  "pitch": "+2Hz", "volume": "+15%"},
     "calm":   {"rate": -8,  "pitch": "-3Hz", "volume": "+0%"},
     "normal": {"rate": 0,   "pitch": "+0Hz", "volume": "+0%"},
 }

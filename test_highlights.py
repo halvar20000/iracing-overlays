@@ -273,6 +273,30 @@ with tempfile.TemporaryDirectory() as td:
           [c["label"] for c in chs][:1] == ["QUALIFYING"] and pr["scenes"][0]["chapter"] == "QUALIFYING"
           and pr["scenes"][0]["chapter_start"] and pr["info"]["program"], chs)
 
+# a late "stopped on track" (Oschersleben R1, 2026-11-19): contact at 239 s with a car beside it,
+# reported at 258 s -> the scene starts before 239 and the other car is named
+drs2 = [{"car_idx": i, "name": n, "car_number": str(i)} for i, n in enumerate(["Andreas W", "Thomas H", "Leader X"])]
+ev2 = [{"type": "session_start", "session_num": 2, "drivers": drs2}, {"type": "flag", "flag": "green", "t_session": 100.0}]
+prog = {0: 0.0, 1: 0.004, 2: 0.3}
+for k in range(101, 320):
+    for i in prog:
+        v = 0.01
+        if i == 0 and 239 <= k < 258:
+            v = 0.0005 if k < 245 else 0.0
+        prog[i] += v
+    ev2.append({"type": "pos", "t": float(k), "p": {str(i): prog[i] % 1 for i in prog}})
+ev2 += [{"type": "incident", "t_session": 238.9, "car_idx": 0, "incident_type": "off_track"},
+        {"type": "incident", "t_session": 238.9, "car_idx": 1, "incident_type": "off_track"},
+        {"type": "incident", "t_session": 258.0, "car_idx": 0, "incident_type": "lost_control", "details": "stopped on track"}]
+rc = H.Race(ev2)
+m = rc.moment_of(0, 258.0)
+check("late spin: real moment found", 236.0 <= m <= 239.5, m)
+check("late spin: the car beside it = contact partner", rc.contact_partners(0, m) == [1], rc.contact_partners(0, m))
+cs = [c for c in H.candidates(rc) if c["kind"] in ("contact", "spin")]
+check("late spin: one contact scene from before the moment to the stop",
+      len(cs) == 1 and cs[0]["kind"] == "contact" and cs[0]["t_start"] < 236 and 255 <= cs[0]["t_end"] <= 260
+      and "Thomas" in "".join(H._short(rc.name(c)) for c in cs[0]["cars"]) or "H" in cs[0]["text"], cs)
+
 print(f"\n{passes} PASS, {len(fails)} FAIL")
 for f in fails:
     print("  FAIL", f)
