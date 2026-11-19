@@ -1646,7 +1646,12 @@ class ShowRunner:
 
     def avatar_status(self) -> dict:
         st = self.avatar.status(self.kind) if self.avatar else {}
-        for sid in self._avatar_segs():                # every Gabi segment can get a video picked
+        # every Gabi segment of this show can get a video picked — also before the
+        # script exists (the Abspann writes it only after the race)
+        briefs = POST_BRIEF if self.kind == "post" else SEGMENT_BRIEF
+        cand = [x for x in (self._avatar_cfg().get("segments") or [])
+                if x in briefs and x not in SEGMENT_SOURCES and x != "track"]
+        for sid in dict.fromkeys(self._avatar_segs() + cand):
             st.setdefault(sid, {"state": "none", "error": "", "file": None, "saved": False})
         return st
 

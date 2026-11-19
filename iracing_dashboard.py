@@ -6058,6 +6058,10 @@ SHOW_HTML = r"""<!DOCTYPE html>
     <button class="go" onclick="save()">💾 Skript speichern</button>
     <button onclick="dirty=false;draw(last,true)">Verwerfen</button>
   </div>
+  <div class="seg" id="avbox" style="display:none"><b>Gabi-Videos</b>
+    <div class="dim" style="font-size:13px">Schon gemachte Videos aus avatar/out – kostet nichts. Ein gewähltes
+      Video läuft immer, egal was im Text steht; „automatisch“ = nach dem Text (dann evtl. neu bestellt).</div>
+    <div id="avrows"></div></div>
   <div id="script"></div>
   <div class="seg" id="pointsbox" style="display:none"><b>Talking Points</b>
     <span class="words" id="pinfo"></span>
@@ -6127,6 +6131,7 @@ async function tick() {
           (d.state !== 'running' ? ' · zum Ändern einfach in den Text klicken, leerer Abschnitt = wird übersprungen' : '')
         : 'Noch kein Skript – wird 5 Min. vor dem Start geschrieben';
     draw(d, false);
+    drawAvatar(d);
     document.getElementById('log').innerHTML = (d.log || []).slice().reverse().slice(0, 12)
         .map(l => '<li>' + new Date(l.t * 1000).toLocaleTimeString() + ' ' + esc(l.msg) + '</li>').join('');
     document.getElementById('facts').textContent = JSON.stringify(d.facts || {}, null, 2);
@@ -6160,14 +6165,11 @@ function draw(d, force) {
                 (av.pick ? 'gewähltes Video' : ({queued: 'wartet', rendering: 'Video wird erzeugt …', ready: 'Video fertig',
                   failed: 'Fehler – nur Stimme', none: 'kein Video – nur Stimme'}[av.state] || av.state)) +
                 (av.state === 'failed' && av.error ? ' <span title="' + esc(av.error) + '">ⓘ</span>' : '') +
-                '</span><div class="avpick" style="margin:4px 0">Video: <select data-avseg="' + s +
-                '" style="max-width:70%;background:#1b1d24;color:#e8e8ee;border:1px solid #3a3d48;border-radius:4px;padding:3px 6px"><option value="">automatisch (nach dem Text)</option></select> ' +
-                '<a data-avprev="' + s + '" target="_blank" style="display:none">▶ ansehen</a></div>' : '';
+                '</span>' : '';
             return '<div class="seg' + (t ? '' : ' off') + '"><b>' + esc(NAMES[s] || s) + '</b>' + avl +
                 '<span class="words" id="w_' + s + '">' + words(t) + ' Wörter</span>' +
                 '<textarea data-seg="' + s + '" rows="' + Math.max(3, Math.ceil(t.length / 95) + 1) + '">' + esc(t) + '</textarea></div>';
         }).join('');
-        el.querySelectorAll('select[data-avseg]').forEach(fillAvatarPick);
         el.querySelectorAll('textarea').forEach(ta => ta.addEventListener('input', () => {
             dirty = true; document.getElementById('edit').className = 'row dirty';
             document.getElementById('w_' + ta.dataset.seg).textContent = words(ta.value) + ' Wörter';
@@ -6175,7 +6177,25 @@ function draw(d, force) {
     }
     document.getElementById('edit').className = 'row' + (dirty ? ' dirty' : '');
 }
-// Gabi videos already in avatar/out, chosen by hand (no credits needed)
+// Gabi videos already in avatar/out, chosen by hand (no credits needed) —
+// shown even before the script exists (the Abspann writes it only after the race)
+let avKey = '';
+const AV_ORDER = ['intro', 'outro', 'goodbye'];
+function drawAvatar(d) {
+    const box = document.getElementById('avbox'), rows = document.getElementById('avrows');
+    const av = d.avatar || {};
+    const rank = s => AV_ORDER.indexOf(s) < 0 ? 9 : AV_ORDER.indexOf(s);
+    const segs = Object.keys(av).sort((a, b) => rank(a) - rank(b));
+    box.style.display = d.avatar && segs.length ? 'block' : 'none';
+    if (segs.join() !== avKey) {
+        avKey = segs.join();
+        rows.innerHTML = segs.map(s => '<div style="margin:6px 0;font-size:14px">' + esc(NAMES[s] || s) + ': ' +
+            '<select data-avseg="' + s + '" style="max-width:70%;background:#1b1d24;color:#e8e8ee;border:1px solid #3a3d48;' +
+            'border-radius:4px;padding:3px 6px"><option value="">automatisch (nach dem Text)</option></select> ' +
+            '<a data-avprev="' + s + '" target="_blank" style="display:none">▶ ansehen</a></div>').join('');
+        rows.querySelectorAll('select[data-avseg]').forEach(fillAvatarPick);
+    }
+}
 async function fillAvatarPick(sel) {
     const seg = sel.dataset.avseg, prev = document.querySelector('a[data-avprev="' + seg + '"]');
     let d;

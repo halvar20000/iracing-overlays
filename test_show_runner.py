@@ -906,6 +906,13 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td_q:
     check("pick: used for any text after a restart, no order", len(calls_q) == n_p
           and rp2.get("pre", "intro", "Noch was anderes.") == old_vid
           and rp2.status("pre")["intro"].get("pick") == "pre_intro_0123456789.mp4", rp2.status("pre"))
+    rpost = sr.ShowRunner(sr.load_config(), None, Speaker(), facts_fn=lambda: {}, script_fn=lambda f, s_: ({}, "t"),
+                          director_on=lambda: None, kind="post", avatar=rp2)
+    rpre = sr.ShowRunner(sr.load_config(), None, Speaker(), facts_fn=lambda: {}, script_fn=lambda f, s_: ({}, "t"),
+                         director_on=lambda: None, avatar=rp2)
+    check("pick: goodbye offered on the Abspann before its script exists, intro/outro on /show",
+          set(rpost.avatar_status()) == {"goodbye"} and {"intro", "outro"} <= set(rpre.avatar_status()),
+          (rpost.avatar_status(), rpre.avatar_status()))
     rp2.pick("pre", "intro", "")
     check("pick: back to automatic", rp2.get("pre", "intro", "Ein völlig anderer Text.") is None)
 
