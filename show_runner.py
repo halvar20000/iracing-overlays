@@ -39,6 +39,7 @@ import os
 import re
 import threading
 import time
+import unicodedata
 import urllib.request
 from pathlib import Path
 
@@ -65,6 +66,10 @@ DEFAULT_CONFIG = {
         # where the track is (5007 /location, loader location.html): shown while
         # the track is talked about, before the video (optional)
         "track_location": "Streckenort",
+        # track layout picture (optional): up once the zoom-in / map is gone,
+        # while the track is still talked about, off before the line that
+        # leads into the video (Thomas 2026-11-19)
+        "track_layout": "Streckenführung",
         # Gabi speaking (avatar_sync.py): a media source ABOVE the idle loop
         # (source with avatar/gabi_idle_loop.mp4, looping, always on)
         "avatar_talk": "Gabi",
@@ -111,6 +116,11 @@ DEFAULT_CONFIG = {
     # video plays when there is none (2026-10-16: the Algarve video ran over
     # Motegi). Empty / missing folder: the source plays whatever it holds.
     "track_video_dir": "show_notes/videos",
+    # zoom-in per track (make_track_zoom.py -> zoom_videos/<track>.mp4), same
+    # name matching as above. Put into "Streckenort" when that is a MEDIA
+    # source and played once (Thomas 2026-11-19: both sources showed Andreas'
+    # video); a browser source there keeps the 5007 /location map.
+    "track_zoom_dir": "zoom_videos",
     # AVATAR: Gabi says these segments as a lip-synced video (sync.so key in
     # commentary_config.json); the rest is voice only. Videos are made ahead —
     # the script is written prepare_min before start_at. Not ready in time /
@@ -333,6 +343,47 @@ def find_track_video(video_dir: Path, track: str, track_cfg: str = "") -> tuple[
         if sc > score:
             best, score = p, sc
     return True, best
+
+
+def _plain_words(s: str) -> set:
+    """Lower-case words without accents ("Nürburgring" -> nurburgring)."""
+    s = unicodedata.normalize("NFKD", (s or "").lower())
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return set(re.findall(r"[^\W_]+", s))
+
+
+ZOOM_ALIASES = {"panorama": "bathurst", "redbull": "spielberg", "villeneuve": "montreal",
+                "rodriguez": "hermanosrodriguez", "mosport": "mosport", "canadian": "mosport",
+                "americas": "cota", "petersburg": "stpete", "marys": "phillipisland"}
+
+
+def find_zoom_video(video_dir: Path, track: str, track_cfg: str = "") -> Path | None:
+    """The zoom-in for the track in zoom_videos/ (named after iRacing's track
+    folder: spa_2024_grandprix.mp4, nurburgring_nordschleife.mp4). A word of
+    the track name must be in the file name (3 letters do: "Spa"); the layout
+    words pick between the variants (Grand Prix = gp / grandprix)."""
+    if not video_dir.is_dir():
+        return None
+    name = {w for w in _plain_words(track) if len(w) >= 3 and w not in _GENERIC}
+    seq = re.findall(r"[^\W_]+", "".join(c for c in unicodedata.normalize("NFKD", (track or "").lower())
+                                         if not unicodedata.combining(c)))
+    name |= {a + b for a, b in zip(seq, seq[1:])}        # Road America -> roadamerica, Lime Rock -> limerock
+    name |= {v for k, v in ZOOM_ALIASES.items() if k in name}   # files named after the town
+    lay = _plain_words(track_cfg)
+    if {"grand", "prix"} <= lay:
+        lay |= {"gp", "grandprix"}
+    best, score = None, 0
+    for p in video_dir.iterdir():
+        if p.suffix.lower() not in VIDEO_EXT:
+            continue
+        stem = _plain_words(p.stem)
+        hit = name & stem
+        if not hit:
+            continue
+        sc = 10 * sum(len(w) for w in hit) + sum(len(w) for w in lay & stem)
+        if sc > score:
+            best, score = p, sc
+    return best
 
 
 def find_notes(notes_dir: Path, track: str, track_cfg: str = "") -> str | None:
@@ -1404,7 +1455,7 @@ class ShowRunner:
                 self._items = set(self.obs.scene_items(self.cfg["scenes"]["moderator"]))
             except Exception:
                 self._items = None             # unknown: try the class sources
-            for key in set(SEGMENT_SOURCES.values()) | {"track_video", "track_location", "avatar_talk"}:   # nothing left on from a rehearsal
+            for key in set(SEGMENT_SOURCES.values()) | {"track_video", "track_location", "track_layout", "avatar_talk"}:   # nothing left on from a rehearsal
                 name = self._name(key)
                 if name and (self._items is None or name in self._items):
                     self._source(key, False)
@@ -1595,6 +1646,31 @@ class ShowRunner:
             return True
         return False
 
+    def _pick_zoom_video(self):
+        """Streckenort as a MEDIA source: point it at today's zoom-in from
+        track_zoom_dir. None = no media source (the map page, as before),
+        True = file set, False = no zoom-in for this track (not shown)."""
+        name = self._name("track_location")
+        if not name:
+            return None
+        try:
+            if self.obs.input_settings(name).get("kind") != "ffmpeg_source":
+                return None
+        except Exception as e:
+            self._note(f"Quelle {name} prüfen: {e}")
+            return None
+        d = Path(self.cfg.get("track_zoom_dir") or "")
+        if not d.is_absolute():
+            d = HERE / d
+        path = find_zoom_video(d, self.facts.get("strecke") or "", self.facts.get("layout") or "")
+        if path is None:
+            self._note(f"Kein Zoom-Video für {self.facts.get('strecke') or 'diese Strecke'} in {d} – {name} bleibt aus")
+            return False
+        if self._obs(lambda: self.obs.set_media_file(name, str(path), **MEDIA_ONCE), f"Zoom-Video {path.name}"):
+            self._note(f"Streckenort: {path.name}")
+            return True
+        return False
+
     def _play_once(self, name):
         """Loop / restart-on-show off before a clip is played (see MEDIA_ONCE)."""
         self._obs(lambda: self.obs.set_input_settings(name, MEDIA_ONCE), f"Schleife aus {name}")
@@ -1681,10 +1757,46 @@ class ShowRunner:
         """Streckenort off once its flight onto the circuit is over (5007
         /location: 2.5 s pause + 7 s flight + 3 s hold) — not up for the
         whole track talk (Thomas 2026-11-19)."""
-        if seg.get("map") and self.clock() - seg.get("map_at", self.clock()) >= float(
-                self.cfg.get("location_s") or DEFAULT_CONFIG["location_s"]):
+        if not seg.get("map"):
+            return
+        age = self.clock() - seg.get("map_at", self.clock())
+        if seg.get("map_media"):                 # zoom-in video: off when it has played (60 s at most)
+            try:
+                done = self.obs.media_status(seg["map_media"])["state"] in (
+                    "OBS_MEDIA_STATE_ENDED", "OBS_MEDIA_STATE_STOPPED", "OBS_MEDIA_STATE_ERROR")
+            except Exception:
+                done = age >= float(self.cfg.get("location_s") or DEFAULT_CONFIG["location_s"])
+            if (done and age >= 2) or age >= 60:     # 2 s: the state from its last play is gone
+                self._source("track_location", False)
+                seg["map"] = False
+                self._layout_on(seg)
+            return
+        if age >= float(self.cfg.get("location_s") or DEFAULT_CONFIG["location_s"]):
             self._source("track_location", False)
             seg["map"] = False
+            self._layout_on(seg)
+
+    def _layout_on(self, seg):
+        """Streckenführung up after the zoom-in while Gabi still talks about the
+        track — not when only the line into the video (or nothing) is left."""
+        if seg.get("id") != "track" or not self._has("track_layout"):
+            return
+        if self._layout_left(seg) <= 0:
+            return
+        self._source("track_layout", True)
+        seg["layout"] = True
+
+    def _layout_left(self, seg) -> int:
+        """Sentences still to come during which the layout may be up (the last
+        one leads into the video when one follows)."""
+        ids = seg.get("ids") or []
+        keep = ids[:-1] if seg.get("video_pending") and len(ids) > 1 else ids
+        return sum(1 for i in keep if not self.speaker.is_done(i))
+
+    def _tick_layout(self, seg):
+        if seg.get("layout") and self._layout_left(seg) <= 0:
+            self._source("track_layout", False)
+            seg["layout"] = False
 
     def _do_page(self, cmd):
         try:
@@ -1724,8 +1836,14 @@ class ShowRunner:
                 self._source(key, True)
                 self._shown = key
         if sid == "track" and self._has("track_location"):
-            self._source("track_location", True)              # the map while the track is talked about
-            seg["map"], seg["map_at"] = True, self.clock()
+            zoom = self._pick_zoom_video()                    # None = map page, True/False = zoom-in video
+            if zoom is not False:
+                self._source("track_location", True)          # the map / zoom-in while the track is talked about
+                seg["map"], seg["map_at"] = True, self.clock()
+            if zoom:
+                loc = self._name("track_location")
+                if self._obs(lambda: self.obs.media_restart(loc), f"Zoom-Video {loc}"):
+                    seg["map_media"] = loc
         video_ok = sid == "track" and self._pick_track_video()
         if video_ok and self.cfg.get("video_after_speech", True):
             seg["video_pending"] = self.cfg["sources"]["track_video"]   # started once the text is spoken
@@ -1736,11 +1854,14 @@ class ShowRunner:
             if self._obs(lambda: self.obs.media_restart(vid), f"Video {vid}"):
                 seg["media"] = vid
         # a page that turns with the talk (RACE 1 -> 2 -> COMBINED): one line per sentence
-        per = 1 if self._page_views(sid) > 1 else 220
+        per = 1 if (self._page_views(sid) > 1
+                    or (sid == "track" and self._has("track_layout"))) else 220
         chunks = [] if self._avatar_play(sid, text, seg) else split_sentences(text, per)
         for ch in chunks:
             seg["ids"].append(self.speaker.say(ch, sid))
         self._setup_paging(sid, seg)
+        if sid == "track" and not seg.get("map"):
+            self._layout_on(seg)                  # no zoom-in / map: the layout right away
         words = len(text.split())
         # safety net: no voice page listening / audio lost -> move on anyway
         seg["deadline"] = self.clock() + words / WORDS_PER_S * 1.6 + DEADLINE_PAD_S
@@ -1754,6 +1875,7 @@ class ShowRunner:
             return
         spoken = all(self.speaker.is_done(i) for i in seg["ids"])
         self._tick_map(seg)
+        self._tick_layout(seg)
         if seg.get("video_pending"):
             if not (spoken or self.clock() > seg["deadline"]):
                 return
@@ -1764,6 +1886,9 @@ class ShowRunner:
             if seg.get("map"):
                 self._source("track_location", False)
                 seg["map"] = False
+            if seg.get("layout"):
+                self._source("track_layout", False)
+                seg["layout"] = False
             self._play_once(vid)
             self._source("track_video", True)
             if self._obs(lambda: self.obs.media_restart(vid), f"Video {vid}"):
@@ -1812,6 +1937,8 @@ class ShowRunner:
                 self._pin(None)
         if seg.get("map"):
             self._source("track_location", False)
+        if seg.get("layout"):
+            self._source("track_layout", False)
         if seg.get("avatar"):                   # Gabi back to the idle loop underneath
             self._obs(lambda: self.obs.media_stop(seg["media"]), "Gabi-Video stoppen")
             self._source("avatar_talk", False)

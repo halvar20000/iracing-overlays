@@ -440,6 +440,72 @@ r12b.start()
 wait_for(lambda: r12b.state == "done", 20, tick=w12b)
 check("map: off after location_s while the talk goes on", st12b[:3] == [("track", True, False),
       ("track", False, False), ("track", False, True)], st12b)
+# Streckenführung: up once the map is gone while she still talks, off before
+# the last sentence (the line into the video), never with map or video (2026-11-19)
+obs12l = FakeObs({"Moderator": {"Streckenvideo": False, "Streckenort": False, "Streckenführung": False},
+                  "iRacing": {}}, media={"Streckenvideo": 0.3})
+c12l = sr.load_config(); c12l["obs"] = {"host": "127.0.0.1", "port": obs12l.port}; c12l["location_s"] = 0.05
+sp12l = Speaker()
+txt12l = "Motegi liegt in Japan. " * 6 + "Und jetzt das Streckenvideo."
+r12l = sr.ShowRunner(c12l, ObsClient(port=obs12l.port), sp12l, facts_fn=lambda: facts,
+                     script_fn=lambda f, s: ({}, "template"), director_on=lambda: None)
+r12l.segments, r12l.script, r12l.script_at = ["track"], {"track": txt12l}, time.time()
+st12l, last12l = [], []
+def w12l():
+    r12l.tick()
+    m = obs12l.scenes["Moderator"]
+    v = (m["Streckenort"], m["Streckenführung"], m["Streckenvideo"])
+    if not st12l or st12l[-1] != v:
+        st12l.append(v)
+        if r12l.seg and r12l.seg.get("ids"):
+            last12l.append(sp12l.is_done(r12l.seg["ids"][-2]) if len(r12l.seg["ids"]) > 1 else None)
+r12l.start()
+wait_for(lambda: r12l.state == "done", 20, tick=w12l)
+check("layout: map -> layout -> nothing -> video, never two at once",
+      st12l[:4] == [(True, False, False), (False, True, False), (False, False, False), (False, False, True)]
+      and not any(sum(x) > 1 for x in st12l), st12l)
+check("layout: off only after the second-to-last sentence", last12l[2:3] == [True], last12l)
+# Streckenort as a MEDIA source: today's zoom-in from track_zoom_dir, played once,
+# off when it has ended; never the track video's file (2026-11-19)
+with tempfile.TemporaryDirectory() as zd:
+    for n in ("spa_2024_grandprix.mp4", "virginia_2022_full.mp4"):
+        (Path(zd) / n).write_bytes(b"")
+    obs12c = FakeObs({"Moderator": {"Streckenvideo": False, "Streckenort": False}, "iRacing": {}},
+                     media={"Streckenvideo": 0.3, "Streckenort": 0.2})
+    c12c = sr.load_config(); c12c["obs"] = {"host": "127.0.0.1", "port": obs12c.port}; c12c["track_zoom_dir"] = zd
+    r12c = sr.ShowRunner(c12c, ObsClient(port=obs12c.port), Speaker(), facts_fn=lambda: facts,
+                         script_fn=lambda f, s: ({}, "template"), director_on=lambda: None)
+    r12c.prepare(); r12c.segments, r12c.script, r12c.script_at = ["track"], {"track": long12}, time.time()
+    st12c = []
+    def w12c():
+        r12c.tick()
+        v = (r12c.seg["id"] if r12c.seg else None, obs12c.scenes["Moderator"]["Streckenort"],
+             obs12c.scenes["Moderator"]["Streckenvideo"])
+        if not st12c or st12c[-1] != v:
+            st12c.append(v)
+    r12c.start()
+    wait_for(lambda: r12c.state == "done", 30, tick=w12c)
+    zf = (obs12c.media["Streckenort"].get("file") or "").replace("\\", "/").rsplit("/", 1)[-1]
+    check("zoom-in: the track's file in Streckenort, played once", zf == "spa_2024_grandprix.mp4"
+          and obs12c.media["Streckenort"].get("looping") is False,
+          (obs12c.media["Streckenort"], facts.get("strecke"), facts.get("layout"), r12c.status().get("log")))
+    check("zoom-in: shown first, never together with the video, then the video", st12c[0] == ("track", True, False)
+          and ("track", False, True) in st12c and not any(m and v for _, m, v in st12c), st12c)
+    # no zoom-in for the track -> Streckenort stays off
+    for n in ("spa_2024_grandprix.mp4",):
+        (Path(zd) / n).unlink()
+    obs12d = FakeObs({"Moderator": {"Streckenvideo": False, "Streckenort": False}, "iRacing": {}},
+                     media={"Streckenvideo": 0.3, "Streckenort": 0.2})
+    c12d = sr.load_config(); c12d["obs"] = {"host": "127.0.0.1", "port": obs12d.port}; c12d["track_zoom_dir"] = zd
+    r12d = sr.ShowRunner(c12d, ObsClient(port=obs12d.port), Speaker(), facts_fn=lambda: facts,
+                         script_fn=lambda f, s: ({}, "template"), director_on=lambda: None)
+    r12d.prepare(); r12d.segments, r12d.script, r12d.script_at = ["track"], {"track": "Motegi liegt in Japan."}, time.time()
+    seen12d = []
+    r12d.start()
+    wait_for(lambda: r12d.state == "done", 20,
+             tick=lambda: (r12d.tick(), seen12d.append(obs12d.scenes["Moderator"]["Streckenort"])))
+    check("zoom-in: none for the track -> Streckenort stays off", not any(seen12d)
+          and not obs12d.media["Streckenort"].get("file"), (seen12d[:3], obs12d.media["Streckenort"]))
 check("place in the facts", sr.build_facts(None, {"name": "Motegi", "place": "Motegi, Japan"}, None, None)["ort"]
       == "Motegi, Japan")
 

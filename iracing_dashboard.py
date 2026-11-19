@@ -6099,7 +6099,7 @@ async function check() {
     el.innerHTML = '<div class="dim">OBS: ' + (d.streaming ? '<span class="ok">streamt</span>' : 'streamt nicht') +
         ' · Szene jetzt: ' + esc(d.current) + '</div><ul>' +
         d.items.map(i => '<li class="' + (i.found ? 'ok' : i.optional ? 'dim' : 'err') + '">' +
-                    (i.found ? '✓ ' : i.optional ? '– nicht da (optional: Pro/Am-Klasse, Saisonplan, Streckenort, Grafik während der REGIE, Abspann): ' : '✗ fehlt: ') +
+                    (i.found ? '✓ ' : i.optional ? '– nicht da (optional: Pro/Am-Klasse, Saisonplan, Streckenort, Streckenführung, Grafik während der REGIE, Abspann): ' : '✗ fehlt: ') +
                     esc(i.what) + ' „' + esc(i.name) + '“' +
                     (!i.found && i.near && i.near.length ? ' <span class="dim">– in OBS gibt es: ' +
                         i.near.map(n => '„' + esc(n) + '“').join(', ') + '</span>' : '') +
@@ -6215,7 +6215,7 @@ def show_check():
                 real = show_runner.match_name(name, srcs)
                 items.append({"what": f"Quelle in {mod}", "name": real or name, "found": bool(real),
                               "optional": key in show_runner.CLASS_SOURCE_FALLBACK or key.startswith("schedule:")
-                                          or key in ("track_location", "results", "standings_after", "avatar_idle"),
+                                          or key in ("track_location", "track_layout", "results", "standings_after", "avatar_idle"),
                               "near": [] if real else [h for h in srcs if h and any(
                                   w in h.casefold() for w in name.casefold().split() if len(w) >= 4)][:4]})
                 if real and key in show_runner.SOLID_PAGES:     # Abspann page that follows the class?

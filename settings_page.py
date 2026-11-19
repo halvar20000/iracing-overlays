@@ -106,6 +106,7 @@ FILES = [
             F("sources.standings_am", "text", "Tabelle AM", "Tabelle AM"),
             F("sources.track_video", "text", "Streckenvideo", "Streckenvideo"),
             F("sources.track_location", "text", "Streckenort", "Streckenort (Karte)"),
+            F("sources.track_layout", "text", "Streckenführung", "Streckenführung (nach dem Zoom-in, bis zur Überleitung zum Video)"),
             F("sources.avatar_talk", "text", "Gabi", "Gabi spricht"),
             F("sources.avatar_idle", "text", "Gabi Ruhe", "Gabi Ruhe-Schleife"),
             F("sources.results", "text", "Ergebnis", "Abspann: Ergebnis"),
