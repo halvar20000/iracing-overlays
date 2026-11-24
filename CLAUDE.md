@@ -191,6 +191,15 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 24, 2026 (tower 5005: qualifying shows only drivers WITH a time):**
+from Andreas's tower: in QUALIFYING the tower is empty until the first timed
+lap, then each driver appears once he has one (best_lap > 0; departed drivers
+with a remembered time stay, "LEFT"). JS `TIMED_ONLY(d)`: `?timed=0` = every
+driver as before, `?timed=1` = the same in practice; race unchanged; helmet
+count still = entered drivers. CODE_VERSION "2026-11-24 quali-timed-only".
+Rendered with a fake /standings (0 times = empty, 2 times = 2 rows). Restart
+5005.
+
 **November 24, 2026 (WCT Misano prep: championship on the EMPTY new season,
 quali delta when the pole driver leaves):** (1) 5010 /lastrace, /lastdotd
 showed nothing: championship_config had league cas-gt3-wct but NO season, and

@@ -1997,6 +1997,12 @@ function penTags(r) {
     if (SHOW_WARN && p.warnings) h += `<span class="tag pen warn">W${p.warnings}</span>`;
     return h;
 }
+function TIMED_ONLY(d) {
+    const q = qs.get('timed');
+    if (q === '0') return false;
+    if (q === '1') return d.session_type !== 'Race';
+    return d.session_type === 'Qualifying';
+}
 function brandColumn(all) {
     const q = qs.get('brand');
     if (q === '1') return true;
@@ -2079,6 +2085,13 @@ function render(d) {
     const isRace = d.session_type === 'Race';
     let rows = d.standings || [];
     SHOW_BRAND = brandColumn(rows);       // whole field, before ?rows= trims it
+    // Qualifying: a driver appears only once he has a timed lap; before the
+    // first one the tower is empty (like Andreas's tower, 2026-11-24).
+    // ?timed=0 = every driver as before, ?timed=1 = the same in practice too.
+    if (TIMED_ONLY(d)) {
+        rows = rows.filter(r => r.best_lap > 0);
+        if (!rows.length) { el.innerHTML = ''; return; }
+    }
     el.classList.toggle('cars', SHOW_CARS);
     el.classList.toggle('slim', COMPACT && isRace && !TEAM_MODE && qs.get('slim') !== '0');
     el.style.setProperty('--bw', SHOW_CARS ? '70px' : SHOW_BRAND ? '28px' : '0px');
@@ -2973,7 +2986,7 @@ def standings():
 # Bump on every change: http://localhost:5005/version shows which code the
 # running process actually loaded (the stream PC gets this folder through
 # Nextcloud, so a restart can still pick up the previous file).
-CODE_VERSION = "2026-11-04 lap-marks warn-flag"
+CODE_VERSION = "2026-11-24 quali-timed-only"
 
 
 @app.route("/version")
