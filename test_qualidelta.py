@@ -222,6 +222,77 @@ def test_own_no_reference_yet():
 
 
 # =============================================================================
+# 3c) Pole driver LEAVES the quali (2026-11-24): pole stays his lap
+# =============================================================================
+def _with_uids(p):
+    for i, d in enumerate(p.ir.d["DriverInfo"]["Drivers"]):
+        d["UserID"] = 1000 + i
+
+
+def test_pole_driver_left():
+    print("spectator: pole driver has left the session:")
+    p = iq.QualiDeltaPoller()
+    base_spectator(p)
+    _with_uids(p)
+    run_lap(p, idx=1, pace=88.0, start_t=0.0, official=88.0, laps_after=2)
+    end = run_lap(p, idx=0, pace=90.0, start_t=100.0, official=90.0, laps_after=2)
+    # Bob (pole, car1) leaves: iRacing drops his best (-1), car out of world
+    snap = feed(p, end + 0.5 * 88.0, [2, -1], [0.5, -1.0], [3, -1], [90.0, -1.0])
+    sess = snap["refs"]["session"]
+    check("pole time still 88 (not P2's 90)", approx(sess["ref_lap"], 88.0))
+    check("pole driver still BETA", sess["ref_driver"] == "BETA")
+    check("pole delta ~ 0.0 on pole pace (old code: -2.0)",
+          approx(sess["delta"], 0.0))
+
+    # his slot is taken by a NEW driver with no lap yet
+    p.ir.d["DriverInfo"]["Drivers"][1].update(
+        {"UserName": "Carl Gamma", "UserID": 2000})
+    snap = feed(p, end + 0.6 * 88.0, [2, 1], [0.6, 0.1], [3, 3], [90.0, 0.0])
+    sess = snap["refs"]["session"]
+    check("slot reused: pole still 88 / BETA",
+          approx(sess["ref_lap"], 88.0) and sess["ref_driver"] == "BETA")
+
+
+def test_pole_left_before_start():
+    print("spectator: pole lap only in ResultsPositions (overlay started later):")
+    p = iq.QualiDeltaPoller()
+    base_spectator(p)
+    _with_uids(p)
+    p.ir.d["SessionInfo"]["Sessions"][0]["ResultsPositions"] = [
+        {"CarIdx": 1, "FastestTime": 88.0}, {"CarIdx": 0, "FastestTime": 90.0}]
+    # only car0's lap seen; car1 never reports a best (left before)
+    end = 0.0
+    p.ir.d["CamCarIdx"] = 0
+    other_best = -1.0
+    # run car0's lap by hand (run_lap gives car1 a live 88 best)
+    feed(p, 0.0, [1, -1], [0.0, -1.0], [3, -1], [0.0, other_best])
+    for k in range(1, 21):
+        feed(p, k / 20.0 * 90.0, [1, -1], [k / 20.0, -1.0], [3, -1], [0.0, other_best])
+    feed(p, 90.0, [2, -1], [0.0, -1.0], [3, -1], [90.0, other_best])
+    p._official_t = -1e9
+    snap = feed(p, 90.0 + 0.5 * 88.0, [2, -1], [0.5, -1.0], [3, -1], [90.0, other_best])
+    sess = snap["refs"]["session"]
+    check("pole = official 88", approx(sess["ref_lap"], 88.0))
+    check("pole driver from ResultsPositions = BETA", sess["ref_driver"] == "BETA")
+    check("delta ~ 0.0 on pole pace (curve scaled 90 -> 88)",
+          approx(sess["delta"], 0.0, 0.1))
+
+
+def test_pole_lap_deleted():
+    print("spectator: pole lap deleted afterwards (driver still there):")
+    p = iq.QualiDeltaPoller()
+    base_spectator(p)
+    _with_uids(p)
+    run_lap(p, idx=1, pace=88.0, start_t=0.0, official=88.0, laps_after=2)
+    end = run_lap(p, idx=0, pace=90.0, start_t=100.0, official=90.0, laps_after=2)
+    # iRacing deletes Bob's 88; his best is now 89.5, he is still in the car
+    snap = feed(p, end + 0.5 * 88.0, [2, 2], [0.5, 0.0], [3, 3], [90.0, 89.5])
+    sess = snap["refs"]["session"]
+    check("deleted lap forgotten (pole no longer 88)",
+          not approx(sess["ref_lap"], 88.0, 0.01))
+
+
+# =============================================================================
 # 3b) Stale lap-start (replay rewind / session-time jump) is hidden, not shown
 # =============================================================================
 def test_stale_lapstart_guard():
@@ -258,6 +329,9 @@ if __name__ == "__main__":
     test_driving()
     test_spectator()
     test_own_no_reference_yet()
+    test_pole_driver_left()
+    test_pole_left_before_start()
+    test_pole_lap_deleted()
     test_stale_lapstart_guard()
     test_colorize()
     print(f"\n{PASS}/{PASS + FAIL} checks passed"

@@ -191,6 +191,26 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 24, 2026 (WCT Misano prep: championship on the EMPTY new season,
+quali delta when the pole driver leaves):** (1) 5010 /lastrace, /lastdotd
+showed nothing: championship_config had league cas-gt3-wct but NO season, and
+CLS answers that with the NEWEST season = the 15th (OPEN_REGISTRATION, 0
+rounds). Stream PC config set to the 14th season (POST /api/config) and
+`season_param(cfg)`: no season set = the league's single ACTIVE season from
+/api/overlay/leagues (cached 10 min; none / several = CLS decides as before),
+used by the standings, round-info and beforeRound fetches. (2) Quali delta
+5014 spectator mode: a pole driver who LEAVES loses his CarIdxBestLapTime, so
+P2 became "pole" (wrong name / time / delta). Now pole time = min of the live
+bests, SessionInfo ResultsPositions FastestTime (`_official_pole`, keeps
+departed drivers, read 1/s) and `_pole_mem` (curve + time + name + UserID of
+the pole lap); pole lap without a curve (set before the overlay ran) = the
+fastest curve we have scaled to it; a reused car slot (other UserID) drops the
+old curve; a remembered pole that iRacing deleted (same driver, slower best) is
+forgotten. Driving mode "Pole" box showed the OWN best - now the official pole.
+test_qualidelta 35/35 (7 of the new fail on the old code). NOT tried in
+iRacing. Also: Misano notes file was deleted in the Unraid working copy only
+(restored from HEAD). Restart 5014.
+
 **November 16, 2026 (race logger 1.5.0 — real contact / spin / slow-down, for
 Johann):** Johann: a +2 was always logged as a spin (iRacing gives 0x / 2x / 4x
 for contacts), 0x wall touches were missing, the furled black flag (slow down)

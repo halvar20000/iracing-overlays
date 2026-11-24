@@ -64,10 +64,54 @@ SCRIPT_DIR   = Path(__file__).resolve().parent
 CONFIG_PATH  = SCRIPT_DIR / "championship_config.json"
 DEFAULT_API  = "https://league.simracing-hub.com"
 
+
+# CLS answers a request WITHOUT ?season= with the league's NEWEST season -
+# once the next season opens registration that is an EMPTY one (WCT 15th
+# season on 24.11.2026: no last round, no DotD, empty table). So "no season
+# set" is resolved here to the league's ACTIVE season (cached 10 min); none
+# or several ACTIVE = leave it to CLS as before.
+_active_cache: dict = {}     # (base, slug) -> (fetched_at, season id | None)
+
+
+def active_season(base: str, slug: str) -> str | None:
+    if not slug or requests is None:
+        return None
+    key = (base, slug)
+    hit = _active_cache.get(key)
+    if hit and time.time() - hit[0] < 600:
+        return hit[1]
+    sid = hit[1] if hit else None
+    try:
+        r = requests.get(f"{base}/api/overlay/leagues", timeout=10)
+        r.raise_for_status()
+        body = r.json()
+        leagues = body.get("leagues") if isinstance(body, dict) else body
+        for lg in leagues or []:
+            if lg.get("slug") == slug:
+                act = [s for s in lg.get("seasons") or []
+                       if str(s.get("status") or "").upper() == "ACTIVE"]
+                sid = act[0].get("id") if len(act) == 1 else None
+                break
+    except Exception as e:
+        print(f"[championship] active season lookup failed: {type(e).__name__}: {e}")
+        if hit:
+            return hit[1]
+        return None
+    _active_cache[key] = (time.time(), sid)
+    return sid
+
+
+def season_param(cfg: dict) -> str | None:
+    """The season to ask CLS for: the configured one, else the ACTIVE one."""
+    if cfg.get("season_id"):
+        return cfg["season_id"]
+    base = (cfg.get("api_base") or DEFAULT_API).rstrip("/")
+    return active_season(base, cfg.get("league_slug") or "")
+
 DEFAULT_CONFIG = {
     "api_base":        DEFAULT_API,
     "league_slug":     "cas-gt3-wct",
-    "season_id":       None,           # None → API picks the ACTIVE season
+    "season_id":       None,           # None → the league's ACTIVE season (season_param)
     "refresh_seconds": 60,             # how often to re-fetch championship
     # Scoring rules the overlay API doesn't publish (yet). Defaults match
     # CLS: a driver needs 50 % of the leader's distance for position points,
@@ -184,7 +228,7 @@ class ChampionshipFetcher:
         if not slug:
             return
         params = {"league": slug}
-        sid = cfg.get("season_id")
+        sid = season_param(cfg)
         if sid:
             params["season"] = sid
 
@@ -829,8 +873,9 @@ class RoundInfoFetcher:
                 key = self._cfg_key(cfg)
                 base = (cfg.get("api_base") or DEFAULT_API).rstrip("/")
                 params = {"league": cfg.get("league_slug") or ""}
-                if cfg.get("season_id"):
-                    params["season"] = cfg["season_id"]
+                sid = season_param(cfg)
+                if sid:
+                    params["season"] = sid
                 r = requests.get(f"{base}/api/overlay/round-info", params=params, timeout=10)
                 r.raise_for_status()
                 body = r.json()
@@ -2629,8 +2674,8 @@ def _roundinfo_before(n: int) -> dict:
     cfg = fetcher.get().get("config") or {}
     base = (cfg.get("api_base") or DEFAULT_API).rstrip("/")
     params = {"league": cfg.get("league_slug") or "", "beforeRound": str(n)}
-    if cfg.get("season_id"):
-        params["season"] = cfg["season_id"]
+    if season_param(cfg):
+        params["season"] = season_param(cfg)
     key = (params["league"], params.get("season"), n)
     hit = _before_cache.get(key)
     if hit and time.time() - hit[0] < 60:

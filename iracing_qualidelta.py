@@ -50,6 +50,7 @@ Stream:        transparent background by default (OBS browser source).
 
 import bisect
 import threading
+import time
 from flask import Flask, jsonify, render_template_string
 
 from iracing_sdk_base import SDKPoller, setup_utf8_stdout
@@ -115,6 +116,13 @@ class QualiDeltaPoller(SDKPoller):
         self._ref_src = None          # (car_idx, pole_time) the ref curve came from
         self._session_best = None     # official pole time (min CarIdxBestLapTime)
         self._ref_driver_idx = None   # car idx that holds the pole/reference lap
+        self._ref_name = ""           # pole driver's SURNAME (header)
+        # The pole lap stays the reference when its driver LEAVES the session
+        # (2026-11-24, Thomas): iRacing then drops his CarIdxBestLapTime and
+        # the old code took P2 as "pole". Kept: curve, time, name, UserID.
+        self._pole_mem = None
+        self._official = None         # (time, car_idx) from ResultsPositions
+        self._official_t = -1e9       # wall clock of the last read
         # on-camera car sector tracking (raw times; colorized per reference)
         self._cam_idx = None
         self._cam_lap = None
@@ -305,6 +313,7 @@ class QualiDeltaPoller(SDKPoller):
         pcts = [p for p, _ in buf]
         times = [e * factor for e in raw_times]   # scale total -> official best
         self._car_ref[idx] = {
+            "uid": self._uid_of(idx),
             "pcts": pcts,
             "times": times,
             "laptime": best,
@@ -312,30 +321,118 @@ class QualiDeltaPoller(SDKPoller):
             "src": src,
         }
 
+    def _uid_of(self, idx):
+        """iRacing UserID of the driver in car `idx` (None if unknown)."""
+        try:
+            for d in (self.ir["DriverInfo"] or {}).get("Drivers") or []:
+                if d.get("CarIdx") == idx:
+                    return d.get("UserID")
+        except Exception:
+            pass
+        return None
+
+    def _official_pole(self):
+        """(time, car_idx) of the fastest OFFICIAL lap of this session from
+        SessionInfo ResultsPositions - it keeps drivers who have left, unlike
+        CarIdxBestLapTime. Read at most once a second (YAML)."""
+        now = time.monotonic()
+        if now - self._official_t < 1.0:
+            return self._official
+        self._official_t = now
+        best = None
+        try:
+            num = self.ir["SessionNum"]
+            for sess in (self.ir["SessionInfo"] or {}).get("Sessions") or []:
+                if sess.get("SessionNum") != num:
+                    continue
+                for r in sess.get("ResultsPositions") or []:
+                    ft = r.get("FastestTime")
+                    if ft and ft > 0 and (best is None or ft < best[0]):
+                        best = (float(ft), r.get("CarIdx"))
+        except Exception:
+            best = None
+        self._official = best
+        return best
+
+    def _use_ref(self, r, laptime=None):
+        """Make curve `r` the pole reference, scaled to `laptime` if given."""
+        pcts, times, sectors = r["pcts"], r["times"], r["sectors"]
+        lt = r["laptime"]
+        if laptime and lt and abs(laptime - lt) > 0.002:
+            f = laptime / lt
+            times = [x * f for x in times]
+            sectors = self._compute_ref_sectors(pcts, times)
+            lt = laptime
+        self._ref_pcts, self._ref_times = pcts, times
+        self._ref_laptime, self._ref_sectors = lt, sectors
+        self._ref_src = r["src"]
+
     def _update_pole_reference(self, bestlaps):
         """Refresh every car's own-best reference curve, then set the POLE
-        reference to the fastest car's curve (min CarIdxBestLapTime)."""
+        reference. Pole time = the fastest of: the live CarIdxBestLapTime,
+        iRacing's official ResultsPositions (keeps drivers who left) and the
+        remembered pole lap. The curve is the pole car's own; when he has left
+        it is the remembered one; with no curve of the pole lap at all (it was
+        set before this overlay started) the fastest curve we have, scaled to
+        the pole time."""
         best = None
         pole_idx = None
         for idx in range(len(bestlaps)):
             b = bestlaps[idx]
             if b and b > 0:
+                # a curve of a driver who left, on a reused car slot, is not his
+                r = self._car_ref.get(idx)
+                if r and r.get("uid") is not None and self._uid_of(idx) not in (None, r["uid"]):
+                    self._car_ref.pop(idx, None)
                 self._store_car_ref(idx, b)
                 if best is None or b < best:
                     best = b
                     pole_idx = idx
-        self._session_best = best
-        if best is None or pole_idx is None:
+
+        mem = self._pole_mem
+        if mem is not None:
+            # same driver still in his car with a SLOWER best = iRacing deleted
+            # the remembered lap afterwards -> forget it
+            i = mem["idx"]
+            if 0 <= i < len(bestlaps) and bestlaps[i] and bestlaps[i] > 0 \
+                    and self._uid_of(i) == mem["uid"] \
+                    and bestlaps[i] > mem["laptime"] + 0.002:
+                mem = self._pole_mem = None
+
+        official = self._official_pole()
+        cands = [x for x in (best,
+                             mem["laptime"] if mem else None,
+                             official[0] if official else None) if x]
+        if not cands:
+            self._session_best = None
             return
-        self._ref_driver_idx = pole_idx   # who's on pole (for the header)
-        r = self._car_ref.get(pole_idx)
-        if not r:
-            return
-        self._ref_pcts = r["pcts"]
-        self._ref_times = r["times"]
-        self._ref_laptime = r["laptime"]
-        self._ref_sectors = r["sectors"]
-        self._ref_src = r["src"]
+        pole = min(cands)
+        self._session_best = pole
+
+        live = self._car_ref.get(pole_idx) if pole_idx is not None else None
+        if live and abs(live["laptime"] - pole) <= 0.002:
+            # the pole car is here and we have its lap: use it + remember it
+            self._ref_driver_idx = pole_idx
+            self._ref_name = self._driver_info(pole_idx)["surname"]
+            self._pole_mem = dict(live, idx=pole_idx, name=self._ref_name)
+            self._use_ref(live)
+        elif mem and abs(mem["laptime"] - pole) <= 0.002:
+            # pole driver has left (or his slot no longer reports it)
+            self._ref_driver_idx = None
+            self._ref_name = mem["name"]
+            self._use_ref(mem)
+        else:
+            # pole lap without its curve: best curve we have, scaled
+            src = live or mem
+            if src is None:
+                quick = [r for r in self._car_ref.values() if r.get("laptime")]
+                src = min(quick, key=lambda r: r["laptime"]) if quick else None
+            holder = official[1] if official and abs(official[0] - pole) <= 0.002 \
+                else pole_idx
+            self._ref_driver_idx = holder
+            self._ref_name = self._driver_info(holder)["surname"] if holder is not None else ""
+            if src is not None:
+                self._use_ref(src, laptime=pole)
 
     def _compute_ref_sectors(self, pcts, times):
         if self._sector_pcts is None:
@@ -633,7 +730,7 @@ class QualiDeltaPoller(SDKPoller):
                         "sectors": self._display_sectors,
                         "have_reference": True,
                         "ref_label": "Pole",
-                        "ref_lap": own_best,
+                        "ref_lap": (self._official_pole() or (own_best,))[0],
                         "ref_driver": "",
                     },
                     "own": {
@@ -686,7 +783,6 @@ class QualiDeltaPoller(SDKPoller):
             cam_best = bestlaps[cam] if bestlaps[cam] and bestlaps[cam] > 0 else 0.0
 
         info = self._driver_info(cam)
-        ref_info = self._driver_info(self._ref_driver_idx)
         pos = 0
         if cam is not None and 0 <= cam < len(positions) and positions[cam]:
             pos = positions[cam]
@@ -710,7 +806,7 @@ class QualiDeltaPoller(SDKPoller):
                     "have_reference": bool(self._ref_pcts),
                     "ref_label": "Pole",
                     "ref_lap": self._session_best or 0.0,
-                    "ref_driver": ref_info["surname"],
+                    "ref_driver": self._ref_name,
                 },
                 "own": {
                     "delta": float(o_delta) if o_delta is not None else None,
