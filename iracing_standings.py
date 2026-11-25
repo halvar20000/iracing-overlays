@@ -2085,12 +2085,31 @@ function render(d) {
     const isRace = d.session_type === 'Race';
     let rows = d.standings || [];
     SHOW_BRAND = brandColumn(rows);       // whole field, before ?rows= trims it
-    // Qualifying: a driver appears only once he has a timed lap; before the
-    // first one the tower is empty (like Andreas's tower, 2026-11-24).
-    // ?timed=0 = every driver as before, ?timed=1 = the same in practice too.
+    // Qualifying: a driver appears only once he has a timed lap (like
+    // Andreas's tower, 2026-11-24). Before the first one only the HEAD shows:
+    // info bar + class tab(s) with the entry count + column header (Thomas
+    // 2026-11-25: not a blank tower). ?timed=0 = every driver as before,
+    // ?timed=1 = the same in practice too.
     if (TIMED_ONLY(d)) {
+        const all = rows;
         rows = rows.filter(r => r.best_lap > 0);
-        if (!rows.length) { el.innerHTML = ''; return; }
+        if (!rows.length) {
+            const multiHead = new Set(all.map(r => r.class_id)).size > 1;
+            let h = infoBar(d), seenCls = new Set();
+            for (const r of all) {
+                if (seenCls.has(r.class_id)) continue;
+                if (seenCls.size) h += '<div class="class-gap"></div>';
+                seenCls.add(r.class_id);
+                const cc = multiHead ? (r.class_color || '') : '';
+                const style = cc ? ` style="--tabc:${cc};--tabt:${textOn(cc)}"` : '';
+                h += `<div class="tabs">
+                    <span class="tab cls"${style}>${esc(r.class_name || 'Class')}</span>
+                    <span class="tab cnt">${ICON.helmet}${r.class_count || ''}</span>
+                </div><div class="${TEAM_MODE ? 'teams' : ''}">${headRow(false)}</div>`;
+            }
+            el.innerHTML = h;
+            return;
+        }
     }
     el.classList.toggle('cars', SHOW_CARS);
     el.classList.toggle('slim', COMPACT && isRace && !TEAM_MODE && qs.get('slim') !== '0');
@@ -2986,7 +3005,7 @@ def standings():
 # Bump on every change: http://localhost:5005/version shows which code the
 # running process actually loaded (the stream PC gets this folder through
 # Nextcloud, so a restart can still pick up the previous file).
-CODE_VERSION = "2026-11-24 quali-timed-only"
+CODE_VERSION = "2026-11-25 quali-head-only"
 
 
 @app.route("/version")

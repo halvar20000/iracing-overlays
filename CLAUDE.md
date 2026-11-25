@@ -198,7 +198,9 @@ with a remembered time stay, "LEFT"). JS `TIMED_ONLY(d)`: `?timed=0` = every
 driver as before, `?timed=1` = the same in practice; race unchanged; helmet
 count still = entered drivers. CODE_VERSION "2026-11-24 quali-timed-only".
 Rendered with a fake /standings (0 times = empty, 2 times = 2 rows). Restart
-5005.
+5005. 2026-11-25 (Thomas, after the Misano quali): before the first time the
+HEAD stays (info bar + class tab(s) with the entry count + column header),
+only no drivers - not a blank tower. CODE_VERSION "2026-11-25 quali-head-only".
 
 **November 24, 2026 (WCT Misano prep: championship on the EMPTY new season,
 quali delta when the pole driver leaves):** (1) 5010 /lastrace, /lastdotd
