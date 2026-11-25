@@ -74,6 +74,10 @@ COMMANDS: dict[str, Optional[str]] = {
     "message_all": "/all {msg}",
     "message_rc": "/rc {msg}",
     "test": "/rc iCASControl chat test",
+    # 0.1.42: /rc is seen by the ADMINS only - this line reaches the drivers,
+    # so the test shows whether the drivers get the chat (Misano 24.11.: the
+    # /rc test arrived, Thomas Kuebler saw none of the race messages)
+    "test_all": "/all RACE CONTROL TEST - PLEASE IGNORE",
 }
 
 MAX_LEN = 200

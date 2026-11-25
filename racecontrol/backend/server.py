@@ -469,7 +469,10 @@ class Engine:
                 "method": self.chat_cfg.get("method", "post"),
                 "available": self._chat_capable(),
                 "rights": self.rights_problem(),
-                "mode": self.mode()}
+                "mode": self.mode(),
+                # 0.1.42: rules running, but nothing reaches the drivers
+                "steward_no_chat": bool(self.steward_cfg.get("enabled"))
+                and not self.chat_cfg.get("enabled")}
 
     def rights_problem(self) -> str:
         """0.1.40: iRacing elevated, iCAS not = the chat never arrives.
@@ -921,7 +924,14 @@ class Engine:
                 "message", "", text="TEST · iCASControl", force=True)}
 
         if action == "chat_test":
-            return {"type": "ack", "text": self.to_iracing("test", force=True)}
+            # /rc (admins) + /all (drivers): ask a driver whether the /all
+            # line arrived - the /rc one alone proves nothing for them
+            rc = self.to_iracing("test", force=True)
+            al = self.to_iracing("test_all", force=True)
+            self.state.note_system(
+                "Chat test: /rc goes to the admins only, the /all line to "
+                "every driver - ask a driver whether he saw it")
+            return {"type": "ack", "text": rc + " | " + al}
 
         if action == "command":
             command = str(msg.get("command", ""))

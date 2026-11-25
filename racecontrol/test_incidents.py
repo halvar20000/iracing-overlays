@@ -1063,7 +1063,18 @@ check("RC message -> '/all ...'", sent[-1][0] == "/all Track limits T4")
 eng4.handle_client_message({"action": "set_chat", "enabled": False})
 eng4.handle_client_message({"action": "chat_test"})
 check("Test works while OFF ('/rc', admins only)",
-      sent[-1][0] == "/rc iCASControl chat test")
+      sent[-2][0] == "/rc iCASControl chat test")
+check("TC1 test also sends an /all line the DRIVERS see (0.1.42)",
+      sent[-1][0] == "/all RACE CONTROL TEST - PLEASE IGNORE")
+_sd_was = eng4.steward_cfg.get("enabled")
+eng4.steward_cfg["enabled"] = True
+check("TC2 chat OFF + Auto Steward ON -> steward_no_chat warning",
+      eng4.chat_status()["steward_no_chat"] is True)
+eng4.handle_client_message({"action": "set_chat", "enabled": True})
+check("TC3 chat ON -> no steward_no_chat warning",
+      eng4.chat_status()["steward_no_chat"] is False)
+eng4.handle_client_message({"action": "set_chat", "enabled": False})
+eng4.steward_cfg["enabled"] = _sd_was
 eng5 = server.Engine(force_sim=True)
 eng5.state = eng4.state
 ack = eng5.handle_client_message({"action": "car", "car_idx": 1, "command": "dsq"})

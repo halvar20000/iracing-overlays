@@ -191,6 +191,17 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 25, 2026 (iCASControl 0.1.42 - Thomas Kuebler saw NONE of the
+race messages, WCT Misano 24.11.):** Thomas's pre-race test (pink line) had
+arrived - but the Test button sends `/rc` (admins only) and bypasses the
+iRACING CHAT switch (force=True), so it proved nothing for the drivers. Cause
+NOT found yet (needs the autosave racecontrol/data/<id>.json from the PC that
+ran iCAS: "Would send" / "Chat to iRacing is OFF" vs sent). Now: chat_test
+also sends `test_all` "/all RACE CONTROL TEST - PLEASE IGNORE" (ask a driver);
+chat_status `steward_no_chat` (Auto Steward on, chat off) -> red line in the
+header warning bar. test_incidents TC1-TC3, 441/441. Guide updated. Restart
+iCAS.
+
 **November 24, 2026 (tower 5005: qualifying shows only drivers WITH a time):**
 from Andreas's tower: in QUALIFYING the tower is empty until the first timed
 lap, then each driver appears once he has one (best_lap > 0; departed drivers

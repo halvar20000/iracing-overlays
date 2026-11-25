@@ -260,9 +260,14 @@ function updateModeToggle() {
     : 'PASSIVE<small>read only</small>';
   $('#mode-details').classList.toggle('hidden', !(modeDetailsOpen || mode === 'mixed'));
   const w = $('#rights-warn');
-  const problem = mode !== 'passive' && c.rights;
-  w.textContent = problem ? '\u26a0 ' + c.rights : '';
-  w.classList.toggle('hidden', !problem);
+  const problems = [];
+  if (mode !== 'passive' && c.rights) problems.push(c.rights);
+  // 0.1.42: Auto Steward on, iRacing chat off = its messages go nowhere
+  if (c.steward_no_chat)
+    problems.push('AUTO STEWARD is ON but iRACING CHAT is OFF - none of its '
+      + 'messages / commands reach the drivers. Click ARMED (or switch the chat on).');
+  w.textContent = problems.length ? '\u26a0 ' + problems.join('  \u26a0 ') : '';
+  w.classList.toggle('hidden', !problems.length);
 }
 
 function updateStreamToggle() {

@@ -170,7 +170,11 @@ Oben rechts sitzt der große Knopf:
 - **ARMED** (rot) – alles scharf: iRacing-Chat, Auto Steward und (wenn eine
   Adresse eingetragen ist) der Stream-Banner. Beim Scharfschalten schickt
   iCAS eine Testzeile „iCASControl chat test“ in den iRacing-Chat – nur
-  Admins sehen sie. Kommt sie nicht an, stimmt etwas nicht.
+  Admins sehen sie. Kommt sie nicht an, stimmt etwas nicht. Kommt sie an,
+  heißt das noch NICHT, dass die Fahrer etwas sehen – dafür den **Test**-Knopf
+  (unten) nehmen und einen Fahrer fragen.
+- Ist der **Auto Steward an, der iRacing-Chat aber aus**, steht ein roter
+  Warnbalken unter der Kopfzeile: dann erreicht keine Meldung die Fahrer.
 - **MIXED** (gelb) – einzelne Schalter wurden von Hand gesetzt. Ein Klick
   schaltet alles scharf.
 
@@ -252,7 +256,11 @@ Damit Strafen und Rennleitungs-Befehle wirklich in iRacing ankommen:
 2. In der Kopfzeile **iRACING CHAT** einschalten (ist anfangs aus).
 3. Methode **post** lassen (Standard, schreibt im Hintergrund). Nur wenn das nicht
    geht, **focus** wählen; dann kommt iRacing kurz in den Vordergrund.
-4. **Test** schickt `/rc iCASControl chat test`. Das sehen nur die Admins.
+4. **Test** schickt zwei Zeilen: `/rc iCASControl chat test` (sehen nur die
+   Admins) und `/all RACE CONTROL TEST - PLEASE IGNORE` (sehen ALLE Fahrer).
+   Vor dem Rennen einen Fahrer fragen, ob die zweite Zeile ankam – nur die
+   zeigt, dass die Meldungen an die Fahrer durchgehen. (Misano 24.11.: die
+   `/rc`-Zeile kam an, ein Fahrer sah keine der Rennmeldungen.)
 
 Was wohin geht:
 
