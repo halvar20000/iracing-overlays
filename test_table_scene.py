@@ -16,6 +16,7 @@ class FakeObs:
     def __init__(self):
         self.scene = "Moderator"
         self.transition = "Fade"
+        self.transitions = ["Cut", "Fade", "Stinger", "Stinger Tabellen"]
         self.items = {
             "Moderator": {"MyCAM": True, "Last_RACE_WCT": False},
             "Tabellen": {"Background": True, "Titelkarte": True, "Last_RACE_WCT": False,
@@ -37,6 +38,10 @@ class FakeObs:
     def set_transition(self, name):
         self.log.append(("transition", name))
         self.transition = name
+
+    def call(self, rt, data=None):
+        assert rt == "GetSceneTransitionList"
+        return {"transitions": [{"transitionName": n} for n in self.transitions]}
 
     def scene_items(self, scene):
         return {n: (i, on) for i, (n, on) in enumerate(self.items[scene].items())}
@@ -69,12 +74,12 @@ t = obs.items["Tabellen"]
 check("T1 ok", ok)
 check("T1 page on, other page off", t["Last_RACE_WCT"] and not t["Standing_WCT_PRO_AM"])
 check("T1 non-page items untouched", t["Background"] and t["Titelkarte"] and t["commentary_voice"])
-check("T1 on Tabellen with the Stinger", obs.scene == "Tabellen" and ("scene", "Tabellen", "Stinger") in obs.log)
+check("T1 on Tabellen with the Stinger", obs.scene == "Tabellen" and ("scene", "Tabellen", "Stinger Tabellen") in obs.log)
 s = ts.state()
 check("T1 title card RESULTATE + league", s["seq"] > st0 and s["title"] == "RESULTATE" and s["sub"] == "CAS IEC")
 check("T1 card up before the switch", sleeps[:1] == [0.15])
 vis_i = max(i for i, x in enumerate(obs.log) if x[0] == "vis")
-check("T1 page set before the switch", vis_i < obs.log.index(("scene", "Tabellen", "Stinger")))
+check("T1 page set before the switch", vis_i < obs.log.index(("scene", "Tabellen", "Stinger Tabellen")))
 run(later)                                         # transition restored
 check("T1 transition back to Fade", obs.transition == "Fade")
 
@@ -89,12 +94,19 @@ check("T2 waited swap_s", 0.45 in sleeps)
 # 3. same key again = back to the scene before, stinger, page hidden later
 ok, msg = ts.toggle("teams")
 check("T3 back to Moderator with the Stinger", ok and obs.scene == "Moderator"
-      and obs.log[-1] == ("scene", "Moderator", "Stinger"))
+      and obs.log[-1] == ("scene", "Moderator", "Stinger Tabellen"))
 check("T3 title card cleared", ts.state()["title"] == "")
 check("T3 page still up during the stinger", t["Teams_Standing_WCT"])
 run(later)
 check("T3 page hidden afterwards", not t["Teams_Standing_WCT"])
 check("T3 transition back", obs.transition == "Fade")
+
+# 3b. "Stinger Tabellen" missing in OBS: Fade, never the REPLAY stinger
+ts, obs, later, sleeps = make()
+obs.transitions = ["Cut", "Fade", "Stinger"]
+obs.transition = "Cut"
+ts.toggle("lastrace")
+check("T3b fallback Fade + note", obs.log[-1] == ("scene", "Tabellen", "Fade") and "fehlt" in ts.note)
 
 # 4. shown again before the hide fires: stays up
 ts, obs, later, sleeps = make()
@@ -197,8 +209,8 @@ check("T10 intro / track on Moderator", scenes["intro"] == {"Moderator"} and "Ta
 titles = [t for (_, _, t) in seen if t]
 check("T10 title cards RESULTATE then MEISTERSCHAFT", titles[:1] == ["RESULTATE"] and "MEISTERSCHAFT" in titles)
 check("T10 entered + left with the Stinger, ONE entry (standings swapped in place)",
-      [x for x in fo.switches if x[0] == "Tabellen"] == [("Tabellen", "Stinger")]
-      and ("Moderator", "Stinger") in fo.switches)
+      [x for x in fo.switches if x[0] == "Tabellen"] == [("Tabellen", "Stinger Tabellen")]
+      and ("Moderator", "Stinger Tabellen") in fo.switches)
 check("T10 pages never put on the Moderator scene",
       not any(rd.get("sceneName") == "Moderator" and rd.get("sceneItemEnabled") is True
               and fo.ids.get(("Moderator", "Letztes Rennen")) == rd.get("sceneItemId")

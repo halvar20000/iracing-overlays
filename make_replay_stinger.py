@@ -8,6 +8,7 @@ OBS: Scene transitions > + > Stinger, this file, transition point
 TRANSITION_MS (the picture is fully covered from COVER_IN to COVER_OUT).
 
     python make_replay_stinger.py [--text REPLAY] [--out stingers/replay_stinger.webm]
+    python make_replay_stinger.py --text "" --out stingers/table_stinger.webm   (tables, no word)
 """
 import argparse
 import os
@@ -73,6 +74,8 @@ def panel_art(text):
 
 def title_layer(text):
     img = Image.new("RGBA", (W, H))
+    if not text:                      # --text "" = panel only (tables: the title card says what comes)
+        return img
     d = ImageDraw.Draw(img)
     f = font(230)
     tw = d.textlength(text, font=f)

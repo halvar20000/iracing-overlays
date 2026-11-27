@@ -15,6 +15,9 @@ and on top the browser source "Titelkarte" = http://localhost:5000/tables/title
 (1920 x 1080). The scenes need NO transition override (an override wins over
 the transition set here).
 
+Transition "Stinger Tabellen" = a stinger in OBS with stingers/table_stinger.
+webm (no word on it; make_replay_stinger.py --text ""), transition point 500 ms.
+
 Config: show_config.json "tables" (DEFAULTS below, merged; re-read on every
 call). Dashboard routes: /streamdeck/table/<key> (toggle), /streamdeck/
 table_back, /tables (status), /tables/state (title card polls it),
@@ -28,7 +31,10 @@ import time
 DEFAULTS = {
     "scene": "Tabellen",
     "back_scene": "Moderator",       # when the scene before is unknown
-    "transition": "Stinger",          # "" = whatever OBS has set
+    # own stinger WITHOUT a word (stingers/table_stinger.webm; the replay
+    # stinger says REPLAY - 2026-11-27). Missing in OBS -> fallback.
+    "transition": "Stinger Tabellen",  # "" = whatever OBS has set
+    "fallback_transition": "Fade",
     "title_source": "Titelkarte",
     "title_s": 1.6,                   # card held this long (s) before it wipes away
     "enter_delay_s": 0.15,            # card up before the switch (the stinger cuts at 0.5 s)
@@ -81,6 +87,7 @@ class TableScene:
         self._trans_prev = None
         self._trans_token = 0
         self.last = ""
+        self.note = ""
 
     # -- helpers --------------------------------------------------------------
     def cfg(self) -> dict:
@@ -120,8 +127,24 @@ class TableScene:
         with self._lock:
             return {"seq": self.seq, "title": self.title, "sub": self.sub, "hold_s": self.hold}
 
-    def _switch(self, scene, cfg):
+    def _pick_transition(self, cfg) -> str:
         trans = cfg.get("transition") or ""
+        if not trans:
+            return ""
+        try:
+            names = [t.get("transitionName") for t in
+                     self._call(lambda o: o.call("GetSceneTransitionList")).get("transitions", [])]
+        except Exception:
+            return trans
+        if trans in names:
+            return trans
+        fb = cfg.get("fallback_transition") or ""
+        self.note = f"Übergang '{trans}' fehlt in OBS - nehme '{fb or 'aktuellen'}'"
+        print(f"[tables] {self.note}")
+        return fb if fb in names else ""
+
+    def _switch(self, scene, cfg):
+        trans = self._pick_transition(cfg)
         if trans:
             try:
                 prev = self._call(lambda o: o.current_transition())
@@ -258,7 +281,7 @@ class TableScene:
     def status(self) -> dict:
         cfg = self.cfg()
         return {"scene": cfg["scene"], "transition": cfg.get("transition"), "shown": self.shown,
-                "back_to": self.back_to, "last": self.last, "title": self.title,
+                "back_to": self.back_to, "last": self.last, "note": self.note, "title": self.title,
                 "items": {k: v for k, v in cfg["items"].items()}}
 
 

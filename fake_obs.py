@@ -98,6 +98,9 @@ class FakeObs:
             self.current = rd["sceneName"]
             self.switches.append((self.current, self.transition))
             return True, None, None
+        if rt == "GetSceneTransitionList":
+            return True, {"currentSceneTransitionName": self.transition, "transitions": [
+                {"transitionName": n} for n in ("Cut", "Fade", "Stinger", "Stinger Tabellen")]}, None
         if rt == "GetCurrentSceneTransition":
             return True, {"transitionName": self.transition}, None
         if rt == "SetCurrentSceneTransition":

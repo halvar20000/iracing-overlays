@@ -219,6 +219,11 @@ fake_obs knows Get/SetCurrentSceneTransition. test_table_scene.py (fake OBS +
 real ShowRunner over fake_obs; needs websockets) all pass, test_show_runner
 181 pass; checked on Thomas's real OBS (Intro -> Tabellen with Stinger, swap,
 back, transition restored). Restart 5000 (Update & restart).
+SAME DAY: the stinger showed "REPLAY" (the word is in replay_stinger.webm) ->
+NEW stingers/table_stinger.webm (make_replay_stinger.py --text "" = panel
+only), default transition "Stinger Tabellen" (Thomas adds it in OBS: Stinger,
+that file, point 500 ms); missing in OBS = `fallback_transition` Fade (never
+the REPLAY one), note in /tables.
 
 **November 25, 2026 (iCASControl 0.1.42 - Thomas Kuebler saw NONE of the
 race messages, WCT Misano 24.11.):** Thomas's pre-race test (pink line) had
