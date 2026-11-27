@@ -191,6 +191,14 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 27, 2026 (IEC championship = TEAMS only, never drivers):** Thomas:
+5010 /table/wct showed the IEC DRIVER table per class. `TEAMS_ONLY_LEAGUES`
+{"cas-iec"} (CLS league slug): /table/wct and /live/wct show the team table per
+class there (= /teams/wct, title "MEISTERSCHAFT - CAS IEC - NACH LAUF n";
+/live/wct has no team projection, so the CLS team table). Other leagues
+unchanged. test_wct_board C6 / C7; checked against the live IEC teams (LMP2 18,
+GT3 23, PCUP 6). Restart 5010.
+
 **November 27, 2026 (TABLES ON THEIR OWN OBS SCENE - stinger + title card,
 for the IEC stream 28.11.; Andreas did not like the pages over the Moderator
 picture):** NEW `table_scene.py` (`TableScene`, in the dashboard 5000 as

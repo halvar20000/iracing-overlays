@@ -2450,11 +2450,29 @@ def _lastrace_classes(out: dict, races: list, class_of, team: bool, multi: bool)
     return out
 
 
+# Leagues whose championship is shown as TEAMS only, never drivers (IEC,
+# Thomas 2026-11-27): /table/wct and /live/wct show the team table there.
+TEAMS_ONLY_LEAGUES = {"cas-iec"}
+
+
+def _teams_only(st: dict) -> bool:
+    return ((st.get("league") or {}).get("slug") or "") in TEAMS_ONLY_LEAGUES
+
+
+def _teams_as_championship(st: dict) -> dict:
+    out = _teams_wct(st)
+    out["tab"] = "STANDINGS"
+    out["title"] = out["title"].replace("TEAMWERTUNG", "MEISTERSCHAFT", 1)
+    return out
+
+
 def _table_wct(st: dict) -> dict:
     """Driver championship in the board look: PRO / AM in Pro/Am seasons,
     one table per car class in multiclass leagues (IEC), else one table.
     Positions inside the class, CLS order (tie-breaks) kept; `points` IS the
     class total in Pro/Am seasons (same as /table)."""
+    if _teams_only(st):
+        return _teams_as_championship(st)
     league = st.get("league") or {}
     season = st.get("season") or {}
     done = season.get("completedRounds")
@@ -2614,6 +2632,9 @@ def live_wct_data():
     if not ps.get("ok"):
         return jsonify({"connected": True, "tab": "LIVE", "title": "", "sections": [],
                         "empty": ps.get("error") or "Lade CLS-Daten …"})
+    st = fetcher.get().get("data") or {}
+    if _teams_only(st) or _teams_only(ps):
+        return jsonify(_teams_as_championship(st or ps))   # no live team projection: CLS team table
     return jsonify(_live_wct(ps))
 
 

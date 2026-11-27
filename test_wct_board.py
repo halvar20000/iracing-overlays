@@ -177,6 +177,17 @@ d = ch._table_wct({"league": {}, "season": {}, "standings": [
 check("C3 multiclass: one table per class", [(s["label"], [r["name"] for r in s["rows"]]) for s in d["sections"]]
       == [("LMP2", ["L", "L2"]), ("GT3", ["G"])], str(d))
 check("C4 /table/wct page (not the /table/<cls> route)", b"/table/wct/data" in cc.get("/table/wct").data)
+# IEC: championship = TEAMS only, never drivers (Thomas 2026-11-27)
+iec = {"league": {"slug": "cas-iec", "name": "CAS IEC"}, "season": {"completedRounds": 3},
+       "standings": [srow(1, "Fabio", 268, carClassName="LMP2"), srow(2, "Fritz", 244, carClassName="LMP2")],
+       "teamClasses": [{"carClassShortCode": "LMP2", "teams": [{"rank": 1, "teamName": "Alemannia Aachen White", "points": 471}]},
+                       {"carClassShortCode": "GT3", "teams": [{"rank": 1, "teamName": "Speed Monkeys", "points": 300}]}]}
+d = ch._table_wct(iec)
+check("C6 IEC /table/wct = team table per class, no driver", d["title"] == "MEISTERSCHAFT - CAS IEC - NACH LAUF 3"
+      and [(s["label"], [r["name"] for r in s["rows"]]) for s in d["sections"]]
+      == [("LMP2", ["Alemannia Aachen White"]), ("GT3", ["Speed Monkeys"])] and d["tab"] == "STANDINGS", str(d))
+d = ch._table_wct(dict(iec, league={"slug": "cas-gt3-wct", "name": "CAS GT3 WCT"}))
+check("C7 other leagues keep the driver table", [r["name"] for r in d["sections"][0]["rows"]] == ["Fabio", "Fritz"], str(d))
 
 print()
 print("ALL PASS" if not failures else f"FAILURES: {failures}")
