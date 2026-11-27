@@ -29,6 +29,8 @@ class FakeObs:
         self.media = {k: {"duration": d, "started": None} for k, d in (media or {}).items()}
         self.browsers = {k: dict(v) for k, v in (browsers or {}).items()}
         self.current = next(iter(self.scenes))
+        self.transition = "Fade"
+        self.switches = []           # (scene, transition at that moment)
         self.streaming = False
         self.recording = False       # StartRecord / PauseRecord / ResumeRecord / StopRecord
         self.rec_paused = False
@@ -94,6 +96,12 @@ class FakeObs:
             if rd["sceneName"] not in self.scenes:
                 return False, None, f"No source was found by the name of `{rd['sceneName']}`."
             self.current = rd["sceneName"]
+            self.switches.append((self.current, self.transition))
+            return True, None, None
+        if rt == "GetCurrentSceneTransition":
+            return True, {"transitionName": self.transition}, None
+        if rt == "SetCurrentSceneTransition":
+            self.transition = rd["transitionName"]
             return True, None, None
         if rt == "GetSceneItemList":
             sc = self.scenes.get(rd["sceneName"])

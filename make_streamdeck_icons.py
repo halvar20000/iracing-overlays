@@ -228,6 +228,15 @@ DASH_ICONS = [
     ("show_start",        "auto",   "play",        "Moderation Start",  "show_start"),
     ("show_next",         "auto",   "next",        "Moderation weiter", "show_next"),
     ("show_stop",         "auto",   "stop",        "Moderation Stopp",  "show_stop"),
+    # TABLES on their own OBS scene with stinger + title card (table_scene.py):
+    # press = show (switch to "Tabellen"), same key again = back
+    ("table_lastrace",    "pre",    "podium",      "Resultate",         "table/lastrace"),
+    ("table_table",       "pre",    "table",       "Meisterschaft",     "table/table"),
+    ("table_teams",       "pre",    "trophy",      "Teamwertung",       "table/teams"),
+    ("table_dotd",        "pre",    "crown",       "Fahrer des Tages",  "table/dotd"),
+    ("table_rsvp",        "pre",    "rsvp",        "Anmeldungen",       "table/rsvp"),
+    ("table_stats",       "pre",    "barchart",    "Statistik",         "table/stats"),
+    ("table_back",        "pre",    "prev",        "Tabelle zurück",    "table_back"),
     # Frag Claude (race_qa.py): press = listen, press again = answer
     ("ask",               "auto",   "mic",         "Frag Claude",       "ask"),
     # WCT-look pages (grid, results_wct, lastrace_wct, teams_wct): pages by

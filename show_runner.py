@@ -155,6 +155,11 @@ SEGMENT_CLASS = {"last_race_pro": "pro", "last_race_am": "am",
                  "standings_pro": "pro", "standings_am": "am",
                  "results_pro": "pro", "results_am": "am",
                  "standings_after_pro": "pro", "standings_after_am": "am"}
+# title card on the Tabellen scene (table_scene.py) per source key
+TABLE_TITLES = {"last_race": "RESULTATE", "last_race_pro": "RESULTATE", "last_race_am": "RESULTATE",
+                "standings": "MEISTERSCHAFT", "standings_pro": "MEISTERSCHAFT",
+                "standings_am": "MEISTERSCHAFT", "results": "ERGEBNIS",
+                "standings_after": "MEISTERSCHAFT", "schedule": "SAISONPLAN"}
 PROAM_SPLIT = {"last_race": ["last_race_pro", "last_race_am"],
                "standings": ["standings_pro", "standings_am"]}
 # the Abspann's split (5002 /solid and 5010 /overlay/solid follow the pin)
@@ -1236,8 +1241,13 @@ class ShowRunner:
 
     def __init__(self, cfg, obs, speaker, facts_fn, script_fn, director_on,
                  clock=time.time, local_now=None, listening=lambda: True, pin=None, store=None,
-                 points_fn=None, kind="pre", director_off=None, avatar=None, page=None):
+                 points_fn=None, kind="pre", director_off=None, avatar=None, page=None,
+                 tables=None):
         self.cfg = cfg
+        # 2026-11-27: pages on their own OBS scene with the stinger + title card
+        # (table_scene.TableScene) when the source is on that scene
+        self.tables = tables
+        self._on_tables = False
         self.obs = obs
         self.speaker = speaker
         self.facts_fn = facts_fn
@@ -1566,6 +1576,24 @@ class ShowRunner:
             self._note(self.last_error)
             return False
 
+    def _table_name(self, key):
+        """OBS source of `key` when it sits on the table scene, else None."""
+        if not self.tables or (self.cfg.get("tables") or {}).get("show_ai") is False:
+            return None
+        name = self._name(key)
+        try:
+            return name if name and self.tables.has(name) else None
+        except Exception:
+            return None
+
+    def _tables_back(self):
+        try:
+            ok, msg = self.tables.back(scene=self.cfg["scenes"]["moderator"])
+            self._note(f"Tabellen-Szene: {msg}")
+        except Exception as e:
+            self._note(f"Tabellen-Szene: {e}")
+        self._on_tables = False
+
     def _src_key(self, sid):
         """Source key for a segment: a class segment uses its own source when it
         exists in the Moderator scene, else the plain one (pinned to the class)."""
@@ -1860,9 +1888,22 @@ class ShowRunner:
             self._pin(self._seg_class(sid))
             key = self._src_key(sid)
             if self._shown != key:
-                if self._shown:
-                    self._source(self._shown, False)
-                self._source(key, True)
+                tname = self._table_name(key)
+                if tname:
+                    cls = self._seg_class(sid)
+                    title = TABLE_TITLES.get(key, "") + (f" {cls.upper()}" if cls and TABLE_TITLES.get(key) else "")
+                    ok, msg = self.tables.show(tname, title)
+                    self._note(f"Tabellen-Szene: {msg}")
+                    if ok:
+                        self._on_tables = True
+                    else:
+                        self._source(key, True)
+                else:
+                    if self._on_tables:
+                        self._tables_back()
+                    if self._shown:
+                        self._source(self._shown, False)
+                    self._source(key, True)
                 self._shown = key
         if sid == "track" and self._has("track_location"):
             zoom = self._pick_zoom_video()                    # None = map page, True/False = zoom-in video
@@ -1961,7 +2002,13 @@ class ShowRunner:
             nxt = self.segments[self.seg_i + 1] if 0 <= self.seg_i + 1 < len(self.segments) else None
             if not (self.state == "running" and nxt in SEGMENT_SOURCES
                     and self._src_key(nxt) == src):        # one shared page PRO -> AM: stays up
-                self._source(src, False)
+                if self._on_tables:
+                    # the next page on the table scene too: it swaps under the card
+                    if not (self.state == "running" and nxt in SEGMENT_SOURCES
+                            and self._table_name(self._src_key(nxt))):
+                        self._tables_back()
+                else:
+                    self._source(src, False)
                 self._shown = None
                 self._pin(None)
         if seg.get("map"):

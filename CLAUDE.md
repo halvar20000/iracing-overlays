@@ -191,6 +191,35 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 27, 2026 (TABLES ON THEIR OWN OBS SCENE - stinger + title card,
+for the IEC stream 28.11.; Andreas did not like the pages over the Moderator
+picture):** NEW `table_scene.py` (`TableScene`, in the dashboard 5000 as
+`poller.tables`): Stream Deck `/streamdeck/table/<key>` (toggle) puts the page
+on OBS scene "Tabellen" (only it on, every other page source there off),
+raises the title card ("RESULTATE" + league name from 5010), waits
+enter_delay_s 0.15 and switches with transition "Stinger" (set for this switch,
+the previous one back 2.5 s later); another table key while on Tabellen = page
+swapped UNDER the card (swap_s 0.45, no scene switch); the same key again /
+`/streamdeck/table_back` = back to the scene before (stinger), page hidden
+hide_after_s 1.5 later. Keys (show_config.json "tables".items, merged with
+DEFAULTS, null removes): lastrace Last_RACE_WCT RESULTATE, table
+Standing_WCT_PRO_AM MEISTERSCHAFT, teams, dotd, rsvp, stats. Title card =
+`/tables/title` (TITLE_HTML, polls /tables/state 100 ms, wipe in .32 s, hold
+title_s 1.6, wipe out; `?demo=TEXT`), status `/tables`. AI show / Abspann:
+ShowRunner(tables=) - a page segment whose source sits on Tabellen goes there
+(TABLE_TITLES, + " PRO"/" AM"), consecutive pages swap in place, back to
+Moderator before a non-page segment; `tables.show_ai: false` = old way. OBS
+(set up over the websocket today): scene Tabellen = Background, Elgato XLR
+Dock, Discord, commentary_voice (a source not in the program scene is silent!),
+17 page sources (same inputs as on Moderator, bounds scale-inner 1800 x 960
+centred, off), browser input "Titelkarte" (http://localhost:5000/tables/title,
+1920 x 1080) on top. Moderator has a per-scene override "Fade" (wins over
+Stinger on the way back - not changed, asked). Icons dashboard/table_*.png.
+fake_obs knows Get/SetCurrentSceneTransition. test_table_scene.py (fake OBS +
+real ShowRunner over fake_obs; needs websockets) all pass, test_show_runner
+181 pass; checked on Thomas's real OBS (Intro -> Tabellen with Stinger, swap,
+back, transition restored). Restart 5000 (Update & restart).
+
 **November 25, 2026 (iCASControl 0.1.42 - Thomas Kuebler saw NONE of the
 race messages, WCT Misano 24.11.):** Thomas's pre-race test (pink line) had
 arrived - but the Test button sends `/rc` (admins only) and bypasses the

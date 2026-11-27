@@ -34,6 +34,7 @@ import highlights
 import highlight_runner
 from obs_ws import ObsClient
 from remote_replay import RemoteReplay, RemoteState
+import table_scene
 from pathlib import Path
 
 
@@ -348,6 +349,11 @@ class TelemetryPoller:
         self.replay_pc = RemoteReplay(obs_factory=lambda: ObsClient(
             _ocfg.get("host", "127.0.0.1"), _ocfg.get("port", 4455), _ocfg.get("password", "")))
         self.replay_pc.start_follow()       # the rig's own replays show up too (idle without a url)
+        # TABLES on their own OBS scene with the stinger + title card (table_scene.py)
+        self.tables = table_scene.TableScene(
+            obs_factory=lambda: ObsClient(_ocfg.get("host", "127.0.0.1"), _ocfg.get("port", 4455),
+                                          _ocfg.get("password", "")),
+            cfg_fn=show_runner.load_config, sub_fn=lambda: _league_name())
         self.remote_state = RemoteState()   # when THIS PC is the replay PC
         import avatar_sync
         self.avatar_renderer = avatar_sync.AvatarRenderer(self.voice)   # Gabi's talking videos (sync.so)
@@ -357,7 +363,7 @@ class TelemetryPoller:
             director_on=lambda: self.set_director(True),
             pin=lambda cls: show_runner.pin_class(scfg, cls),
             page=lambda cmd: show_runner.page_nav(scfg, cmd), store=show_runner.SCRIPT_FILE,
-            points_fn=self._show_points, avatar=self.avatar_renderer)
+            points_fn=self._show_points, avatar=self.avatar_renderer, tables=self.tables)
         self._point_at = 0.0              # last talking point spoken (quiet moments in quali / race)
         self.post_show = show_runner.ShowRunner(           # ABSPANN after the race
             scfg, self.show_obs, _ShowSpeaker(self.commentator),
@@ -365,7 +371,7 @@ class TelemetryPoller:
             # director_on: after a ZWISCHENSTAND (race 1 of 2) REGIE takes the race again
             director_on=lambda: self.set_director(True), kind="post",
             director_off=lambda: self.set_director(False),
-            avatar=self.avatar_renderer)
+            avatar=self.avatar_renderer, tables=self.tables)
         self._race_story: list = []       # this race told by its live commentary (Abspann summary)
         self.avatar_test = avatar_sync.AvatarTest(self.voice)   # /avatar: sync.so lip-sync test
         # HIGHLIGHT VIDEO (highlight_runner.py, 2026-10-21): scenes from a race
@@ -7336,6 +7342,41 @@ def replay_remote_status():
     return jsonify(st)
 
 
+_league_cache = {"t": 0.0, "name": ""}
+
+
+def _league_name() -> str:
+    """League name for the title card (5010 /api/roundinfo, cached 60 s)."""
+    now = time.monotonic()
+    if now - _league_cache["t"] > 60:
+        _league_cache["t"] = now
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:5010/api/roundinfo", timeout=1.5) as r:
+                info = (json.loads(r.read().decode()) or {}).get("info") or {}
+            _league_cache["name"] = ((info.get("league") or {}).get("name") or "").strip()
+        except Exception:
+            pass
+    return _league_cache["name"]
+
+
+@app.route("/tables")
+def tables_status():
+    """Tables scene: what is up, last action, the configured keys."""
+    return jsonify(poller.tables.status())
+
+
+@app.route("/tables/state")
+def tables_state():
+    """Polled by the title card (/tables/title)."""
+    return jsonify(poller.tables.state())
+
+
+@app.route("/tables/title")
+def tables_title():
+    """OBS browser source "Titelkarte" on the Tabellen scene (1920 x 1080)."""
+    return table_scene.TITLE_HTML
+
+
 @app.route("/replay_pc")
 def replay_pc_status():
     """Stream PC: is a second replay PC set, what happened last."""
@@ -7527,6 +7568,11 @@ def streamdeck(action, param=None):
     elif action == "show_next":
         poller.show.next()
         ok, msg = True, f"show segment={poller.show.seg['id'] if poller.show.seg else None}"
+    # --- tables on their own OBS scene (table_scene.py): key = toggle ---
+    elif action == "table":
+        ok, msg = poller.tables.toggle(param or "")
+    elif action == "table_back":
+        ok, msg = poller.tables.back()
     elif action == "show_stop":
         poller.show.stop()
         ok, msg = True, "show stopped"

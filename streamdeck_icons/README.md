@@ -123,6 +123,13 @@ URL wie unten. Das Dashboard (Port 5000) muss laufen.
 | `show_start.png` | `http://localhost:5000/streamdeck/show_start` — KI-Moderation jetzt starten |
 | `show_next.png` | `http://localhost:5000/streamdeck/show_next` — nächster Moderations-Abschnitt |
 | `show_stop.png` | `http://localhost:5000/streamdeck/show_stop` — Moderation abbrechen |
+| `table_lastrace.png` | `http://localhost:5000/streamdeck/table/lastrace` — Resultate letztes Rennen auf der Szene „Tabellen“ (Stinger + Titelkarte); nochmal drücken = zurück |
+| `table_table.png` | `http://localhost:5000/streamdeck/table/table` — Meisterschaft (wie oben) |
+| `table_teams.png` | `http://localhost:5000/streamdeck/table/teams` — Teamwertung |
+| `table_dotd.png` | `http://localhost:5000/streamdeck/table/dotd` — Fahrer des Tages (letzte Runde) |
+| `table_rsvp.png` | `http://localhost:5000/streamdeck/table/rsvp` — Anmeldungen |
+| `table_stats.png` | `http://localhost:5000/streamdeck/table/stats` — Statistik |
+| `table_back.png` | `http://localhost:5000/streamdeck/table_back` — von „Tabellen“ zurück zur Szene davor |
 | `ask.png` | `http://localhost:5000/streamdeck/ask` — Frag Claude: drücken = Frage stellen, nochmal drücken = Antwort (FRAG_CLAUDE.md) |
 | `page_next.png` | `http://localhost:5001/nav/next` — alle Seiten: nächste Seite / weiter scrollen |
 | `page_prev.png` | `http://localhost:5001/nav/prev` — alle Seiten: Seite zurück |
