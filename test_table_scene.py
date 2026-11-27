@@ -24,6 +24,7 @@ class FakeObs:
                          "commentary_voice": True, "Letztes Rennen": False},
         }
         self.log = []                 # (action, ...) in order
+        self.no_create = False
 
     def current_scene(self):
         return self.scene
@@ -40,6 +41,12 @@ class FakeObs:
         self.transition = name
 
     def call(self, rt, data=None):
+        if rt == "CreateSceneItem":
+            if self.no_create:
+                raise RuntimeError("create refused")
+            self.log.append(("create", data["sceneName"], data["sourceName"]))
+            self.items[data["sceneName"]][data["sourceName"]] = True
+            return {"sceneItemId": 99}
         assert rt == "GetSceneTransitionList"
         return {"transitions": [{"transitionName": n} for n in self.transitions]}
 
@@ -74,12 +81,15 @@ t = obs.items["Tabellen"]
 check("T1 ok", ok)
 check("T1 page on, other page off", t["Last_RACE_WCT"] and not t["Standing_WCT_PRO_AM"])
 check("T1 non-page items untouched", t["Background"] and t["Titelkarte"] and t["commentary_voice"])
-check("T1 on Tabellen with the Stinger", obs.scene == "Tabellen" and ("scene", "Tabellen", "Stinger Tabellen") in obs.log)
+check("T1 card put on Moderator too", ("create", "Moderator", "Titelkarte") in obs.log
+      and obs.items["Moderator"]["Titelkarte"])
+check("T1 on Tabellen with a Cut under the card (no stinger)", obs.scene == "Tabellen"
+      and ("scene", "Tabellen", "Cut") in obs.log)
 s = ts.state()
 check("T1 title card RESULTATE + league", s["seq"] > st0 and s["title"] == "RESULTATE" and s["sub"] == "CAS IEC")
-check("T1 card up before the switch", sleeps[:1] == [0.15])
+check("T1 card covering before the cut", sleeps[:1] == [0.4])
 vis_i = max(i for i, x in enumerate(obs.log) if x[0] == "vis")
-check("T1 page set before the switch", vis_i < obs.log.index(("scene", "Tabellen", "Stinger Tabellen")))
+check("T1 page set before the switch", vis_i < obs.log.index(("scene", "Tabellen", "Cut")))
 run(later)                                         # transition restored
 check("T1 transition back to Fade", obs.transition == "Fade")
 
@@ -93,16 +103,18 @@ check("T2 waited swap_s", 0.45 in sleeps)
 
 # 3. same key again = back to the scene before, stinger, page hidden later
 ok, msg = ts.toggle("teams")
-check("T3 back to Moderator with the Stinger", ok and obs.scene == "Moderator"
-      and obs.log[-1] == ("scene", "Moderator", "Stinger Tabellen"))
-check("T3 title card cleared", ts.state()["title"] == "")
+check("T3 back to Moderator with a Cut under a blank card", ok and obs.scene == "Moderator"
+      and obs.log[-1] == ("scene", "Moderator", "Cut"))
+s3 = ts.state()
+check("T3 blank card, no word", s3["title"] == "" and s3["blank"] and s3["hold_s"] == 0.25)
+check("T3 card not created twice", sum(1 for x in obs.log if x[0] == "create") == 1)
 check("T3 page still up during the stinger", t["Teams_Standing_WCT"])
 run(later)
 check("T3 page hidden afterwards", not t["Teams_Standing_WCT"])
 check("T3 transition back", obs.transition == "Fade")
 
 # 3b. "Stinger Tabellen" missing in OBS: Fade, never the REPLAY stinger
-ts, obs, later, sleeps = make()
+ts, obs, later, sleeps = make({"tables": {"wipe": False}})
 obs.transitions = ["Cut", "Fade", "Stinger"]
 obs.transition = "Cut"
 ts.toggle("lastrace")
@@ -116,6 +128,22 @@ ts.toggle("lastrace")
 run(later)
 check("T4 re-shown page not hidden by the old timer", obs.items["Tabellen"]["Last_RACE_WCT"])
 
+# 4b. wipe off = the old stinger + card
+ts, obs, later, sleeps = make({"tables": {"wipe": False}})
+ts.toggle("lastrace")
+check("T4b wipe off: Stinger, card not added to Moderator", obs.log[-1] == ("scene", "Tabellen", "Stinger Tabellen")
+      and "Titelkarte" not in obs.items["Moderator"] and sleeps[:1] == [0.15])
+ts.toggle("lastrace")
+check("T4b back: Stinger, card cleared (not blank)", obs.log[-1] == ("scene", "Moderator", "Stinger Tabellen")
+      and not ts.state()["blank"])
+
+# 4c. the card cannot be put on the scene: falls back to the stinger
+ts, obs, later, sleeps = make()
+obs.no_create = True
+ok, _ = ts.toggle("lastrace")
+check("T4c no card on Moderator -> Stinger, note", ok and obs.log[-1] == ("scene", "Tabellen", "Stinger Tabellen")
+      and "Titelkarte" in ts.note)
+
 # 5. errors
 ts, obs, later, sleeps = make()
 ok, msg = ts.toggle("nope")
@@ -124,7 +152,7 @@ ok, msg = ts.toggle("dotd")                        # Last_DOTD not on the scene
 check("T5 missing source named", not ok and "Last_DOTD" in msg and obs.scene == "Moderator")
 
 # 6. config: own items, removed item, no transition
-cfg = {"tables": {"transition": "", "items": {"lastrace": {"source": "Letztes Rennen"},
+cfg = {"tables": {"transition": "", "wipe": False, "items": {"lastrace": {"source": "Letztes Rennen"},
                                               "rsvp": None, "x": {"source": "Teams_Standing_WCT", "title": "X"}}}}
 ts, obs, later, sleeps = make(cfg)
 c = ts.cfg()
@@ -150,6 +178,7 @@ ts = TableScene(obs_factory=lambda: None, cfg_fn=dict, sleep=lambda s: None, spa
 ok, msg = ts.toggle("lastrace")
 check("T8 OBS down = error, no crash", not ok and "OBS" in msg)
 
+check("T9b card plays a blank wipe", "s.title || s.blank" in table_scene.TITLE_HTML)
 check("T9 title page has the poll + demo", "/tables/state" in table_scene.TITLE_HTML and "demo" in table_scene.TITLE_HTML)
 
 # 10. the AI show: page segments go to the Tabellen scene (real ShowRunner,
@@ -184,7 +213,7 @@ c = sr.load_config()
 c["obs"] = {"host": "127.0.0.1", "port": fo.port}
 c["segments"] = ["intro", "last_race", "standings", "track", "outro"]
 c["avatar"] = {"enabled": False, "segments": []}
-c["tables"] = {"swap_s": 0.05, "hide_after_s": 0.05, "enter_delay_s": 0}
+c["tables"] = {"swap_s": 0.05, "hide_after_s": 0.05, "enter_delay_s": 0, "cover_s": 0.05}
 tsc = TableScene(obs_factory=lambda: ObsClient(port=fo.port), cfg_fn=lambda: c)
 facts = {"liga": "CAS IEC", "strecke": "Fuji", "runde": 5, "letzte_runde": {"strecke": "Spa"}, "tabelle": [{"pos": 1}]}
 script = {"intro": "Hallo.", "last_race": "Das Ergebnis.", "standings": "Die Tabelle.",
@@ -208,9 +237,9 @@ check("T10 last_race + standings on Tabellen", scenes["last_race"] == {"Tabellen
 check("T10 intro / track on Moderator", scenes["intro"] == {"Moderator"} and "Tabellen" not in scenes["track"])
 titles = [t for (_, _, t) in seen if t]
 check("T10 title cards RESULTATE then MEISTERSCHAFT", titles[:1] == ["RESULTATE"] and "MEISTERSCHAFT" in titles)
-check("T10 entered + left with the Stinger, ONE entry (standings swapped in place)",
-      [x for x in fo.switches if x[0] == "Tabellen"] == [("Tabellen", "Stinger Tabellen")]
-      and ("Moderator", "Stinger Tabellen") in fo.switches)
+check("T10 entered + left with a Cut under the card, ONE entry (standings swapped in place)",
+      [x for x in fo.switches if x[0] == "Tabellen"] == [("Tabellen", "Cut")]
+      and ("Moderator", "Cut") in fo.switches and fo.scenes["Moderator"].get("Titelkarte") is True)
 check("T10 pages never put on the Moderator scene",
       not any(rd.get("sceneName") == "Moderator" and rd.get("sceneItemEnabled") is True
               and fo.ids.get(("Moderator", "Letztes Rennen")) == rd.get("sceneItemId")

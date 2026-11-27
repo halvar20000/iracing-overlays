@@ -33,8 +33,16 @@ DEFAULTS = {
     "back_scene": "Moderator",       # when the scene before is unknown
     # own stinger WITHOUT a word (stingers/table_stinger.webm; the replay
     # stinger says REPLAY - 2026-11-27). Missing in OBS -> fallback.
-    "transition": "Stinger Tabellen",  # "" = whatever OBS has set
+    "transition": "Stinger Tabellen",  # only with "wipe": false
     "fallback_transition": "Fade",
+    # 2026-11-27 evening, Thomas: stinger (brown, no word) THEN the blue card =
+    # two transitions. "wipe": the card itself is the transition - it wipes in
+    # over the scene on air (the same browser input is put on that scene too),
+    # a Cut under the fully covering card, the card wipes away on the page.
+    # false = the old stinger + card.
+    "wipe": True,
+    "cover_s": 0.4,                   # card fully covering after this long (its wipe in is .32 s)
+    "back_hold_s": 0.25,              # blank card held this long on the way back
     "title_source": "Titelkarte",
     "title_s": 1.6,                   # card held this long (s) before it wipes away
     "enter_delay_s": 0.15,            # card up before the switch (the stinger cuts at 0.5 s)
@@ -80,6 +88,7 @@ class TableScene:
         self.title = ""
         self.sub = ""
         self.hold = DEFAULTS["title_s"]
+        self.blank = False                # card without a word (way back)
         self.shown = None                 # source name up on the table scene
         self.back_to = None               # scene to go back to
         self._known: set = set()          # every page source this ever showed
@@ -107,7 +116,7 @@ class TableScene:
             raise RuntimeError("OBS nicht eingerichtet")
         return fn(o)
 
-    def _title_on(self, title, cfg):
+    def _title_on(self, title, cfg, hold=None, blank=False):
         sub = ""
         if self._sub_fn:
             try:
@@ -116,16 +125,20 @@ class TableScene:
                 sub = ""
         with self._lock:
             self.seq += 1
-            self.title, self.sub, self.hold = title or "", sub, float(cfg.get("title_s") or 1.6)
+            self.title, self.sub = title or "", ("" if blank else sub)
+            self.hold = float(hold if hold is not None else (cfg.get("title_s") or 1.6))
+            self.blank = bool(blank)
 
     def _title_off(self):
         with self._lock:
             self.seq += 1
             self.title = ""
+            self.blank = False
 
     def state(self) -> dict:
         with self._lock:
-            return {"seq": self.seq, "title": self.title, "sub": self.sub, "hold_s": self.hold}
+            return {"seq": self.seq, "title": self.title, "sub": self.sub, "hold_s": self.hold,
+                    "blank": self.blank}
 
     def _pick_transition(self, cfg) -> str:
         trans = cfg.get("transition") or ""
@@ -159,6 +172,44 @@ class TableScene:
                 self._call(lambda o: o.set_transition(trans))
                 self._spawn(self._restore_transition, token)
         self._call(lambda o: o.set_scene(scene))
+
+    def _ensure_card(self, scene, cfg) -> bool:
+        """The title card input also on `scene` (on top, on). False = cannot."""
+        src = cfg.get("title_source") or ""
+        if not src or not scene:
+            return False
+        try:
+            items = self._call(lambda o: o.scene_items(scene))
+            if src not in items:
+                self._call(lambda o: o.call("CreateSceneItem", {"sceneName": scene, "sourceName": src,
+                                                                "sceneItemEnabled": True}))
+                print(f"[tables] '{src}' in die Szene '{scene}' gelegt (Titelkarte als Übergang)")
+            elif not items[src][1]:
+                self._call(lambda o: o.set_visible(scene, src, True))
+            return True
+        except Exception as e:
+            self.note = f"Titelkarte nicht in '{scene}': {e} - Stinger statt Wischer"
+            print(f"[tables] {self.note}")
+            return False
+
+    def _cut(self, scene):
+        """Scene switch with Cut (the card covers both pictures)."""
+        try:
+            prev = self._call(lambda o: o.current_transition())
+        except Exception:
+            prev = None
+        if prev and prev != "Cut":
+            with self._lock:
+                if self._trans_prev is None:
+                    self._trans_prev = prev
+                self._trans_token += 1
+                token = self._trans_token
+            self._call(lambda o: o.set_transition("Cut"))
+            self._spawn(self._restore_transition, token)
+        self._call(lambda o: o.set_scene(scene))
+
+    def _wipe_ok(self, cfg, *scenes) -> bool:
+        return bool(cfg.get("wipe", True)) and all(self._ensure_card(s, cfg) for s in scenes)
 
     def _restore_transition(self, token):
         self._sleep(TRANSITION_RESTORE_S)
@@ -234,9 +285,14 @@ class TableScene:
                 else:
                     self.back_to = cur or cfg.get("back_scene")
                     self._only(scene, source, items, cfg)           # scene not on air yet
-                    self._title_on(title, cfg)
-                    self._sleep(float(cfg.get("enter_delay_s") or 0))
-                    self._switch(scene, cfg)
+                    if self._wipe_ok(cfg, cur, scene):
+                        self._title_on(title, cfg)                  # wipes in over `cur`
+                        self._sleep(float(cfg.get("cover_s") or 0.4))
+                        self._cut(scene)                            # under the card
+                    else:
+                        self._title_on(title, cfg)
+                        self._sleep(float(cfg.get("enter_delay_s") or 0))
+                        self._switch(scene, cfg)
             except Exception as e:
                 self.last = f"OBS: {e}"
                 return False, self.last
@@ -253,13 +309,20 @@ class TableScene:
             except Exception as e:
                 self.last = f"OBS: {e}"
                 return False, self.last
-            self._title_off()
             if cur == cfg["scene"]:
                 try:
-                    self._switch(target, cfg)
+                    if self._wipe_ok(cfg, cur, target):
+                        self._title_on("", cfg, hold=cfg.get("back_hold_s", 0.25), blank=True)
+                        self._sleep(float(cfg.get("cover_s") or 0.4))
+                        self._cut(target)
+                    else:
+                        self._title_off()
+                        self._switch(target, cfg)
                 except Exception as e:
                     self.last = f"OBS: {e}"
                     return False, self.last
+            else:
+                self._title_off()
             self._gen += 1
             gen, shown = self._gen, self.shown
             self.shown, self.back_to = None, None
@@ -332,7 +395,7 @@ async function poll() {
     if (seq === null) seq = s.seq;              // a page (re)load shows nothing old
     else if (s.seq !== seq) {
       seq = s.seq;
-      if (s.title) play(s); else { clearTimeout(timer); clearTimeout(outT); hide(); }
+      if (s.title || s.blank) play(s); else { clearTimeout(timer); clearTimeout(outT); hide(); }
     }
   } catch (e) {}
   setTimeout(poll, 100);

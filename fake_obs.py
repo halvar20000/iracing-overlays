@@ -112,6 +112,13 @@ class FakeObs:
                 return False, None, "No scene"
             return True, {"sceneItems": [{"sourceName": s, "sceneItemId": self.ids[(rd["sceneName"], s)],
                                           "sceneItemEnabled": e} for s, e in sc.items()]}, None
+        if rt == "CreateSceneItem":
+            sc = self.scenes.get(rd["sceneName"])
+            if sc is None:
+                return False, None, "No scene"
+            self.ids[(rd["sceneName"], rd["sourceName"])] = max(self.ids.values(), default=0) + 1
+            sc[rd["sourceName"]] = rd.get("sceneItemEnabled", True)
+            return True, {"sceneItemId": self.ids[(rd["sceneName"], rd["sourceName"])]}, None
         if rt == "GetSceneItemId":
             key = (rd["sceneName"], rd["sourceName"])
             if key not in self.ids:

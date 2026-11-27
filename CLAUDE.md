@@ -224,6 +224,14 @@ NEW stingers/table_stinger.webm (make_replay_stinger.py --text "" = panel
 only), default transition "Stinger Tabellen" (Thomas adds it in OBS: Stinger,
 that file, point 500 ms); missing in OBS = `fallback_transition` Fade (never
 the REPLAY one), note in /tables.
+EVENING (Thomas: brown stinger, THEN the blue card = two transitions): `wipe`
+(default on) - the card IS the transition: the same "Titelkarte" input is put
+on the scene on air too (CreateSceneItem, by itself, on top), the card wipes in
+there, after cover_s 0.4 a CUT under the fully covering card, the card wipes
+away on the page; back = a blank card (back_hold_s 0.25) the same way. No
+stinger; the card cannot be added = the stinger as before; `"wipe": false` =
+the old stinger + card. test_table_scene T1/T3/T4b/T4c/T10, fake_obs
+CreateSceneItem. Restart 5000.
 
 **November 25, 2026 (iCASControl 0.1.42 - Thomas Kuebler saw NONE of the
 race messages, WCT Misano 24.11.):** Thomas's pre-race test (pink line) had
