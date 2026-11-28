@@ -325,6 +325,34 @@ def test_colorize():
     check("S1 delta ~ -1.0", approx(out[0]["delta"], -1.0))
 
 
+def test_team_event():
+    print("spectator: team event shows the pole lap's TEAM (IEC, 2026-11-28):")
+    p = iq.QualiDeltaPoller()
+    base_spectator(p)
+    _with_uids(p)
+    p.ir.d["WeekendInfo"] = {"TeamRacing": 1}
+    p.ir.d["DriverInfo"]["Drivers"][0]["TeamName"] = "Alpha Racing"
+    p.ir.d["DriverInfo"]["Drivers"][1]["TeamName"] = "WS Racing eSports LMP2 I [CAS IEC]"
+    run_lap(p, idx=1, pace=88.0, start_t=0.0, official=88.0, laps_after=2)
+    end = run_lap(p, idx=0, pace=90.0, start_t=100.0, official=90.0, laps_after=2)
+    snap = feed(p, end + 0.5 * 88.0, [2, 2], [0.5, 0.0], [3, -1], [90.0, 88.0])
+    sess = snap["refs"]["session"]
+    check("team event: pole driver + his team, league tag cut",
+          sess["ref_driver"] == "BETA" and sess["ref_team"] == "WS Racing eSports LMP2 I")
+    # the pole driver leaves: team kept with the remembered lap
+    snap = feed(p, end + 0.6 * 88.0, [2, -1], [0.6, -1.0], [3, -1], [90.0, -1.0])
+    check("pole driver left: team still shown", snap["refs"]["session"]["ref_team"] == "WS Racing eSports LMP2 I")
+    # solo session: no team line (iRacing reports the driver as his own team)
+    q = iq.QualiDeltaPoller()
+    base_spectator(q)
+    q.ir.d["WeekendInfo"] = {"TeamRacing": 0}
+    q.ir.d["DriverInfo"]["Drivers"][1]["TeamName"] = "Bob Beta"
+    run_lap(q, idx=1, pace=88.0, start_t=0.0, official=88.0, laps_after=2)
+    end = run_lap(q, idx=0, pace=90.0, start_t=100.0, official=90.0, laps_after=2)
+    snap = feed(q, end + 0.5 * 88.0, [2, 2], [0.5, 0.0], [3, -1], [90.0, 88.0])
+    check("solo session: no team line", snap["refs"]["session"]["ref_team"] == "")
+
+
 if __name__ == "__main__":
     test_driving()
     test_spectator()
@@ -334,6 +362,7 @@ if __name__ == "__main__":
     test_pole_lap_deleted()
     test_stale_lapstart_guard()
     test_colorize()
+    test_team_event()
     print(f"\n{PASS}/{PASS + FAIL} checks passed"
           + ("" if FAIL == 0 else f"  ({FAIL} FAILED)"))
     sys.exit(1 if FAIL else 0)

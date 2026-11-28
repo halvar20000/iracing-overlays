@@ -191,6 +191,12 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 28, 2026 (quali delta 5014: pole TEAM in team events, IEC):** the
+right block shows the team of the pole lap above the pole driver's surname
+(`ref_team`, WeekendInfo.TeamRacing 1 and TeamName != UserName, a trailing
+"[CAS IEC]" tag cut; kept in _pole_mem when he leaves; solo sessions = no
+line). test_qualidelta 38/38. Restart 5014.
+
 **November 28, 2026 (tables scene: weather + track pictures, card reports "covered"):**
 Thomas wanted the same wipe for the OBS image sources "Wetter Temperaturen",
 "Wetter Feuchtigkeit" (forecast PNGs) and "Streckenführung": added to scene

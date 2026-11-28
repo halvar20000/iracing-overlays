@@ -49,6 +49,7 @@ Stream:        transparent background by default (OBS browser source).
 """
 
 import bisect
+import re
 import threading
 import time
 from flask import Flask, jsonify, render_template_string
@@ -117,6 +118,7 @@ class QualiDeltaPoller(SDKPoller):
         self._session_best = None     # official pole time (min CarIdxBestLapTime)
         self._ref_driver_idx = None   # car idx that holds the pole/reference lap
         self._ref_name = ""           # pole driver's SURNAME (header)
+        self._ref_team = ""           # his TEAM in team events (IEC, 2026-11-28)
         # The pole lap stays the reference when its driver LEAVES the session
         # (2026-11-24, Thomas): iRacing then drops his CarIdxBestLapTime and
         # the old code took P2 as "pole". Kept: curve, time, name, UserID.
@@ -413,13 +415,15 @@ class QualiDeltaPoller(SDKPoller):
         if live and abs(live["laptime"] - pole) <= 0.002:
             # the pole car is here and we have its lap: use it + remember it
             self._ref_driver_idx = pole_idx
-            self._ref_name = self._driver_info(pole_idx)["surname"]
-            self._pole_mem = dict(live, idx=pole_idx, name=self._ref_name)
+            pi = self._driver_info(pole_idx)
+            self._ref_name, self._ref_team = pi["surname"], pi["team"]
+            self._pole_mem = dict(live, idx=pole_idx, name=self._ref_name, team=self._ref_team)
             self._use_ref(live)
         elif mem and abs(mem["laptime"] - pole) <= 0.002:
             # pole driver has left (or his slot no longer reports it)
             self._ref_driver_idx = None
             self._ref_name = mem["name"]
+            self._ref_team = mem.get("team", "")
             self._use_ref(mem)
         else:
             # pole lap without its curve: best curve we have, scaled
@@ -430,7 +434,8 @@ class QualiDeltaPoller(SDKPoller):
             holder = official[1] if official and abs(official[0] - pole) <= 0.002 \
                 else pole_idx
             self._ref_driver_idx = holder
-            self._ref_name = self._driver_info(holder)["surname"] if holder is not None else ""
+            hi = self._driver_info(holder) if holder is not None else {"surname": "", "team": ""}
+            self._ref_name, self._ref_team = hi["surname"], hi["team"]
             if src is not None:
                 self._use_ref(src, laptime=pole)
 
@@ -568,7 +573,7 @@ class QualiDeltaPoller(SDKPoller):
     def _driver_info(self, idx):
         """Broadcast header fields for a car index: number, SURNAME (caps),
         license letter + color. Safe defaults when the car isn't found."""
-        out = {"number": "", "surname": "", "lic": "", "lic_color": "#27d367"}
+        out = {"number": "", "surname": "", "lic": "", "lic_color": "#27d367", "team": ""}
         if idx is None or idx < 0:
             return out
         try:
@@ -579,6 +584,14 @@ class QualiDeltaPoller(SDKPoller):
                     name = (d.get("UserName") or "").strip()
                     if name:
                         out["surname"] = name.split()[-1].upper()
+                    team = (d.get("TeamName") or "").strip()
+                    try:
+                        team_ev = int((self.ir["WeekendInfo"] or {}).get("TeamRacing") or 0) == 1
+                    except Exception:
+                        team_ev = False
+                    if team_ev and team and team != name:
+                        # "WS Racing eSports LMP2 I [CAS IEC]" -> without the league tag
+                        out["team"] = re.sub(r"\s*\[[^\]]*\]\s*$", "", team)
                     lic = (d.get("LicString") or "").strip()
                     if lic:
                         out["lic"] = lic[0].upper()
@@ -807,6 +820,7 @@ class QualiDeltaPoller(SDKPoller):
                     "ref_label": "Pole",
                     "ref_lap": self._session_best or 0.0,
                     "ref_driver": self._ref_name,
+                    "ref_team": self._ref_team,
                 },
                 "own": {
                     "delta": float(o_delta) if o_delta is not None else None,
@@ -917,6 +931,11 @@ PAGE_HTML = """
         text-transform: uppercase; white-space: nowrap;
         max-width: 150px; overflow: hidden; text-overflow: ellipsis;
     }
+    .ref-team {
+        font-size: 12px; font-weight: 700; letter-spacing: .5px; color: #9fb4e8;
+        text-transform: uppercase; white-space: nowrap;
+        max-width: 170px; overflow: hidden; text-overflow: ellipsis; margin-bottom: 1px;
+    }
     .ref-time { font-size: 26px; font-weight: 800; color: #fff; margin-top: 3px; }
 
     /* ---- bottom sector strip ---- */
@@ -961,6 +980,7 @@ PAGE_HTML = """
                 <div class="delta-big" id="delta">—</div>
             </div>
             <div class="right">
+                <div class="ref-team hidden" id="ref-team"></div>
                 <div class="ref-name" id="ref-driver">—</div>
                 <div class="ref-time" id="ref-time">—</div>
             </div>
@@ -1026,6 +1046,9 @@ function renderRef(d) {
     // Right block: who set the reference + their lap. In driving mode there's
     // no named holder, so we show the label ("Best") instead of a name.
     setText(document.getElementById("ref-driver"), d.ref_driver || d.ref_label || "BEST");
+    const teamEl = document.getElementById("ref-team");          // team events: team of the pole lap
+    setText(teamEl, d.ref_team || "");
+    teamEl.classList.toggle("hidden", !d.ref_team);
     setText(document.getElementById("ref-time"), fmtLap(d.ref_lap));
 }
 
