@@ -62,8 +62,13 @@ def make(cfg=None):
     obs = FakeObs()
     later = []                        # spawned jobs, run by hand
     sleeps = []
+    waits = []
+    def wait(ev, t):                  # the card page "reports" at once
+        waits.append(t)
+        return True
     ts = TableScene(obs_factory=lambda: obs, cfg_fn=lambda: cfg or {}, sub_fn=lambda: "CAS IEC",
-                    sleep=sleeps.append, spawn=lambda fn, *a: later.append((fn, a)))
+                    sleep=sleeps.append, spawn=lambda fn, *a: later.append((fn, a)),
+                    clock=lambda: 0.0, wait=wait)
     return ts, obs, later, sleeps
 
 
@@ -144,6 +149,22 @@ ok, _ = ts.toggle("lastrace")
 check("T4c no card on Moderator -> Stinger, note", ok and obs.log[-1] == ("scene", "Tabellen", "Stinger Tabellen")
       and "Titelkarte" in ts.note)
 
+# 4d. the card page reports "covered" (only for the current seq); no report = cut after cover_max_s + note
+import threading as _th
+got = []
+ts = TableScene(obs_factory=lambda: FakeObs(), cfg_fn=lambda: {"tables": {"cover_max_s": 2}},
+                sleep=lambda s: None, spawn=lambda *a: None)
+ev_seen = []
+ts._wait = lambda ev, t: (ev_seen.append(ev), ts.covered(ts.state()["seq"] - 1), ts.covered(ts.state()["seq"]), ev.is_set())[-1]
+ok, _ = ts.toggle("lastrace")
+check("T4d covered: old seq refused, current accepted, cut follows", ok and ev_seen and ev_seen[0].is_set()
+      and ts.covered(-5) is False and ts.note == "")
+ts = TableScene(obs_factory=lambda: FakeObs(), cfg_fn=dict, sleep=lambda s: None, spawn=lambda *a: None,
+                wait=lambda ev, t: False)
+ok, _ = ts.toggle("lastrace")
+check("T4d no report: still switches, note says why", ok and "nicht gemeldet" in ts.note)
+check("T9c page reports covered", "/tables/covered?seq=" in table_scene.TITLE_HTML)
+
 # 5. errors
 ts, obs, later, sleeps = make()
 ok, msg = ts.toggle("nope")
@@ -213,7 +234,7 @@ c = sr.load_config()
 c["obs"] = {"host": "127.0.0.1", "port": fo.port}
 c["segments"] = ["intro", "last_race", "standings", "track", "outro"]
 c["avatar"] = {"enabled": False, "segments": []}
-c["tables"] = {"swap_s": 0.05, "hide_after_s": 0.05, "enter_delay_s": 0, "cover_s": 0.05}
+c["tables"] = {"swap_s": 0.05, "hide_after_s": 0.05, "enter_delay_s": 0, "cover_s": 0.05, "cover_max_s": 0.05}
 tsc = TableScene(obs_factory=lambda: ObsClient(port=fo.port), cfg_fn=lambda: c)
 facts = {"liga": "CAS IEC", "strecke": "Fuji", "runde": 5, "letzte_runde": {"strecke": "Spa"}, "tabelle": [{"pos": 1}]}
 script = {"intro": "Hallo.", "last_race": "Das Ergebnis.", "standings": "Die Tabelle.",

@@ -41,7 +41,11 @@ DEFAULTS = {
     # a Cut under the fully covering card, the card wipes away on the page.
     # false = the old stinger + card.
     "wipe": True,
-    "cover_s": 0.4,                   # card fully covering after this long (its wipe in is .32 s)
+    "cover_s": 0.4,                   # minimum wait before the cut (its wipe in is .32 s)
+    # the card PAGE reports when it covers the picture (/tables/covered) - in
+    # OBS it started 0.2-0.3 s late (poll + render), a fixed 0.4 s cut too early
+    # (2026-11-28, measured on Thomas's OBS). No report after this long = cut anyway.
+    "cover_max_s": 1.5,
     "back_hold_s": 0.25,              # blank card held this long on the way back
     "title_source": "Titelkarte",
     "title_s": 1.6,                   # card held this long (s) before it wipes away
@@ -55,6 +59,11 @@ DEFAULTS = {
         "dotd":     {"source": "Last_DOTD", "title": "FAHRER DES TAGES"},
         "rsvp":     {"source": "RSVP", "title": "ANMELDUNGEN"},
         "stats":    {"source": "Statistic", "title": "STATISTIK"},
+        # 2026-11-28 (Thomas): the forecast pictures + track layout image
+        # (image sources, the pictures change per event in OBS)
+        "wetter_temp":  {"source": "Wetter Temperaturen", "title": "TEMPERATUREN"},
+        "wetter_regen": {"source": "Wetter Feuchtigkeit", "title": "FEUCHTIGKEIT"},
+        "strecke":      {"source": "Streckenführung", "title": "STRECKE"},
     },
 }
 TRANSITION_RESTORE_S = 2.5
@@ -76,7 +85,7 @@ def merge(cfg: dict | None) -> dict:
 
 class TableScene:
     def __init__(self, obs_factory, cfg_fn, sub_fn=None, clock=time.monotonic,
-                 sleep=time.sleep, spawn=None):
+                 sleep=time.sleep, spawn=None, wait=None):
         self._obs_factory = obs_factory
         self._obs = None
         self._cfg_fn = cfg_fn
@@ -97,6 +106,10 @@ class TableScene:
         self._trans_token = 0
         self.last = ""
         self.note = ""
+        self._covered = threading.Event()
+        self._covered_seq = None
+        # wait(event, timeout) -> bool; tests inject one that does not block
+        self._wait = wait or (lambda ev, t: ev.wait(t))
 
     # -- helpers --------------------------------------------------------------
     def cfg(self) -> dict:
@@ -124,6 +137,7 @@ class TableScene:
             except Exception:
                 sub = ""
         with self._lock:
+            self._covered.clear()
             self.seq += 1
             self.title, self.sub = title or "", ("" if blank else sub)
             self.hold = float(hold if hold is not None else (cfg.get("title_s") or 1.6))
@@ -134,6 +148,30 @@ class TableScene:
             self.seq += 1
             self.title = ""
             self.blank = False
+
+    def covered(self, seq) -> bool:
+        """The title card page: my wipe-in for `seq` now covers the picture."""
+        try:
+            seq = int(seq)
+        except (TypeError, ValueError):
+            return False
+        with self._lock:
+            ok = seq == self.seq
+        if ok:
+            self._covered_seq = seq
+            self._covered.set()
+        return ok
+
+    def _wait_cover(self, cfg, min_s=None):
+        """After _title_on: until the page reports the card covers the picture
+        (at least cover_s, at most cover_max_s)."""
+        t0 = self._clock()
+        got = self._wait(self._covered, float(cfg.get("cover_max_s") or 1.5))
+        if not got:
+            self.note = "Titelkarte hat nicht gemeldet (Quelle in OBS? Seite alt?) - Schnitt nach Zeit"
+        rest = float(cfg.get("cover_s") or 0 if min_s is None else min_s) - (self._clock() - t0)
+        if rest > 0:
+            self._sleep(rest)
 
     def state(self) -> dict:
         with self._lock:
@@ -280,14 +318,14 @@ class TableScene:
                         self.last = f"{source} ist schon auf {scene}"
                         return True, self.last
                     self._title_on(title, cfg)
-                    self._sleep(float(cfg.get("swap_s") or 0))      # card covers the page first
+                    self._wait_cover(cfg, float(cfg.get("swap_s") or 0))   # card covers the page first
                     self._only(scene, source, items, cfg)
                 else:
                     self.back_to = cur or cfg.get("back_scene")
                     self._only(scene, source, items, cfg)           # scene not on air yet
                     if self._wipe_ok(cfg, cur, scene):
                         self._title_on(title, cfg)                  # wipes in over `cur`
-                        self._sleep(float(cfg.get("cover_s") or 0.4))
+                        self._wait_cover(cfg)
                         self._cut(scene)                            # under the card
                     else:
                         self._title_on(title, cfg)
@@ -313,7 +351,7 @@ class TableScene:
                 try:
                     if self._wipe_ok(cfg, cur, target):
                         self._title_on("", cfg, hold=cfg.get("back_hold_s", 0.25), blank=True)
-                        self._sleep(float(cfg.get("cover_s") or 0.4))
+                        self._wait_cover(cfg)
                         self._cut(target)
                     else:
                         self._title_off()
@@ -383,10 +421,15 @@ function play(s) {
   card.className = ''; card.style.display = 'block';
   void card.offsetWidth;                       // restart the animation
   card.className = 'in';
+  const mySeq = s.seq;
+  setTimeout(() => {                           // background wipe (.32 s) done = picture covered
+    if (mySeq != null && !qs.get('demo'))
+      fetch('/tables/covered?seq=' + mySeq, {cache: 'no-store'}).catch(() => {});
+  }, 330);
   timer = setTimeout(() => {
     card.className = 'out';
     outT = setTimeout(hide, 500);
-  }, 320 + (s.hold_s || 1.6) * 1000);
+  }, 330 + (s.hold_s || 1.6) * 1000);
 }
 async function poll() {
   try {

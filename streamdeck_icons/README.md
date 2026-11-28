@@ -129,6 +129,9 @@ URL wie unten. Das Dashboard (Port 5000) muss laufen.
 | `table_dotd.png` | `http://localhost:5000/streamdeck/table/dotd` — Fahrer des Tages (letzte Runde) |
 | `table_rsvp.png` | `http://localhost:5000/streamdeck/table/rsvp` — Anmeldungen |
 | `table_stats.png` | `http://localhost:5000/streamdeck/table/stats` — Statistik |
+| `table_wetter_temp.png` | `http://localhost:5000/streamdeck/table/wetter_temp` — Wetter Temperaturen (Bild-Quelle „Wetter Temperaturen“), Titelkarte TEMPERATUREN |
+| `table_wetter_regen.png` | `http://localhost:5000/streamdeck/table/wetter_regen` — Wetter Feuchtigkeit / Regen (Quelle „Wetter Feuchtigkeit“), Titelkarte FEUCHTIGKEIT |
+| `table_strecke.png` | `http://localhost:5000/streamdeck/table/strecke` — Streckenführung (Quelle „Streckenführung“), Titelkarte STRECKE |
 | `table_back.png` | `http://localhost:5000/streamdeck/table_back` — von „Tabellen“ zurück zur Szene davor |
 | `ask.png` | `http://localhost:5000/streamdeck/ask` — Frag Claude: drücken = Frage stellen, nochmal drücken = Antwort (FRAG_CLAUDE.md) |
 | `page_next.png` | `http://localhost:5001/nav/next` — alle Seiten: nächste Seite / weiter scrollen |

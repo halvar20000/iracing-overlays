@@ -191,6 +191,19 @@ that isn't already prefix-matched.
 
 ## Recent sessions
 
+**November 28, 2026 (tables scene: weather + track pictures, card reports "covered"):**
+Thomas wanted the same wipe for the OBS image sources "Wetter Temperaturen",
+"Wetter Feuchtigkeit" (forecast PNGs) and "Streckenführung": added to scene
+Tabellen over the websocket (same inputs, bounds 1800 x 960 centred, off, under
+the card) + table_scene DEFAULTS keys wetter_temp TEMPERATUREN, wetter_regen
+FEUCHTIGKEIT, strecke STRECKE; icons dashboard/table_wetter_temp / _regen /
+table_strecke (new symbols thermo, drop). Measured on his OBS (screenshots
+0.25 / 0.5 s): the card started 0.2-0.3 s late, the fixed cover_s 0.4 cut
+with the card a quarter in. Now the card page GETs `/tables/covered?seq=` when
+its wipe-in is done (330 ms after it starts) and the cut / in-scene swap waits
+for that (min cover_s / swap_s, max cover_max_s 1.5, then cut + note).
+test_table_scene T4d. Restart 5000.
+
 **November 27, 2026 (IEC championship = TEAMS only, never drivers):** Thomas:
 5010 /table/wct showed the IEC DRIVER table per class. `TEAMS_ONLY_LEAGUES`
 {"cas-iec"} (CLS league slug): /table/wct and /live/wct show the team table per

@@ -7371,6 +7371,12 @@ def tables_state():
     return jsonify(poller.tables.state())
 
 
+@app.route("/tables/covered")
+def tables_covered():
+    """The title card page: its wipe-in for ?seq= covers the picture now."""
+    return jsonify({"ok": poller.tables.covered(request.args.get("seq"))})
+
+
 @app.route("/tables/title")
 def tables_title():
     """OBS browser source "Titelkarte" on the Tabellen scene (1920 x 1080)."""

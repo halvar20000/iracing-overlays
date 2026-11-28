@@ -64,6 +64,10 @@ G = {
            '<circle cx="16.5" cy="16.5" r="2" class="F"/><path d="M7 11.8h10.5"/>',
     "map": '<path d="M5 18c-2-2-1.5-5 .5-6.5S9 9 9 6.5 12 2.5 15 4.5s1 5 3 6.5 3.5 4 1.5 6.5-6 1-8 .5S7 20 5 18z"/>'
            '<circle cx="15" cy="4.6" r="1.8" class="F"/>',
+    "thermo": '<path d="M10 14.5V4.5a2 2 0 0 1 4 0v10a4 4 0 1 1-4 0z"/><circle cx="12" cy="17.6" r="1.9" class="F"/>'
+              '<path d="M12 8v7.5M16.5 6h2.5M16.5 9.5h2.5M16.5 13h2.5"/>',
+    "drop": '<path d="M12 3c3 4 6.5 7.6 6.5 11.4a6.5 6.5 0 0 1-13 0C5.5 10.6 9 7 12 3z"/>'
+            '<path d="M8.8 14.6a3.2 3.2 0 0 0 3.2 3.2"/>',
     "flag": '<path d="M5 21.5V3"/><path d="M5 3.5h15v10H5" stroke-width="1.6"/>'
             '<rect x="5" y="3.5" width="3.75" height="3.33" class="F"/><rect x="12.5" y="3.5" width="3.75" height="3.33" class="F"/>'
             '<rect x="8.75" y="6.83" width="3.75" height="3.33" class="F"/><rect x="16.25" y="6.83" width="3.75" height="3.33" class="F"/>'
@@ -236,6 +240,9 @@ DASH_ICONS = [
     ("table_dotd",        "pre",    "crown",       "Fahrer des Tages",  "table/dotd"),
     ("table_rsvp",        "pre",    "rsvp",        "Anmeldungen",       "table/rsvp"),
     ("table_stats",       "pre",    "barchart",    "Statistik",         "table/stats"),
+    ("table_wetter_temp", "pre",    "thermo",      "Wetter Temperatur", "table/wetter_temp"),
+    ("table_wetter_regen","pre",    "drop",        "Wetter Feuchte",    "table/wetter_regen"),
+    ("table_strecke",     "pre",    "map",         "Strecke",           "table/strecke"),
     ("table_back",        "pre",    "prev",        "Tabelle zurück",    "table_back"),
     # Frag Claude (race_qa.py): press = listen, press again = answer
     ("ask",               "auto",   "mic",         "Frag Claude",       "ask"),
