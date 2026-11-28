@@ -210,6 +210,13 @@ cover_max_s 1.5, card started after the cut = the 0.2-0.3 s "late card"). Title
 state now has its own `_tlock`. T4e (page reports from another thread) fails on
 the old code. 10 presses of the weather / track keys on his real OBS switched
 right every time.
+THEN (wetter_regen worked from the browser, not from his Stream Deck key):
+keys normalised (`norm_key`: blanks, case, "-", ALIASES wetter_feuchte /
+feuchtigkeit / regen ..., temperatur, streckenfuehrung, resultate,
+meisterschaft); every press logged (`presses` in /tables, last 20, key as
+sent + answer, console line); /streamdeck/<action>/<param>/ with a trailing "/"
+was a 404 - now routed. T4f. Cause on his deck still unknown - read /tables
+presses after he presses it.
 
 **November 27, 2026 (IEC championship = TEAMS only, never drivers):** Thomas:
 5010 /table/wct showed the IEC DRIVER table per class. `TEAMS_ONLY_LEAGUES`

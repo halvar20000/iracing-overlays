@@ -67,6 +67,22 @@ DEFAULTS = {
     },
 }
 TRANSITION_RESTORE_S = 2.5
+# other spellings a Stream Deck key may carry (2026-11-28: "wetter_regen" worked
+# from the browser, not from the key - accept the obvious variants)
+ALIASES = {
+    "wetter_feuchte": "wetter_regen", "wetter_feuchtigkeit": "wetter_regen", "feuchte": "wetter_regen",
+    "feuchtigkeit": "wetter_regen", "regen": "wetter_regen", "wetter_rain": "wetter_regen",
+    "wetter_temperatur": "wetter_temp", "wetter_temperaturen": "wetter_temp", "temperatur": "wetter_temp",
+    "temperaturen": "wetter_temp", "streckenfuehrung": "strecke", "streckenführung": "strecke",
+    "resultate": "lastrace", "meisterschaft": "table",
+}
+
+
+def norm_key(key: str, items: dict) -> str:
+    k = (key or "").strip().strip("/").lower().replace("-", "_").replace(" ", "_")
+    if k in items:
+        return k
+    return ALIASES.get(k, k)
 
 
 def merge(cfg: dict | None) -> dict:
@@ -109,6 +125,7 @@ class TableScene:
         self._trans_token = 0
         self.last = ""
         self.note = ""
+        self.presses = []                 # [(time, key as sent, message)] newest last, 20 kept
         self._covered = threading.Event()
         self._covered_seq = None
         # wait(event, timeout) -> bool; tests inject one that does not block
@@ -293,7 +310,14 @@ class TableScene:
             return False
 
     def toggle(self, key: str) -> tuple[bool, str]:
+        ok, msg = self._toggle(key)
+        self.presses = (self.presses + [(time.strftime("%H:%M:%S"), repr(key), msg)])[-20:]
+        print(f"[tables] Taste {key!r}: {msg}")
+        return ok, msg
+
+    def _toggle(self, key: str) -> tuple[bool, str]:
         cfg = self.cfg()
+        key = norm_key(key, cfg["items"])
         it = cfg["items"].get(key)
         if not it or not it.get("source"):
             return False, f"Tabelle '{key}' unbekannt (show_config.json tables.items: {', '.join(cfg['items'])})"
@@ -388,6 +412,7 @@ class TableScene:
         cfg = self.cfg()
         return {"scene": cfg["scene"], "transition": cfg.get("transition"), "shown": self.shown,
                 "back_to": self.back_to, "last": self.last, "note": self.note, "title": self.title,
+                "presses": [{"t": t, "key": k, "msg": m} for t, k, m in reversed(self.presses)],
                 "items": {k: v for k, v in cfg["items"].items()}}
 
 

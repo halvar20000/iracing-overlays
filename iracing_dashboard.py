@@ -7542,6 +7542,7 @@ def incidents_dismiss():
 # -----------------------------------------------------------------------------
 @app.route("/streamdeck/<action>")
 @app.route("/streamdeck/<action>/<param>")
+@app.route("/streamdeck/<action>/<param>/")     # a key URL ending in "/" (was a 404)
 def streamdeck(action, param=None):
     snap = poller.get()
     ok, msg = False, f"unknown action: {action}"

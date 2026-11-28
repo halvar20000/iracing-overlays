@@ -21,7 +21,7 @@ class FakeObs:
             "Moderator": {"MyCAM": True, "Last_RACE_WCT": False},
             "Tabellen": {"Background": True, "Titelkarte": True, "Last_RACE_WCT": False,
                          "Standing_WCT_PRO_AM": True, "Teams_Standing_WCT": False,
-                         "commentary_voice": True, "Letztes Rennen": False},
+                         "commentary_voice": True, "Letztes Rennen": False, "Wetter Feuchtigkeit": False},
         }
         self.log = []                 # (action, ...) in order
         self.no_create = False
@@ -180,6 +180,15 @@ ok, _ = ts.toggle("lastrace")
 check("T4e report from another thread ends the wait at once (not the 3 s timeout)",
       ok and _t.time() - t0 < 1.0 and ts.note == "")
 check("T9c page reports covered", "/tables/covered?seq=" in table_scene.TITLE_HTML)
+
+# 4f. key spellings from a Stream Deck: blanks, case, aliases; every press logged
+ts, obs, later, sleeps = make()
+ok, msg = ts.toggle("wetter_regen ")
+check("T4f trailing blank accepted", ok and obs.items["Tabellen"]["Wetter Feuchtigkeit"])
+ok, msg = ts.toggle("Wetter-Feuchte")
+check("T4f alias + case = same key (second press = back)", ok and obs.scene == "Moderator")
+check("T4f presses logged, newest first in status", [p["key"] for p in ts.status()["presses"]][:2]
+      == ["'Wetter-Feuchte'", "'wetter_regen '"])
 
 # 5. errors
 ts, obs, later, sleeps = make()
