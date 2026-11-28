@@ -196,6 +196,12 @@ right block shows the team of the pole lap above the pole driver's surname
 (`ref_team`, WeekendInfo.TeamRacing 1 and TeamName != UserName, a trailing
 "[CAS IEC]" tag cut; kept in _pole_mem when he leaves; solo sessions = no
 line). test_qualidelta 38/38. Restart 5014.
+SAME DAY: MULTICLASS - the pole is the CLASS pole of the car on camera (a GT3
+showed the LMP2 session best): live bests, ResultsPositions (`_official_pole(cls)`)
+and the pole memory (`_pole_mems` per CarClassID) filtered by the camera car's
+class; no time in that class yet = no reference (the other class's curve is
+cleared). Driving mode: own class too. test_qualidelta 42/42 (3 fail on the old
+code).
 
 **November 28, 2026 (tables scene: weather + track pictures, card reports "covered"):**
 Thomas wanted the same wipe for the OBS image sources "Wetter Temperaturen",

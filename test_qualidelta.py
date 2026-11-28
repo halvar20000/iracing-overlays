@@ -353,6 +353,52 @@ def test_team_event():
     check("solo session: no team line", snap["refs"]["session"]["ref_team"] == "")
 
 
+def test_multiclass_pole():
+    print("spectator: MULTICLASS - the pole is the camera car's CLASS pole (IEC, 2026-11-28):")
+    p = iq.QualiDeltaPoller()
+    base_spectator(p)
+    drv = p.ir.d["DriverInfo"]["Drivers"]
+    drv[0].update({"CarClassID": 2, "UserID": 1000})              # Alice GT3 (camera)
+    drv[1].update({"CarClassID": 1, "UserID": 1001})              # Bob   LMP2
+    drv.append({"CarIdx": 2, "CarNumber": "12", "UserName": "Cleo Gamma", "CarClassID": 2,
+                "UserID": 1002, "LicString": "A 4.0", "LicColor": 0x27d367})
+    best = [0.0, 0.0, 0.0]
+
+    def lap(idx, pace, t0):
+        n = 3
+        laps = [1, 1, 1]
+        surf = [-1] * n
+        surf[idx] = 3
+        def pv(v):
+            q = [0.0] * n
+            q[idx] = v
+            return q
+        feed(p, t0, list(laps), pv(0.0), list(surf), list(best))
+        for k in range(1, 21):
+            feed(p, t0 + k / 20.0 * pace, list(laps), pv(k / 20.0), list(surf), list(best))
+        laps[idx] = 2
+        best[idx] = pace
+        feed(p, t0 + pace, list(laps), pv(0.0), list(surf), list(best))
+        return t0 + pace
+
+    p.ir.d["CamCarIdx"] = 0
+    end = lap(1, 80.0, 0.0)                                       # LMP2 80.0
+    snap = feed(p, end + 1, [1, 2, 1], [0.1, 0.0, 0.0], [3, -1, -1], list(best))
+    check("no GT3 time yet: NO reference (not the LMP2's 80)",
+          snap["refs"]["session"]["have_reference"] is False and not snap["refs"]["session"]["ref_lap"])
+    end = lap(2, 88.0, end + 10)                                   # GT3 Cleo 88.0
+    snap = feed(p, end + 1, [1, 2, 2], [0.1, 0.0, 0.0], [3, -1, -1], list(best))
+    sess = snap["refs"]["session"]
+    check("GT3 on camera: pole = best GT3 88.0 / GAMMA", approx(sess["ref_lap"], 88.0) and sess["ref_driver"] == "GAMMA")
+    p.ir.d["CamCarIdx"] = 1                                        # camera to the LMP2
+    snap = feed(p, end + 2, [1, 2, 2], [0.1, 0.0, 0.0], [3, -1, -1], list(best))
+    sess = snap["refs"]["session"]
+    check("LMP2 on camera: pole = 80.0 / BETA", approx(sess["ref_lap"], 80.0) and sess["ref_driver"] == "BETA")
+    p.ir.d["CamCarIdx"] = 0
+    snap = feed(p, end + 3, [1, 2, 2], [0.1, 0.0, 0.0], [3, -1, -1], list(best))
+    check("back to the GT3: 88.0 again", approx(snap["refs"]["session"]["ref_lap"], 88.0))
+
+
 if __name__ == "__main__":
     test_driving()
     test_spectator()
@@ -363,6 +409,7 @@ if __name__ == "__main__":
     test_stale_lapstart_guard()
     test_colorize()
     test_team_event()
+    test_multiclass_pole()
     print(f"\n{PASS}/{PASS + FAIL} checks passed"
           + ("" if FAIL == 0 else f"  ({FAIL} FAILED)"))
     sys.exit(1 if FAIL else 0)
