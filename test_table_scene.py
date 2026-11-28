@@ -163,6 +163,22 @@ ts = TableScene(obs_factory=lambda: FakeObs(), cfg_fn=dict, sleep=lambda s: None
                 wait=lambda ev, t: False)
 ok, _ = ts.toggle("lastrace")
 check("T4d no report: still switches, note says why", ok and "nicht gemeldet" in ts.note)
+# 4e. the REAL case: the page reports from another thread (Flask request)
+#     while show() holds the lock - must not wait for the timeout
+import time as _t
+ts = TableScene(obs_factory=lambda: FakeObs(), cfg_fn=lambda: {"tables": {"cover_max_s": 3, "cover_s": 0}},
+                sleep=lambda s: None, spawn=lambda *a: None)
+def page():
+    seq0 = ts.state()["seq"]
+    while ts.state()["seq"] == seq0:
+        _t.sleep(0.005)
+    _t.sleep(0.05)
+    ts.covered(ts.state()["seq"])
+_th.Thread(target=page, daemon=True).start()
+t0 = _t.time()
+ok, _ = ts.toggle("lastrace")
+check("T4e report from another thread ends the wait at once (not the 3 s timeout)",
+      ok and _t.time() - t0 < 1.0 and ts.note == "")
 check("T9c page reports covered", "/tables/covered?seq=" in table_scene.TITLE_HTML)
 
 # 5. errors

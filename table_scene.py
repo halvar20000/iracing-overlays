@@ -93,6 +93,9 @@ class TableScene:
         self._clock, self._sleep = clock, sleep
         self._spawn = spawn or (lambda fn, *a: threading.Thread(target=fn, args=a, daemon=True).start())
         self._lock = threading.RLock()
+        # title state has its OWN lock: the card page polls /tables/state and
+        # reports /tables/covered WHILE show() holds _lock and waits for it
+        self._tlock = threading.Lock()
         self.seq = 0
         self.title = ""
         self.sub = ""
@@ -136,7 +139,7 @@ class TableScene:
                 sub = self._sub_fn() or ""
             except Exception:
                 sub = ""
-        with self._lock:
+        with self._tlock:
             self._covered.clear()
             self.seq += 1
             self.title, self.sub = title or "", ("" if blank else sub)
@@ -144,7 +147,7 @@ class TableScene:
             self.blank = bool(blank)
 
     def _title_off(self):
-        with self._lock:
+        with self._tlock:
             self.seq += 1
             self.title = ""
             self.blank = False
@@ -155,7 +158,7 @@ class TableScene:
             seq = int(seq)
         except (TypeError, ValueError):
             return False
-        with self._lock:
+        with self._tlock:             # not _lock: show() holds it while it waits for this
             ok = seq == self.seq
         if ok:
             self._covered_seq = seq
@@ -167,14 +170,16 @@ class TableScene:
         (at least cover_s, at most cover_max_s)."""
         t0 = self._clock()
         got = self._wait(self._covered, float(cfg.get("cover_max_s") or 1.5))
-        if not got:
+        if got:
+            self.note = ""
+        else:
             self.note = "Titelkarte hat nicht gemeldet (Quelle in OBS? Seite alt?) - Schnitt nach Zeit"
         rest = float(cfg.get("cover_s") or 0 if min_s is None else min_s) - (self._clock() - t0)
         if rest > 0:
             self._sleep(rest)
 
     def state(self) -> dict:
-        with self._lock:
+        with self._tlock:
             return {"seq": self.seq, "title": self.title, "sub": self.sub, "hold_s": self.hold,
                     "blank": self.blank}
 

@@ -203,6 +203,13 @@ with the card a quarter in. Now the card page GETs `/tables/covered?seq=` when
 its wipe-in is done (330 ms after it starts) and the cut / in-scene swap waits
 for that (min cover_s / swap_s, max cover_max_s 1.5, then cut + note).
 test_table_scene T4d. Restart 5000.
+SAME DAY, FIX (Thomas: works only sometimes): show() holds `_lock` while it
+waits for the card, and /tables/state + /tables/covered took the SAME lock - the
+card could not even see its title until the cut was done (every press ran into
+cover_max_s 1.5, card started after the cut = the 0.2-0.3 s "late card"). Title
+state now has its own `_tlock`. T4e (page reports from another thread) fails on
+the old code. 10 presses of the weather / track keys on his real OBS switched
+right every time.
 
 **November 27, 2026 (IEC championship = TEAMS only, never drivers):** Thomas:
 5010 /table/wct showed the IEC DRIVER table per class. `TEAMS_ONLY_LEAGUES`
